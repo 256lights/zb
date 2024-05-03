@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"extensions": {
+		"recommendations": [
+			"golang.go"
+		]
+	},
+	"settings": {
+		"go.alternateTools": {
+		  "dlv": "${workspaceFolder}/tools/dlv.sh",
+	  	"go": "${workspaceFolder}/tools/go.sh",
+	  	"gopls": "${workspaceFolder}/tools/gopls.sh",
+		},
+	}
+}
