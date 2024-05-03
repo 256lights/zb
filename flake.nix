@@ -19,8 +19,12 @@
 
         devShells.default = pkgs.mkShell {
           packages = [
+            pkgs.delve
             pkgs.go_1_22
+            pkgs.gopls
           ];
+
+          hardeningDisable = [ "fortify" ];
         };
       }
     ) // {
