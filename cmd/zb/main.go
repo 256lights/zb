@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"runtime/cgo"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -67,11 +69,13 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 	return c
 }
 
+const derivationTypeName = "derivation"
+
 func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 	l := new(lua.State)
 	defer l.Close()
 
-	// TODO(soon): lua.NewMetatable(l, "derivation")
+	registerDerivationMetatable(l)
 
 	base := lua.NewOpenBase(io.Discard, func(l *lua.State) (int, error) {
 		return 0, fmt.Errorf("loadfile not supported")
@@ -100,6 +104,20 @@ func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 	return nil
 }
 
+func registerDerivationMetatable(l *lua.State) {
+	lua.NewMetatable(l, derivationTypeName)
+	err := lua.SetFuncs(l, 0, map[string]lua.Function{
+		"__index":     indexDerivation,
+		"__pairs":     derivationPairs,
+		"__gc":        gcDerivation,
+		"__metatable": nil, // prevent Lua access to metatable
+	})
+	if err != nil {
+		panic(err)
+	}
+	l.Pop(1)
+}
+
 type derivation struct {
 	name    string
 	system  string
@@ -114,38 +132,38 @@ func derivationFunction(l *lua.State) (int, error) {
 	}
 	drv := new(derivation)
 
-	if typ, err := l.Field(1, "name", 0); err != nil {
-		return 0, fmt.Errorf("name argument: %v", err)
-	} else if typ != lua.TypeString {
-		return 0, fmt.Errorf("name argument: %v expected, got %v", lua.TypeString, typ)
-	}
-	drv.name, _ = l.ToString(-1)
-	l.Pop(1)
-
-	if typ, err := l.Field(1, "system", 0); err != nil {
-		return 0, fmt.Errorf("system argument: %v", err)
-	} else if typ != lua.TypeString {
-		return 0, fmt.Errorf("system argument: %v expected, got %v", lua.TypeString, typ)
-	}
-	drv.system, _ = l.ToString(-1)
-	l.Pop(1)
+	// Start a copy of the table.
+	l.CreateTable(0, int(l.RawLen(1)))
+	tableCopyIndex := l.Top()
 
 	// Obtain environment variables from extra pairs.
 	l.PushNil()
-	reserved := map[string]struct{}{
-		"name":   {},
-		"system": {},
-	}
 	for l.Next(1) {
-		// We need to be careful not to use state.ToString on the key
-		// without checking its type first,
-		// since state.ToString may change the value on the stack.
-		// We clone the value here to be safe.
-		l.PushValue(-2)
-		k, _ := lua.ToString(l, -1)
-		l.Pop(1)
+		if l.Type(-2) != lua.TypeString {
+			// Skip this pair.
+			l.Pop(1)
+			continue
+		}
 
-		if _, known := reserved[k]; !known {
+		// Store copy of pair into table.
+		l.PushValue(-2) // Push key.
+		l.PushValue(-2) // Push value.
+		// TODO(soon): Validate primitive or list.
+		l.RawSet(tableCopyIndex)
+
+		// Handle pairs.
+		switch k, _ := l.ToString(-2); k {
+		case "name":
+			if typ := l.Type(-1); typ != lua.TypeString {
+				return 0, fmt.Errorf("name argument: %v expected, got %v", lua.TypeString, typ)
+			}
+			drv.name, _ = l.ToString(-1)
+		case "system":
+			if typ := l.Type(-1); typ != lua.TypeString {
+				return 0, fmt.Errorf("system argument: %v expected, got %v", lua.TypeString, typ)
+			}
+			drv.system, _ = l.ToString(-1)
+		default:
 			v, err := toEnvVar(l, -1)
 			if err != nil {
 				return 0, fmt.Errorf("%s: %v", k, err)
@@ -160,9 +178,15 @@ func derivationFunction(l *lua.State) (int, error) {
 		l.Pop(1)
 	}
 
-	// TODO(soon): Return a Lua value.
-	fmt.Printf("%#v\n", drv)
-	return 0, nil
+	l.NewUserdataUV(8, 1)
+	l.Rotate(-2, -1) // Swap userdata and argument table copy.
+	l.SetUserValue(-2, 1)
+	handle := cgo.NewHandle(drv)
+	setUserdataHandle(l, -1, handle)
+
+	lua.SetMetatable(l, derivationTypeName)
+
+	return 1, nil
 }
 
 func toEnvVar(l *lua.State, idx int) (string, error) {
@@ -180,6 +204,92 @@ func toEnvVar(l *lua.State, idx int) (string, error) {
 	default:
 		return "", fmt.Errorf("%v cannot be used as an environment variable", typ)
 	}
+}
+
+func toDerivation(l *lua.State) (*derivation, error) {
+	const idx = 1
+	if _, err := lua.CheckUserdata(l, idx, derivationTypeName); err != nil {
+		return nil, err
+	}
+	drv := testDerivation(l, idx)
+	if drv == nil {
+		return nil, lua.NewArgError(l, idx, "could not extract derivation")
+	}
+	return drv, nil
+}
+
+func testDerivation(l *lua.State, idx int) *derivation {
+	handle, _ := testUserdataHandle(l, idx, derivationTypeName)
+	if handle == 0 {
+		return nil
+	}
+	drv, _ := handle.Value().(*derivation)
+	return drv
+}
+
+// gcDerivation handles the __gc metamethod on derivations
+// by releasing the [*derivation].
+func gcDerivation(l *lua.State) (int, error) {
+	const idx = 1
+	handle, ok := testUserdataHandle(l, idx, derivationTypeName)
+	if !ok {
+		return 0, lua.NewTypeError(l, idx, derivationTypeName)
+	}
+	if handle == 0 {
+		return 0, nil
+	}
+	handle.Delete()
+	setUserdataHandle(l, idx, 0)
+	return 0, nil
+}
+
+// indexDerivation handles the __index metamethod on derivations.
+func indexDerivation(l *lua.State) (int, error) {
+	if _, err := toDerivation(l); err != nil {
+		return 0, err
+	}
+	l.UserValue(1, 1) // Push derivation argument table.
+	l.PushValue(2)    // Copy key argument.
+	if _, err := l.Table(-2, 0); err != nil {
+		return 0, err
+	}
+	return 1, nil
+}
+
+// derivationPairs handles the __pairs metamethod on derivations.
+func derivationPairs(l *lua.State) (int, error) {
+	if _, err := toDerivation(l); err != nil {
+		return 0, err
+	}
+	l.UserValue(1, 1) // Push derivation argument table.
+	l.PushClosure(1, derivationPairNext)
+	l.PushNil()
+	l.PushNil()
+	return 3, nil
+}
+
+// derivationPairNext is the iterator function returned by the derivation __pairs metamethod.
+func derivationPairNext(l *lua.State) (int, error) {
+	l.PushValue(2) // Move control value to top of stack.
+	if !l.Next(lua.UpvalueIndex(1)) {
+		l.PushNil()
+		return 1, nil
+	}
+	return 2, nil
+}
+
+func testUserdataHandle(l *lua.State, idx int, tname string) (cgo.Handle, bool) {
+	data := lua.TestUserdata(l, idx, tname)
+	if len(data) != 8 {
+		return 0, false
+	}
+	return cgo.Handle(binary.LittleEndian.Uint64(data)), true
+}
+
+func setUserdataHandle(l *lua.State, idx int, handle cgo.Handle) {
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], uint64(handle))
+	l.SetUserdata(idx, 0, buf[:])
 }
 
 func loadExpression(l *lua.State, expr string) error {
