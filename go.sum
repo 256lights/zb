@@ -1,6 +1,7 @@
 github.com/cpuguy83/go-md2man/v2 v2.0.3/go.mod h1:tgQtvFlXSQOSOSIRvRPT7W67SCa46tRHOmNcaadrF8o=
-github.com/google/go-cmp v0.4.1 h1:/exdXoGamhu5ONeUJH0deniYLWYvQwW66yvlfiiKTu0=
 github.com/google/go-cmp v0.4.1/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/gNBxE=
+github.com/google/go-cmp v0.5.4 h1:L8R9j+yAqZuZjsqh/z+F1NCffTKKLShY6zXTItVIZ8M=
+github.com/google/go-cmp v0.5.4/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/gNBxE=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
@@ -21,3 +22,5 @@ zombiezen.com/go/log v1.1.0 h1:AOtu8qHcBZ8n6rC8K56oImtkqSus0lqT+e7EWD9CWoI=
 zombiezen.com/go/log v1.1.0/go.mod h1:Eos1rXF8JpgK+h6NYITdTJslqFJJA3SaIJHMU75Sqfg=
 zombiezen.com/go/lua v0.0.0-20231013005828-290725fb9140 h1:x6mmWFZICLX0aXWmta56V11tSpA5v4rfAqexmhjotBI=
 zombiezen.com/go/lua v0.0.0-20231013005828-290725fb9140/go.mod h1:lgq5GpF8LE5ZO7qCsmr3DdzhQC+THlZIhC0JOobP/uU=
+zombiezen.com/go/nix v0.0.0-20240505035425-db1ac175083f h1:hr19i9UtxvDUfPpP8zFKVnKztZvv4nZSP/972JHrovo=
+zombiezen.com/go/nix v0.0.0-20240505035425-db1ac175083f/go.mod h1:3/4h+nWUdD9F6De1g7zBvgn4RyryS+mnK5JiW2JHRe8=

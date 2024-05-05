@@ -14,6 +14,7 @@ import (
 	"zombiezen.com/go/bass/sigterm"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/lua"
+	"zombiezen.com/go/zb"
 )
 
 type globalConfig struct {
@@ -118,19 +119,11 @@ func registerDerivationMetatable(l *lua.State) {
 	l.Pop(1)
 }
 
-type derivation struct {
-	name    string
-	system  string
-	builder string
-	args    []string
-	env     map[string]string
-}
-
 func derivationFunction(l *lua.State) (int, error) {
 	if !l.IsTable(1) {
 		return 0, lua.NewTypeError(l, 1, lua.TypeTable.String())
 	}
-	drv := new(derivation)
+	drv := new(zb.Derivation)
 
 	// Start a copy of the table.
 	l.CreateTable(0, int(l.RawLen(1)))
@@ -157,21 +150,21 @@ func derivationFunction(l *lua.State) (int, error) {
 			if typ := l.Type(-1); typ != lua.TypeString {
 				return 0, fmt.Errorf("name argument: %v expected, got %v", lua.TypeString, typ)
 			}
-			drv.name, _ = l.ToString(-1)
+			drv.Name, _ = l.ToString(-1)
 		case "system":
 			if typ := l.Type(-1); typ != lua.TypeString {
 				return 0, fmt.Errorf("system argument: %v expected, got %v", lua.TypeString, typ)
 			}
-			drv.system, _ = l.ToString(-1)
+			drv.System, _ = l.ToString(-1)
 		default:
 			v, err := toEnvVar(l, -1)
 			if err != nil {
 				return 0, fmt.Errorf("%s: %v", k, err)
 			}
-			if drv.env == nil {
-				drv.env = make(map[string]string)
+			if drv.Env == nil {
+				drv.Env = make(map[string]string)
 			}
-			drv.env[k] = v
+			drv.Env[k] = v
 		}
 
 		// Remove value, keeping key for the next iteration.
@@ -206,7 +199,7 @@ func toEnvVar(l *lua.State, idx int) (string, error) {
 	}
 }
 
-func toDerivation(l *lua.State) (*derivation, error) {
+func toDerivation(l *lua.State) (*zb.Derivation, error) {
 	const idx = 1
 	if _, err := lua.CheckUserdata(l, idx, derivationTypeName); err != nil {
 		return nil, err
@@ -218,12 +211,12 @@ func toDerivation(l *lua.State) (*derivation, error) {
 	return drv, nil
 }
 
-func testDerivation(l *lua.State, idx int) *derivation {
+func testDerivation(l *lua.State, idx int) *zb.Derivation {
 	handle, _ := testUserdataHandle(l, idx, derivationTypeName)
 	if handle == 0 {
 		return nil
 	}
-	drv, _ := handle.Value().(*derivation)
+	drv, _ := handle.Value().(*zb.Derivation)
 	return drv
 }
 
