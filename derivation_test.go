@@ -18,6 +18,30 @@ func TestDerivationMarshalText(t *testing.T) {
 		wantPath nix.StorePath
 	}{
 		{
+			name: "FloatingCA",
+			drv: &Derivation{
+				Dir:     nix.DefaultStoreDirectory,
+				Name:    "hello",
+				System:  "x86_64-linux",
+				Builder: "/bin/sh",
+				Args:    []string{"-c", "echo 'Hello' > $out"},
+				Env: map[string]string{
+					"builder":        "/bin/sh",
+					"name":           "hello",
+					"out":            "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9",
+					"outputHashAlgo": "sha256",
+					"outputHashMode": "recursive",
+					"system":         "x86_64-linux",
+				},
+				Outputs: map[string]*DerivationOutput{
+					"out": RecursiveFileFloatingCAOutput(nix.SHA256),
+				},
+			},
+
+			wantPath: "/nix/store/cs4n5mbm46xwzb9yxm983gzqh0k5b2hp-hello.drv",
+			want:     readTestdata(t, "cs4n5mbm46xwzb9yxm983gzqh0k5b2hp-hello.drv"),
+		},
+		{
 			name: "FixedOutput",
 			drv: &Derivation{
 				Dir:     nix.DefaultStoreDirectory,
