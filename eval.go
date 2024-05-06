@@ -1,10 +1,12 @@
 package zb
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"runtime/cgo"
+	"strings"
 
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/lua"
@@ -26,7 +28,7 @@ func NewEval(storeDir nix.StoreDirectory) *Eval {
 		panic(err)
 	}
 	err := lua.SetFuncs(&eval.l, 0, map[string]lua.Function{
-		"derivation": derivationFunction,
+		"derivation": eval.derivationFunction,
 		"path":       eval.pathFunction,
 	})
 	if err != nil {
@@ -77,11 +79,17 @@ func registerDerivationMetatable(l *lua.State) {
 	l.Pop(1)
 }
 
-func derivationFunction(l *lua.State) (int, error) {
+func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 	if !l.IsTable(1) {
 		return 0, lua.NewTypeError(l, 1, lua.TypeTable.String())
 	}
-	drv := new(Derivation)
+	drv := &Derivation{
+		Dir: eval.storeDir,
+		Env: make(map[string]string),
+		Outputs: map[string]*DerivationOutput{
+			"out": RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
 
 	// Start a copy of the table.
 	l.CreateTable(0, int(l.RawLen(1)))
@@ -102,8 +110,9 @@ func derivationFunction(l *lua.State) (int, error) {
 		// TODO(soon): Validate primitive or list.
 		l.RawSet(tableCopyIndex)
 
-		// Handle pairs.
-		switch k, _ := l.ToString(-2); k {
+		// Handle special pairs.
+		k, _ := l.ToString(-2)
+		switch k {
 		case "name":
 			if typ := l.Type(-1); typ != lua.TypeString {
 				return 0, fmt.Errorf("name argument: %v expected, got %v", lua.TypeString, typ)
@@ -114,19 +123,43 @@ func derivationFunction(l *lua.State) (int, error) {
 				return 0, fmt.Errorf("system argument: %v expected, got %v", lua.TypeString, typ)
 			}
 			drv.System, _ = l.ToString(-1)
-		default:
-			v, err := toEnvVar(l, -1)
+		case "builder":
+			if typ := l.Type(-1); typ != lua.TypeString {
+				return 0, fmt.Errorf("system argument: %v expected, got %v", lua.TypeString, typ)
+			}
+			var err error
+			drv.Builder, err = toEnvVar(l, drv, -1)
 			if err != nil {
 				return 0, fmt.Errorf("%s: %v", k, err)
 			}
-			if drv.Env == nil {
-				drv.Env = make(map[string]string)
-			}
-			drv.Env[k] = v
 		}
+
+		v, err := toEnvVar(l, drv, -1)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %v", k, err)
+		}
+		drv.Env[k] = v
 
 		// Remove value, keeping key for the next iteration.
 		l.Pop(1)
+	}
+
+	drv.Env[defaultDerivationOutputName] = hashPlaceholder(defaultDerivationOutputName)
+	drvPath, err := writeDerivation(context.TODO(), drv)
+	if err != nil {
+		return 0, fmt.Errorf("derivation: %v", err)
+	}
+	l.PushStringContext(string(drvPath), []string{string(drvPath)})
+	if err := l.SetField(tableCopyIndex, "drvPath", 0); err != nil {
+		return 0, fmt.Errorf("derivation: %v", err)
+	}
+
+	placeholder := unknownCAOutputPlaceholder(drvPath, defaultDerivationOutputName)
+	l.PushStringContext(placeholder, []string{
+		"!" + defaultDerivationOutputName + "!" + string(drvPath),
+	})
+	if err := l.SetField(tableCopyIndex, defaultDerivationOutputName, 0); err != nil {
+		return 0, fmt.Errorf("derivation: %v", err)
 	}
 
 	l.NewUserdataUV(8, 1)
@@ -140,7 +173,7 @@ func derivationFunction(l *lua.State) (int, error) {
 	return 1, nil
 }
 
-func toEnvVar(l *lua.State, idx int) (string, error) {
+func toEnvVar(l *lua.State, drv *Derivation, idx int) (string, error) {
 	switch typ := l.Type(idx); typ {
 	case lua.TypeNil:
 		return "", nil
@@ -151,6 +184,23 @@ func toEnvVar(l *lua.State, idx int) (string, error) {
 		return "1", nil
 	case lua.TypeString, lua.TypeNumber:
 		s, _ := l.ToString(idx)
+		for _, dep := range l.StringContext(idx) {
+			if rest, isDrv := strings.CutPrefix(dep, "!"); isDrv {
+				outName, drvPath, ok := strings.Cut(rest, "!")
+				if !ok {
+					return "", fmt.Errorf("internal error: malformed context %q", dep)
+				}
+				if drv.InputDerivations == nil {
+					drv.InputDerivations = make(map[nix.StorePath]map[string]struct{})
+				}
+				if drv.InputDerivations[nix.StorePath(drvPath)] == nil {
+					drv.InputDerivations[nix.StorePath(drvPath)] = make(map[string]struct{})
+				}
+				drv.InputDerivations[nix.StorePath(drvPath)][outName] = struct{}{}
+			} else {
+				drv.InputSources = append(drv.InputSources, nix.StorePath(dep))
+			}
+		}
 		return s, nil
 	default:
 		return "", fmt.Errorf("%v cannot be used as an environment variable", typ)

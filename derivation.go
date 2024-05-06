@@ -2,12 +2,15 @@ package zb
 
 import (
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
 	"zombiezen.com/go/nix"
+	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/nix/nixbase32"
 )
 
@@ -43,17 +46,41 @@ func (drv *Derivation) StorePath() (nix.StorePath, error) {
 	if drv.Name == "" {
 		return "", fmt.Errorf("compute derivation path: missing name")
 	}
+	p, _, err := drv.export()
+	if err != nil {
+		return "", fmt.Errorf("compute %s derivation path: %v", drv.Name, err)
+	}
+	return p, nil
+}
+
+func (drv *Derivation) export() (nix.StorePath, []byte, error) {
+	if drv.Name == "" {
+		return "", nil, fmt.Errorf("missing name")
+	}
 	if drv.Dir == "" {
-		return "", fmt.Errorf("compute %s derivation path: missing store directory", drv.Name)
+		return "", nil, fmt.Errorf("missing store directory")
 	}
 
 	data, err := drv.marshalText(false)
 	if err != nil {
-		return "", fmt.Errorf("compute %s derivation path: %v", drv.Name, err)
+		return "", nil, err
 	}
 	h := nix.NewHasher(nix.SHA256)
 	h.Write(data)
 
+	p, err := fixedCAOutputPath(
+		drv.Dir,
+		drv.Name+".drv",
+		nix.TextContentAddress(h.SumHash()),
+		drv.references(),
+	)
+	if err != nil {
+		return "", data, err
+	}
+	return p, data, nil
+}
+
+func (drv *Derivation) references() storeReferences {
 	refs := storeReferences{
 		others: make(map[nix.StorePath]struct{}, len(drv.InputSources)+len(drv.InputDerivations)),
 	}
@@ -63,12 +90,7 @@ func (drv *Derivation) StorePath() (nix.StorePath, error) {
 	for _, input := range sortedKeys(drv.InputDerivations) {
 		refs.others[input] = struct{}{}
 	}
-
-	p, err := fixedCAOutputPath(drv.Dir, drv.Name+".drv", nix.TextContentAddress(h.SumHash()), refs)
-	if err != nil {
-		return "", fmt.Errorf("compute %s derivation path: %v", drv.Name, err)
-	}
-	return p, nil
+	return refs
 }
 
 // MarshalText converts the derivation to ATerm format.
@@ -164,6 +186,47 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 	buf = append(buf, "])"...)
 
 	return buf, nil
+}
+
+func writeDerivation(ctx context.Context, drv *Derivation) (nix.StorePath, error) {
+	p, data, err := drv.export()
+	if err != nil {
+		if drv.Name == "" {
+			return "", fmt.Errorf("write derivation: %v", err)
+		}
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+
+	imp, err := startImport(ctx)
+	if err != nil {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+	defer imp.Close()
+	w := nar.NewWriter(imp)
+	err = w.WriteHeader(&nar.Header{
+		Size: int64(len(data)),
+	})
+	if err != nil {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+	if _, err := w.Write(data); err != nil {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+	if err := w.Close(); err != nil {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+	err = imp.Trailer(&nixExportTrailer{
+		storePath:  p,
+		references: sortedKeys(drv.references().others),
+	})
+	if err != nil {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+
+	if err := imp.Close(); err != nil {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+	return p, nil
 }
 
 type derivationOutputType int8
@@ -379,6 +442,29 @@ func (m contentAddressMethod) prefix() string {
 	default:
 		panic("unknown content address method")
 	}
+}
+
+func hashPlaceholder(outputName string) string {
+	h := nix.NewHasher(nix.SHA256)
+	h.WriteString("nix-output:")
+	h.WriteString(outputName)
+	return "/" + h.SumHash().RawBase32()
+}
+
+// unknownCAOutputPlaceholder returns the placeholder
+// for an unknown output of a content-addressed derivation.
+func unknownCAOutputPlaceholder(drvPath nix.StorePath, outputName string) string {
+	drvName := strings.TrimSuffix(drvPath.Name(), ".drv")
+	h := nix.NewHasher(nix.SHA256)
+	h.WriteString("nix-upstream-output:")
+	h.WriteString(drvPath.Digest())
+	h.WriteString(":")
+	h.WriteString(drvName)
+	if outputName != defaultDerivationOutputName {
+		h.WriteString("-")
+		h.WriteString(outputName)
+	}
+	return "/" + h.SumHash().RawBase32()
 }
 
 func appendATermString(dst []byte, s string) []byte {
