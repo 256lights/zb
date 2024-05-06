@@ -6,15 +6,17 @@ import (
 	"io"
 	"runtime/cgo"
 
+	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/lua"
 )
 
 type Eval struct {
-	l lua.State
+	l        lua.State
+	storeDir nix.StoreDirectory
 }
 
-func NewEval() *Eval {
-	eval := new(Eval)
+func NewEval(storeDir nix.StoreDirectory) *Eval {
+	eval := &Eval{storeDir: storeDir}
 	registerDerivationMetatable(&eval.l)
 
 	base := lua.NewOpenBase(io.Discard, func(l *lua.State) (int, error) {
@@ -23,9 +25,17 @@ func NewEval() *Eval {
 	if err := lua.Require(&eval.l, lua.GName, true, base); err != nil {
 		panic(err)
 	}
-	lua.SetFuncs(&eval.l, 0, map[string]lua.Function{
+	err := lua.SetFuncs(&eval.l, 0, map[string]lua.Function{
 		"derivation": derivationFunction,
+		"path":       eval.pathFunction,
 	})
+	if err != nil {
+		panic(err)
+	}
+	eval.l.PushString(string(storeDir))
+	if err := eval.l.SetField(-2, "storeDir", 0); err != nil {
+		panic(err)
+	}
 	eval.l.Pop(1)
 
 	return eval

@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"zombiezen.com/go/bass/sigterm"
 	"zombiezen.com/go/log"
+	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb"
 )
 
@@ -67,7 +68,7 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 }
 
 func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
-	eval := zb.NewEval()
+	eval := zb.NewEval(nix.DefaultStoreDirectory)
 	s, err := eval.Expression(opts.expr)
 	if err != nil {
 		return err
