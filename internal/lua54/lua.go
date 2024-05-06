@@ -79,6 +79,10 @@ import (
 //   lua_pushlstring(L, _GoStringPtr(s), _GoStringLen(s));
 // }
 //
+// void zombiezen_lua_pushstringcontext(lua_State *L, _GoString_ s, const char * const *context) {
+//   lua_pushlstringcontext(L, _GoStringPtr(s), _GoStringLen(s), context);
+// }
+//
 // const char *zombiezen_lua_reader(lua_State *L, void *data, size_t *size) {
 //   const char *p = zombiezen_lua_readercb(L, data, size);
 //   if (p == NULL) {
@@ -142,6 +146,15 @@ import (
 //
 // static void pushlightuserdata(lua_State *L, uintptr_t p) {
 //   lua_pushlightuserdata(L, (void *)p);
+// }
+//
+// static int concatcb(lua_State *L) {
+//   lua_concat(L, lua_gettop(L));
+//   return 1;
+// }
+//
+// static void pushconcatfunction(lua_State *L) {
+//   lua_pushcfunction(L, concatcb);
 // }
 //
 // static int lencb(lua_State *L) {
@@ -589,6 +602,32 @@ func (l *State) ToString(idx int) (s string, ok bool) {
 	return C.GoStringN(ptr, C.int(len)), true
 }
 
+func (l *State) StringContext(idx int) []string {
+	if l.ptr == nil {
+		return nil
+	}
+	if !l.isAcceptableIndex(idx) {
+		panic("unacceptable index")
+	}
+	ptr := C.lua_stringcontext(l.ptr, C.int(idx))
+	if ptr == nil {
+		return nil
+	}
+	n := 0
+	for ptr := ptr; *ptr != nil; {
+		n++
+		ptr = (**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(ptr)) + unsafe.Sizeof((*C.char)(nil))))
+	}
+	if n == 0 {
+		return nil
+	}
+	result := make([]string, n)
+	for i, sp := range unsafe.Slice(ptr, n) {
+		result[i] = C.GoString(sp)
+	}
+	return result
+}
+
 func (l *State) RawLen(idx int) uint64 {
 	if l.ptr == nil {
 		return 0
@@ -674,6 +713,27 @@ func (l *State) PushString(s string) {
 		panic("stack overflow")
 	}
 	C.zombiezen_lua_pushstring(l.ptr, s)
+	l.top++
+}
+
+func (l *State) PushStringContext(s string, context []string) {
+	if len(context) == 0 {
+		l.PushString(s)
+		return
+	}
+
+	l.init()
+	if l.top >= l.cap {
+		panic("stack overflow")
+	}
+	cc := C.calloc(C.size_t(len(context)+1), C.size_t(unsafe.Sizeof((*C.char)(nil))))
+	defer C.free(cc)
+	ccSlice := unsafe.Slice((**C.char)(cc), len(context))
+	for i := range ccSlice {
+		ccSlice[i] = C.CString(context[i])
+		defer C.free(unsafe.Pointer(ccSlice[i]))
+	}
+	C.zombiezen_lua_pushstringcontext(l.ptr, s, (**C.char)(cc))
 	l.top++
 }
 
@@ -1176,6 +1236,25 @@ func (l *State) Next(idx int) bool {
 		l.top--
 	}
 	return ok
+}
+
+func (l *State) Concat(n int, msgHandler int) error {
+	l.init()
+	msgHandler = l.checkMessageHandler(msgHandler)
+
+	if n == 0 {
+		l.PushString("")
+		return nil
+	}
+
+	l.checkElems(n)
+	C.pushconcatfunction(l.ptr)
+	l.top++
+	l.Insert(-(n + 1))
+	if err := l.Call(n, 1, msgHandler); err != nil {
+		return fmt.Errorf("lua: concat: %w", err)
+	}
+	return nil
 }
 
 func (l *State) Len(idx int, msgHandler int) error {

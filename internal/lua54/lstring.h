@@ -49,6 +49,8 @@ LUAI_FUNC void luaS_clearcache (global_State *g);
 LUAI_FUNC void luaS_init (lua_State *L);
 LUAI_FUNC void luaS_remove (lua_State *L, TString *ts);
 LUAI_FUNC Udata *luaS_newudata (lua_State *L, size_t s, int nuvalue);
+LUAI_FUNC size_t luaS_contextlen (const char * const *context);
+LUAI_FUNC TString *luaS_newlstrcontext (lua_State *L, const char *str, size_t l, const char * const *context);
 LUAI_FUNC TString *luaS_newlstr (lua_State *L, const char *str, size_t l);
 LUAI_FUNC TString *luaS_new (lua_State *L, const char *str);
 LUAI_FUNC TString *luaS_createlngstrobj (lua_State *L, size_t l);

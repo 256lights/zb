@@ -392,6 +392,7 @@ typedef struct TString {
     size_t lnglen;  /* length for long strings */
     struct TString *hnext;  /* linked list for hash table */
   } u;
+  char **context;
   char contents[1];
 } TString;
 

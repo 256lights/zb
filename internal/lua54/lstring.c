@@ -149,6 +149,7 @@ static TString *createstrobj (lua_State *L, size_t l, int tag, unsigned int h) {
   ts = gco2ts(o);
   ts->hash = h;
   ts->extra = 0;
+  ts->context = NULL;
   getstr(ts)[l] = '\0';  /* ending 0 */
   return ts;
 }
@@ -214,12 +215,22 @@ static TString *internshrstr (lua_State *L, const char *str, size_t l) {
   return ts;
 }
 
+size_t luaS_contextlen (const char * const *context) {
+  size_t n = 0;
+  if (context != NULL) {
+    const char * const *ptr;
+    for (ptr = context; *ptr != NULL; ptr++) {
+      n++;
+    }
+  }
+  return n;
+}
 
 /*
-** new string (with explicit length)
+** new string (with explicit length and context)
 */
-TString *luaS_newlstr (lua_State *L, const char *str, size_t l) {
-  if (l <= LUAI_MAXSHORTLEN)  /* short string? */
+TString *luaS_newlstrcontext (lua_State *L, const char *str, size_t l, const char * const *context) {
+  if (l <= LUAI_MAXSHORTLEN && (context == NULL || *context == NULL))  /* short string? */
     return internshrstr(L, str, l);
   else {
     TString *ts;
@@ -227,8 +238,27 @@ TString *luaS_newlstr (lua_State *L, const char *str, size_t l) {
       luaM_toobig(L);
     ts = luaS_createlngstrobj(L, l);
     memcpy(getstr(ts), str, l * sizeof(char));
+    if (context != NULL && *context != NULL) {
+      size_t n = luaS_contextlen(context);
+      ts->context = luaM_newvector(L, n + 1, char*);
+      ts->context[n] = NULL;
+      size_t i;
+      for (i = 0; i < n; i++) {
+        size_t sz = strlen(context[i]) + 1;
+        ts->context[i] = luaM_newvector(L, sz, char);
+        memcpy(ts->context[i], context[i], sz);
+      }
+    }
     return ts;
   }
+}
+
+
+/*
+** new string (with explicit length)
+*/
+TString *luaS_newlstr (lua_State *L, const char *str, size_t l) {
+  return luaS_newlstrcontext(L, str, l, NULL);
 }
 
 

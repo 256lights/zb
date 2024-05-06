@@ -24,6 +24,7 @@ package lua
 import (
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -291,6 +292,50 @@ func TestStateRepresentation(t *testing.T) {
 	if got, want := unsafe.Alignof(State{}), unsafe.Alignof(lua54.State{}); got%want != 0 {
 		t.Errorf("unsafe.Alignof(State{}) = %d; want %d", got, want)
 	}
+}
+
+func TestStringContext(t *testing.T) {
+	t.Run("Basic", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const s = "hello"
+		want := []string{"bar", "foo"}
+		state.PushStringContext(s, slices.Clone(want))
+		if got := state.StringContext(-1); !slices.Equal(got, want) {
+			t.Errorf("state.StringContext(-1) = %q; want %q", got, want)
+		}
+		if got, ok := state.ToString(-1); got != s || !ok {
+			t.Errorf("state.ToString(-1) = %q, %t; want %q, true", got, ok, s)
+		}
+	})
+
+	t.Run("Concat", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.PushStringContext("a", []string{"foo"})
+		state.PushStringContext("b", []string{"bar"})
+		if err := state.Concat(2, 0); err != nil {
+			t.Fatal(err)
+		}
+
+		if got, want := state.StringContext(-1), ([]string{"foo", "bar"}); !slices.Equal(got, want) {
+			t.Errorf("state.StringContext(-1) = %q; want %q", got, want)
+		}
+		const want = "ab"
+		if got, ok := state.ToString(-1); got != want || !ok {
+			t.Errorf("state.ToString(-1) = %q, %t; want %q, true", got, ok, want)
+		}
+	})
 }
 
 func BenchmarkExec(b *testing.B) {

@@ -339,6 +339,12 @@ func (l *State) ToString(idx int) (s string, ok bool) {
 	return l.state.ToString(idx)
 }
 
+// StringContext returns any context values associated with the string at the given index.
+// If the Lua value is not a string, the function returns nil.
+func (l *State) StringContext(idx int) []string {
+	return l.state.StringContext(idx)
+}
+
 // RawLen returns the raw "length" of the value at the given index:
 // for strings, this is the string length;
 // for tables, this is the result of the length operator ('#') with no metamethods;
@@ -389,6 +395,12 @@ func (l *State) PushInteger(n int64) {
 // PushString pushes a string onto the stack.
 func (l *State) PushString(s string) {
 	l.state.PushString(s)
+}
+
+// PushString pushes a string onto the stack
+// with the given context arguments.
+func (l *State) PushStringContext(s string, context []string) {
+	l.state.PushStringContext(s, context)
 }
 
 // PushBoolean pushes a boolean onto the stack.
@@ -833,6 +845,16 @@ func (l *State) GCGenerational(minorMul, majorMul int) {
 // [next]: https://www.lua.org/manual/5.4/manual.html#pdf-next
 func (l *State) Next(idx int) bool {
 	return l.state.Next(idx)
+}
+
+// Concat concatenates the n values at the top of the stack, pops them,
+// and leaves the result on the top.
+// If n is 1, the result is the single value on the stack
+// (that is, the function does nothing);
+// if n is 0, the result is the empty string.
+// Concatenation is performed following the usual semantics of Lua.
+func (l *State) Concat(n, msgHandler int) error {
+	return l.state.Concat(n, msgHandler)
 }
 
 // Len pushes the length of the value at the given index to the stack.

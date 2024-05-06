@@ -804,6 +804,14 @@ static void freeobj (lua_State *L, GCObject *o) {
     }
     case LUA_VLNGSTR: {
       TString *ts = gco2ts(o);
+      if (ts->context != NULL) {
+        size_t n = luaS_contextlen((const char * const *)ts->context);
+        size_t i;
+        for (i = 0; i < n; i++) {
+          luaM_freearray(L, ts->context[i], strlen(ts->context[i]) + 1);
+        }
+        luaM_freearray(L, ts->context, n + 1);
+      }
       luaM_freemem(L, ts, sizelstring(ts->u.lnglen));
       break;
     }

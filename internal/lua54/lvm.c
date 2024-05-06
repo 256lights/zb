@@ -630,6 +630,29 @@ static void copy2buff (StkId top, int n, char *buff) {
   } while (--n > 0);
 }
 
+static char **copycontext(lua_State *L, StkId top, int n, size_t ncontext) {
+  if (ncontext == 0) {
+    return NULL;
+  }
+  char **vec = luaM_newvector(L, ncontext + 1, char*);
+  vec[ncontext] = NULL;
+  char **dst = vec;
+  do {
+    char **src = tsvalue(s2v(top - n))->context;
+    if (src == NULL) {
+      continue;
+    }
+    while (*src != NULL) {
+      size_t sz = strlen(*src) + 1;
+      *dst = luaM_newvector(L, sz, char);
+      memcpy(*dst, *src, sz);
+      src++;
+      dst++;
+    }
+  } while (--n > 0);
+  return vec;
+}
+
 
 /*
 ** Main operation for concatenation: concat 'total' values in the stack,
@@ -653,16 +676,19 @@ void luaV_concat (lua_State *L, int total) {
       /* at least two non-empty string values; get as many as possible */
       size_t tl = vslen(s2v(top - 1));
       TString *ts;
+      size_t ncontext = luaS_contextlen((const char * const *)tsvalue(s2v(top - 1))->context);
       /* collect total length and number of strings */
       for (n = 1; n < total && tostring(L, s2v(top - n - 1)); n++) {
-        size_t l = vslen(s2v(top - n - 1));
+        TValue* v = s2v(top - n - 1);
+        size_t l = vslen(v);
         if (l_unlikely(l >= (MAX_SIZE/sizeof(char)) - tl)) {
           L->top.p = top - total;  /* pop strings to avoid wasting stack */
           luaG_runerror(L, "string length overflow");
         }
         tl += l;
+        ncontext += luaS_contextlen((const char * const *)tsvalue(v)->context);
       }
-      if (tl <= LUAI_MAXSHORTLEN) {  /* is result a short string? */
+      if (tl <= LUAI_MAXSHORTLEN && ncontext == 0) {  /* is result a short string? */
         char buff[LUAI_MAXSHORTLEN];
         copy2buff(top, n, buff);  /* copy strings to buffer */
         ts = luaS_newlstr(L, buff, tl);
@@ -670,6 +696,7 @@ void luaV_concat (lua_State *L, int total) {
       else {  /* long string; copy strings directly to final result */
         ts = luaS_createlngstrobj(L, tl);
         copy2buff(top, n, getstr(ts));
+        ts->context = copycontext(L, top, n, ncontext);
       }
       setsvalue2s(L, top - n, ts);  /* create result */
     }

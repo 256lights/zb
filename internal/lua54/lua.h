@@ -201,6 +201,7 @@ LUA_API const char     *(lua_typename) (lua_State *L, int tp);
 LUA_API lua_Number      (lua_tonumberx) (lua_State *L, int idx, int *isnum);
 LUA_API lua_Integer     (lua_tointegerx) (lua_State *L, int idx, int *isnum);
 LUA_API int             (lua_toboolean) (lua_State *L, int idx);
+LUA_API const char * const *(lua_stringcontext) (lua_State *L, int idx);
 LUA_API const char     *(lua_tolstring) (lua_State *L, int idx, size_t *len);
 LUA_API lua_Unsigned    (lua_rawlen) (lua_State *L, int idx);
 LUA_API lua_CFunction   (lua_tocfunction) (lua_State *L, int idx);
@@ -244,6 +245,7 @@ LUA_API int   (lua_compare) (lua_State *L, int idx1, int idx2, int op);
 LUA_API void        (lua_pushnil) (lua_State *L);
 LUA_API void        (lua_pushnumber) (lua_State *L, lua_Number n);
 LUA_API void        (lua_pushinteger) (lua_State *L, lua_Integer n);
+LUA_API const char *(lua_pushlstringcontext) (lua_State *L, const char *s, size_t len, const char * const *context);
 LUA_API const char *(lua_pushlstring) (lua_State *L, const char *s, size_t len);
 LUA_API const char *(lua_pushstring) (lua_State *L, const char *s);
 LUA_API const char *(lua_pushvfstring) (lua_State *L, const char *fmt,

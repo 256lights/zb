@@ -402,6 +402,18 @@ LUA_API int lua_toboolean (lua_State *L, int idx) {
 }
 
 
+LUA_API const char * const *lua_stringcontext (lua_State *L, int idx) {
+  TValue *o;
+  lua_lock(L);
+  o = index2value(L, idx);
+  if (!ttisstring(o)) {
+    lua_unlock(L);
+    return NULL;
+  }
+  lua_unlock(L);
+  return (const char * const *)tsvalue(o)->context;
+}
+
 LUA_API const char *lua_tolstring (lua_State *L, int idx, size_t *len) {
   TValue *o;
   lua_lock(L);
@@ -515,6 +527,20 @@ LUA_API void lua_pushinteger (lua_State *L, lua_Integer n) {
   setivalue(s2v(L->top.p), n);
   api_incr_top(L);
   lua_unlock(L);
+}
+
+LUA_API const char *lua_pushlstringcontext (lua_State *L, const char *s, size_t len, const char * const *context) {
+  TString *ts;
+  if (context == NULL || *context == NULL) {
+    return lua_pushlstring(L, s, len);
+  }
+  lua_lock(L);
+  ts = luaS_newlstrcontext(L, s, len, context);
+  setsvalue2s(L, L->top.p, ts);
+  api_incr_top(L);
+  luaC_checkGC(L);
+  lua_unlock(L);
+  return getstr(ts);
 }
 
 
