@@ -13,8 +13,8 @@ import (
 	"github.com/spf13/cobra"
 	"zombiezen.com/go/bass/sigterm"
 	"zombiezen.com/go/log"
-	"zombiezen.com/go/lua"
 	"zombiezen.com/go/zb"
+	"zombiezen.com/go/zb/internal/lua"
 )
 
 type globalConfig struct {
