@@ -12,6 +12,7 @@ import (
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/nix/nixbase32"
+	"zombiezen.com/go/zb/internal/sortedset"
 )
 
 // A Derivation represents a store derivation:
@@ -34,10 +35,10 @@ type Derivation struct {
 	Env map[string]string
 
 	// InputSources is the set of source filesystem objects that this derivation depends on.
-	InputSources []nix.StorePath
+	InputSources sortedset.Set[nix.StorePath]
 	// InputDerivations is the set of derivations that this derivation depends on.
 	// The mapped values are the set of output names that are used.
-	InputDerivations map[nix.StorePath]map[string]struct{}
+	InputDerivations map[nix.StorePath]*sortedset.Set[string]
 	// Outputs is the set of outputs that the derivation produces.
 	Outputs map[string]*DerivationOutput
 }
@@ -81,14 +82,11 @@ func (drv *Derivation) export() (nix.StorePath, []byte, error) {
 }
 
 func (drv *Derivation) references() storeReferences {
-	refs := storeReferences{
-		others: make(map[nix.StorePath]struct{}, len(drv.InputSources)+len(drv.InputDerivations)),
-	}
-	for _, src := range drv.InputSources {
-		refs.others[src] = struct{}{}
-	}
-	for _, input := range sortedKeys(drv.InputDerivations) {
-		refs.others[input] = struct{}{}
+	refs := storeReferences{}
+	refs.others.Grow(drv.InputSources.Len() + len(drv.InputDerivations))
+	refs.others.AddSet(&drv.InputSources)
+	for input := range drv.InputDerivations {
+		refs.others.Add(input)
 	}
 	return refs
 }
@@ -132,22 +130,19 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 		buf = appendATermString(buf, string(drvPath))
 		buf = append(buf, ",["...)
 		// TODO(someday): This can be some kind of tree? See DerivedPathMap.
-		for j, outName := range sortedKeys(drv.InputDerivations[drvPath]) {
+		outputs := drv.InputDerivations[drvPath]
+		for j := 0; j < outputs.Len(); j++ {
 			if j > 0 {
 				buf = append(buf, ',')
 			}
-			buf = appendATermString(buf, outName)
+			buf = appendATermString(buf, outputs.At(j))
 		}
 		buf = append(buf, "])"...)
 	}
 
 	buf = append(buf, "],["...)
-	srcs := drv.InputSources
-	if !slices.IsSorted(srcs) {
-		srcs = slices.Clone(srcs)
-		slices.Sort(srcs)
-	}
-	for i, src := range srcs {
+	for i := 0; i < drv.InputSources.Len(); i++ {
+		src := drv.InputSources.At(i)
 		if i > 0 {
 			buf = append(buf, ',')
 		}
@@ -217,7 +212,7 @@ func writeDerivation(ctx context.Context, drv *Derivation) (nix.StorePath, error
 	}
 	err = imp.Trailer(&nixExportTrailer{
 		storePath:  p,
-		references: sortedKeys(drv.references().others),
+		references: drv.references().others,
 	})
 	if err != nil {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
@@ -358,9 +353,9 @@ func (out *DerivationOutput) marshalText(dst []byte, storeDir nix.StoreDirectory
 func makeStorePath(dir nix.StoreDirectory, typ string, hash nix.Hash, name string, refs storeReferences) (nix.StorePath, error) {
 	h := sha256.New()
 	io.WriteString(h, typ)
-	for _, ref := range sortedKeys(refs.others) {
+	for i := 0; i < refs.others.Len(); i++ {
 		io.WriteString(h, ":")
-		io.WriteString(h, string(ref))
+		io.WriteString(h, string(refs.others.At(i)))
 	}
 	if refs.self {
 		io.WriteString(h, ":self")
@@ -405,11 +400,11 @@ func fixedCAOutputPath(dir nix.StoreDirectory, name string, ca nix.ContentAddres
 
 type storeReferences struct {
 	self   bool
-	others map[nix.StorePath]struct{}
+	others sortedset.Set[nix.StorePath]
 }
 
 func (refs storeReferences) isEmpty() bool {
-	return !refs.self && len(refs.others) == 0
+	return !refs.self && refs.others.Len() == 0
 }
 
 type contentAddressMethod int8

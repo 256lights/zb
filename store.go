@@ -8,9 +8,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"slices"
 
 	"zombiezen.com/go/nix"
+	"zombiezen.com/go/zb/internal/sortedset"
 )
 
 type nixImporter struct {
@@ -20,7 +20,7 @@ type nixImporter struct {
 }
 
 func startImport(ctx context.Context) (*nixImporter, error) {
-	c := exec.Command("nix-store", "--import")
+	c := exec.CommandContext(ctx, "nix-store", "--import")
 	c.Stderr = os.Stderr
 	stdin, err := c.StdinPipe()
 	if err != nil {
@@ -52,7 +52,7 @@ func (imp *nixImporter) Write(p []byte) (int, error) {
 
 type nixExportTrailer struct {
 	storePath  nix.StorePath
-	references []nix.StorePath
+	references sortedset.Set[nix.StorePath]
 	deriver    nix.StorePath
 }
 
@@ -60,18 +60,15 @@ func (imp *nixImporter) Trailer(t *nixExportTrailer) error {
 	if !imp.header {
 		return fmt.Errorf("write nix store export trailer: NAR not yet written")
 	}
-	if !slices.IsSorted(t.references) {
-		return fmt.Errorf("write nix store export trailer: references not sorted")
-	}
 	imp.header = false
 
 	trailer := []byte{
 		'N', 'I', 'X', 'E', 0, 0, 0, 0,
 	}
 	trailer = appendNARString(trailer, string(t.storePath))
-	trailer = binary.LittleEndian.AppendUint64(trailer, uint64(len(t.references)))
-	for _, ref := range t.references {
-		trailer = appendNARString(trailer, string(ref))
+	trailer = binary.LittleEndian.AppendUint64(trailer, uint64(t.references.Len()))
+	for i := 0; i < t.references.Len(); i++ {
+		trailer = appendNARString(trailer, string(t.references.At(i)))
 	}
 	trailer = appendNARString(trailer, string(t.deriver))
 	trailer = append(trailer, 0, 0, 0, 0, 0, 0, 0, 0)

@@ -8,6 +8,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
+	"zombiezen.com/go/zb/internal/sortedset"
 )
 
 func TestDerivationMarshalText(t *testing.T) {
@@ -95,15 +96,15 @@ func TestDerivationMarshalText(t *testing.T) {
 					"system":                      "x86_64-linux",
 					"urls":                        "mirror://gnu/automake/automake-1.16.5.tar.xz",
 				},
-				InputDerivations: map[nix.StorePath]map[string]struct{}{
-					"/nix/store/6pj63b323pn53gpw3l5kdh1rly55aj15-bash-5.1-p16.drv": {"out": {}},
-					"/nix/store/8kd1la3xqfzdcb3gsgpp3k98m7g3hw9d-curl-7.84.0.drv":  {"dev": {}},
-					"/nix/store/g3m3mdgfsix265c945ncaxyyvx4cnx14-mirrors-list.drv": {"out": {}},
-					"/nix/store/zq638s1j77mxzc52ql21l9ncl3qsjb2h-stdenv-linux.drv": {"out": {}},
+				InputDerivations: map[nix.StorePath]*sortedset.Set[string]{
+					"/nix/store/6pj63b323pn53gpw3l5kdh1rly55aj15-bash-5.1-p16.drv": sortedset.New("out"),
+					"/nix/store/8kd1la3xqfzdcb3gsgpp3k98m7g3hw9d-curl-7.84.0.drv":  sortedset.New("dev"),
+					"/nix/store/g3m3mdgfsix265c945ncaxyyvx4cnx14-mirrors-list.drv": sortedset.New("out"),
+					"/nix/store/zq638s1j77mxzc52ql21l9ncl3qsjb2h-stdenv-linux.drv": sortedset.New("out"),
 				},
-				InputSources: []nix.StorePath{
+				InputSources: *sortedset.New[nix.StorePath](
 					"/nix/store/lphxcbw5wqsjskipaw1fb8lcf6pm6ri6-builder.sh",
-				},
+				),
 				Outputs: map[string]*DerivationOutput{
 					"out": FixedCAOutput(nix.FlatFileContentAddress(mustParseHash(t, "sha256:f01d58cd6d9d77fbdca9eb4bbd5ead1988228fdb73d6f7a201f5f8d6b118b469"))),
 				},

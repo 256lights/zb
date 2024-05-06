@@ -10,6 +10,7 @@ import (
 
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/lua"
+	"zombiezen.com/go/zb/internal/sortedset"
 )
 
 type Eval struct {
@@ -128,13 +129,28 @@ func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 				return 0, fmt.Errorf("system argument: %v expected, got %v", lua.TypeString, typ)
 			}
 			var err error
-			drv.Builder, err = toEnvVar(l, drv, -1)
+			drv.Builder, err = stringToEnvVar(l, drv, -1)
 			if err != nil {
 				return 0, fmt.Errorf("%s: %v", k, err)
 			}
+		case "args":
+			if typ := l.Type(-1); typ != lua.TypeTable {
+				return 0, fmt.Errorf("args argument: %v expected, got %v", lua.TypeTable, typ)
+			}
+			err := ipairs(l, -1, func(i int64) error {
+				arg, err := stringToEnvVar(l, drv, -1)
+				if err != nil {
+					return fmt.Errorf("#%d: %v", i, err)
+				}
+				drv.Args = append(drv.Args, arg)
+				return nil
+			})
+			if err != nil {
+				return 0, fmt.Errorf("%s %v", k, err)
+			}
 		}
 
-		v, err := toEnvVar(l, drv, -1)
+		v, err := toEnvVar(l, drv, -1, true)
 		if err != nil {
 			return 0, fmt.Errorf("%s: %v", k, err)
 		}
@@ -173,7 +189,8 @@ func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 	return 1, nil
 }
 
-func toEnvVar(l *lua.State, drv *Derivation, idx int) (string, error) {
+func toEnvVar(l *lua.State, drv *Derivation, idx int, allowLists bool) (string, error) {
+	idx = l.AbsIndex(idx)
 	switch typ := l.Type(idx); typ {
 	case lua.TypeNil:
 		return "", nil
@@ -183,28 +200,69 @@ func toEnvVar(l *lua.State, drv *Derivation, idx int) (string, error) {
 		}
 		return "1", nil
 	case lua.TypeString, lua.TypeNumber:
-		s, _ := l.ToString(idx)
-		for _, dep := range l.StringContext(idx) {
-			if rest, isDrv := strings.CutPrefix(dep, "!"); isDrv {
-				outName, drvPath, ok := strings.Cut(rest, "!")
-				if !ok {
-					return "", fmt.Errorf("internal error: malformed context %q", dep)
-				}
-				if drv.InputDerivations == nil {
-					drv.InputDerivations = make(map[nix.StorePath]map[string]struct{})
-				}
-				if drv.InputDerivations[nix.StorePath(drvPath)] == nil {
-					drv.InputDerivations[nix.StorePath(drvPath)] = make(map[string]struct{})
-				}
-				drv.InputDerivations[nix.StorePath(drvPath)][outName] = struct{}{}
-			} else {
-				drv.InputSources = append(drv.InputSources, nix.StorePath(dep))
-			}
-		}
-		return s, nil
+		return stringToEnvVar(l, drv, idx)
 	default:
-		return "", fmt.Errorf("%v cannot be used as an environment variable", typ)
+		if hasMethod, err := lua.CallMeta(l, idx, "__tostring"); err != nil {
+			return "", err
+		} else if hasMethod {
+			s, err := stringToEnvVar(l, drv, -1)
+			if err != nil {
+				return "", fmt.Errorf("__tostring result: %v", err)
+			}
+			return s, nil
+		}
+
+		// No __tostring? Then assume this is an array/list.
+		if typ != lua.TypeTable {
+			return "", fmt.Errorf("%v cannot be used as an environment variable", typ)
+		}
+		if !allowLists {
+			return "", fmt.Errorf("sub-tables not permitted as environment variable values")
+		}
+		sb := new(strings.Builder)
+		err := ipairs(l, idx, func(i int64) error {
+			if i > 1 {
+				sb.WriteString(" ")
+			}
+			s, err := toEnvVar(l, drv, -1, false)
+			if err != nil {
+				return fmt.Errorf("#%d: %v", i, err)
+			}
+			sb.WriteString(s)
+			return nil
+		})
+		if err != nil {
+			return "", err
+		}
+		return sb.String(), nil
 	}
+}
+
+func stringToEnvVar(l *lua.State, drv *Derivation, idx int) (string, error) {
+	if !l.IsString(idx) {
+		return "", fmt.Errorf("%v is not a string", l.Type(idx))
+	}
+	l.PushValue(idx) // Clone so that we don't munge a number.
+	defer l.Pop(1)
+	s, _ := l.ToString(-1)
+	for _, dep := range l.StringContext(-1) {
+		if rest, isDrv := strings.CutPrefix(dep, "!"); isDrv {
+			outName, drvPath, ok := strings.Cut(rest, "!")
+			if !ok {
+				return "", fmt.Errorf("internal error: malformed context %q", dep)
+			}
+			if drv.InputDerivations == nil {
+				drv.InputDerivations = make(map[nix.StorePath]*sortedset.Set[string])
+			}
+			if drv.InputDerivations[nix.StorePath(drvPath)] == nil {
+				drv.InputDerivations[nix.StorePath(drvPath)] = new(sortedset.Set[string])
+			}
+			drv.InputDerivations[nix.StorePath(drvPath)].Add(outName)
+		} else {
+			drv.InputSources.Add(nix.StorePath(dep))
+		}
+	}
+	return s, nil
 }
 
 func toDerivation(l *lua.State) (*Derivation, error) {
@@ -303,4 +361,25 @@ func loadExpression(l *lua.State, expr string) error {
 		return err
 	}
 	return nil
+}
+
+func ipairs(l *lua.State, idx int, f func(i int64) error) error {
+	idx = l.AbsIndex(idx)
+	top := l.Top()
+	defer l.SetTop(top)
+	for i := int64(1); ; i++ {
+		l.PushInteger(i)
+		typ, err := l.Table(idx, 0)
+		if err != nil {
+			return fmt.Errorf("#%d: %w", i, err)
+		}
+		if typ == lua.TypeNil {
+			return nil
+		}
+		err = f(i)
+		l.SetTop(top)
+		if err != nil {
+			return err
+		}
+	}
 }
