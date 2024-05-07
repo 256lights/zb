@@ -9,3 +9,4 @@ This is a list of shortcuts taken for this prototype.
 - No other built-in libraries.
   `string.format` specifically would be good,
   but would require some fancy work for contexts.
+- Need a [`toFile`](https://nixos.org/manual/nix/stable/language/builtins#builtins-toFile) implementation.
