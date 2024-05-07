@@ -6,7 +6,8 @@
 	],
 	"extensions": {
 		"recommendations": [
-			"golang.go"
+			"golang.go",
+			"sumneko.lua"
 		]
 	},
 	"settings": {
@@ -15,5 +16,17 @@
 	  	"go": "${workspaceFolder}/tools/go.sh",
 	  	"gopls": "${workspaceFolder}/tools/gopls.sh",
 		},
+		"Lua.runtime.version": "Lua 5.4",
+		"Lua.runtime.builtin": {
+			"coroutine": "disable",
+			"debug": "disable",
+			"io": "disable",
+			"math": "disable",
+			"os": "disable",
+			"package": "disable",
+			"string": "disable",
+			"table": "disable",
+			"utf8": "disable",
+		}
 	}
 }
