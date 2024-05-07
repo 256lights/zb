@@ -1352,6 +1352,32 @@ func (l *State) getinfo(what *C.char, ar *C.lua_Debug) *Debug {
 	return db
 }
 
+func (l *State) Upvalue(funcIndex, n int) (name string, ok bool) {
+	l.init()
+	if !l.isAcceptableIndex(funcIndex) {
+		panic("unacceptable index")
+	}
+	cname := C.lua_getupvalue(l.ptr, C.int(funcIndex), C.int(n))
+	if cname == nil {
+		return "", false
+	}
+	l.top++
+	return C.GoString(cname), true
+}
+
+func (l *State) SetUpvalue(funcIndex, n int) (name string, ok bool) {
+	l.checkElems(1)
+	if !l.isAcceptableIndex(funcIndex) {
+		panic("unacceptable index")
+	}
+	cname := C.lua_setupvalue(l.ptr, C.int(funcIndex), C.int(n))
+	if cname == nil {
+		return "", false
+	}
+	l.top--
+	return C.GoString(cname), true
+}
+
 type Debug struct {
 	Name            string
 	NameWhat        string

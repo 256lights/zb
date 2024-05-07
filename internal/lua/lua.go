@@ -446,7 +446,7 @@ type Function func(*State) (int, error)
 // so the first upvalue you push with PushClosure
 // can be accessed with UpvalueIndex(1).
 // As such, this implementation detail is largely invisible
-// except in debug interfaces.
+// except in debug interfaces like [State.Upvalue] and [State.SetUpvalue].
 // No assumptions should be made about the content of the first upvalue,
 // as it is subject to change,
 // but it is guaranteed that PushClosure will use exactly one upvalue.
@@ -915,6 +915,25 @@ func (l *State) Stack(level int) *ActivationRecord {
 //     its table is pushed after the function.
 func (l *State) Info(what string) *Debug {
 	return (*Debug)(l.state.Info(what))
+}
+
+// Upvalue gets information about the n-th upvalue of the closure at funcIndex.
+// Upvalue pushes the upvalue's value onto the stack,
+// unless n is greater than the number of upvalues.
+// Upvalue returns the name of the upvalue and whether the upvalue exists.
+// The first upvalue is n=1.
+func (l *State) Upvalue(funcIndex, n int) (name string, ok bool) {
+	return l.state.Upvalue(funcIndex, n)
+}
+
+// SetUpvalue assigns the value on the top of the stack to the the closure's upvalue.
+// SetUpvalue also pops the value from the stack,
+// unless n is greater than the number of upvalues.
+// SetUpvalue returns the name of the upvalue,
+// and whether the assignment occurred.
+// The first upvalue is n=1.
+func (l *State) SetUpvalue(funcIndex, n int) (name string, ok bool) {
+	return l.state.SetUpvalue(funcIndex, n)
 }
 
 // Debug holds information about a function or an activation record.

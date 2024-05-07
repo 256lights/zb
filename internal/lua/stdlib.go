@@ -112,9 +112,14 @@ func NewOpenBase(out io.Writer, loadfile Function) Function {
 				// loadfile(filename)
 				l.PushValue(UpvalueIndex(1))
 				l.Rotate(1, 1)
-				if err := l.Call(1, 1, 0); err != nil {
+				if err := l.Call(1, 2, 0); err != nil {
 					return 0, err
 				}
+				if l.IsNil(-2) {
+					msg, _ := ToString(l, -1)
+					return 0, fmt.Errorf("dofile: %s", msg)
+				}
+				l.Pop(1)
 
 				// Call the loaded function.
 				if err := l.Call(0, MultipleReturns, 0); err != nil {
