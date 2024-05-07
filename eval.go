@@ -204,6 +204,8 @@ func registerDerivationMetatable(l *lua.State) {
 		"__index":     indexDerivation,
 		"__pairs":     derivationPairs,
 		"__gc":        gcDerivation,
+		"__tostring":  derivationToString,
+		"__concat":    concatDerivation,
 		"__metatable": nil, // prevent Lua access to metatable
 	})
 	if err != nil {
@@ -467,6 +469,43 @@ func derivationPairNext(l *lua.State) (int, error) {
 		return 1, nil
 	}
 	return 2, nil
+}
+
+// derivationToString handles the __tostring metamethod on derivations.
+func derivationToString(l *lua.State) (int, error) {
+	if _, err := toDerivation(l); err != nil {
+		return 0, err
+	}
+	l.UserValue(1, 1) // Push derivation argument table.
+	if _, err := l.Field(-1, "out", 0); err != nil {
+		return 0, err
+	}
+	return 1, nil
+}
+
+// concatDerivation handles the __concat metamethod on derivations.
+func concatDerivation(l *lua.State) (int, error) {
+	l.SetTop(2)
+	if testDerivation(l, 1) != nil {
+		l.UserValue(1, 1) // Push derivation argument table.
+		if _, err := l.Field(-1, "out", 0); err != nil {
+			return 0, err
+		}
+		l.Replace(1)
+		l.Pop(1)
+	}
+	if testDerivation(l, 2) != nil {
+		l.UserValue(2, 1) // Push derivation argument table.
+		if _, err := l.Field(-1, "out", 0); err != nil {
+			return 0, err
+		}
+		l.Replace(2)
+		l.Pop(1)
+	}
+	if err := l.Concat(2, 0); err != nil {
+		return 0, err
+	}
+	return 1, nil
 }
 
 func testUserdataHandle(l *lua.State, idx int, tname string) (cgo.Handle, bool) {
