@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"runtime/cgo"
 	"strings"
 
@@ -48,20 +50,130 @@ func (eval *Eval) Close() error {
 	return eval.l.Close()
 }
 
-func (eval *Eval) Expression(expr string) (string, error) {
-	if err := loadExpression(&eval.l, expr); err != nil {
-		return "", err
+func (eval *Eval) File(exprFile string, attrPaths []string) ([]any, error) {
+	defer eval.l.SetTop(0)
+	if err := loadFile(&eval.l, exprFile); err != nil {
+		return nil, err
 	}
 	if err := eval.l.Call(0, 1, 0); err != nil {
 		eval.l.Pop(1)
-		return "", err
+		return nil, err
 	}
-	s, err := lua.ToString(&eval.l, -1)
-	eval.l.Pop(1)
-	if err != nil {
-		return "", err
+	return eval.attrPaths(attrPaths)
+}
+
+func (eval *Eval) Expression(expr string, attrPaths []string) ([]any, error) {
+	defer eval.l.SetTop(0)
+	if err := loadExpression(&eval.l, expr); err != nil {
+		return nil, err
 	}
-	return s, nil
+	if err := eval.l.Call(0, 1, 0); err != nil {
+		eval.l.Pop(1)
+		return nil, err
+	}
+	return eval.attrPaths(attrPaths)
+}
+
+// attrPaths evaluates all the attribute paths given
+// against the value on the top of the stack.
+func (eval *Eval) attrPaths(paths []string) ([]any, error) {
+	if len(paths) == 0 {
+		x, err := luaToGo(&eval.l)
+		if err != nil {
+			return nil, err
+		}
+		return []any{x}, nil
+	}
+
+	result := make([]any, 0, len(paths))
+	for _, p := range paths {
+		expr := "local x = ...; return x"
+		if !strings.HasPrefix(p, "[") {
+			expr += "."
+		}
+		expr += p + ";"
+		if err := eval.l.LoadString(expr, expr, "t"); err != nil {
+			eval.l.Pop(1)
+			return result, fmt.Errorf("%s: %v", p, err)
+		}
+		eval.l.PushValue(-2)
+		if err := eval.l.Call(1, 1, 0); err != nil {
+			eval.l.Pop(1)
+			return result, fmt.Errorf("%s: %v", p, err)
+		}
+		x, err := luaToGo(&eval.l)
+		eval.l.Pop(1)
+		if err != nil {
+			return result, fmt.Errorf("%s: %v", p, err)
+		}
+		result = append(result, x)
+	}
+	return result, nil
+}
+
+func luaToGo(l *lua.State) (any, error) {
+	switch typ := l.Type(-1); typ {
+	case lua.TypeNil:
+		return nil, nil
+	case lua.TypeNumber:
+		if l.IsInteger(-1) {
+			i, _ := l.ToInteger(-1)
+			return i, nil
+		}
+		n, _ := l.ToNumber(-1)
+		return n, nil
+	case lua.TypeBoolean:
+		return l.IsBoolean(-1), nil
+	case lua.TypeString:
+		s, _ := l.ToString(-1)
+		return s, nil
+	case lua.TypeTable:
+		// Try first for an array.
+		var arr []any
+		err := ipairs(l, -1, func(i int64) error {
+			x, err := luaToGo(l)
+			if err != nil {
+				return fmt.Errorf("#%d: %v", i, err)
+			}
+			arr = append(arr, x)
+			return nil
+		})
+		if err != nil {
+			if len(arr) > 0 {
+				return arr, err
+			}
+			return nil, err
+		}
+		if len(arr) > 0 {
+			return arr, nil
+		}
+
+		// It's an object.
+		m := make(map[string]any)
+		l.PushNil()
+		for l.Next(-2) {
+			if l.Type(-2) != lua.TypeString {
+				l.Pop(1)
+				continue
+			}
+
+			k, _ := l.ToString(-2)
+			v, err := luaToGo(l)
+			if err != nil {
+				l.Pop(2)
+				return nil, fmt.Errorf("[%q]: %v", k, err)
+			}
+			l.Pop(1)
+			m[k] = v
+		}
+		return m, nil
+	default:
+		drv := testDerivation(l, -1)
+		if drv != nil {
+			return drv, nil
+		}
+		return nil, fmt.Errorf("cannot convert %v to Go", typ)
+	}
 }
 
 const derivationTypeName = "derivation"
@@ -349,6 +461,24 @@ func setUserdataHandle(l *lua.State, idx int, handle cgo.Handle) {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], uint64(handle))
 	l.SetUserdata(idx, 0, buf[:])
+}
+
+func loadFile(l *lua.State, path string) error {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("load file: %w", err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("load file: %w", err)
+	}
+	defer f.Close()
+
+	if err := l.Load(f, "@"+path, "t"); err != nil {
+		l.Pop(1)
+		return fmt.Errorf("load file %s: %w", path, err)
+	}
+	return nil
 }
 
 func loadExpression(l *lua.State, expr string) error {

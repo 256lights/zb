@@ -48,20 +48,25 @@ func main() {
 }
 
 type evalOptions struct {
-	expr string
+	expr         string
+	file         string
+	installables []string
 }
 
 func newEvalCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
-		Use:           "eval",
-		Short:         "evaluate a Lua expression",
-		Args:          cobra.NoArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:                   "eval [options] [INSTALLABLE [...]]",
+		Short:                 "evaluate a Lua expression",
+		DisableFlagsInUseLine: true,
+		Args:                  cobra.ArbitraryArgs,
+		SilenceErrors:         true,
+		SilenceUsage:          true,
 	}
 	opts := new(evalOptions)
 	c.Flags().StringVar(&opts.expr, "expr", "", "interpret installables as attribute paths relative to the Lua expression `expr`")
+	c.Flags().StringVar(&opts.file, "file", "", "interpret installables as attribute paths relative to the Lua expression stored in `path`")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
+		opts.installables = args
 		return runEval(cmd.Context(), g, opts)
 	}
 	return c
@@ -69,11 +74,27 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 
 func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 	eval := zb.NewEval(nix.DefaultStoreDirectory)
-	s, err := eval.Expression(opts.expr)
+
+	var results []any
+	var err error
+	switch {
+	case opts.expr != "" && opts.file != "":
+		return fmt.Errorf("can specify at most one of --expr or --file")
+	case opts.expr != "":
+		results, err = eval.Expression(opts.expr, opts.installables)
+	case opts.file != "":
+		results, err = eval.File(opts.file, opts.installables)
+	default:
+		return fmt.Errorf("installables not supported yet")
+	}
 	if err != nil {
 		return err
 	}
-	fmt.Println(s)
+
+	for _, result := range results {
+		fmt.Println(result)
+	}
+
 	return nil
 }
 
