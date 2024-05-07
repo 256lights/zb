@@ -1,14 +1,4 @@
-local drv1 = derivation {
-  name = "hello";
-  ["in"] = path "hello.txt";
-  builder = "/bin/sh";
-  system = "x86_64-linux";
-  args = {"-c", [[
-while read line; do
-  echo "$line"
-done < $in > $out
-]]};
-}
+local drv1 = dofile("hello.lua")
 
 local drv2 = derivation {
   name = "hello2";

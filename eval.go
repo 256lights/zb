@@ -3,6 +3,7 @@ package zb
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,21 +25,40 @@ func NewEval(storeDir nix.StoreDirectory) *Eval {
 	eval := &Eval{storeDir: storeDir}
 	registerDerivationMetatable(&eval.l)
 
-	base := lua.NewOpenBase(io.Discard, func(l *lua.State) (int, error) {
-		return 0, fmt.Errorf("loadfile not supported")
-	})
+	base := lua.NewOpenBase(io.Discard, loadfileFunction)
 	if err := lua.Require(&eval.l, lua.GName, true, base); err != nil {
+		eval.l.Close()
 		panic(err)
 	}
+
+	// Wrap load function.
+	if tp := eval.l.RawField(-1, "load"); tp != lua.TypeFunction {
+		eval.l.Close()
+		panic("load is not a function")
+	}
+	eval.l.PushClosure(1, loadFunction)
+	eval.l.RawSetField(-2, "load")
+
+	// Replace dofile.
+	if tp := eval.l.RawField(-1, "loadfile"); tp != lua.TypeFunction {
+		eval.l.Close()
+		panic("loadfile is not a function")
+	}
+	eval.l.PushClosure(1, dofileFunction)
+	eval.l.RawSetField(-2, "dofile")
+
+	// Set other built-ins.
 	err := lua.SetFuncs(&eval.l, 0, map[string]lua.Function{
 		"derivation": eval.derivationFunction,
 		"path":       eval.pathFunction,
 	})
 	if err != nil {
+		eval.l.Close()
 		panic(err)
 	}
 	eval.l.PushString(string(storeDir))
 	if err := eval.l.SetField(-2, "storeDir", 0); err != nil {
+		eval.l.Close()
 		panic(err)
 	}
 	eval.l.Pop(1)
@@ -512,4 +532,129 @@ func ipairs(l *lua.State, idx int, f func(i int64) error) error {
 			return err
 		}
 	}
+}
+
+// loadFunction is a wrapper around the load builtin function
+// that forces the mode to be "t".
+func loadFunction(l *lua.State) (int, error) {
+	const maxLoadArgs = 4
+	const modeArg = 3
+
+	l.SetTop(maxLoadArgs)
+	switch l.Type(modeArg) {
+	case lua.TypeNil:
+		l.PushString("t")
+		l.Replace(modeArg)
+	case lua.TypeString:
+		if s, _ := l.ToString(modeArg); s != "t" {
+			l.PushNil()
+			l.PushString(fmt.Sprintf("load only supports text chunks (got %q)", s))
+			return 2, nil
+		}
+	default:
+		l.PushNil()
+		l.PushString("only permitted mode for load is 't'")
+		return 2, nil
+	}
+	l.PushValue(lua.UpvalueIndex(1))
+	l.Insert(1)
+	if err := l.Call(maxLoadArgs, lua.MultipleReturns, 0); err != nil {
+		return 0, err
+	}
+	return l.Top(), nil
+}
+
+// loadfileFunction is the global loadfile function implementation.
+func loadfileFunction(l *lua.State) (int, error) {
+	filename, err := lua.CheckString(l, 1)
+	if err != nil {
+		return 0, err
+	}
+	if len(l.StringContext(1)) > 0 {
+		l.PushNil()
+		l.PushString("import from derivation not supported")
+		return 2, nil
+	}
+
+	const modeArg = 2
+	switch l.Type(modeArg) {
+	case lua.TypeNil, lua.TypeNone:
+	case lua.TypeString:
+		if s, _ := l.ToString(modeArg); s != "t" {
+			l.PushNil()
+			l.PushString(fmt.Sprintf("loadfile only supports text chunks (got %q)", s))
+			return 2, nil
+		}
+	default:
+		l.PushNil()
+		l.PushString("only permitted mode for loadfile is 't'")
+		return 2, nil
+	}
+
+	const envArg = 3
+	hasEnv := l.Type(envArg) != lua.TypeNone
+
+	filename, err = absSourcePath(l, filename)
+	if err != nil {
+		l.PushNil()
+		l.PushString(err.Error())
+		return 2, nil
+	}
+	if err := loadFile(l, filename); err != nil {
+		l.PushNil()
+		l.PushString(err.Error())
+		return 2, nil
+	}
+
+	if hasEnv {
+		l.PushValue(envArg)
+		if _, ok := l.SetUpvalue(-2, 1); !ok {
+			// Remove env if not used.
+			l.Pop(1)
+		}
+	}
+
+	return 1, nil
+}
+
+// dofileFunction is the global dofile function implementation.
+// It assumes that a loadfile function is its first upvalue.
+func dofileFunction(l *lua.State) (int, error) {
+	filename, err := lua.CheckString(l, 1)
+	if err != nil {
+		return 0, err
+	}
+	if len(l.StringContext(1)) > 0 {
+		return 0, errors.New("dofile: import from derivation not supported")
+	}
+	l.SetTop(1)
+
+	// Perform path resolution here instead of at loadfile,
+	// since loadfile would just obtain our call record.
+	resolved, err := absSourcePath(l, filename)
+	if err != nil {
+		return 0, fmt.Errorf("dofile: %v", err)
+	}
+	if resolved != filename {
+		l.PushString(resolved)
+		l.Replace(1)
+	}
+
+	// loadfile(filename)
+	l.PushValue(lua.UpvalueIndex(1))
+	l.Insert(1)
+	if err := l.Call(1, 2, 0); err != nil {
+		return 0, fmt.Errorf("dofile: %v", err)
+	}
+	if l.IsNil(-2) {
+		msg, _ := lua.ToString(l, -1)
+		return 0, fmt.Errorf("dofile: %s", msg)
+	}
+	l.Pop(1)
+
+	// Call the loaded function.
+	if err := l.Call(0, lua.MultipleReturns, 0); err != nil {
+		return 0, fmt.Errorf("dofile %s: %v", resolved, err)
+	}
+	return l.Top(), nil
 }

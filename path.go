@@ -44,21 +44,9 @@ func (eval *Eval) pathFunction(l *lua.State) (int, error) {
 		return 0, lua.NewTypeError(l, 1, "string or table")
 	}
 
-	if !filepath.IsAbs(p) {
-		// TODO(maybe): This is probably wonky with tail calls.
-		debugInfo := l.Stack(1).Info("S")
-		if debugInfo == nil {
-			return 0, fmt.Errorf("path: no caller information available")
-		}
-		if source, ok := strings.CutPrefix(debugInfo.Source, "@"); ok {
-			p = filepath.Join(filepath.Dir(source), filepath.FromSlash(p))
-		} else {
-			var err error
-			p, err = filepath.Abs(filepath.FromSlash(p))
-			if err != nil {
-				return 0, fmt.Errorf("path: %w", err)
-			}
-		}
+	p, err := absSourcePath(l, p)
+	if err != nil {
+		return 0, fmt.Errorf("path: %v", err)
 	}
 	if name == "" {
 		name = filepath.Base(p)
@@ -90,4 +78,32 @@ func (eval *Eval) pathFunction(l *lua.State) (int, error) {
 	}
 	l.PushStringContext(string(storePath), []string{string(storePath)})
 	return 1, nil
+}
+
+// absSourcePath takes a source path passed as an argument from Lua to Go
+// and resolves it relative to the calling function.
+func absSourcePath(l *lua.State, path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	// TODO(maybe): This is probably wonky with tail calls.
+	debugInfo := l.Stack(1).Info("S")
+	if debugInfo == nil {
+		return "", fmt.Errorf("resolve path: no caller information available")
+	}
+	source, ok := strings.CutPrefix(debugInfo.Source, "@")
+	if !ok {
+		// Not loaded from a file. Use working directory.
+		//
+		// TODO(someday): This is intended for --expr evaluation,
+		// but would take place for any chunk loaded with the "load" built-in.
+		// Perhaps an allow-list of sources?
+		path, err := filepath.Abs(filepath.FromSlash(path))
+		if err != nil {
+			return "", fmt.Errorf("resolve path: %w", err)
+		}
+		return path, nil
+	}
+
+	return filepath.Join(filepath.Dir(source), filepath.FromSlash(path)), nil
 }
