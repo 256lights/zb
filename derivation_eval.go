@@ -155,6 +155,7 @@ func toEnvVar(l *lua.State, drv *Derivation, idx int, allowLists bool) (string, 
 			return "", err
 		} else if hasMethod {
 			s, err := stringToEnvVar(l, drv, -1)
+			l.Pop(1)
 			if err != nil {
 				return "", fmt.Errorf("__tostring result: %v", err)
 			}
