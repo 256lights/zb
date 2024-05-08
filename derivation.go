@@ -1,6 +1,7 @@
 package zb
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -10,7 +11,6 @@ import (
 	"strings"
 
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/nix/nixbase32"
 	"zombiezen.com/go/zb/internal/sortedset"
 )
@@ -197,17 +197,8 @@ func writeDerivation(ctx context.Context, drv *Derivation) (nix.StorePath, error
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
 	defer imp.Close()
-	w := nar.NewWriter(imp)
-	err = w.WriteHeader(&nar.Header{
-		Size: int64(len(data)),
-	})
+	err = writeSingleFileNAR(imp, bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
-	}
-	if _, err := w.Write(data); err != nil {
-		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
-	}
-	if err := w.Close(); err != nil {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
 	err = imp.Trailer(&nixExportTrailer{

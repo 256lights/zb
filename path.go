@@ -80,6 +80,69 @@ func (eval *Eval) pathFunction(l *lua.State) (int, error) {
 	return 1, nil
 }
 
+func (eval *Eval) toFileFunction(l *lua.State) (int, error) {
+	name, err := lua.CheckString(l, 1)
+	if err != nil {
+		return 0, err
+	}
+	s, err := lua.CheckString(l, 2)
+	if err != nil {
+		return 0, err
+	}
+
+	h := nix.NewHasher(nix.SHA256)
+	h.WriteString(s)
+	var refs storeReferences
+	for _, dep := range l.StringContext(2) {
+		if strings.HasPrefix(dep, "!") {
+			return 0, fmt.Errorf("toFile %q: cannot depend on derivation outputs", name)
+		}
+		refs.others.Add(nix.StorePath(dep))
+	}
+
+	storePath, err := fixedCAOutputPath(eval.storeDir, name, nix.TextContentAddress(h.SumHash()), refs)
+	if err != nil {
+		return 0, fmt.Errorf("toFile %q: %v", name, err)
+	}
+
+	imp, err := startImport(context.TODO())
+	if err != nil {
+		return 0, fmt.Errorf("toFile %q: %v", name, err)
+	}
+	defer imp.Close()
+	err = writeSingleFileNAR(imp, strings.NewReader(s), int64(len(s)))
+	if err != nil {
+		return 0, fmt.Errorf("toFile %q: %v", name, err)
+	}
+	err = imp.Trailer(&nixExportTrailer{
+		storePath:  storePath,
+		references: refs.others,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("toFile %q: %v", name, err)
+	}
+	if err := imp.Close(); err != nil {
+		return 0, fmt.Errorf("toFile %q: %v", name, err)
+	}
+
+	l.PushStringContext(string(storePath), []string{string(storePath)})
+	return 1, nil
+}
+
+func writeSingleFileNAR(w io.Writer, r io.Reader, sz int64) error {
+	nw := nar.NewWriter(w)
+	if err := nw.WriteHeader(&nar.Header{Size: sz}); err != nil {
+		return err
+	}
+	if _, err := io.Copy(nw, r); err != nil {
+		return err
+	}
+	if err := nw.Close(); err != nil {
+		return err
+	}
+	return nil
+}
+
 // absSourcePath takes a source path passed as an argument from Lua to Go
 // and resolves it relative to the calling function.
 func absSourcePath(l *lua.State, path string) (string, error) {

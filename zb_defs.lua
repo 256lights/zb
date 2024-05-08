@@ -14,6 +14,11 @@
 ---@return derivation
 function derivation(args) end
 
---- @param p (string|{path: string, name: string?})
---- @return string
+---@param p (string|{path: string, name: string?})
+---@return string
 function path(p) end
+
+---@param name string
+---@param s string File contents
+---@return string # store path
+function toFile(name, s) end

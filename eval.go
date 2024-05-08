@@ -49,6 +49,7 @@ func NewEval(storeDir nix.StoreDirectory) *Eval {
 	err := lua.SetFuncs(&eval.l, 0, map[string]lua.Function{
 		"derivation": eval.derivationFunction,
 		"path":       eval.pathFunction,
+		"toFile":     eval.toFileFunction,
 	})
 	if err != nil {
 		eval.l.Close()
