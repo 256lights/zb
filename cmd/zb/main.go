@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -34,6 +36,7 @@ func main() {
 	}
 
 	rootCommand.AddCommand(
+		newBuildCommand(g),
 		newEvalCommand(g),
 	)
 
@@ -95,6 +98,97 @@ func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 		fmt.Println(result)
 	}
 
+	return nil
+}
+
+type buildOptions struct {
+	evalOptions
+	outLink string
+}
+
+func newBuildCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:                   "build [options] [INSTALLABLE [...]]",
+		Short:                 "build one or more derivations",
+		DisableFlagsInUseLine: true,
+		Args:                  cobra.ArbitraryArgs,
+		SilenceErrors:         true,
+		SilenceUsage:          true,
+	}
+	opts := new(buildOptions)
+	c.Flags().StringVar(&opts.expr, "expr", "", "interpret installables as attribute paths relative to the Lua expression `expr`")
+	c.Flags().StringVar(&opts.file, "file", "", "interpret installables as attribute paths relative to the Lua expression stored in `path`")
+	c.Flags().StringVarP(&opts.outLink, "out-link", "o", "result", "change the name of the output path symlink to `path`")
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		opts.installables = args
+		return runBuild(cmd.Context(), g, opts)
+	}
+	return c
+}
+
+func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
+	eval := zb.NewEval(nix.DefaultStoreDirectory)
+
+	var results []any
+	var err error
+	switch {
+	case opts.expr != "" && opts.file != "":
+		return fmt.Errorf("can specify at most one of --expr or --file")
+	case opts.expr != "":
+		results, err = eval.Expression(opts.expr, opts.installables)
+	case opts.file != "":
+		results, err = eval.File(opts.file, opts.installables)
+	default:
+		return fmt.Errorf("installables not supported yet")
+	}
+	if err != nil {
+		return err
+	}
+	if len(results) == 0 {
+		return fmt.Errorf("no evaluation results")
+	}
+
+	args := []string{"--realise"}
+	if opts.outLink != "" {
+		args = append(args, "--add-root", opts.outLink)
+	}
+	args = append(args, "--")
+	for _, result := range results {
+		drv, _ := result.(*zb.Derivation)
+		if drv == nil {
+			return fmt.Errorf("%v is not a derivation", result)
+		}
+		p, err := drv.StorePath()
+		if err != nil {
+			return err
+		}
+		args = append(args, string(p))
+	}
+
+	stdout := new(strings.Builder)
+	c := exec.CommandContext(ctx, "nix-store", args...)
+	if opts.outLink == "" {
+		c.Stdout = os.Stdout
+	} else {
+		c.Stdout = stdout
+	}
+	c.Stderr = os.Stderr
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("nix-store --realise: %v", err)
+	}
+	if opts.outLink != "" {
+		outLinks := strings.FieldsFunc(stdout.String(), func(c rune) bool {
+			return c == '\n'
+		})
+		for _, out := range outLinks {
+			target, err := os.Readlink(out)
+			if err != nil {
+				fmt.Println(out)
+			} else {
+				fmt.Println(target)
+			}
+		}
+	}
 	return nil
 }
 
