@@ -1,11 +1,13 @@
 package zb
 
 import (
+	_ "embed"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	slashpath "path"
 	"path/filepath"
 	"runtime/cgo"
 	"strings"
@@ -13,6 +15,9 @@ import (
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/lua"
 )
+
+//go:embed prelude.lua
+var preludeSource string
 
 type Eval struct {
 	l        lua.State
@@ -50,6 +55,18 @@ func NewEval(storeDir nix.StoreDirectory) *Eval {
 		"derivation": eval.derivationFunction,
 		"path":       eval.pathFunction,
 		"toFile":     eval.toFileFunction,
+		"baseNameOf": func(l *lua.State) (int, error) {
+			path, err := lua.CheckString(l, 1)
+			if err != nil {
+				return 0, err
+			}
+			if path == "" {
+				l.PushString("")
+				return 1, nil
+			}
+			l.PushString(slashpath.Base(path))
+			return 1, nil
+		},
 	})
 	if err != nil {
 		eval.l.Close()
@@ -61,6 +78,16 @@ func NewEval(storeDir nix.StoreDirectory) *Eval {
 		panic(err)
 	}
 	eval.l.Pop(1)
+
+	// Run prelude.
+	if err := eval.l.LoadString(preludeSource, "=(prelude)", "t"); err != nil {
+		eval.l.Close()
+		panic(err)
+	}
+	if err := eval.l.Call(0, 0, 0); err != nil {
+		eval.l.Close()
+		panic(err)
+	}
 
 	return eval
 }

@@ -36,9 +36,54 @@ func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 	drv := &Derivation{
 		Dir: eval.storeDir,
 		Env: make(map[string]string),
-		Outputs: map[string]*DerivationOutput{
-			"out": RecursiveFileFloatingCAOutput(nix.SHA256),
-		},
+	}
+
+	// Configure outputs.
+	var h nix.Hash
+	switch typ := l.RawField(1, "outputHash"); typ {
+	case lua.TypeNil:
+	case lua.TypeString:
+		s, _ := l.ToString(-1)
+		var err error
+		h, err = nix.ParseHash(s)
+		if err != nil {
+			return 0, fmt.Errorf("outputHash argument: %v", err)
+		}
+	default:
+		return 0, fmt.Errorf("outputHash argument: %v expected, got %v", lua.TypeString, typ)
+	}
+	l.Pop(1)
+
+	switch typ := l.RawField(1, "outputHashMode"); typ {
+	case lua.TypeNil:
+		if !h.IsZero() {
+			drv.Outputs = map[string]*DerivationOutput{
+				defaultDerivationOutputName: FixedCAOutput(nix.FlatFileContentAddress(h)),
+			}
+		}
+	case lua.TypeString:
+		switch mode, _ := l.ToString(-1); mode {
+		case "flat":
+			drv.Outputs = map[string]*DerivationOutput{
+				defaultDerivationOutputName: FixedCAOutput(nix.FlatFileContentAddress(h)),
+			}
+		case "recursive":
+			drv.Outputs = map[string]*DerivationOutput{
+				defaultDerivationOutputName: FixedCAOutput(nix.RecursiveFileContentAddress(h)),
+			}
+		default:
+			return 0, fmt.Errorf("outputHashMode argument: invalid mode %q", mode)
+		}
+	default:
+		return 0, fmt.Errorf("outputHashMode argument: %v expected, got %v", lua.TypeString, typ)
+	}
+	l.Pop(1)
+
+	if h.IsZero() {
+		// TODO(someday): Multiple outputs.
+		drv.Outputs = map[string]*DerivationOutput{
+			defaultDerivationOutputName: RecursiveFileFloatingCAOutput(nix.SHA256),
+		}
 	}
 
 	// Start a copy of the table.
@@ -109,22 +154,48 @@ func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 		l.Pop(1)
 	}
 
-	drv.Env[defaultDerivationOutputName] = hashPlaceholder(defaultDerivationOutputName)
+	for outputName, outType := range drv.Outputs {
+		switch outType.typ {
+		case floatingCAOutputType:
+			drv.Env[outputName] = hashPlaceholder(outputName)
+		case fixedCAOutputType:
+			p, ok := outType.Path(eval.storeDir, drv.Name, outputName)
+			if !ok {
+				panic("should have a path")
+			}
+			drv.Env[outputName] = string(p)
+		default:
+			panic(outputName + " has an unhandled output type")
+		}
+	}
 	drvPath, err := writeDerivation(context.TODO(), drv)
 	if err != nil {
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
+
 	l.PushStringContext(string(drvPath), []string{string(drvPath)})
 	if err := l.SetField(tableCopyIndex, "drvPath", 0); err != nil {
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
-
-	placeholder := unknownCAOutputPlaceholder(drvPath, defaultDerivationOutputName)
-	l.PushStringContext(placeholder, []string{
-		"!" + defaultDerivationOutputName + "!" + string(drvPath),
-	})
-	if err := l.SetField(tableCopyIndex, defaultDerivationOutputName, 0); err != nil {
-		return 0, fmt.Errorf("derivation: %v", err)
+	for outputName, outType := range drv.Outputs {
+		var placeholder string
+		switch outType.typ {
+		case floatingCAOutputType:
+			placeholder = unknownCAOutputPlaceholder(drvPath, defaultDerivationOutputName)
+		case fixedCAOutputType:
+			// TODO(someday): We already computed this earlier.
+			p, ok := outType.Path(eval.storeDir, drv.Name, outputName)
+			if !ok {
+				panic("should have a path")
+			}
+			placeholder = string(p)
+		}
+		l.PushStringContext(placeholder, []string{
+			"!" + outputName + "!" + string(drvPath),
+		})
+		if err := l.SetField(tableCopyIndex, outputName, 0); err != nil {
+			return 0, fmt.Errorf("derivation: %v", err)
+		}
 	}
 
 	l.NewUserdataUV(8, 1)
@@ -197,7 +268,7 @@ func stringToEnvVar(l *lua.State, drv *Derivation, idx int) (string, error) {
 	s, _ := l.ToString(-1)
 	for _, dep := range l.StringContext(-1) {
 		if rest, isDrv := strings.CutPrefix(dep, "!"); isDrv {
-			outName, drvPath, ok := strings.Cut(rest, "!")
+			outputName, drvPath, ok := strings.Cut(rest, "!")
 			if !ok {
 				return "", fmt.Errorf("internal error: malformed context %q", dep)
 			}
@@ -207,7 +278,7 @@ func stringToEnvVar(l *lua.State, drv *Derivation, idx int) (string, error) {
 			if drv.InputDerivations[nix.StorePath(drvPath)] == nil {
 				drv.InputDerivations[nix.StorePath(drvPath)] = new(sortedset.Set[string])
 			}
-			drv.InputDerivations[nix.StorePath(drvPath)].Add(outName)
+			drv.InputDerivations[nix.StorePath(drvPath)].Add(outputName)
 		} else {
 			drv.InputSources.Add(nix.StorePath(dep))
 		}

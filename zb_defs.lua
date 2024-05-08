@@ -22,3 +22,15 @@ function path(p) end
 ---@param s string File contents
 ---@return string # store path
 function toFile(name, s) end
+
+--- baseNameOf returns the last element of path.
+--- Trailing slashes are removed before extracting the last element.
+--- If the path is empty, baseNameOf returns "".
+--- If the path consists entirely of slashes, baseNameOf returns "/".
+---@param path string slash-separated path
+---@return string
+function baseNameOf(path) end
+
+---@param args {url: string, hash: string, name: string?, executable: boolean?}
+---@return derivation
+function fetchurl(args) end

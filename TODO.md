@@ -12,4 +12,5 @@ This is a list of shortcuts taken for this prototype.
 - I'm using `/bin/sh` as part of stage0.
   Hypothetically, I could use the included kaem shell
   if it could support `$out` expansion.
-- Outputs are always a single floating content-addressed `out`.
+- Only single output.
+- Files and derivations are imported into the Nix store immediately instead of as-needed.
