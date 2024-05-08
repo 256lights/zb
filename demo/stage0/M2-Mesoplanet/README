@@ -1,0 +1,19 @@
+#+title: M2-Mesoplanet
+Macro Expander Saving Our m2-PLANET
+
+* About
+M2-Mesoplanet simplifies the bootstrappable stage0/M2-Planet toolchain by imitating gcc's behaviour.
+
+* Options
+ - -f <path> :: input file (specify as many as necessary)
+ - -o <path> :: output file (specify once)
+ - --help  or -h :: output simple help message
+ - --version or -V :: output file version
+
+ - -E or --preprocess-only :: do not spawn processes to generate executable file
+ - --max-string <N>  :: N is a number
+ - --fuzz :: prevents execution of dangerous random garbage
+ - --no-debug :: strip debug symbols from output
+ - --dirty-mode :: keep all temp files
+ - --debug-mode <N> :: N is a number
+
