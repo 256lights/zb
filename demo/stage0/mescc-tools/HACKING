@@ -1,0 +1,63 @@
+-*-mode:org-*-
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of mescc-tools.
+##
+## mescc-tools is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## mescc-tools is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with mescc-tools.  If not, see <http://www.gnu.org/licenses/>.
+
+mescc-tools being based on the goal of absolute minimal platform bootstrap.
+If your hardware doesn't have some crazy engineering decisions, mescc-tools can
+and likely will be trivially ported to it.
+
+* SETUP
+The most obvious way to setup for mescc-tools development is to install any C
+compiler and make clone of your choice.
+
+* BUILD
+The standard C based approach to building mescc-tools is simply running:
+make
+
+Should you wish to verify that mescc-tools was built correctly run:
+make test
+
+* ADDING an ARCHITECTURE
+The process is simple:
+1) add an architecture flag for your architecture to hex2_linker.c
+2) Then make sure byte and then bit order are correct
+3) Tweak to make sure immediate prefixes are the correct size for your architecture
+4) Then make sure relative displacements are calculated correctly
+5) Then make sure absolute displacements are calculated correctly
+6) add an architecture flag for your architecture to M1-Macro.c
+7) Then make sure byte and then bit order are correct
+8) Tweak to make sure immediate prefixes are the correct size for your architecture
+9) If you require unusual string padding, please add that now
+10) Write your architecture.def or architecture.M1 file to include instruction
+and register encodings that map to the required encoding.
+
+* ROADMAP
+The current outstanding work for mescc-tools is several architecture specific
+bootstrap ports, that unfortunately share C level code but require significant
+manual labor to implement.
+
+* DEBUG
+The default build process will generate debuggable binaries.
+as blood-elf will generate the segments and text section required for proper debugging
+
+* Bugs
+mescc-tools is the most unforgiving assembly development environment possible.
+Things such as manual padding requirements, arbitrary instruction encoding and
+other features of these tools, make for rapid bootstrapping but horrific
+development environments.
+
+Please only use these tools to bootstrap your system from zero; otherwise cross-
+compile with gcc and save yourself the pain.

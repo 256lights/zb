@@ -1,0 +1,47 @@
+## Copyright (C) 2016 Jeremiah Orians
+## This file is part of M2-Planet.
+##
+## M2-Planet is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## M2-Planet is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with M2-Planet.  If not, see <http://www.gnu.org/licenses/>.
+
+:_start
+
+	mov_rbp,rsp                 ; Protect rsp
+
+	;; Prepare argv
+	lea_rax,[rbp+DWORD] %8      ; ARGV_address = RBP + 8
+	push_rax                    ; Put argv on the stack
+
+	;; Prepare envp
+	mov_rax,rbp                 ; Address we need to load from
+	mov_rax,[rax]               ; Get ARGC
+	add_rax, %2                 ; OFFSET = ARGC + 2
+	sal_rax, !3                 ; OFFSET = OFFSET * WORDSIZE
+	add_rax,rbp                 ; ENVP_address = RSP + OFFSET
+	push_rax                    ; Put envp on the stack
+
+	;; Stack offset
+	add_rbp, %8                 ; Fix rbp
+
+	;; Perform the main loop
+	call %FUNCTION_main
+
+	push_rax                    ; Put return value on the stack
+	push_rax                    ; So that _exit gets it
+
+:FUNCTION_exit
+:FUNCTION__exit
+	pop_rbx
+	pop_rdi
+	mov_rax, %0x3C
+	syscall

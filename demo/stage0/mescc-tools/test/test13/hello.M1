@@ -1,0 +1,66 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of mescc-tools.
+##
+## mescc-tools is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## mescc-tools is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with mescc-tools.  If not, see <http://www.gnu.org/licenses/>.
+
+DEFINE CMPDI_R0 202C
+DEFINE NULL 00000000
+DEFINE BF 48
+DEFINE BB 4B
+DEFINE BNE 8240
+DEFINE BEQ 8241
+DEFINE LI_R0 0038
+DEFINE LI_R3 6038
+DEFINE LI_R5 A038
+DEFINE LWZ_R4 8480
+DEFINE SC 02000044
+DEFINE MFLR_R4 A602887C
+
+:_start
+	@1 CMPDI_R0              # cmpdi   r0,1
+	^@overrr BNE             # blne overrr
+:backkk
+	@1 CMPDI_R0              # cmpdi   r0,1
+	@overr BNE               # bne overr
+:backk
+	~over BF                 # bl over
+:back
+	@4 LI_R0                 # li r0, 4
+	@1 LI_R3                 # li r3, 1
+	^~after BF               # bl 0x8
+	&msg                     # Address of Message
+	NULL                     # garbage
+	NULL                     # garbage
+:after
+	MFLR_R4                  # mflr r4
+	@0 LWZ_R4                # lwz r4, 0(r4)
+	@15 LI_R5                # li r5, 15
+	SC                       # sc
+	@1 LI_R0                 # li r0, 1
+	@42 LI_R3                # li r3, 0x2a
+	SC                       # sc
+:over
+	~back BB                 # bl back
+:overr
+	@0 CMPDI_R0              # cmpdi   r0,0
+	@backk BEQ               # beq backk
+:overrr
+	@0 CMPDI_R0              # cmpdi   r0,0
+	^@backkk BEQ             # beq backk
+
+:msg
+"Hello World!!!
+"
+
+:ELF_end

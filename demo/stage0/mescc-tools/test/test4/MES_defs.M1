@@ -1,0 +1,42 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of stage0.
+##
+## stage0 is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## stage0 is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with stage0.  If not, see <http://www.gnu.org/licenses/>.
+
+DEFINE PUSH_ebp 55
+DEFINE MOVE_esp_To_ebp 89E5
+DEFINE SUB_Immediate8_From_esp 83EC
+DEFINE PUSH_Immediate32 68
+DEFINE CALLI32 E8
+DEFINE ADD_Immediate8_To_esp 83C4
+DEFINE TEST_eax_eax 85C0
+DEFINE TEST_al_al 84C0
+DEFINE LOADI32_eax B8
+DEFINE LEAVE C9
+DEFINE RETURN C3
+DEFINE STORE_eax_To_ebp_offset8 8945
+DEFINE PUSH_ebp_offset8 FF75
+DEFINE PUSH_eax 50
+DEFINE LOAD_eax_From_ebp_offset8 8B45
+DEFINE LOAD_ebx_From_ebp_offset8 8B5D
+DEFINE LOAD_ecx_From_ebp_offset8 8B4D
+DEFINE LOAD_edx_From_ebp_offset8 8B55
+DEFINE LOAD8_eax_From_eax_pointer 0FB600
+DEFINE STORE_To_ebp_offset8_Immediate32 C745
+DEFINE ADD_To_ebp_offset8_Immediate8 8345
+DEFINE COPY_edx_To_eax 89C2
+DEFINE ADD_eax_To_edx 01D0
+DEFINE JZ8 74
+DEFINE JUMP32 E9
+DEFINE INT_80 CD80

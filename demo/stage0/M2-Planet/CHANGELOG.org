@@ -1,0 +1,503 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of M2-Planet.
+##
+## M2-Planet is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## M2-Planet is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with M2-Planet.  If not, see <http://www.gnu.org/licenses/>.
+
+* 1.11 - 2023-11-01
+** Added
+Added support for #warning.
+Added global structs (and . operator).
+Added local structs.
+Added (u)int8_t, (u)int16_t and (u)int32_t.
+Properly remove blocks that are not used (e.g. after #if 0)
+
+** Changed
+Updated M2libc dependency
+
+** Fixed
+Fixed doubly indirect structs.
+Fixed a few segfaults.
+Fixed macro expressions with ).
+Add sufficient padding when assigning global constants on 64-bit architectures.
+Fix structs greater than 512bytes in size on armv7l.
+
+** Removed
+
+* 1.10 - 2022-05-01
+** Added
+Generates a warning on unknown preprocessor commands
+Implemented C99 negation
+Add support for empty defines
+Implemented support for #ifdef and #ifndef
+Implemented #error statement support
+Add support for evaluating macro variables
+Define arch specific variables
+	__i386__
+	__x86_64__
+	__arm__
+	__aarch64__
+	__riscv
+	__riscv_xlen
+Implemented #undef statement support
+Add support for char** arrays
+Added basic test for multi-dimensional arrays
+Implemented minimal variable dereferencing support (base types only)
+Add support for assignment operators
+Add riscv32 port
+Enable riscv32 tests
+Added #FILENAME statement functionality to enable more flexiblity with debug messages
+
+** Changed
+Updated M2libc dependency
+
+** Fixed
+--max-string now validates passed input is an integer
+-D now throws an error if not passed an argument
+Fix segfault on half done #define statements
+Correct #define behavior inside of #if/#elif/#else/#endif blocks
+make clean now cleans up RISCV tests
+catch half broken #define (statements instead of segfaulting
+no longer segfault on null macro name
+no longer try to expand null tokens
+Catch the special case of attempting to remove a NULL macro token
+Fixed nested #if behavior to do the actual correct thing
+
+** Removed
+
+* 1.9 - 2021-10-03
+** Added
+Add riscv64 port
+Add tests for riscv64
+
+** Changed
+Breakup program function to reduce complexity and risk of errors
+Update M2libc to enable RISC-V Development
+Update all tests to work around breaking update in blood-elf
+
+** Fixed
+Stop hang on large global arrays
+Fixed Memory leak on read token
+Fixed Global buffer overflow in collect_weird_string
+Updated info in HACKING
+Report proper error message for negative global array values
+Fix global array initialization to allocate the correct amount of memory
+Fix  Problem with global arrays
+Catch truncated function calls and truncated array statements
+
+** Removed
+
+* 1.8 - 2021-06-08
+** Added
+AArch64 added support for arithmetic right shift
+AMD64 added support for unsigned comparisons
+armv7l added support for unsigned comparisons
+AArch64 added support for unsigned comparison
+added support for --max-string to enable arbitrary large C tokens and strings
+Added prototype output buffering for x86
+List of known M2-Planet issues has been added
+Added first generation implemention of typedef
+Add newline tokens to parse stream
+Add a preprocessor-only mode (-E)
+Add macro directives to token_list
+Add support for conditional inclusion (#if, #elif, #else, #endif)
+Add error checking for unexpected #endif
+Added hacky version of #define support (#if defined($FOO))
+Add a test for supported preprocessor features
+Added simple macro expansion
+Add support for global char foo[12]; definitions
+Added support for make -j $num build operations for tests to speed up testing on multicore systems
+Enable virtualization of bare metal binaries
+Add support for &global_variable
+Added __M2__ to default macro environment to enable #if defined(__M2__)  M2-Planet specific functionality
+Add support for -D variable and -D variable=value
+Added -e (errexit) shell option in scripts, where possible
+
+** Changed
+knight-posix HEAP pointer now set by kernel rather than libc
+knight now leverages new SET instructions to reduce instruction count and processing time.
+Make type information localized to the inside of statements
+Default types available and added --bootstrap-mode flag to enable the old behavior for cc_* emulation
+Improve error reporting for unexpected non-newline
+Moved all low level primitives into M2libc
+Updated tests to leverage M2libc
+Standardized test scripts
+tests: use new-style mescc-tools flags
+Harmonize --debug behaviour for all scripts of the same test
+Unified all tests for all architectures
+Replace file_print with fputs
+Skip "extern" in type definitions. This makes supporting gcc >= 10 easier in GNU Mes.
+
+** Fixed
+AArch64 Fix LSEEK syscall number
+Arithmetic recursion to match gcc behavior in regards to if(-1 > 0)
+Fix x86 behavior on unsigned compares
+Remove Segfault that occurs when outputing files in excess of 100MB in size
+Fix x86 close syscall
+Type abuse bugs that resulted in segfaults
+Fixed the backwards assignment of x86/AMD64 division
+Fix e25c1995aab5833323ee0784402ae7d3318b093e SCM MES regression
+Fixed the backwards modulus
+Various segfaults in the new macro preprocessor
+Fix all special cases where line number was wrong
+
+** Removed
+Removed obsolete bootstrap directory
+Removed need for fixup
+Remove test/common_* files with M2libc transistion
+
+* 1.7 - 2020-11-15
+** Added
+Added common error catch for the declaration of variables inside of loops that usually results in crashes
+Added support for C multi-strings
+
+** Changed
+Changed ELF headers for FreeBSD compatibility
+Changed sha256 function to be more compatible with FreeBSD
+Changed malloc behavior to accept non-exact brk returns
+Changed looping tests to reflect new expected code behavior in regards to variable declaration inside of loops
+
+** Fixed
+Type regression in cc_* compatibility
+Shift behavior to better match C standard
+64bit host behavior in regards to primary_expr_number in knight tests
+GCC 10 compatibility
+
+** Removed
+
+* 1.6 - 2020-04-30
+** Added
+Added test for chdir and getcwd family of posix primitives
+Added fflush stub, for code to match our behavior when compiled with GCC (we don't buffer)
+Added fseek and rewind functions
+
+** Changed
+Updated kaem
+Revised 27 to include dwart stubs
+Restructured tests to enable future growth
+Reengineered M2-Planet to leverage blood-elf v1.0's output format
+
+** Fixed
+AArch64 wasteful stack
+Fixed continue behavior
+Generate fully proper elf output
+
+** Removed
+
+* 1.5 - 2020-02-01
+** Added
+Added support for \a and \b
+Added support for long
+Added support for size_t
+Added support for ssize_t
+Added support for const keyword
+Added support for alternate instructions for signed/unsigned combinations
+Added is_signed data to all types
+Added support for signed multiplication, division and modulus
+Added dist build target
+Added a manpage for M2-Planet
+Added support for nested structs thanks to fosslinux
+Added support for access, chdir and fchdir primitives
+Added AArch64 target (mescc-tools 0.7.0 required), all tests passing but rough on the edges
+Added require support to reduce number of segfaults possible
+Added first pass error checking in primitives
+Added first knight-native cc-minimal.c
+
+** Changed
+Reordered types to prefer longs over unsigned over ints or chars
+Replaced NOP with NULL to better match what it is really ment.
+Enabled large binary support in knight-native
+
+** Fixed
+Typo: Recieved -> Received
+ARMv7l elf-header regression
+Corrected AMD64's xchg rax, rbx into it's proper encoding
+A great deal of typos thanks to Andrius Štikonas
+Regression in numerate_number
+Segfault found in build_member when passed a non-number
+Segfault found in tokenizer
+Segfault in string hexifier
+Enabled skipped cleanup scripts
+Unbalanced { segfaults
+
+** Removed
+Removed bootstrap process as it belongs in mescc-tools-seed instead.
+Removed need for fixup_int32
+Removed unneeded lines in .gitignore
+
+* 1.4 - 2019-06-23
+** Added
+
+** Changed
+Tweaked cc_types.c to better match amd64 assembly
+Replaced out with output_list in cc_core.c
+For 32bit behavior on 64bit platforms
+Replaced generated seed with hand written seed in M1
+
+** Fixed
+
+** Removed
+
+* 1.3 - 2019-04-22
+** Added
+Added port to Knight-Native
+Ported 24/24 working tests for AMD64
+Added support for CONSTANT to leverage sizeof(type)
+
+** Changed
+Added basic verification of the compiled program (kaem) to test25
+Added basic verification of the compiled program (Slow_Lisp) to test26
+Updated from mescc-tools from 0.6.0 to 0.6.1 (To gain support for --64)
+Changed test26 to adust behavior according to struct size
+
+** Fixed
+Corrected Global char* to behave correctly when given a static string
+Ensured pointers match register size
+
+** Removed
+Removed need to hand calculate struct sizes
+
+* 1.2 - 2019-04-14
+** Added
+Added 24/24 working tests for armv7l
+Port to ARMv7l and ARMv6l both work
+
+** Changed
+ELF-code segment now writable for ARMv7l without debug
+Updated from mescc-tools from 0.5.2 to 0.6 (with changes in checksums due to alternate null padding)
+
+** Fixed
+Fixed unsigned division in ARMv7l port
+Fixed non-uniform behavior across locales and *BSDs
+Fixed broken stack in ARMv7l thanks to dddddd
+
+** Removed
+
+* 1.1 - 2019-03-09
+** Added
+Added support for \f, \v and \e
+Added refresh to bootstrap.sh to build seed from cc_x86.s
+Added missing license headers
+Added support for ~expressions
+Added prototype for Slow_Lisp build test
+Added Custom type for mes.h
+Added support for octal and binary numbers
+Added support for \0
+Added support for GET_MACHINE_FLAGS in tests
+Added --architecture flag
+Added 24/24 working tests for knight-posix
+Added working HEAP/malloc to knight-posix
+
+** Changed
+Converted M2-Planet to use GNU style error message
+Seed.M1 when built will now have the same checksum as M2-Planet self-hosted
+Harmonized license headers
+Updated M1 to current version
+Updated hex2 to current version
+Updated get_machine to current version
+Updated to mescc-tools 0.6.0 syntax
+Changed default architecture to knight-native
+Moved x86 specific exit.c and putchar.c to test/common_x86/functions
+Relocated x86 specific libc.M1 to test/common_x86
+Formalized Knight-posix execve standard
+Relocated x86 specific file.c to test/common_x86/functions
+
+** Fixed
+Fixed typo in file headers
+Fixed version number to reflect current version
+Thanks to akkartik several documentation issues were identified and fixed
+Corrected missed license headers
+Fix regression caused by Linux 4.17
+Fixed broken logic comparions for knight-posix
+Fixed CONSTANT logic for knight-posix
+
+** Removed
+Removed redundent x86 definitions
+
+* 1.0 - 2018-08-26
+** Added
+Added more generic logic to lookup_type
+Added prim_types to simply the task of reducing search space to primitives
+
+** Changed
+Reorganized Primitive expression evaluation
+Reorganized Collect_local to better match implementation
+Broke out process_break
+Changed ordering in declare_function to reduce stack operations
+Converted weird_string collection into a simpler form
+Inlined 2 small stubs as breaking them out wouldn't help implementation
+Reordered conditionals for easier implementation and reduced operations
+Broke out OUT and FUNCTION to silence a single GCC warning
+Moved required_match and line_error into cc_core.c and removed required_match.c
+Relocated contents of test/functions to functions
+Upgrades mescc-tools to 40537c0200ad28cd5090bc0776251d5983ef56e3 commit
+Tweaked order for for, while and do loops to make them more in commone
+Tweaked source to better match assembly
+Simplify implementation order of logic
+Simplifed the promote_type logic to a much breifer form
+Broke out generally useful member lookup
+Upgraded seed.M1 to be generated by cc_x86
+
+** Fixed
+Fixed detection of locals to screen out all non-primitive name space collisions
+Checked in updated gcc function definition
+Changed's numerate_number's behavior related to zeros
+Improved error message to help debugging
+Fixed bootstrap.sh to build a working M2-Planet binary
+
+** Removed
+Removed redundent steps in Recursive statement
+Removed several redundent steps in Collect_arguments
+
+* 0.3 - 2018-08-12
+** Added
+Added support for global intializers
+Introduced base offset local and argument load/store
+Added function pointer requirement into M2-Planet
+Added test24 - get_machine
+Added General_Recursion to reduce complexity
+Added uniqueID to purge all code segments that recreate it's functionality
+Added struct Char arrays for structs
+Added in_set to make complex conditional logic into a simple char search
+
+** Changed
+Made String naming 100% deterministic
+Broke up all_expr to simplify any manual implementations
+Cleaned up function calls
+Simplify variable looksup
+Reused a union to reduce globals
+Brought back common recursion
+Reorged logic tree to reduce complexity
+Simplified expression
+Changed EOF detection logic to deal with unsigned bits
+Reduced Memory usage down from 50MB to 2MB
+Simplified Tokenizer logic for easier implementation and understanding
+Simplified program logic
+Significantly reduced weird string detection logic
+Trimmed escape_lookup down to a key core
+Eliminated Several Minor unneeded steps
+
+** Fixed
+Correct bug in how \" is treated
+Clean up of & when && should have been used
+Made test22 for consistent
+Fixed !c->a regression
+Fixed ARM platform build
+Reduced Memory usage per Token to size of string plus fixed padding
+
+** Removed
+Removed need for string copying in M2-Planet
+Wasted steps in stack offsets
+Need for stack relative offsets
+Extra stack walks
+Removed need for current_function
+Removed unused values
+Removed legacy x86 << >> hacks at the cost of more instructions
+
+* 0.2 - 2018-06-21
+** Added
+Added type promotion to allow progress on mes.c
+Add support for anonymous unions inside of structs
+Added support for passing of function pointers via FUNCTION
+Added support for Local functions
+Added support for EOF
+Added additional debug information to M2-Planet
+Added line numbers and files names for errors in parsing to help debug
+Added support for close and fclose
+Added prototype support for chmod
+Added basic support for escape strings
+Added support for continue
+Added string_length function to string.c
+Added function numerate_string for converting string to integer
+Added supporting hex2char, char2hex, dec2char and char2dec functions
+Added support bitwise xor
+Added Blood-elf test
+Added Hex2_linker test
+Added M1-macro test
+Added prototypes to allow functions to be independently built
+Added support for debug format output to help debugging
+Added function specific counters to make output even more deterministic
+Added M1-macro seed to eliminate C compiler dependency for bootstrap
+
+** Changed
+Improving Documentation to help new programmers get functional
+Cleaned up numerate_number to make it more general purpose
+Enabled stand alone builds of calloc
+Unified bitwise operations
+Made string.c more independent
+Created a M1-macro stub file to simplify independent builds
+Created a hex2_linker stub file to simplify independent builds
+Created a blood-elf stub file to simplify independent builds
+
+** Fixed
+Minor cleanup and removal of unneeded whitespace
+Fixed outstanding bug when struct foo* foo and foo->bar was used
+Fixed ":foo bug
+Fixed "\n:foo bug
+Adjusted all previous references to numerate_number to ensure output is consistent
+Fixed up reader so that '\'' and "\"" work correctly now
+fixed "\"" bug in string output generation
+
+** Removed
+Removed need for memset in numerate_number
+Removed minimal build target as it no longer serves a purpose
+Removed independent counters for for, while and if jumps
+
+* 0.1 - 2018-02-23
+** Added
+Added example programs
+Added first generation libc
+Added first generation defs.M1
+added FOR Loop support along with example
+Added support for assembly statements
+Added CONSTANT to the language
+Added support for <. >= and > expressions
+Added struct support
+Added unary - and ! support
+Added additional functionality such as mixed structs, do while loops, gotos and tests for the new functionality
+Incorporate breaks into loops
+Became Self-Hosting
+
+** Changed
+Tweaked argument processing to help mescc support
+Isolated global_token to cc.c
+Moved strings to the bottom of the output
+Broke out globals
+Started to move type information out of hard-coded logic
+Started adding tests instead of examples
+Put common x86 platform logic in a shared folder to reduce duplicate code
+Converted from legacy M2-Planet Input.c Output.c to M2-Planet -f input.c ... -f
+Minor reordering of tests
+
+** Fixed
+expanded type support to include integer arrays
+Reduced the memory churn in string creation
+fixed Capitalization problems
+
+** Removed
+Removed need for enum in bootstrapping
+Removed need for global output list
+Eliminated the global stack
+Reduced library dependencies
+
+* 0.0 - 2017-07-05
+** Added
+Added minimal tokenizer
+Added minimal string support
+Added minimal parser
+
+** Changed
+
+** Fixed
+
+** Removed

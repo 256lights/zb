@@ -1,0 +1,76 @@
+## Copyright (C) 2020 deesix <deesix@tuta.io>
+## This file is part of M2-Planet.
+##
+## M2-Planet is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## M2-Planet is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with M2-Planet.  If not, see <http://www.gnu.org/licenses/>.
+
+:_start
+	INIT_SP
+	LDR_X0_[SP]
+	ADD_X1_SP_8
+	SET_BP_FROM_SP
+	PUSH_X0
+	PUSH_X1
+	SET_X1_TO_2
+	ADD_X0_X1_X0
+	SET_X1_TO_8
+	MUL_X0_X1_X0
+	ADD_X0_BP_X0
+	PUSH_X0
+
+	;; Setup for _envp
+	LOAD_W1_AHEAD
+	SKIP_32_DATA
+	&GLOBAL__envp
+	STR_X0_[X1]
+
+	;; Setup for malloc
+	LOAD_W16_AHEAD
+	SKIP_32_DATA
+	&FUNCTION___init_malloc
+	BLR_X16
+
+	;; Setup for FILE*
+	LOAD_W16_AHEAD
+	SKIP_32_DATA
+	&FUNCTION___init_io
+	BLR_X16
+
+	;; Call main
+	LOAD_W16_AHEAD
+	SKIP_32_DATA
+	&FUNCTION_main
+	BLR_X16
+
+	POP_X1
+	POP_X1
+	POP_X1
+	PUSH_X0                     ; Put return on the stack
+	PUSH_X0                     ; So that _exit has it
+	PUSH_X0                     ; So that _exit has it
+
+:FUNCTION_exit
+	LOAD_W16_AHEAD
+	SKIP_32_DATA
+	&FUNCTION___kill_io
+	BLR_X16
+
+:FUNCTION__exit
+	SET_X0_FROM_BP
+	SUB_X0_8
+	DEREF_X0
+	SET_X8_TO_SYS_EXIT
+	SYSCALL
+
+:GLOBAL__envp
+	NULL

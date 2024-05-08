@@ -1,0 +1,58 @@
+.\"Made with Love
+.TH kaem 1 "JULY 2019" Linux "User Manuals"
+.SH NAME
+
+kaem - Like running with scissors but shell scripts without a shell
+
+.SH SYNOPSIS
+.na
+
+kaem [--file FILE --strict --verbose --nightmare-mode]
+
+.SH DESCRIPTION
+
+kaem exists to be the most minimal shell needed in the bootstrap
+processes; that has the ability to function as an init
+thus allowing the bootstrap to occur with only itself and a
+hex0 assembler as the only binaries running on the system.
+.br
+
+At its core is read a line (except when the line is terminated
+with a '\\', when it is read the next line too) and then collect
+the arguments into an array, lookup the program in the path
+provided by the name or if not found in the ENVIRONMENT and
+then execute the program with the specified options.
+
+.br
+If no filename is passed, it then attempts to execute a file
+called kaem.run; which is the standard name for kaem scripts.
+If you wish for kaem to stop when one of the lines throws or
+returns an error code, simply add --strict. If you wish to
+see what is being executed, simply add --verbose. If you
+hate dealing with an environment and want to eliminate it
+entirely --nightmare-mode.
+
+.SH EXAMPLES
+
+Typically, kaem will be in running scripts used in bootstrapping
+.br
+# kaem --verbose --strict
+.br
+# kaem -f bootstrap.sh --nightmare-mode
+.br
+
+.SH COMPATIBILITY
+
+kaem is compatible with all Turing complete machines;
+even the ones that try to be Turing complete -1
+
+.SH AUTHORS
+Jeremiah Orians <Jeremiah@pdp10.guru>
+
+.SH COPYRIGHT
+Copyright 2016-2019 Jeremiah Orians <Jeremiah@pdp10.guru>
+.br
+License GPLv3+.
+
+.SH "SEE ALSO"
+M1(1), hex2(1), blood-elf(1), get_machine(1), syscalls(2)

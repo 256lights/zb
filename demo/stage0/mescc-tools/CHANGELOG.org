@@ -1,0 +1,421 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of mescc-tools
+##
+## mescc-tools is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## mescc-tools is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with mescc-tools.  If not, see <http://www.gnu.org/licenses/>.
+
+* Current
+** Added
+
+** Changed
+
+** Fixed
+
+** Removed
+
+* 1.5 - 2023-07-20
+** Added
+Add UEFI support for spawning new processes.
+
+** Changed
+Kaem now sets the SHELL variable if it doesn't exist
+Kaem now checks environment variable length before using strcpy.
+
+** Fixed
+Fixed makefile make call for kaem
+Fixed kaem so it now handles cases when the alias name is longer than the command
+Fixed M1 quoted DEFINES
+Hex2 added support signed and unsigned range_check behavior
+M1 added support for signed and unsigned range_check behavior
+Fix bug where unset removes the first environment variable when a token value is NULL.
+Fixed several kaem segfaults that could occur on UEFI systems
+
+** Removed
+Hex2 removed support for the flags: --BigEndian, --LittleEndian, --exec_enable and --BaseAddress
+M1 removed support for the flags: --BigEndian and --LittleEndian
+
+* 1.4 - 2022-05-01
+** Added
+Added exec support to kaem
+Added if/else conditionals to kaem
+Add support for aliases in kaem
+Added --hex2 and --endian flags to get_machine
+Kaem now returns more specific messages based on waitpid's status
+Kaem added --show-exit-codes flag to enable seeing exit codes for subprocesses
+
+** Changed
+Kaem now places space between echo tokens
+Kaem now also terminates commands with ;
+Kaem now is strict by default and you need to pass --non-strict to revert to old behavior
+
+** Fixed
+Various typos
+Fix extracting exit status of completed programs in kaem
+Catch get_machine's --override segfault
+
+** Removed
+Remove unused getopt include from blood-elf
+
+* 1.3 - 2021-10-03
+** Added
+Hex2 support for RISC-V
+M1 support for RISC-V
+Blood-elf support for RISC-V
+
+** Changed
+clean up $@ behavior for kaem
+ *MAJOR BREAKING CHANGE* make Blood-elf require --little-endian or --big-endian flag to be used (commit db4a332418e7fe5033b2836c9f355f076df325df)
+
+** Fixed
+Make changing PATH within a kaem script actually change the PATH
+Multiple typos in hex2 and M1
+Correct e_entry behavior for elf example headers
+Make kaem behave correctly when given a NULL envp
+Make kaem behave correctly when given an empty envp
+
+** Removed
+Removed High level prototypes for hex1, hex2 and M0
+
+* 1.2 - 2021-06-09
+** Added
+netBSD support for tests
+FreeBSD support for test
+FreeBSD support for generated binaries
+Implemented Hash table to speed up M1
+Add aligned addressing for AArch64
+Produce meaningful warning message when users are not generating ROM images
+Produce warning for potentially wrong endianess
+Use hash table for hex2 jump table
+Add proper escaping support to kaem
+Adding baseline support for ppc64le in hex2
+Add ppc64le support to M1
+Add minimal PPC64LE test for M1+hex2
+Add RISC-V support to hex2_linker
+Add RISC-V support to M1
+Add --blood flag to get_machine to simplify the process of getting blood-elf flags during bootstrap
+Added variable expansion collapse support
+
+** Changed
+Inherrit CFLAGS in kaem makefile
+Changed M1 to leverage O(1) macro application
+Pulled all variable initialization outside of loops to fix M2-Planet compatibility
+Broke kaem tests into individual commands
+Close files that were fopen'ed
+Harmonize get_machine flags to support --os and depreciate --OS
+Replace file_print with more C standard compliant fputs
+Harmonized on ELF header numbers for architecture numbering
+
+** Fixed
+Fixed makefiles so guix is able to build
+Fixed kaem 32bit regression.
+Spelling mistakes
+GCC 10 Compatibility issue
+Behavior of kaem --strict in regards to blank lines
+Missing makefile dependencies on get_machine
+catm stopped reading past the end of argv
+Added missing test and made add_envar update
+Fix kaem overwriting environment variables
+Make kaem test14 not locale specific
+Fixed build failure caused by export LANGUAGE=nl_BE:nl
+Disable attempting to run Linux binaries on non-Linux hosts
+Make overly long atoms have a useful error message
+
+** Removed
+Remove kaem.run in Kaem/
+Finish eliminating all functions outside of M2libc
+
+* 1.0 - 2020-05-01
+** Added
+Added builtin cd into kaem
+Added builtin set into kaem
+Added builtin pwd into kaem
+Added working variable substitution into kaem
+Added kaem subtests
+Seperate kaem makefile
+Added fuzzing argument to kaem to prevent damage during fuzzing
+
+** Changed
+Prevent buffer overflows in kaem
+Made hex2 argument names more standard
+Made M1 argument names more standard
+Moved kaem and its tests into a seperate directory
+
+** Fixed
+kaem behavior in regards to failing execve
+kaem segfaults from messy inputs caught
+Multiple segfaults found from fuzzing
+Fixed kaem truncation bug
+Got kaem to run properly on armv7l
+
+** Removed
+
+* 0.7 - 2020-01-30
+** Added
+Added support for AMD64 dwarf footers in blood-elf via --64
+Added hex0 for i386 in NASM, M1 and hex0
+Added hex1 for i386 in NASM, M1, hex1 and hex0
+Added first generation AARCH64 elf header
+Added hex2 for i386 in NASM, M1, hex2 and hex1
+Added M0 for i386 in NASM, M1 and hex2
+Added catm for i386 in NASM, M1 and hex0
+Added support for EOF in line comments in hex2 and M1; thanks to markjenkins
+Added prototype M1 Manpage
+Added prototype hex2 Manpage
+Added prototype blood-elf Manpage
+Added prototype kaem Manpage
+Added prototype get_machine Manpage
+Added cc_x86 for AMD64 in NASM and M1
+Added cc_x86 for x86 in NASM and M1
+Added cc_amd64 for AMD64 in NASM and M1
+Added cc_amd64 for x86 in NASM and M1
+
+** Changed
+
+** Fixed
+Removed duplicate in kaem's help
+Fixed regression in M1 in regards to knight null padding
+Removed a series of segfaults
+
+** Removed
+
+* 0.6 - 2019-04-14
+** Added
+Added template ELF headers for ARM
+Added initial support for ARM
+Added official hex0 seed for AMD64
+Added official hex1 seed for AMD64
+Added support for <Number null padding in M1 files
+Added support for < alignment padding
+Added support for ^!label, ^@label and ^%label alignment calculations
+Added standard line error messages to hex2-linker
+Added standard line error messages to M1-macro
+Added --exact and --override to get_machine
+Added GET_MACHINE_FLAGS variable to tests to allow overriding
+Backported M2-Planet's support for Octal and binary
+Added support for *BSDs to test the results of the build using sha256.sh (thanks to ng0)
+Added official hex2 seed for AMD64
+Added NASM versions of AMD64 bootstrap pieces for improve introspection of bootstrap
+Added kaem.run script supporting intial phase of AMD64 bootstrap
+Added catm C prototype to eliminate the dependency on cat and the shell supporting >
+Added catm NASM prototype to simplify build
+Added catm M1 prototype to reduce bootstrap dependency
+Added catm hex0 prototype to eliminate bootstrap dependencies down to hex0
+Added M0 NASM prototype to simplify build
+Added M0 M1 prototype to reduce bootstrap dependency
+Added M0 hex2 prototype to eliminate bootstrap dependencies down to hex2
+Verified ARM port to support M2-Planet
+
+** Changed
+Updated build.sh and kaem.run to the current mescc-tools syntax
+Reduced get_machine's build dependencies
+Cleaned up x86 elf headers
+Removed kaem's dependence on getopt
+Replaced --Architecture with --architecture
+changed get_machine's default output to filter machine names into known families
+Reduced M1 null padding of strings to a single null for all architectures except Knight
+Updated AMD64 bootstrap kaem.run to include steps from hex0 to M0
+
+** Fixed
+Fixed broken test9 thanks to janneke
+Fixed wrong displacement calculations for ARM immediates
+Fixed typo in license header
+Fixed kaem.run to actually function and produce identical results
+Fixed regression caused by linux 4.17
+Removed false newline added in numerate_number for zero case
+Fixed broken bootstrap script
+
+** Removed
+Removed final dependency on getopt
+Removed need to know architecture numbers as that was a bad idea
+
+* 0.5 - 2018-06-15
+** Added
+Added INSTALL notes
+Added HACKING notes
+Added examples of minimal Hex1, Hex2 and M1-macro programs that may need to be
+written to bootstrap a particular architecture.
+Added useful functions to reduce bootstrap dependencies
+Added support for binary output in M1-macro
+
+** Changed
+Changed Knight architecture offset calculation to match new standard
+Updated test3 lisp.s to include more functionality
+Updated test3 definitions file to reflect changes in Knight instruction encoding
+enhanced README to be more useful
+Pulled numerate_string functionality out of hex2 and M1 into a shared library
+Eliminated getopt from M1-Macro, hex2-linker and blood-elf; use --Architecture 1 instead of --Architecture=1
+
+** Fixed
+Corrected M1-macro incorrectly expressing negative numbers
+Updated test3 checksum to reflect new version of lisp.s
+fixed check.sh to actually perform all checks.
+Fixed build.sh to function in a self-hosting fashion
+
+** Removed
+Removed blood-elf's dependency on getopt
+Removed C preprocessor macro from blood-elf needed for mescc support
+Removed hex2's dependency on getopt
+Removed C preprocessor macro from hex2 needed for mescc support
+Removed need for octal support in the building of hex2
+Removed M1's dependency on getopt
+Removed C preprocessor macro from M1 needed for mescc support
+Removed need for sprintf from M1
+
+* 0.4 - 2018-02-24
+** Added
+Added file checks to reduce the number of error messageless faults
+Added a current generation M1.M1 file as a test for mescc-tools
+Added prototype kaem build script
+M1-macro now catches undefined macros to allow easier troubleshooting
+Added kaem build tool
+Added ability to track build progress in kaem
+Added support for line escapes in kaem
+Added support for --strict in kaem to halt in the event of errors
+Added selectable script file support in kaem
+Added support for PATH search to kaem with fallbacks in the event of NULL environments
+
+** Changed
+flipped blood-elf from ignoring :: to :_
+converted test8 into a full test
+Added bash style line comments to kaem
+Added support for raw strings to kaem
+Stopped showing comment lines in kaem --verbose
+Removed dependence on getenv to have more control over environmental lookup
+
+** Fixed
+Fixed stack overflow bug caused by too deeply nested recursion by transforming into iteration
+Fixed default repo to point to current repo
+Added missing license header to kaem.c
+Fixed infinite looping in kaem scripts that hit an error that resets the file descriptor
+
+** Removed
+Removed need for strtol
+Removed need for a global variable in M1-Macro
+Removed legacy functions from kaem
+
+* 0.3 - 2017-12-01
+** Added
+Incorporated a hex0 test which implements hex1 functionality
+Added --output and --exec_enable options to hex2
+Added --output option to M1
+
+Wrote Hex1 in Hex0 for AMD64/ELF
+Added the ability to specify an output file
+Added exec_enable to allow the arbitrary setting of executable bits
+Added get_machine to enable better scripting
+Incorporated janneke's build scripts
+Added a test to test for unusual nybble and byte order/formatting issues
+Added blood-elf to generate elf footer capable of being used by objdump
+
+** Changed
+Renamed MESCC_Tools to mescc-tools to harmonize with guix package name
+
+Now all tests will be architecture specific
+Modified sprintf to behave correctly for negative numbers
+Converted blood-elf to read M1-macro input and output M1-macro output
+replaced uint with unsigned to better match the standard
+Harmonized MAXSTRING to 4096bytess
+
+** Fixed
+
+Incorporated janneke's patchs to fix mescc compatibility
+Fixed test on ARM platforms
+Fixed range check to behave correctly with unsigned ints
+
+** Removed
+Removed the need to redirect hex2 output into a file
+Removed the need for chmod u+x in development paths
+Removed the need to redirect M1 output into a file
+Removed the need for chmod entirely from bootstrap path
+
+Removed dependency on shell supporting redirects
+Removed need for stdint and stdbool
+Removed need for enum support
+Removed need for strtol in M1-macro
+
+* 0.2 - 2017-07-25
+** Added
+created test2 (a 32bit x86 hex assembler) with its associated build and test changes
+Fixed proof answers for test1 and test2
+Added support to M0 for multiple architectures
+Added range checking into M0 to make sure immediates will fit into specified space
+Added a basic tutorial for generating new M0 definitions
+Created a M1 compatible version of test0
+Added an amd64 program for enabling execute bits (might need to later alter the 0777)
+Added an i386 program for enabling execute bits (might need to later alter the 0777)
+Added rain1's improvements to gcc flags
+Added rain1's stack reduction recommendations
+Incorporated an AMD64/elf hex1 example program as a test
+Incorporated Test7 into make test and make clean flows
+
+** Changed
+Adjusted tags to reflect current CHANGELOG
+Make test now depends upon test2 completing
+Changed how M0 processes input to reduce stack usage and improve performance
+Renamed M0 to M1 to reflect the additional functionality it provides
+Applied Janneke's patch for accepting hex numerics in M1
+Refactored x86/amd64 elf headers to a standard to avoid duplication
+Standardized C flags for compiling M1 and Hex2
+Made eval_immediates iterative instead of recursive
+Made identify_macros iterative instead of recursive
+Made process_string iterative instead of recursive
+Made preserve_other iterative instead of recursive
+Made print_hex iterative instead of recursive
+Incremented version numbers for hex2 and M1
+Updated guix.scm to match the new version and finish the release
+Converted guix.scm definition for mescc_tools to use uri method instead of git
+
+** Fixed
+Removed unrequired temp file in test1
+Clarified meaning of Label>base displacement conditional
+Corrected error in test0 elf32
+Test1 and Test2 to reflect the fact that /bin/bash doesn't exist in guix
+Fixed M0 regression to continue to support original test code
+Corrected makefile and build scripts to reflect rename
+Modified test make scripts to reflect new standard elf headers
+Fixed base address needed by test5 and its associated checksum
+Harmonized flags for displaying version with standard
+
+** Removed
+Removed bashisms from Test1 and Test2 to allow proper behavior on debian based systems
+Removed alerting on missing files in cleanup target
+Removed massive M0 Definition lists as they don't serve a useful purpose
+
+* 0.1 - 2017-06-25
+** Added
+Incorporated support for little Endian output format in hex2
+Incorporated support for multiple input files in hex2
+Added range checking for Hex2
+Added support for 1 and 4 byte relative displacements
+Added Hex2 Test
+Added the ability to specify a new base address
+Added example M0 x86 opcode definitions
+Incorporated support for multiple input files in M0
+Added support for little Endian immediate output in M0
+Added Hex assembler example test
+Added support for Label>base in Hex2
+Added Version info
+Added install target
+Added inital guix package definition
+
+** Changed
+Displacement calculations are now based on architecture specific rules
+M0 Immediates now need prefixes to specify the storage space to use for the immediate
+
+** Fixed
+Behavior regarding !label displacements
+
+** Removed
+
+* 0.0 - 2017-05-10
+Initial release of MESCC Tools from stage0 High Level prototypes

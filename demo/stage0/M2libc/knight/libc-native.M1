@@ -1,0 +1,41 @@
+## Copyright (C) 2016 Jeremiah Orians
+## This file is part of M2-Planet.
+##
+## M2-Planet is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## M2-Planet is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with M2-Planet.  If not, see <http://www.gnu.org/licenses/>.
+
+:_start
+	; Setup initial stack pointer
+	LOADR R15 4
+	JUMP 4
+	&STACK
+
+	LOADR32 R12 @HEAP           ; Setup HEAP pointer
+	ADD R12 R12 R15             ; After Stack
+
+	; Setup initial base pointer
+	COPY R14 R15
+
+	; Perform the main loop
+	LOADR R0 4
+	JUMP 4
+	&FUNCTION_main
+	CALL R0 R15
+
+:FUNCTION_exit
+:FUNCTION__exit
+	HALT                        ; Stop the machine
+
+	;; Our default heap pointer (offset from start of stack)
+:HEAP
+	'00100000'

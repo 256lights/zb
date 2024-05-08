@@ -1,0 +1,46 @@
+## Copyright (C) 2016 Jeremiah Orians
+## This file is part of M2-Planet.
+##
+## M2-Planet is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## M2-Planet is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with M2-Planet.  If not, see <http://www.gnu.org/licenses/>.
+
+:_start
+
+	mov_ebp,esp                 ; Protect esp
+
+	;; Prepare argv
+	lea_eax,[ebp+DWORD] %4      ; ARGV_address = EBP + 4
+	push_eax                    ; Put argv on the stack
+
+	;; Prepare envp
+	mov_eax,ebp                 ; Address we need to load from
+	mov_eax,[eax]               ; Get ARGC
+	add_eax, %2                 ; OFFSET = ARGC + 2
+	sal_eax, !2                 ; OFFSET = OFFSET * WORDSIZE
+	add_eax,ebp                 ; ENVP_address = ESP + OFFSET
+	push_eax                    ; Put envp on the stack
+
+	;; Stack offset
+	add_ebp, %4                 ; Fix ebp
+
+	;; Perform the main loop
+	call %FUNCTION_main
+	push_eax                    ; Put return on stack
+	push_eax                    ; so that _exit gets the value
+
+	;; Exit to kernel
+:FUNCTION_exit
+:FUNCTION__exit
+	mov_ebx,eax                 ; Using the return code given by main
+	mov_eax, %1                 ; Syscall exit
+	int !0x80                   ; Exit with that code

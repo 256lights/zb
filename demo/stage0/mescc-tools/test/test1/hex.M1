@@ -1,0 +1,195 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of stage0.
+##
+## stage0 is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## stage0 is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with stage0.  If not, see <http://www.gnu.org/licenses/>.
+
+DEFINE ADD_RAX_R14 4C01F0
+DEFINE CMP_RAX_Immediate8 4883F8
+DEFINE CMP_R15_Immediate8 4983FF
+DEFINE JE8 74
+DEFINE JNE8 75
+DEFINE JGE8 7D
+DEFINE JE32 0F84
+DEFINE JL8 7C
+DEFINE JMP8 EB
+DEFINE JMP32 E9
+DEFINE LOAD32I_RDX 48C7C2
+DEFINE LOAD32I_RSI 48C7C6
+DEFINE LOAD32I_RDI 48C7C7
+DEFINE LOAD32I_RAX 48C7C0
+DEFINE LOAD32I_R14 49C7C6
+DEFINE LOAD32I_R15 49C7C7
+DEFINE LOAD8_al_Absolute32 8A0425
+DEFINE STORE8_al_Absolute32 880425
+DEFINE SYSCALL 0F05
+DEFINE SHL_R14_Immediate8 49C1E6
+DEFINE TEST_RAX_RAX 4885C0
+DEFINE MOVE_R14_RAX 4989C6
+DEFINE MOVZBQ_RAX_AL 480FB6C0
+DEFINE RETQ C3
+DEFINE SUB_RAX_Immediate8 4883E8
+DEFINE CALLI32 E8
+DEFINE NULL 00000000
+
+# Where the ELF Header is going to hit is :_start
+
+:hex
+	# Purge Comment Lines (#)
+	CMP_RAX_Immediate8 !35
+	JE8 !purge_comment
+
+	# Purge Comment Lines (;)
+	CMP_RAX_Immediate8 !59
+	JE8 !purge_comment
+
+	# deal all ascii less than '0'
+	CMP_RAX_Immediate8 !48
+	JL8 !ascii_other
+
+	# deal with 0-9
+	CMP_RAX_Immediate8 !58
+	JL8 !ascii_num
+
+	# deal with all ascii less than 'A'
+	CMP_RAX_Immediate8 !65
+	JL8 !ascii_other
+
+	# deal with 'A'-'F'
+	CMP_RAX_Immediate8 !71
+	JL8 !ascii_high
+
+	# deal with all ascii less than 'a'
+	CMP_RAX_Immediate8 !97
+	JL8 !ascii_other
+
+	#deal with 'a'-'f'
+	CMP_RAX_Immediate8 !103
+	JL8 !ascii_low
+
+	# The rest that remains needs to be ignored
+	JMP8 !ascii_other
+
+:purge_comment
+	# Attempt to read 1 byte from STDIN
+	LOAD32I_RDX %1              # set the size of chars we want
+	LOAD32I_RSI &input          # Where to put it
+	LOAD32I_RDI %0              # Where are we reading from
+	LOAD32I_RAX %0              # the syscall number for read
+	SYSCALL                     # call the Kernel
+
+	TEST_RAX_RAX                # check what we got
+	JE32 %Done                  # Got EOF call it done
+
+	# load byte
+	LOAD8_al_Absolute32 &input  # load char
+	MOVZBQ_RAX_AL               # We have to zero extend it to use it
+
+	# Loop if not LF
+	CMP_RAX_Immediate8 !10
+	JNE8 !purge_comment
+
+	# Otherwise return -1
+	LOAD32I_RAX %-1
+	RETQ
+
+:ascii_num
+	SUB_RAX_Immediate8 !48
+	RETQ
+
+:ascii_low
+	SUB_RAX_Immediate8 !87
+	RETQ
+
+:ascii_high
+	SUB_RAX_Immediate8 !55
+	RETQ
+
+:ascii_other
+	LOAD32I_RAX %-1
+	RETQ
+
+# Our main function
+:_start
+	# Our flag for byte processing
+	LOAD32I_R15 %-1
+
+	# temp storage for the sum
+	LOAD32I_R14 %0
+
+:loop
+	# Attempt to read 1 byte from STDIN
+	LOAD32I_RDX %1              # set the size of chars we want
+	LOAD32I_RSI &input          # Where to put it
+	LOAD32I_RDI %0              # Where are we reading from
+	LOAD32I_RAX %0              # the syscall number for read
+	SYSCALL                     # call the Kernel
+
+	TEST_RAX_RAX                # check what we got
+	JE8 !Done                   # Got EOF call it done
+
+	# load byte
+	LOAD8_al_Absolute32 &input  # load char
+	MOVZBQ_RAX_AL               # We have to zero extend it to use it
+
+	# process byte
+	CALLI32 %hex
+
+	# deal with -1 values
+	CMP_RAX_Immediate8 !0
+	JL8 !loop
+
+	# deal with toggle
+	CMP_R15_Immediate8 !0
+	JGE8 !print
+
+	# process first byte of pair
+	MOVE_R14_RAX
+	LOAD32I_R15 %0
+	JMP8 !loop
+
+# process second byte of pair
+:print
+	# update the sum and store in output
+	SHL_R14_Immediate8 !4
+	ADD_RAX_R14
+	STORE8_al_Absolute32 &output
+
+	# flip the toggle
+	LOAD32I_R15 %-1
+
+	# Print our Hex
+	LOAD32I_RDX %1              # set the size of chars we want
+	LOAD32I_RSI &output         # What we are writing
+	LOAD32I_RDI %1              # Stdout File Descriptor
+	LOAD32I_RAX %1              # the syscall number for write
+	SYSCALL                     # call the Kernel
+
+	JMP8 !loop
+
+:Done
+	# program completed Successfully
+	LOAD32I_RDI %0              # All is well
+	LOAD32I_RAX %60             # put the exit syscall number in rax
+	SYSCALL                     # Call it a good day
+
+# Where we are putting our output
+:output
+	# Reserve 4bytes of Zeros
+	NULL
+# Where we get our input
+:input
+	# Reserve 4bytes of Zeros
+	NULL
+
+:ELF_end

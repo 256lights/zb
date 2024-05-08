@@ -1,0 +1,119 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of stage0.
+##
+## stage0 is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## stage0 is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with stage0.  If not, see <http://www.gnu.org/licenses/>.
+
+:_start
+PUSH_ebp
+MOVE_esp_To_ebp
+SUB_Immediate8_From_esp !64
+CALLI32 %main
+
+ADD_Immediate8_To_esp !0
+STORE_eax_To_ebp_offset8 !-4
+
+# exit(r);
+PUSH_ebp_offset8 !-4
+CALLI32 %exit
+ADD_Immediate8_To_esp !4
+TEST_eax_eax
+LEAVE
+RETURN
+
+:_env
+PUSH_ebp
+MOVE_esp_To_ebp
+SUB_Immediate8_From_esp !64
+LOAD_eax_From_ebp_offset8 !8
+LEAVE
+RETURN
+
+:exit
+PUSH_ebp
+MOVE_esp_To_ebp
+SUB_Immediate8_From_esp !64
+LOAD_ebx_From_ebp_offset8 !8
+LOADI32_eax %1
+INT_80
+LEAVE
+RETURN
+
+:write
+PUSH_ebp
+MOVE_esp_To_ebp
+SUB_Immediate8_From_esp !64
+LOAD_ebx_From_ebp_offset8 !8
+LOAD_ecx_From_ebp_offset8 !12
+LOAD_edx_From_ebp_offset8 !16
+LOADI32_eax %4
+INT_80
+LEAVE
+RETURN
+
+:strlen
+# while (s[i]) ...
+PUSH_ebp
+MOVE_esp_To_ebp
+SUB_Immediate8_From_esp !64
+STORE_To_ebp_offset8_Immediate32 !-4 %0
+JUMP32 %strlen_1
+:strlen_0
+LOAD_eax_From_ebp_offset8 !-4
+ADD_To_ebp_offset8_Immediate8 !-4 !1
+TEST_eax_eax
+:strlen_1
+LOAD_eax_From_ebp_offset8 !-4
+COPY_edx_To_eax
+LOAD_edx_From_ebp_offset8 !8
+ADD_eax_To_edx
+LOAD8_eax_From_eax_pointer
+TEST_eax_eax
+TEST_eax_eax
+TEST_al_al
+JZ8 !strlen_2
+JUMP32 %strlen_0
+:strlen_2
+LOAD_eax_From_ebp_offset8 !-4
+LEAVE
+RETURN
+
+:eputs
+PUSH_ebp
+MOVE_esp_To_ebp
+SUB_Immediate8_From_esp !64
+PUSH_ebp_offset8 !8
+CALLI32 %strlen
+ADD_Immediate8_To_esp !4
+STORE_eax_To_ebp_offset8 !-4
+# write(2, s, i);
+
+PUSH_ebp_offset8 !-4
+PUSH_ebp_offset8 !8
+LOADI32_eax %2
+PUSH_eax
+CALLI32 %write
+ADD_Immediate8_To_esp !12
+TEST_eax_eax
+LOADI32_eax %0
+LEAVE
+RETURN
+
+#.data
+
+:g_stdin
+'00 00 00 00'
+
+:g_environment
+'00 00 00 00'
+

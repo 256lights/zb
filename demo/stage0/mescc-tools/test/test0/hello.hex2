@@ -1,0 +1,54 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of stage0.
+##
+## stage0 is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## stage0 is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with stage0.  If not, see <http://www.gnu.org/licenses/>.
+
+## stage0's hex2 format for x86
+##    !<label>          1 byte relative
+##    $<label>          2 byte address
+##    @<label>          2 byte relative
+##    %<label>          4 byte relative
+##    &<label>          4 byte address
+##    label_<label>     function-local
+##    string_<count>    string
+##
+
+#.text
+
+:main
+55 89 e5 83 ec 40
+# eputs("Hello, Mescc!\n");
+
+68 &string_0
+e8 %eputs 83 c4 04
+85 c0
+b8 2a 00 00 00
+c9 c3
+
+#.data
+
+:g_environment
+00 00 00 00
+
+:g_stdin
+00 00 00 00
+
+:g_stdout
+00 00 00 00
+
+:string_0
+48 65 6c 6c 6f 2c 20 4d 65 73 63 63 21 0a 00
+
+:ELF_end
+

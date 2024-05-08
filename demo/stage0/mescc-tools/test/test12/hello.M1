@@ -1,0 +1,66 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of mescc-tools.
+##
+## mescc-tools is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## mescc-tools is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with mescc-tools.  If not, see <http://www.gnu.org/licenses/>.
+
+DEFINE SYSCALL_ALWAYS 000000EF
+DEFINE LOADI_ALWAYS A0E3
+DEFINE ADDI_PC_ALWAYS 8FE2
+DEFINE SUBI_ALWAYS 40E2
+DEFINE MOVE_ALWAYS A0E1
+DEFINE CMPI_ALWAYS 50E3
+DEFINE BNE 1A
+DEFINE BL_ALWAYS EB
+DEFINE LOADB_FROM_R1_ALWAYS D1E5
+DEFINE STOREB_TO_R1_ALWAYS C1E5
+DEFINE R0 0
+DEFINE R1 1
+DEFINE R2 2
+DEFINE R3 3
+DEFINE R7 7
+DEFINE R14 E
+DEFINE PC F
+
+:_start
+:main
+^~print BL_ALWAYS
+!string1 R1 '0' ADDI_PC_ALWAYS
+!0 R0 '0' LOADB_FROM_R1_ALWAYS
+!1 R0 R0 SUBI_ALWAYS
+!0 R0 '0' STOREB_TO_R1_ALWAYS
+!0 R0 '0' CMPI_ALWAYS
+^~main BNE
+
+;; Exit returning success
+!0 R0 '0' LOADI_ALWAYS
+!1 R7 '0' LOADI_ALWAYS
+SYSCALL_ALWAYS
+
+
+<
+:print
+;; Print our char
+!1 R0 '0' LOADI_ALWAYS
+!string1 R1 '0' ADDI_PC_ALWAYS
+!1 R2 '0' LOADI_ALWAYS
+!4 R7 '0' LOADI_ALWAYS
+SYSCALL_ALWAYS
+'0' R14 PC '0' MOVE_ALWAYS
+
+:ELF_data
+<10
+<
+:string1
+'FF00'
+<

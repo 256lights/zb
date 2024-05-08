@@ -1,0 +1,137 @@
+# SPDX-FileCopyrightText: 2022 Jeremiah Orians
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+:PE32_base
+# DOS MZ header
+4D 5A                           # Signature
+00 00                           # Number of bytes in the last page.
+00 00                           # Number of whole/partial pages
+00 00                           # Number of entries in the relocation table.
+00 00                           # Header size
+00 00                           # Minimum allocation
+00 00                           # Maximum allocation
+00 00                           # Relocatable segment address for SS
+00 00                           # Initial value for SP
+00 00                           # Checksum (I don't think is looked at)
+00 00                           # Initial value for IP (Seems ignored)
+00 00                           # Relocatable segment address for CS (Seems ignored)
+00 00                           # The (absolute) offset to the relocation table.
+00 00                           # Value used for overlay management. If zero, this is the main executable
+00 00 00 00 00 00 00 00         # Reserved in PE
+00 00                           # OEM identifier
+00 00                           # OEM info
+00 00 00 00 00 00 00 00 00 00   # The required reserved 20 bytes of NULLS
+00 00 00 00 00 00 00 00 00 00
+40 00 00 00                     # Starting address of the PE header
+
+# [0x40]
+:PE_header
+50 45 00 00                     # Signature "PE"
+64 86                           # Machine
+01 00                           # number of sections
+00 00 00 00                     # Timestamp supposedly
+00 00 00 00                     # PointerToSymbolTable
+00 00 00 00                     # number of symbols
+@OptionalHeader_end>PE_header   # SizeOfOptionalHeader
+00 00                           # 'Characteristics'
+
+# [0x58]
+# COFF header bits
+0B 02                           # Magic PE32+ (64 bit)
+00 00                           # Linker version
+00 00 00 00                     # size of code
+00 00 00 00                     # sizeOfInitializedData
+00 00 00 00                     # SizeOfUninitializedData
+00 10 00 00                     # AddressOfEntryPoint
+00 00 00 00                     # BaseOfCode
+00 00 00 00 00 00 00 00         # ImageBase
+01 00 00 00                     # SectionAlignment
+01 00 00 00                     # FileAlignment
+00 00 00 00                     # OperatingSystemVersion
+00 00 00 00                     # ImageVersion
+00 00 00 00                     # SubsystemVersion
+00 00 00 00                     # Win32VersionValue
+00 00 10 00                     # SizeOfImage
+%PE32_text>PE32_base            # SizeOfHeaders
+00 00 00 00                     # CheckSum (isn't used at all)
+0A 00                           # Subsystem
+00 00                           # DllCharacteristics
+00 00 00 00                     # SizeOfStackReserve
+00 00 00 00                     # SizeOfStackCommit
+00 00 00 00                     # SizeOfHeapReserve
+00 00 00 00                     # SizeOfHeapCommit
+00 00 00 00                     # LoaderFlags
+00 00 00 00                     # NumberOfRvaAndSizes
+
+# [0xB8]
+# Data directories (has to be 16 entries always 16bytes per entry)
+00 00 00 00                     # Export Table
+00 00 00 00                     # Size of Export Table
+
+00 00 00 00                     # Import Table
+10 00 00 00                     # Size of Import Table
+
+00 00 00 00                     # Resource Table
+00 00 00 00                     # Size of Resource Table
+
+00 00 00 00                     # Exception Table
+00 00 00 00                     # Size of Exception Table
+
+00 00 00 00                     # Certificate Table
+00 00 00 00                     # Size of Certificate Table
+
+00 00 00 00                     # Base Relocation Table
+00 00 00 00                     # Size of Base Relocation Table
+
+00 00 00 00                     # Debug Table
+00 00 00 00                     # Size of Debug Table
+
+00 00 00 00                     # Architecture Data Table
+00 00 00 00                     # Size of Architecture Data Table
+
+00 00 00 00                     # Global Pointer
+00 00 00 00                     # NULL
+
+00 00 00 00                     # TLS Table
+00 00 00 00                     # Size of TLS Table
+
+00 00 00 00                     # Load Config Table
+00 00 00 00                     # Size of Load Config Table
+
+00 00 00 00                     # Bound Import Table
+00 00 00 00                     # Size of Bound Import Table
+
+00 00 00 00                     # Import Address Table
+00 00 00 00                     # Size of Import Address Table
+
+00 00 00 00                     # Delay Import Descriptor Table
+00 00 00 00                     # Size of Delay Import Descriptor Table
+
+00 00 00 00                     # CLR Runtime header table
+00 00 00 00                     # Size of CLR Runtime Header table
+
+# [0x130]
+:OptionalHeader_end
+
+00 00 00 00 00 00 00 00         # MUST BE NULL
+
+# no idea what it is yet
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+
+# [0x148]
+# Start of section headers
+2E 74 65 78 74 00 00 00                 ; Name of the section: ".text"
+%ELF_end>PE32_text                      ; VirtualSize
+00 10 00 00                             ; VirtualAddress
+%ELF_end>PE32_text                      ; SizeOfRawData
+70 01 00 00                             ; PointerToRawData
+00 00 00 00                             ; PointerToRelocations
+00 00 00 00                             ; PointerToLinenumbers
+00 00                                   ; NumberOfRelocations
+00 00                                   ; NumberOfLinenumbers
+00 00 00 00                             ; 'Characteristics'
+
+# [0x170]
+:PE32_text

@@ -1,0 +1,415 @@
+# SPDX-FileCopyrightText: 2020 Jeremiah Orians <jeremiah@pdp10.guru>
+# SPDX-FileCopyrightText: 2023 Andrius Štikonas <andrius@stikonas.eu>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+DEFINE add_rsi, 4883C6
+DEFINE add_rdi, 4883C7
+DEFINE add_rdi,rax 4801C7
+DEFINE call E8
+DEFINE cmp_al, 3C
+DEFINE cmp_rsi,rdi 4839FE
+DEFINE je 0F84
+DEFINE je8 74
+DEFINE jl8 7C
+DEFINE jle8 7E
+DEFINE jmp8 EB
+DEFINE jne8 75
+DEFINE lea_rsi,[rsp] 488D3424
+DEFINE mov_ah, B4
+DEFINE mov_eax, B8
+DEFINE mov_edi, BF
+DEFINE mov_rax,rdi 4889F8
+DEFINE mov_rax,r14 4C89F0
+DEFINE mov_rbp,rsp 4889E5
+DEFINE mov_rdi,rax 4889C7
+DEFINE mov_rdi,r13 4C89EF
+DEFINE mov_rdi,r14 4C89F7
+DEFINE mov_rdx,rbp 4889EA
+DEFINE mov_rdx,rdi 4889FA
+DEFINE mov_rsi,rax 4889C6
+DEFINE mov_rsi,rdi 4889FE
+DEFINE mov_rsi,rsp 4889E6
+DEFINE mov_r13,rax 4989C5
+DEFINE mov_r14,rax 4989C6
+DEFINE mov_r14,rdi 4989FE
+DEFINE mov_[rsi],al 8806
+DEFINE mov_[rsi],rax 488906
+DEFINE mov_al,[rdi] 8A07
+DEFINE mov_rax,[rdi] 488B07
+DEFINE mov_rdi,[rdi] 488B3F
+DEFINE pop_rax 58
+DEFINE pop_rdi 5F
+DEFINE pop_rdx 5A
+DEFINE pop_rsi 5E
+DEFINE pop_r15 415F
+DEFINE push 6A
+DEFINE push_rax 50
+DEFINE push_rdi 57
+DEFINE push_rdx 52
+DEFINE push_rsi 56
+DEFINE ret C3
+DEFINE syscall 0F05
+DEFINE test_eax,eax 85C0
+DEFINE test_edi,edi 85FF
+DEFINE test_r15,r15 4D85FF
+DEFINE xor_eax,eax 31C0
+DEFINE xor_edx,edx 31D2
+DEFINE xor_edi,edi 31FF
+DEFINE xor_esi,esi 31F6
+DEFINE xor_r15,r15 4D31FF
+
+# Register usage
+# * R13 script
+# * R14 MALLOC
+# * R15 command_done
+
+:_start
+	pop_rax                             # Get the number of arguments
+	pop_rdi                             # Get the program name
+	pop_rdi                             # Get the actual input name
+	test_edi,edi                        # Check for missing output
+	jne8 !_start_out                    # Have real input
+	push_rax                            # Need to adjust stack
+	mov_edi, &default_file              # Use "kaem.amd64"
+
+:_start_out
+	xor_esi,esi                         # prepare read_only
+	push !2
+	pop_rax                             # the syscall number for open()
+	syscall                             # Now open that damn file
+
+	test_eax,eax                        # IF NULL We couldn't open the file
+	jle8 !Exit_Failure                  # Abort hard
+	mov_r13,rax                         # Set input pointer
+
+	pop_rax                             # Get start of envp
+	mov_rbp,rsp                         # Protect envp
+
+	push !12
+	pop_rax                             # the Syscall # for SYS_BRK
+	xor_edi,edi                         # Get current brk
+	syscall                             # Let the kernel do the work
+	mov_r14,rax                         # Set our malloc pointer
+
+	# Where the main work gets done
+	# Using RDI for tokens and RSI for tokens[i]
+:main_loop
+	xor_eax,eax                         # Zero RAX
+	mov_ah, !0x8                        # Using 256 char* of space (0x800)
+	call %malloc                        # get it
+	mov_rdi,rax                         # set tokens
+
+	mov_rsi,rdi                         # I = 0
+	xor_eax,eax                         # Using 0
+	xor_r15,r15                         # command_done = 0
+
+	# Using RAX for result and RDI for tokens[i]
+:collect_command
+	call %collect_token                 # Get another token
+	test_eax,eax                        # if NULL == result
+	je8 !collect_command_comment        # It is a comment, don't store
+
+	mov_[rsi],rax                       # tokens[i] = result
+	add_rsi, !8                         # i = i + 1 (adjusted for char* size)
+
+:collect_command_comment
+	test_r15,r15                        # IF 0 == command_done
+	je8 !collect_command                # keep looping
+
+	# Deal with line comments
+	cmp_rsi,rdi                         # if 0 < i
+	je8 !main_loop                      # It was a comment
+
+	call %print_command                 # print the command
+	mov_rax,[rdi]                       # program = tokens[0]
+	test_eax,eax                        # IF NULL == program
+	je8 !Exit_Failure                   # Some shit went down, abort
+
+	push_rdi                            # Protect Tokens
+	push !57
+	pop_rax                             # FORKing
+	syscall                             # int f = FORK()
+	pop_rdi                             # Restore Tokens
+
+	test_eax,eax                        # Check fork
+	jl8 !Exit_Failure                   # IF f == -1 abort hard
+	jne8 !collect_command_parent        # IF f == 0 it is child
+
+	# Deal with child case
+	push !59
+	pop_rax                             # EXECVE
+	mov_rdx,rbp                         # third arg = envp
+	mov_rsi,rdi                         # second arg = tokens
+	mov_rdi,[rdi]                       # program = tokens[0]
+	syscall                             # execve(program, tokens, envp);
+
+# Exit_Failure function
+# Receives nothing
+# And aborts hard
+# DOES NOT RETURN
+:Exit_Failure
+	push !1
+	pop_rdi                             # All is wrong
+	jmp8 !Exit                          # Exit
+
+:collect_command_parent
+	mov_rdi,rax                         # first arg = f
+	push_rax                            # allocate stack for status
+	mov_rsi,rsp                         # second arg = &status
+	xor_edx,edx                         # third arg = NULL
+	push !61
+	pop_rax                             # WAITPID
+	syscall                             # wait4pid(f, &status, 0, 0); [r10 = 0]
+
+	pop_rax                             # Using status
+	test_eax,eax                        # IF 0 == status
+	je8 !main_loop                      # Loop forever
+
+	# Deal with very unhappy case
+	mov_eax, &hard                      # Using "Subprocess error\n"
+	call %File_Print                    # Print it
+	jmp8 !Exit_Failure                  # return error
+
+:Done
+	# program completed Successfully
+	xor_edi,edi                         # All is well
+:Exit
+	push !60                            # SYS_exit
+	pop_rax                             # put the exit syscall number in rax
+	syscall                             # Call it a day
+
+# print_command function
+# Receives tokens[j] in RDI and tokens[i] in RSI
+# Modifies RAX
+:print_command
+	push_rdi                            # Protect RDI
+	mov_eax, &prefix                    # using " +> "
+	call %File_Print                    # print it
+:print_command_loop
+	mov_rax,[rdi]                       # using tokens[j]
+	call %File_Print                    # print it
+	add_rdi, !8                         # j = j + 1
+	push !32
+	pop_rax                             # using ' '
+	call %fputc                         # print it
+	cmp_rsi,rdi                         # IF j < i
+	jne8 !print_command_loop            # otherwise keep looping
+
+	push !10
+	pop_rax                             # using '\n'
+	call %fputc                         # print it
+	pop_rdi                             # Restore RDI
+	ret
+
+
+# collect_token function
+# Receives nothing
+# Overwrites RAX
+# Uses RAX as C, RDI as token and RSI as token[i]
+:collect_token
+	push_rdi                            # Protect RDI
+	push_rsi                            # Protect RSI
+	xor_eax,eax                         # Zero RAX
+	mov_ah, !0x10                       # max_string = 4096 * sizeof(char)
+	call %malloc                        # allocate space
+	mov_rdi,rax                         # token = malloc(max_string);
+	mov_rsi,rax                         # i = 0; set token[i]
+
+:collect_token_loop
+	call %fgetc                         # c = fgetc(input);
+	cmp_al, !-4                         # if C == EOF
+	je8 !Done                           # We are done
+
+	cmp_al, !32                         # IF C == ' '
+	je8 !collect_token_done             # Space terminates token
+
+	cmp_al, !9                          # IF C == '\t'
+	je8 !collect_token_done             # tab terminates token
+
+	cmp_al, !10                         # IF C == '\n'
+	jne8 !collect_token_string          # otherwise check next
+
+	# It is a newline
+	jmp8 !collect_token_set_command_done # Set command_done = TRUE
+
+:collect_token_string
+	cmp_al, !34                         # IF C == '\"'
+	jne8 !collect_token_comment         # otherwise check next
+
+	# It is a RAW STRING
+	call %collect_string                # Get the rest of the string
+	jmp8 !collect_token_done            # Be done
+
+:collect_token_comment
+	cmp_al, !35                         # IF C == '#'
+	jne8 !collect_token_escape          # otherwise check next
+
+	# It is a line comment
+	call %collect_comment               # Read it all
+:collect_token_set_command_done
+	push !1
+	pop_r15                             # Set command_done = TRUE
+	jmp8 !collect_token_done            # Be done
+
+:collect_token_escape
+	cmp_al, !92                         # IF C == '\\'
+	jne8 !collect_token_other           # otherwise just store it
+
+	# It is an escape char
+	call %fgetc                         # Read the char to drop
+	jmp8 !collect_token_done            # Be done
+
+:collect_token_other
+	mov_[rsi],al                        # token[i] = C
+	add_rsi, !1                         # i = i + 1
+	jmp8 !collect_token_loop            # Keep going
+
+:collect_token_done
+	cmp_rsi,rdi                         # IF i == 0
+	jne8 !collect_token_good            # otherwise return the token
+	xor_edi,edi                         # token = NULL
+
+:collect_token_good
+	mov_rax,rdi                         # Return token
+	pop_rsi                             # Restore RSI
+	pop_rdi                             # Restore RDI
+	ret
+
+
+# collect_string function
+# Receives target[index] in RSI
+# Modifies RAX
+# Uses RAX as C
+:collect_string
+	call %fgetc                         # C = fgetc(input)
+	cmp_al, !-4                         # if C == EOF
+	je %Exit_Failure                    # Something went horribly wrong
+
+	cmp_al, !34                         # IF C == '\"'
+	je8 !collect_string_done            # be done
+
+	# deal with inside of string
+	mov_[rsi],al                        # target[index] = C
+	add_rsi, !1                         # index = index + 1
+	jmp8 !collect_string                # Keep going
+
+:collect_string_done
+	ret
+
+
+# collect_comment function
+# Receives nothing
+# Modifies RAX
+# uses RAX as Int C
+# Just throws away everything it reads
+:collect_comment
+	call %fgetc                         # C = fgetc(input)
+	cmp_al, !-4                         # IF C == EOF
+	je %Exit_Failure                    # abort hard
+
+	cmp_al, !10                         # IF C == '\n'
+	jne8 !collect_comment               # otherwise keep looping
+	ret
+
+
+# Malloc isn't actually required if the program being built fits in the initial memory
+# However, it doesn't take much to add it.
+# Requires [MALLOC] to be initialized and RAX to have the number of desired bytes
+:malloc
+	push_rdi                            # Protect RDI
+	push_rsi                            # Protect RSI
+	push_rdx                            # Protect RDX
+	mov_rdi,r14                         # Using the current pointer
+	add_rdi,rax                         # Request the number of desired bytes
+	push !12
+	pop_rax                             # the Syscall # for SYS_BRK
+	syscall                             # call the Kernel
+	mov_rax,r14                         # Return pointer
+	mov_r14,rdi                         # Update pointer
+	pop_rdx                             # Restore RDX
+	pop_rsi                             # Restore RSI
+	pop_rdi                             # Restore RDI
+	ret
+
+
+# fgetc function
+# Loads FILE* from [script]
+# Returns -4 (EOF) or char in AL
+:fgetc
+	push_rdi                            # Protect RDI
+	push_rsi                            # Protect RSI
+	push_rdx                            # Protect RDX
+	push !-4
+	pop_rax                             # Put EOF in RAX
+	push_rax                            # Assume bad (If nothing read, value will remain EOF)
+	lea_rsi,[rsp]                       # Get stack address
+	mov_rdi,r13                         # Where are we reading from
+	xor_eax,eax                         # the syscall number for read
+	push !1
+	pop_rdx                             # set the size of chars we want
+	syscall                             # call the Kernel
+	pop_rax                             # Get either char or EOF
+	cmp_al, !-4                         # Check for EOF
+:fgetc_done
+	pop_rdx                             # Restore RDX
+	pop_rsi                             # Restore RSI
+	pop_rdi                             # Restore RDI
+	ret
+
+
+# File_Print function
+# Receives CHAR* in RAX
+# calls fputc for every non-null char
+:File_Print
+	push_rdi                            # Protect RDI
+	push_rsi                            # Protect RSI
+	mov_rdi,rax                         # Protect S
+	test_eax,eax                        # Protect against nulls
+	je8 !File_Print_Done                # Simply don't try to print them
+:File_Print_Loop
+	xor_eax,eax                         # Zero RAX
+	mov_al,[rdi]                        # Read byte
+	test_eax,eax                        # Check for NULL
+	je8 !File_Print_Done                # Stop at NULL
+
+	call %fputc                         # write it
+	add_rdi, !1                         # S = S + 1
+	jmp8 !File_Print_Loop               # Keep going
+
+:File_Print_Done
+	pop_rsi                             # Restore RSI
+	pop_rdi                             # Restore RDI
+	ret
+
+
+# fputc function
+# receives CHAR in RAX and load FILE* from stdout
+# writes char and returns
+:fputc
+	push_rdi                            # Protect RDI
+	push_rsi                            # Protect RSI
+	push_rdx                            # Protect RDX
+	push_rax                            # We are writing rax
+	lea_rsi,[rsp]                       # Get stack address
+	push !1
+	pop_rdi                             # Write to target file
+	mov_rax,rdi                         # the syscall number for write
+	mov_rdx,rdi                         # set the size of chars we want
+	syscall                             # call the Kernel
+	pop_rax                             # Restore stack
+	pop_rdx                             # Restore RDX
+	pop_rsi                             # Restore RSI
+	pop_rdi                             # Restore RDI
+	ret
+
+
+:default_file
+	"kaem.amd64"
+:prefix
+	" +> "
+:hard
+"Subprocess error
+"
+
+:ELF_end

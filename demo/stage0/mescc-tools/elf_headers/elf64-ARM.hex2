@@ -1,0 +1,67 @@
+### Copyright (C) 2016 Jeremiah Orians
+### Copyright (C) 2017 Jan Nieuwenhuizen <janneke@gnu.org>
+### This file is part of stage0.
+###
+### stage0 is free software: you can redistribute it and/or modify
+### it under the terms of the GNU General Public License as published by
+### the Free Software Foundation, either version 3 of the License, or
+### (at your option) any later version.
+###
+### stage0 is distributed in the hope that it will be useful,
+### but WITHOUT ANY WARRANTY; without even the implied warranty of
+### MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+### GNU General Public License for more details.
+###
+### You should have received a copy of the GNU General Public License
+### along with stage0.  If not, see <http://www.gnu.org/licenses/>.
+
+### elf64.hex2: 64 bit elf header in hex2
+### if you wish to use this header, you need to add :ELF_end to the end of your
+### M1 or hex2 files.
+
+## ELF Header
+:ELF_base
+01111111 01000101 01001100 01000110     ## e_ident[EI_MAG0-3] ELF's magic number
+
+00000010                                ## e_ident[EI_CLASS] Indicating 64 bit
+00000001                                ## e_ident[EI_DATA] Indicating little endianness
+00000001                                ## e_ident[EI_VERSION] Indicating original elf
+
+00000011                                ## e_ident[EI_OSABI] Set at 3 because FreeBSD is strict
+00000000                                ## e_ident[EI_ABIVERSION] See above
+
+00000000 00000000 00000000 00000000 00000000 00000000 00000000 ## e_ident[EI_PAD]
+00000010 00000000                       ## e_type Indicating Executable
+10110111 00000000                       ## e_machine Indicating AARCH64
+00000001 00000000 00000000 00000000     ## e_version Indicating original elf
+
+&_start 00000000 00000000 00000000 00000000 ## e_entry Address of the entry point (Number of bytes this header is + Base Address)
+%ELF_program_headers>ELF_base 00000000 00000000 00000000 00000000 ## e_phoff Address of program header table
+00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000 ## e_shoff Address of section header table
+
+00000000 00000000 00000000 00000000     ## e_flags
+01000000 00000000                       ## e_ehsize Indicating our 64 Byte header
+
+00111000 00000000                       ## e_phentsize size of a program header table
+00000001 00000000                       ## e_phnum number of entries in program table
+
+00000000 00000000                       ## e_shentsize size of a section header table
+00000000 00000000                       ## e_shnum number of entries in section table
+
+00000000 00000000                       ## e_shstrndx index of the section names
+
+## Program Header
+:ELF_program_headers
+00000001 00000000 00000000 00000000     ## ph_type
+00000111 00000000 00000000 00000000     ## ph_lags: PF-X|PF-W|PF-R = 7
+00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000 ## p_offset
+
+&ELF_base 00000000 00000000 00000000 00000000 ## p_vaddr
+&ELF_base 00000000 00000000 00000000 00000000 ## p_physaddr
+
+%ELF_end>ELF_base 00000000 00000000 00000000 00000000 ## p_filesz
+%ELF_end>ELF_base 00000000 00000000 00000000 00000000 ## p_memsz
+
+00000001 00000000 00000000 00000000 00000000 00000000 00000000 00000000 ## Required alignment
+
+:ELF_text

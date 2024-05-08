@@ -1,0 +1,274 @@
+* License
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of mescc-tools.
+##
+## mescc-tools is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## mescc-tools is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with mescc-tools.  If not, see <http://www.gnu.org/licenses/>.
+
+* How to use software to generated opcode information
+Lets start with a simple program you wish to convert to M1, so to start we are going to write a hex disassembler that uses a lookup table
+** simple assembly example
+.text # section declaration
+output: .byte 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x0A
+
+# we must export the entry point to the ELF linker or loader.
+# They convientionally recognize _start as their entry point.
+# Use ld -e main to override the default if you wish
+.global _start
+
+print_byte:
+	# Write what ever is in eax
+	mov $1, %edx                # set the size of chars we want
+	mov %eax, %ecx              # What we are writing
+	mov $1, %ebx                # Stdout File Descriptor
+	mov $4, %eax                # the syscall number for write
+	int $0x80                   # call the Kernel
+	ret
+
+read_byte:
+	# Attempt to read a single byte from STDIN
+	mov $1, %edx                # set the size of chars we want
+	mov $input, %ecx            # Where to put it
+	mov $0, %ebx                # Where are we reading from
+	mov $3, %eax                # the syscall number for read
+	int $0x80                   # call the Kernel
+
+	# If we didn't read any bytes jump to Done
+	test %eax, %eax             # check what we got
+	jz Done                     # Got EOF call it done
+
+	# Move our byte into registers for processing
+	movb input, %al             # load char
+	movzx %al, %eax             # move char into eax
+	ret
+
+_start:
+loop:
+	call read_byte
+	mov %eax, %esi              # We have to zero extend it to use it
+	mov %eax, %ebp              # We have to zero extend it to use it
+
+	# Break out the nibbles
+	shr $4, %esi                # Purge the bottom 4 bits
+	and $0xF, %ebp              # Chop off all but the bottom 4 bits
+
+	# add our base pointer
+	add $output, %esi           # Use that as our index into our array
+	add $output, %ebp           # Use that as our index into our array
+
+	# Print our first Hex
+	mov %esi, %eax              # What we are writing
+	call print_byte
+
+	# Print our second Hex
+	mov %ebp, %eax              # What we are writing
+	call print_byte
+	jmp loop
+
+Done:
+	# program completed Successfully
+	mov $0, %ebx                # All is well
+	mov $1, %eax                # put the exit syscall number in eax
+	int $0x80                   # Call it a good day
+
+.data
+
+write_size = 2
+input:
+	.byte write_size
+
+** Build it
+To build the above program (assuming you put it in a file named foo.S and wish to produce a program called foo):
+as -o foo.o foo.S
+ld -o foo foo.S
+
+** objdump its secrets
+If one were to run:
+objdump -d foo > opcodes.note
+
+*** Which would contain
+Disassembly of section .text:
+
+08048074 <output>:
+ 8048074:	30 31                	xor    %dh,(%ecx)
+ 8048076:	32 33                	xor    (%ebx),%dh
+ 8048078:	34 35                	xor    $0x35,%al
+ 804807a:	36 37                	ss aaa
+ 804807c:	38 39                	cmp    %bh,(%ecx)
+ 804807e:	41                   	inc    %ecx
+ 804807f:	42                   	inc    %edx
+ 8048080:	43                   	inc    %ebx
+ 8048081:	44                   	inc    %esp
+ 8048082:	45                   	inc    %ebp
+ 8048083:	46                   	inc    %esi
+ 8048084:	0a                   	.byte 0xa
+
+08048085 <print_byte>:
+ 8048085:	ba 01 00 00 00       	mov    $0x1,%edx
+ 804808a:	89 c1                	mov    %eax,%ecx
+ 804808c:	bb 01 00 00 00       	mov    $0x1,%ebx
+ 8048091:	b8 04 00 00 00       	mov    $0x4,%eax
+ 8048096:	cd 80                	int    $0x80
+ 8048098:	c3                   	ret
+
+08048099 <read_byte>:
+ 8048099:	ba 01 00 00 00       	mov    $0x1,%edx
+ 804809e:	b9 f3 90 04 08       	mov    $0x80490f3,%ecx
+ 80480a3:	bb 00 00 00 00       	mov    $0x0,%ebx
+ 80480a8:	b8 03 00 00 00       	mov    $0x3,%eax
+ 80480ad:	cd 80                	int    $0x80
+ 80480af:	85 c0                	test   %eax,%eax
+ 80480b1:	74 34                	je     80480e7 <Done>
+ 80480b3:	a0 f3 90 04 08       	mov    0x80490f3,%al
+ 80480b8:	0f b6 c0             	movzbl %al,%eax
+ 80480bb:	c3                   	ret
+
+080480bc <_start>:
+ 80480bc:	e8 d8 ff ff ff       	call   8048099 <read_byte>
+ 80480c1:	89 c6                	mov    %eax,%esi
+ 80480c3:	89 c5                	mov    %eax,%ebp
+ 80480c5:	c1 ee 04             	shr    $0x4,%esi
+ 80480c8:	83 e5 0f             	and    $0xf,%ebp
+ 80480cb:	81 c6 74 80 04 08    	add    $0x8048074,%esi
+ 80480d1:	81 c5 74 80 04 08    	add    $0x8048074,%ebp
+ 80480d7:	89 f0                	mov    %esi,%eax
+ 80480d9:	e8 a7 ff ff ff       	call   8048085 <print_byte>
+ 80480de:	89 e8                	mov    %ebp,%eax
+ 80480e0:	e8 a0 ff ff ff       	call   8048085 <print_byte>
+ 80480e5:	eb d5                	jmp    80480bc <_start>
+
+080480e7 <Done>:
+ 80480e7:	bb 00 00 00 00       	mov    $0x0,%ebx
+ 80480ec:	b8 01 00 00 00       	mov    $0x1,%eax
+ 80480f1:	cd 80                	int    $0x80
+
+** making sense of the objdump information
+*** Labels
+When you see 08048074 <output>:
+It indicates that at address 0x08048074 the definition of the function output resides.
+
+*** 1OP Instructions
+When you see  8048098:	c3                   	ret
+It indicates that at address 0x8048098 there is a Return instruction which as the Hex opcode encoding of C3 and could be implemented in M1 as:
+DEFINE RETURN C3
+Or any other mnemonic term that is more optimal for the problem at hand.
+
+*** 2OP Instructions
+When you see  80480c1:	89 c6                	mov    %eax,%esi
+It indicate that at address 0x80480C1 there is a Move instruction that copies the value of register eax to register esi and has the Hex opcode encoding of 89C6 and therefor can be defined in M1 as:
+DEFINE COPY_EAX_To_ESI 89C6
+or
+If we assume (eax=>R0, ebx=>R1, ecx=>R2, edx=>R3, esi=>R4, edi=>R5, ebp=>R6, and esp=>R7)
+DEFINE COPY_R0_To_R4 89C6
+
+*** Instructions with Immediates or displacements
+Immediates occur in variable sizes but an immediate can not exist without an instruction
+
+**** Trivial example
+Most immediates are common values such as 1 (01) or -1 (FF..FF) that are immediately obvious:
+ 80480a8:	b8 03 00 00 00       	mov    $0x3,%eax
+ 8048091:	b8 04 00 00 00       	mov    $0x4,%eax
+ 80480ec:	b8 01 00 00 00       	mov    $0x1,%eax
+Espcially when there is a very familiar pattern and leading (or in x86's case trailing zeros)
+It should be immediately obvious that B8 is the opcode for loading a 32bit immediate value into eax, which can be written in M1 as:
+DEFINE MOV_Immediate32_EAX B8
+or
+DEFINE LOADI32_R0 B8
+
+You only need to remember to follow that mnemonic with a 32bit immediate (%4 works)
+
+**** Easy example
+For some immediate instructions the size and placement of the immediate is obvious (or perhaps obvious once you realize the Endianness of the instruction set you are working with)
+For example:
+ 80480b3:	a0 f3 90 04 08       	mov    0x80490f3,%al
+Knowing that x86 is little endian, the 08 should pop out at you.
+f3 90 04 08 is the little endian encoding of the number 0x080490F3
+and thus we know that the opcode is A0 and it requires a 32bit value (An absolute address) and that it writes that result to al (which is the bottom 8bits of the eax register)
+
+Thus we can express this opcode as:
+DEFINE MOV_Absolute32_al A0
+or
+LOAD8_R0_Absolute32 A0
+Which then always has to be followed by a 32bit absolute address ($foo works)
+
+**** Annoying example
+For some instructions, you may have to lookup the opcode to determine its length and thus the length of its immediate such as:
+ 80480b1:	74 34                	je     80480e7 <Done>
+Which when confronted with such a case, simply lookup the 74 in http://ref.x86asm.net/coder32.html
+thus resolving to it is both jz and je and it takes a 8bit relative address (the 34).
+Thus we can define our newly determined opcode in M1 as:
+DEFINE JE8 74
+DEFINE JZ8 74
+or
+DEFINE Jump_if_Zero8 74
+
+but we need to make sure that whenever we use our mnemonic we follow it with a 8bit relative value (!label works well)
+
+*** Things objdump gets wrong
+The thing all disassemblers tend to get wrong and dependes entirely on heuristics is the identification of strings and byte constants.
+
+In our case, it has identified our table as a set of instructions (also correctly determined their representation)
+08048074 <output>:
+ 8048074:	30 31                	xor    %dh,(%ecx)
+ 8048076:	32 33                	xor    (%ebx),%dh
+ 8048078:	34 35                	xor    $0x35,%al
+ 804807a:	36 37                	ss aaa
+ 804807c:	38 39                	cmp    %bh,(%ecx)
+ 804807e:	41                   	inc    %ecx
+ 804807f:	42                   	inc    %edx
+ 8048080:	43                   	inc    %ebx
+ 8048081:	44                   	inc    %esp
+ 8048082:	45                   	inc    %ebp
+ 8048083:	46                   	inc    %esi
+ 8048084:	0a                   	.byte 0xa
+
+In M1 we have the ability to do things like strings to store such a table.
+Which would probably be the following:
+:output
+"0123456789ABCDEF"
+
+Which certainly alot easier to read and understand than
+output: .byte 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x0A
+
+* Using that opcode information to write a M1 program
+Thus we would come to a defintion list that looks something like this:
+
+DEFINE MOVZBL_al_To_eax 0FB6C0
+DEFINE JE8 74
+DEFINE ADD_Immediate32_To_ebp 81C5
+DEFINE ADD_Immediate32_To_esi 81C6
+DEFINE ANDI8_ebp 83E5
+DEFINE TEST_eax_eax 85C0
+DEFINE MOV_eax_To_ecx 89C1
+DEFINE MOV_eax_To_ebp 89C5
+DEFINE MOV_eax_To_esi 89C6
+DEFINE MOV_ebp_To_eax 89E8
+DEFINE MOV_esi_To_eax 89F0
+DEFINE LOAD8_al A0
+DEFINE LOADI32_eax B8
+DEFINE LOADI32_ecx B9
+DEFINE LOADI32_edx BA
+DEFINE LOADI32_ebx BB
+DEFINE SHIFT_RIGHT_Immediate8_esi C1EE
+DEFINE RETURN C3
+DEFINE INT_80 CD80
+DEFINE CALLI32 E8
+DEFINE JUMP8 EB
+
+** emacs tips
+Using the objdump output, first clear the labels and not instruction data.
+Then leverage C-x ( and C-x ) to define a keyboard macro that deletes the address from the start of the line. C-x e followed by e repeatedly to clear all of the lines.
+M-x sort-lines, will sort all selected lines (very useful as now all instructions with the same opcode are next to each other for easy pruning)
+M-x delete-duplicate-lines will purge all exact duplicates (very handy for compiler output)
+
+Then all that remains is determining the immediates and figuring out what line actually does. This is left as an exercise for the reader.

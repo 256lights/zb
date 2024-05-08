@@ -1,0 +1,1685 @@
+
+# Core program
+
+# Defining function exit
+:FUNCTION_exit
+pop_ebx
+pop_ebx
+mov_eax, %1
+int !0x80
+ret
+# Defining function fgetc
+:FUNCTION_fgetc
+mov_eax, %3
+lea_ebx,[esp+DWORD] %4
+mov_ebx,[ebx]
+push_ebx
+mov_ecx,esp
+mov_edx, %1
+int !0x80
+test_eax,eax
+pop_eax
+jne %FUNCTION_fgetc_Done
+mov_eax, %-1
+:FUNCTION_fgetc_Done
+ret
+# Defining function fputc
+:FUNCTION_fputc
+mov_eax, %4
+lea_ebx,[esp+DWORD] %4
+mov_ebx,[ebx]
+lea_ecx,[esp+DWORD] %8
+mov_edx, %1
+int !0x80
+ret
+# Defining function open
+:FUNCTION_open
+lea_ebx,[esp+DWORD] %12
+mov_ebx,[ebx]
+lea_ecx,[esp+DWORD] %8
+mov_ecx,[ecx]
+lea_edx,[esp+DWORD] %4
+mov_edx,[edx]
+mov_eax, %5
+int !0x80
+ret
+# Defining function fopen
+:FUNCTION_fopen
+# Defining local f
+push_eax	#f
+# IF_0
+
+mov_eax, %119
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %0
+pop_ebx	# _common_recursion
+add_eax,ebx
+movsx_eax,BYTE_PTR_[eax]
+pop_ebx	# _common_recursion
+cmp
+sete_al
+movzx_eax,al
+test_eax,eax
+je %ELSE_0
+
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %16
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, %577
+push_eax	#_process_expression2
+mov_eax, %384
+push_eax	#_process_expression2
+call %FUNCTION_open
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+jmp %_END_IF_0
+
+:ELSE_0
+
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %16
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, %0
+push_eax	#_process_expression2
+mov_eax, %0
+push_eax	#_process_expression2
+call %FUNCTION_open
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+:_END_IF_0
+
+# IF_1
+mov_eax, %0
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setg_al
+movzx_eax,al
+test_eax,eax
+je %ELSE_1
+mov_eax, %0
+pop_ebx	# _return_result_locals
+ret
+jmp %_END_IF_1
+:ELSE_1
+:_END_IF_1
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+pop_ebx	# _return_result_locals
+ret
+# Defining function close
+:FUNCTION_close
+lea_ebx,[esp+DWORD] %4
+mov_eax, %6
+int !0x80
+ret
+# Defining function fclose
+:FUNCTION_fclose
+# Defining local error
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_close
+pop_ebx	# _process_expression_locals
+push_eax	#error
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+pop_ebx	# _return_result_locals
+ret
+# Defining function file_print
+:FUNCTION_file_print
+:WHILE_0
+
+mov_eax, %0
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %0
+pop_ebx	# _common_recursion
+add_eax,ebx
+movsx_eax,BYTE_PTR_[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+test_eax,eax
+je %END_WHILE_0
+
+# THEN_while_0
+
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %0
+pop_ebx	# _common_recursion
+add_eax,ebx
+movsx_eax,BYTE_PTR_[eax]
+push_eax	#_process_expression1
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_fputc
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+lea_eax,[esp+DWORD] %8
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %1
+pop_ebx	# _common_recursion
+add_eax,ebx
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+jmp %WHILE_0
+
+:END_WHILE_0
+
+ret
+# Defining function malloc
+:FUNCTION_malloc
+mov_eax,[esp+DWORD] %4
+push_eax
+mov_eax, %45
+mov_ebx, %0
+int !0x80
+pop_ebx
+add_ebx,eax
+push_eax
+push_ebx
+mov_eax, %45
+int !0x80
+pop_ebx
+cmp
+pop_eax
+je %FUNCTION_malloc_Done
+mov_eax, %-1
+:FUNCTION_malloc_Done
+ret
+# Defining function memset
+:FUNCTION_memset
+# Defining local s
+push_eax	#s
+# FOR_initialization_0
+
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %20
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+:FOR_0
+
+mov_eax, %0
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setl_al
+movzx_eax,al
+test_eax,eax
+je %FOR_END_0
+
+jmp %FOR_THEN_0
+
+:FOR_ITER_0
+
+lea_eax,[esp+DWORD] %8
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %1
+pop_ebx	# _common_recursion
+sub_ebx,eax
+mov_eax,ebx
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+jmp %FOR_0
+
+:FOR_THEN_0
+
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %0
+pop_ebx	# _common_recursion
+add_eax,ebx
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %16
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],al
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %1
+pop_ebx	# _common_recursion
+add_eax,ebx
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+jmp %FOR_ITER_0
+
+:FOR_END_0
+
+pop_ebx	# _recursive_statement_locals
+ret
+# Defining function calloc
+:FUNCTION_calloc
+# Defining local ret
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+imul_ebx
+push_eax	#_process_expression1
+call %FUNCTION_malloc
+pop_ebx	# _process_expression_locals
+push_eax	#ret
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, %0
+push_eax	#_process_expression2
+lea_eax,[esp+DWORD] %20
+mov_eax,[eax]
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %20
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+imul_ebx
+push_eax	#_process_expression2
+call %FUNCTION_memset
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+pop_ebx	# _return_result_locals
+ret
+# Defining function free
+:FUNCTION_free
+ret
+# Defining function match
+:FUNCTION_match
+# Defining local i
+mov_eax, %0
+push_eax	#_common_recursion
+mov_eax, %1
+pop_ebx	# _common_recursion
+sub_ebx,eax
+mov_eax,ebx
+push_eax	#i
+:DO_0
+
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %1
+pop_ebx	# _common_recursion
+add_eax,ebx
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+# IF_2
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+add_eax,ebx
+movsx_eax,BYTE_PTR_[eax]
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+add_eax,ebx
+movsx_eax,BYTE_PTR_[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+test_eax,eax
+je %ELSE_2
+mov_eax, %0
+pop_ebx	# _return_result_locals
+ret
+jmp %_END_IF_2
+:ELSE_2
+:_END_IF_2
+mov_eax, %0
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %16
+mov_eax,[eax]
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+add_eax,ebx
+movsx_eax,BYTE_PTR_[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+push_eax	#_common_recursion
+mov_eax, %0
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %16
+mov_eax,[eax]
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+add_eax,ebx
+movsx_eax,BYTE_PTR_[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+pop_ebx	# _common_recursion
+and_eax,ebx
+test_eax,eax
+jne %DO_0
+
+:DO_END_0
+
+mov_eax, %1
+pop_ebx	# _return_result_locals
+ret
+# Defining function consume_token
+:FUNCTION_consume_token
+# Defining local i
+mov_eax, %0
+push_eax	#i
+# Defining local c
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_fgetc
+pop_ebx	# _process_expression_locals
+push_eax	#c
+:DO_1
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+add_eax,ebx
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],al
+lea_eax,[esp+DWORD] %4
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %1
+pop_ebx	# _common_recursion
+add_eax,ebx
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %20
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_fgetc
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+mov_eax, %32
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+push_eax	#_common_recursion
+mov_eax, %9
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+pop_ebx	# _common_recursion
+and_eax,ebx
+push_eax	#_common_recursion
+mov_eax, %10
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+pop_ebx	# _common_recursion
+and_eax,ebx
+push_eax	#_common_recursion
+mov_eax, %62
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+pop_ebx	# _common_recursion
+and_eax,ebx
+test_eax,eax
+jne %DO_1
+:DO_END_1
+pop_ebx	# _recursive_statement_locals
+pop_ebx	# _recursive_statement_locals
+ret
+# Defining function storeLabel
+:FUNCTION_storeLabel
+# Defining local entry
+mov_eax, %1
+push_eax	#_process_expression1
+mov_eax, %8
+push_eax	#_process_expression2
+call %FUNCTION_calloc
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+push_eax	#entry
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+# looking up offset
+push_eax	#_common_recursion
+mov_eax, &GLOBAL_jump_table
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+mov_eax, &GLOBAL_jump_table
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+# looking up offset
+# -> offset calculation
+mov_ebx, %4
+add_eax,ebx
+push_eax	#_common_recursion
+mov_eax, %4096
+push_eax	#_common_recursion
+mov_eax, %1
+pop_ebx	# _common_recursion
+add_eax,ebx
+push_eax	#_process_expression1
+mov_eax, %1
+push_eax	#_process_expression2
+call %FUNCTION_calloc
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+push_eax	#_process_expression1
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+# looking up offset
+# -> offset calculation
+mov_ebx, %4
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_consume_token
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+# IF_3
+mov_eax, %95
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+# looking up offset
+# -> offset calculation
+mov_ebx, %4
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %0
+pop_ebx	# _common_recursion
+add_eax,ebx
+movsx_eax,BYTE_PTR_[eax]
+pop_ebx	# _common_recursion
+cmp
+sete_al
+movzx_eax,al
+test_eax,eax
+je %ELSE_3
+mov_eax, &GLOBAL_jump_table
+push_eax	#_common_recursion
+mov_eax, &GLOBAL_jump_table
+mov_eax,[eax]
+# looking up offset
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+jmp %_END_IF_3
+:ELSE_3
+:_END_IF_3
+pop_ebx	# _recursive_statement_locals
+ret
+# Defining function line_Comment
+:FUNCTION_line_Comment
+# Defining local c
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_fgetc
+pop_ebx	# _process_expression_locals
+push_eax	#c
+:WHILE_1
+mov_eax, %10
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+push_eax	#_common_recursion
+mov_eax, %13
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+pop_ebx	# _common_recursion
+and_eax,ebx
+test_eax,eax
+je %END_WHILE_1
+# THEN_while_1
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_fgetc
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+jmp %WHILE_1
+:END_WHILE_1
+pop_ebx	# _recursive_statement_locals
+ret
+# Defining function purge_string
+:FUNCTION_purge_string
+# Defining local c
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_fgetc
+pop_ebx	# _process_expression_locals
+push_eax	#c
+:WHILE_2
+mov_eax, %0xFFFFFFFF
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+push_eax	#_common_recursion
+mov_eax, %34
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+pop_ebx	# _common_recursion
+and_eax,ebx
+test_eax,eax
+je %END_WHILE_2
+# THEN_while_2
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_fgetc
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+jmp %WHILE_2
+:END_WHILE_2
+pop_ebx	# _recursive_statement_locals
+ret
+# Defining function first_pass
+:FUNCTION_first_pass
+# IF_4
+mov_eax, %0
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+sete_al
+movzx_eax,al
+test_eax,eax
+je %ELSE_4
+ret
+jmp %_END_IF_4
+:ELSE_4
+:_END_IF_4
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+# looking up offset
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_first_pass
+pop_ebx	# _process_expression_locals
+# Defining local source_file
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+# looking up offset
+# -> offset calculation
+mov_ebx, %4
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &STRING_0
+
+push_eax	#_process_expression2
+call %FUNCTION_fopen
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+push_eax	#source_file
+# IF_5
+mov_eax, %0
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+sete_al
+movzx_eax,al
+test_eax,eax
+je %ELSE_5
+mov_eax, &STRING_1
+push_eax	#_process_expression1
+mov_eax, %2
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+# looking up offset
+# -> offset calculation
+mov_ebx, %4
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, %2
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, &STRING_2
+push_eax	#_process_expression1
+mov_eax, %2
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, %1
+push_eax	#_process_expression1
+call %FUNCTION_exit
+pop_ebx	# _process_expression_locals
+jmp %_END_IF_5
+:ELSE_5
+:_END_IF_5
+# Defining local c
+push_eax	#c
+# FOR_initialization_1
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_fgetc
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+:FOR_1
+mov_eax, %0xFFFFFFFF
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+test_eax,eax
+je %FOR_END_1
+jmp %FOR_THEN_1
+:FOR_ITER_1
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_fgetc
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+jmp %FOR_1
+:FOR_THEN_1
+# IF_6
+mov_eax, %58
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+sete_al
+movzx_eax,al
+test_eax,eax
+je %ELSE_6
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_storeLabel
+pop_ebx	# _process_expression_locals
+jmp %_END_IF_6
+:ELSE_6
+# IF_7
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %35
+pop_ebx	# _common_recursion
+cmp
+sete_al
+movzx_eax,al
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %59
+pop_ebx	# _common_recursion
+cmp
+sete_al
+movzx_eax,al
+pop_ebx	# _common_recursion
+or_eax,ebx
+test_eax,eax
+je %ELSE_7
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_line_Comment
+pop_ebx	# _process_expression_locals
+jmp %_END_IF_7
+:ELSE_7
+# IF_8
+mov_eax, %34
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+sete_al
+movzx_eax,al
+test_eax,eax
+je %ELSE_8
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_purge_string
+pop_ebx	# _process_expression_locals
+jmp %_END_IF_8
+:ELSE_8
+:_END_IF_8
+:_END_IF_7
+:_END_IF_6
+jmp %FOR_ITER_1
+:FOR_END_1
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_fclose
+pop_ebx	# _process_expression_locals
+pop_ebx	# _recursive_statement_locals
+pop_ebx	# _recursive_statement_locals
+ret
+# Defining function output_debug
+:FUNCTION_output_debug
+# Defining local i
+push_eax	#i
+# FOR_initialization_2
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %16
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+:FOR_2
+mov_eax, %0
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+test_eax,eax
+je %FOR_END_2
+jmp %FOR_THEN_2
+:FOR_ITER_2
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+# looking up offset
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+jmp %FOR_2
+:FOR_THEN_2
+# IF_9
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+test_eax,eax
+je %ELSE_9
+mov_eax, &STRING_3
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+# looking up offset
+# -> offset calculation
+mov_ebx, %4
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, &STRING_4
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+# looking up offset
+# -> offset calculation
+mov_ebx, %4
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, &STRING_5
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+jmp %_END_IF_9
+:ELSE_9
+mov_eax, &STRING_6
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+# looking up offset
+# -> offset calculation
+mov_ebx, %4
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, &STRING_7
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+# looking up offset
+# -> offset calculation
+mov_ebx, %4
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, &STRING_8
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+:_END_IF_9
+jmp %FOR_ITER_2
+:FOR_END_2
+pop_ebx	# _recursive_statement_locals
+ret
+# Defining function reverse_list
+:FUNCTION_reverse_list
+# Defining local root
+mov_eax, %0
+push_eax	#root
+# Defining local next
+push_eax	#next
+:WHILE_3
+mov_eax, %0
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %16
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setne_al
+movzx_eax,al
+test_eax,eax
+je %END_WHILE_3
+# THEN_while_3
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %16
+mov_eax,[eax]
+# looking up offset
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+# looking up offset
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+lea_eax,[esp+DWORD] %4
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %16
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+lea_eax,[esp+DWORD] %12
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+jmp %WHILE_3
+:END_WHILE_3
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _return_result_locals
+pop_ebx	# _return_result_locals
+ret
+# Defining function main
+:FUNCTION_main
+mov_eax, &GLOBAL_jump_table
+push_eax	#_common_recursion
+mov_eax, %0
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+# Defining local input
+mov_eax, %0
+push_eax	#input
+mov_eax, &GLOBAL_output
+push_eax	#_common_recursion
+mov_eax, %1
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+# Defining local output_file
+mov_eax, &STRING_9
+push_eax	#output_file
+# Defining local option_index
+mov_eax, %1
+push_eax	#option_index
+:WHILE_4
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %20
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+setle_al
+movzx_eax,al
+test_eax,eax
+je %END_WHILE_4
+# THEN_while_4
+# IF_10
+mov_eax, %0
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %24
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+sal_eax, !2
+add_eax,ebx
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+sete_al
+movzx_eax,al
+test_eax,eax
+je %ELSE_10
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %1
+pop_ebx	# _common_recursion
+add_eax,ebx
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+jmp %_END_IF_10
+:ELSE_10
+# IF_11
+lea_eax,[esp+DWORD] %20
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+sal_eax, !2
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &STRING_10
+push_eax	#_process_expression2
+call %FUNCTION_match
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %24
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+sal_eax, !2
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &STRING_11
+push_eax	#_process_expression2
+call %FUNCTION_match
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+or_eax,ebx
+test_eax,eax
+je %ELSE_11
+mov_eax, &STRING_12
+push_eax	#_process_expression1
+mov_eax, %2
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+lea_eax,[esp+DWORD] %20
+push_eax	#_common_recursion
+mov_eax, %0
+pop_ebx	# _common_recursion
+sal_eax, !2
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, %2
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, &STRING_13
+push_eax	#_process_expression1
+mov_eax, %2
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, %0
+push_eax	#_process_expression1
+call %FUNCTION_exit
+pop_ebx	# _process_expression_locals
+jmp %_END_IF_11
+:ELSE_11
+# IF_12
+lea_eax,[esp+DWORD] %20
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+sal_eax, !2
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &STRING_14
+push_eax	#_process_expression2
+call %FUNCTION_match
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %24
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+sal_eax, !2
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &STRING_15
+push_eax	#_process_expression2
+call %FUNCTION_match
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+or_eax,ebx
+test_eax,eax
+je %ELSE_12
+# Defining local temp
+mov_eax, %1
+push_eax	#_process_expression1
+mov_eax, %8
+push_eax	#_process_expression2
+call %FUNCTION_calloc
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+push_eax	#temp
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+# looking up offset
+# -> offset calculation
+mov_ebx, %4
+add_eax,ebx
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %28
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %1
+pop_ebx	# _common_recursion
+add_eax,ebx
+pop_ebx	# _common_recursion
+sal_eax, !2
+add_eax,ebx
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+lea_eax,[esp+DWORD] %0
+
+mov_eax,[eax]
+# looking up offset
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %16
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+lea_eax,[esp+DWORD] %12
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+lea_eax,[esp+DWORD] %4
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %2
+pop_ebx	# _common_recursion
+add_eax,ebx
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+pop_ebx	# _recursive_statement_locals
+jmp %_END_IF_12
+:ELSE_12
+# IF_13
+lea_eax,[esp+DWORD] %20
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+sal_eax, !2
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &STRING_16
+push_eax	#_process_expression2
+call %FUNCTION_match
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %24
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+sal_eax, !2
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &STRING_17
+push_eax	#_process_expression2
+call %FUNCTION_match
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+or_eax,ebx
+test_eax,eax
+je %ELSE_13
+lea_eax,[esp+DWORD] %4
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %24
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %1
+pop_ebx	# _common_recursion
+add_eax,ebx
+pop_ebx	# _common_recursion
+sal_eax, !2
+add_eax,ebx
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+mov_eax, &GLOBAL_output
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &STRING_18
+push_eax	#_process_expression2
+call %FUNCTION_fopen
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+# IF_14
+mov_eax, %0
+push_eax	#_common_recursion
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+sete_al
+movzx_eax,al
+test_eax,eax
+je %ELSE_14
+mov_eax, &STRING_19
+push_eax	#_process_expression1
+mov_eax, %2
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+# looking up offset
+# -> offset calculation
+mov_ebx, %4
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, %2
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, &STRING_20
+push_eax	#_process_expression1
+mov_eax, %2
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, %1
+push_eax	#_process_expression1
+call %FUNCTION_exit
+pop_ebx	# _process_expression_locals
+jmp %_END_IF_14
+:ELSE_14
+:_END_IF_14
+lea_eax,[esp+DWORD] %0
+
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+push_eax	#_common_recursion
+mov_eax, %2
+pop_ebx	# _common_recursion
+add_eax,ebx
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+jmp %_END_IF_13
+:ELSE_13
+# IF_15
+lea_eax,[esp+DWORD] %20
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %4
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+sal_eax, !2
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &STRING_21
+push_eax	#_process_expression2
+call %FUNCTION_match
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %24
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+sal_eax, !2
+add_eax,ebx
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, &STRING_22
+push_eax	#_process_expression2
+call %FUNCTION_match
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+or_eax,ebx
+test_eax,eax
+je %ELSE_15
+mov_eax, &STRING_23
+push_eax	#_process_expression1
+mov_eax, %1
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, %0
+push_eax	#_process_expression1
+call %FUNCTION_exit
+pop_ebx	# _process_expression_locals
+jmp %_END_IF_15
+:ELSE_15
+mov_eax, &STRING_24
+push_eax	#_process_expression1
+mov_eax, %2
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, %1
+push_eax	#_process_expression1
+call %FUNCTION_exit
+pop_ebx	# _process_expression_locals
+:_END_IF_15
+:_END_IF_13
+:_END_IF_12
+:_END_IF_11
+:_END_IF_10
+jmp %WHILE_4
+:END_WHILE_4
+# IF_16
+mov_eax, %0
+push_eax	#_common_recursion
+lea_eax,[esp+DWORD] %12
+mov_eax,[eax]
+pop_ebx	# _common_recursion
+cmp
+sete_al
+movzx_eax,al
+test_eax,eax
+je %ELSE_16
+mov_eax, %1
+pop_ebx	# _return_result_locals
+pop_ebx	# _return_result_locals
+pop_ebx	# _return_result_locals
+ret
+jmp %_END_IF_16
+:ELSE_16
+:_END_IF_16
+lea_eax,[esp+DWORD] %8
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_first_pass
+pop_ebx	# _process_expression_locals
+mov_eax, &GLOBAL_jump_table
+push_eax	#_common_recursion
+mov_eax, &GLOBAL_jump_table
+mov_eax,[eax]
+push_eax	#_process_expression1
+call %FUNCTION_reverse_list
+pop_ebx	# _process_expression_locals
+pop_ebx	# _common_recursion
+mov_[ebx],eax
+mov_eax, &STRING_25
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, &GLOBAL_jump_table
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, %1
+push_eax	#_process_expression2
+call %FUNCTION_output_debug
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, &STRING_26
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, &GLOBAL_jump_table
+mov_eax,[eax]
+push_eax	#_process_expression1
+mov_eax, %0
+push_eax	#_process_expression2
+call %FUNCTION_output_debug
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, &STRING_27
+push_eax	#_process_expression1
+mov_eax, &GLOBAL_output
+mov_eax,[eax]
+push_eax	#_process_expression2
+call %FUNCTION_file_print
+pop_ebx	# _process_expression_locals
+pop_ebx	# _process_expression_locals
+mov_eax, %0
+pop_ebx	# _return_result_locals
+pop_ebx	# _return_result_locals
+pop_ebx	# _return_result_locals
+ret
+
+# Program global variables
+
+:GLOBAL_output
+NULL
+:GLOBAL_jump_table
+NULL
+
+# Program strings
+
+:STRING_0
+
+"r"
+:STRING_1
+"The file: "
+:STRING_2
+" can not be opened!
+"
+:STRING_3
+' 3A 45 4C 46 5F 73 74 72 5F 00'
+:STRING_4
+' 0A 22 00'
+:STRING_5
+' 22 0A 00'
+:STRING_6
+"%ELF_str_"
+:STRING_7
+">ELF_str
+&"
+:STRING_8
+"
+%10000
+!2
+!0
+@1
+"
+:STRING_9
+""
+:STRING_10
+"-h"
+:STRING_11
+"--help"
+:STRING_12
+"Usage: "
+:STRING_13
+" -f FILENAME1 {-f FILENAME2}
+"
+:STRING_14
+"-f"
+:STRING_15
+"--file"
+:STRING_16
+"-o"
+:STRING_17
+"--output"
+:STRING_18
+"w"
+:STRING_19
+"The file: "
+:STRING_20
+" can not be opened!
+"
+:STRING_21
+"-V"
+:STRING_22
+"--version"
+:STRING_23
+"blood-elf 0.1
+(Basically Launches Odd Object Dump ExecutabLe Files
+"
+:STRING_24
+"Unknown option
+"
+:STRING_25
+' 3A 45 4C 46 5F 73 74 72 0A 21 30 0A 00'
+:STRING_26
+' 25 30 0A 3A 45 4C 46 5F 73 79 6D 0A 25 30 0A 25 30 0A 25 30 0A 21 30 0A 21 30 0A 40 31 0A 00'
+:STRING_27
+' 0A 3A 45 4C 46 5F 65 6E 64 0A 00'
+
+:ELF_end

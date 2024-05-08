@@ -1,0 +1,57 @@
+.\"Made with Love
+.TH blood-elf 1 "JULY 2019" Linux "User Manuals"
+.SH NAME
+
+blood-elf - Get mescc with dwarfs
+
+.SH SYNOPSIS
+.na
+
+blood-elf --file FILE [--output FILE --64]
+
+.SH DESCRIPTION
+
+blood-elf exists to generate ELF debug tables in M1-macro
+format from M1-macro assembly files.
+.br
+
+At its core is read until you find :LABEL and then add it
+to the list of things to output. It will ignore labels that
+have '_' prefixing their name. eg :_foo will not get an entry.
+If no output is specified, the result will be sent to Standard
+Out.
+
+.br
+Fortunately the only architecture difference that you need
+to concern yourself with is if your binary is going to be
+64bits or 32bits (which is the default) and to pass the flag:
+--64 should you need that alternate format
+
+.SH EXAMPLES
+
+Typically, blood-elf will be called in scripts used in bootstrapping
+.br
+# blood-elf -f cc.M1 -o cc-footer.M1
+.br
+# blood-elf --file cc.M1 --64 --output cc-footer.M1
+.br
+
+.SH COMPATIBILITY
+
+blood-elf is compatible with all Turing complete machines;
+even the ones that try to be Turing complete -1.
+
+.SH AUTHORS
+Jeremiah Orians <Jeremiah@pdp10.guru>
+.br
+Jan (janneke) Nieuwenhuizen <janneke@gnu.org>
+
+.SH COPYRIGHT
+Copyright 2016-2019 Jeremiah Orians <Jeremiah@pdp10.guru>
+.br
+Copyright 2017 Jan Nieuwenhuizen <janneke@gnu.org>
+.br
+License GPLv3+.
+
+.SH "SEE ALSO"
+M1(1), hex2(1), kaem(1), syscalls(2)

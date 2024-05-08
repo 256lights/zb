@@ -1,0 +1,450 @@
+## Copyright (C) 2021 Andrius Štikonas
+## This file is part of stage0.
+##
+## stage0 is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## stage0 is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with stage0.  If not, see <http://www.gnu.org/licenses/>.
+
+## ELF Header
+
+# :ELF_base
+7F 45 4C 46        ## e_ident[EI_MAG0-3] ELF's magic number
+
+01                 ## e_ident[EI_CLASS] Indicating 32 bit
+01                 ## e_ident[EI_DATA] Indicating little endianness
+01                 ## e_ident[EI_VERSION] Indicating original elf
+
+03                 ## e_ident[EI_OSABI] Set at 3 because FreeBSD is strict
+00                 ## e_ident[EI_ABIVERSION] Set at 0 because none cares
+
+00 00 00 00 00 00 00 ## e_ident[EI_PAD]
+02 00              ## e_type Indicating Executable
+F3 00              ## e_machine Indicating RISC-V
+01 00 00 00        ## e_version Indicating original elf
+
+54 00 60 00        ## e_entry Address of the entry point (Number of bytes this header is + Base Address)
+34 00 00 00        ## e_phoff Address of program header table
+00 00 00 00        ## e_shoff Address of section header table
+
+00 00 00 00        ## e_flags
+34 00              ## e_ehsize Indicating our 52 Byte header
+
+20 00              ## e_phentsize size of a program header table
+01 00              ## e_phnum number of entries in program table
+
+00 00              ## e_shentsize size of a section header table
+00 00              ## e_shnum number of entries in section table
+
+00 00              ## e_shstrndx index of the section names
+
+## Program Header
+# :ELF_program_headers
+01 00 00 00        ## ph_type: PT-LOAD = 1
+00 00 00 00        ## p_offset
+
+00 00 60 00        # ph_vaddr
+00 00 60 00        # ph_physaddr
+
+7A 03 00 00        # ph_filesz
+7A 03 00 00        # ph_memsz
+
+07 00 00 00        ## ph_flags: PF-X|PF-W|PF-R = 7
+01 00 00 00        ## ph_align
+
+; Our main function
+# :_start ; (0x0600054)
+
+# Register use:
+# s2: input fd
+# s4: command_done
+# s6: malloc pointer
+
+    03 26 81 00     # rd_a2 rs1_sp !8 lw                ; Input file name
+    13 07 00 00     # rd_a4 mv                          ; Initialize register (set *rusage = NULL in waitid)
+
+    63 16 06 00     # rs1_a2 @_start_out bnez           ; Use input file if specified
+                    # +12B
+
+    # Else use kaem.riscv32
+    17 06 00 00     # rd_a2 ~default_file auipc         ; load address of default_file
+    13 06 86 2E     # rd_a2 rs1_a2 !default_file addi   ; into register a2
+                    # +744B
+
+# :_start_out ; (0x0600064)
+
+    # Open input file and store FD in s2
+    93 08 80 03     # rd_a7 !56 addi                    ; sys_openat
+    13 05 C0 F9     # rd_a0 !-100 addi                  ; AT_FDCWD
+    93 05 06 00     # rd_a1 rs1_a2 mv                   ; file name
+    13 06 00 00     # rd_a2 addi                        ; read only
+    73 00 00 00     # ecall                             ; syscall
+    63 40 05 2C     # rs1_a0 @Fail bltz                 ; Error opening file
+                    # +704B
+    13 09 05 00     # rd_s2 rs1_a0 mv                   ; Save fd in for later
+
+    # Prepare heap memory
+    93 08 60 0D     # rd_a7 !214 addi                   ; sys_brk
+    13 05 00 00     # rd_a0 mv                          ; Get current brk
+    73 00 00 00     # ecall                             ; syscall
+    13 0B 05 00     # rd_s6 rs1_a0 mv                   ; Set our malloc pointer
+
+# Using a1 for tokens and a2 for tokens[i]
+# :main_loop ; (0x0600090)
+    13 05 10 00     # rd_a0 !1 addi                     ; 256 * sizeof(char*)
+    13 15 B5 00     # rd_a0 rs1_a0 rs2_x11 slli         ; 2048 = 1 << 11
+    EF 00 00 1F     # rd_ra $malloc jal                 ; allocate space
+                    # +496B
+    93 05 05 00     # rd_a1 rs1_a0 mv                   ; set tokens pointer
+    13 06 05 00     # rd_a2 rs1_a0 mv                   ; set tokens[i] pointer (i=0)
+
+    13 0A 00 00     # rd_s4 mv                          ; command_done = 0
+
+# :collect_command ; (0x06000A8)
+    EF 00 C0 0D     # rd_ra $collect_token jal          ; Get another token
+                    # +220B
+    63 06 05 00     # rs1_a0 @collect_command_comment beqz ; if NULL == result then it is a comment, don't store
+                    # +12B
+
+    23 20 A6 00     # rs1_a2 rs2_a0 sw                  ; tokens[i] = result
+    13 06 46 00     # rd_a2 rs1_a2 !4 addi              ; i = i + 1 (sizeof(char*) = 4)
+
+# :collect_command_comment ; (0x06000B8)
+    E3 08 0A FE     # rs1_s4 @collect_command beqz      ; keep looping if 0 == command_done
+                    # -16B
+
+    # Deal with line comments
+    E3 8A C5 FC     # rs1_a1 rs2_a2 @main_loop beq      ; keep looping if comment
+                    # -44B
+
+    EF 00 40 07     # rd_ra $print_command jal          ; print the command
+                    # +116B
+    03 A5 05 00     # rd_a0 rs1_a1 lw                   ; program = tokens[0]
+    63 08 05 26     # rs1_a0 @Fail beqz                 ; Error, no program
+                    # +624B
+
+    13 01 C1 FF     # rd_sp rs1_sp !-4 addi             ; allocate stack
+    23 20 B1 00     # rs1_sp rs2_a1 sw                  ; protect tokens
+
+    93 08 C0 0D     # rd_a7 !220 addi                   ; sys_clone
+    13 05 10 01     # rd_a0 !17 addi                    ; SIGCHLD flag
+    93 05 00 00     # rd_a1 mv                          ; Child uses duplicate of parent's stack
+    73 00 00 00     # ecall                             ; syscall
+
+    83 25 01 00     # rd_a1 rs1_sp lw                   ; restore tokens
+    13 01 41 00     # rd_sp rs1_sp !4 addi              ; deallocate stack
+
+    63 46 05 24     # rs1_a0 @Fail bltz                 ; if f == -1 no child was created
+                    # +588B
+    63 1A 05 00     # rs1_a0 @collect_command_parent bnez ; if f == 0 it is child
+                    # +20B
+
+    # Deal with child case
+    93 08 D0 0D     # rd_a7 !221 addi                   ; sys_execve
+    03 A5 05 00     # rd_a0 rs1_a1 lw                   ; program = tokens[0]
+    73 00 00 00     # ecall                             ; execve(program, tokens)
+    EF 00 80 23     # rd_ra $Fail jal                   ; Exit with an error
+                    # +568B
+
+# :collect_command_parent ; (0x0600104)
+    93 08 F0 05     # rd_a7 !95 addi                    ; sys_waitid
+    13 05 00 00     # rd_a0 mv                          ; set idtype = P_ALL
+    17 06 00 00     # rd_a2 ~info auipc                 ; a2 = siginfo_t &info
+    13 06 A6 26     # rd_a2 rs1_a2 !info addi
+                    # +618B
+    93 06 40 00     # rd_a3 !4 mv                       ; set *options = WEXITED
+    73 00 00 00     # ecall                             ; syscall
+
+    # Check if child exited
+    03 26 46 01     # rd_a2 rs1_a2 !20 lw               ; status = info->si_status
+    E3 08 06 F6     # rs1_a2 @main_loop beqz            ; Loop if 0 == status
+                    # -144B
+
+# :abort ; (0x0600124)
+    17 05 00 00     # rd_a0 ~hard auipc                 ; Get error string
+    13 05 25 23     # rd_a0 rs1_a0 !hard addi           ; Get error string
+                    # +562B
+    EF 00 80 18     # rd_ra $File_Print jal             ; Print it
+                    # +392B
+    6F 00 80 20     # $Fail jal                         ; Exit with failure
+                    # +520B
+
+
+# print_command function
+# Receives tokens[j] in a1 and tokens[i] in a2
+# Modifies a0
+# :print_command ; (0x0600134)
+    13 01 41 FF     # rd_sp rs1_sp !-12 addi            ; allocate stack
+    23 20 11 00     # rs1_sp rs2_ra sw                  ; protect ra
+    23 22 B1 00     # rs1_sp rs2_a1 @4 sw               ; protect a1
+    23 24 C1 00     # rs1_sp rs2_a2 @8 sw               ; protect a2
+
+    17 05 00 00     # rd_a0 ~prefix auipc               ; Get prefix " +> "
+    13 05 D5 20     # rd_a0 rs1_a0 !prefix addi         ; Get prefix " +> "
+                    # +525B
+    EF 00 80 16     # rd_ra $File_Print jal             ; print it
+                    # +360B
+
+# :print_command_loop ; (0x0600150)
+    03 A5 05 00     # rd_a0 rs1_a1 lw                   ; get tokens[j]
+    EF 00 00 16     # rd_ra $File_Print jal             ; print it
+                    # +352B
+    93 85 45 00     # rd_a1 rs1_a1 !4 addi              ; j = j + 1
+    13 05 00 02     # rd_a0 !32 addi                    ; a0 = ' '
+    EF 00 40 19     # rd_ra $fputc jal                  ; print it
+                    # +404B
+    E3 96 C5 FE     # rs1_a1 rs2_a2 @print_command_loop bne ; continue if j < i, otherwise keep looping
+                    # -20B
+
+    13 05 A0 00     # rd_a0 !10 addi                    ; a0 = '\n'
+    EF 00 80 18     # rd_ra $fputc jal                  ; print it
+                    # +392B
+
+    83 20 01 00     # rd_ra rs1_sp lw                   ; restore ra
+    83 25 41 00     # rd_a1 rs1_sp !4 lw                ; restore a1
+    03 26 81 00     # rd_a2 rs1_sp !8 lw                ; restore a2
+    13 01 C1 00     # rd_sp rs1_sp !12 addi             ; deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+
+# collect_token function
+# Receives nothing
+# Overwrites a0
+# Uses a0 as c, a1 as token and a2 as token[i]
+# :collect_token ; (0x0600184)
+    13 01 41 FF     # rd_sp rs1_sp !-12 addi            ; allocate stack
+    23 20 11 00     # rs1_sp rs2_ra sw                  ; protect ra
+    23 22 B1 00     # rs1_sp rs2_a1 @4 sw               ; protect a1
+    23 24 C1 00     # rs1_sp rs2_a2 @8 sw               ; protect a2
+
+    37 15 00 00     # rd_a0 ~4096 lui                   ; 4096 * sizeof(char)
+    EF 00 00 0F     # rd_ra $malloc jal                 ; allocate space
+                    # +240B
+    93 05 05 00     # rd_a1 rs1_a0 mv                   ; token = malloc(max_string)
+    13 06 05 00     # rd_a2 rs1_a0 mv                   ; i = 0; set token[i]
+
+# :collect_token_loop ; (0x06001A4)
+    EF 00 40 0A     # rd_ra $fgetc jal                  ; read character
+                    # +164B
+
+    93 02 C0 FF     # rd_t0 !-4 addi                    ; if character == EOF
+    63 00 55 18     # rs1_a0 rs2_t0 @Done beq           ; We are done
+                    # +384B
+
+    93 02 00 02     # rd_t0 !32 addi                    ; if c == ' '
+    63 06 55 04     # rs1_a0 rs2_t0 @collect_token_done beq ; Space terminates token
+                    # +76B
+
+    93 02 90 00     # rd_t0 !9 addi                     ; if c == '\t'
+    63 02 55 04     # rs1_a0 rs2_t0 @collect_token_done beq ; Tab terminates token
+                    # +68B
+
+    93 02 A0 00     # rd_t0 !10 addi                    ; continue if c == '\n'
+    63 16 55 00     # rs1_a0 rs2_t0 @collect_token_comment bne ; otherwise check next
+                    # +12B
+
+    # newline
+    13 0A 10 00     # rd_s4 !1 addi                     ; command_done = true
+    6F 00 40 03     # $collect_token_done jal           ; Done with current command
+                    # +52B
+
+# :collect_token_comment ; (0x06001D0)
+    93 02 30 02     # rd_t0 !35 addi                    ; if c == '#'
+    63 18 55 00     # rs1_a0 rs2_t0 @collect_token_escape bne ; otherwise check next
+                    # +16B
+
+    # It is a line comment
+    EF 00 80 04     # rd_ra $collect_comment jal        ; Read whole comment
+                    # +72B
+    13 0A 10 00     # rd_s4 !1 addi                     ; command_done = true
+    EF 00 00 02     # rd_ra $collect_token_done jal     ; Done
+                    # +32B
+
+# :collect_token_escape ; (0x06001E4)
+    93 02 C0 05     # rd_t0 !92 addi                    ; if c == '\'
+    63 16 55 00     # rs1_a0 rs2_t0 @collect_token_other bne ; otherwise just store it
+                    # +12B
+
+    # Escape character
+    EF 00 C0 05     # rd_ra $fgetc jal                  ; Read the char to drop
+                    # +92B
+    EF 00 00 01     # rd_ra $collect_token_done jal     ; We are done
+                    # +16B
+
+# :collect_token_other ; (0x06001F4)
+    23 00 A6 00     # rs1_a2 rs2_a0 sb                  ; token[i] = c
+    13 06 16 00     # rd_a2 rs1_a2 !1 addi              ; i = i + 1
+    6F F0 9F FA     # $collect_token_loop jal           ; Read another character
+                    # -88B
+
+# :collect_token_done ; (0x0600200)
+    63 94 C5 00     # rs1_a1 rs2_a2 @collect_token_good bne ; return the token unless
+                    # +8B
+    93 05 00 00     # rd_a1 mv                          ; i == 0, then token = NULL
+
+# :collect_token_good ; (0x0600208)
+    13 85 05 00     # rd_a0 rs1_a1 mv                   ; Return token
+    83 20 01 00     # rd_ra rs1_sp lw                   ; restore ra
+    83 25 41 00     # rd_a1 rs1_sp !4 lw                ; restore a1
+    03 26 81 00     # rd_a2 rs1_sp !8 lw                ; restore a2
+    13 01 C1 00     # rd_sp rs1_sp !12 addi             ; Deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+
+# collect_comment function
+# Receives nothing
+# Modifies a0
+# uses a0 as c
+# Just throws away everything it reads
+# :collect_comment ; (0x0600220)
+    13 01 C1 FF     # rd_sp rs1_sp !-4 addi             ; allocate stack
+    23 20 11 00     # rs1_sp rs2_ra sw                  ; protect ra
+
+    EF 00 00 02     # rd_ra $fgetc jal                  ; c = fgetc(input)
+                    # +32B
+    93 02 C0 FF     # rd_t0 !-4 addi                    ; if c == EOF
+    63 04 55 10     # rs1_a0 rs2_t0 @Fail beq           ; Abort
+                    # +264B
+
+    93 02 A0 00     # rd_t0 !10 addi                    ; if c == '\n'
+    E3 14 55 FE     # rs1_a0 rs2_t0 @collect_comment bne ; loop
+                    # -24B
+
+    83 20 01 00     # rd_ra rs1_sp lw                   ; restore ra
+    13 01 41 00     # rd_sp rs1_sp !4 addi              ; deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+
+# fgetc function ; (0x0600248)
+# Loads FILE* from s2
+# Returns -4 (EOF) or char in a0
+# :fgetc
+    13 01 41 FF     # rd_sp rs1_sp !-12 addi            ; allocate stack
+    23 22 B1 00     # rs1_sp rs2_a1 @4 sw               ; protect a1
+    23 24 C1 00     # rs1_sp rs2_a2 @8 sw               ; protect a2
+
+    93 08 F0 03     # rd_a7 !63 addi                    ; sys_read
+    93 05 01 00     # rd_a1 rs1_sp mv                   ; Get stack address
+    13 05 09 00     # rd_a0 rs1_s2 mv                   ; read from input file
+    13 06 10 00     # rd_a2 !1 addi                     ; read 1 character
+    73 00 00 00     # ecall                             ; syscall
+
+    63 16 05 00     # rs1_a0 @fgetc_done bnez           ; Check if nothing was read
+                    # +12B
+
+# :fgetc_fail ; (0x060026C)
+    93 02 C0 FF     # rd_t0 !-4 addi                    ; Use -4 as EOF
+    23 80 55 00     # rs1_a1 rs2_t0 sb                  ; Store EOF in *a1
+
+# :fgetc_done ; (0x0600274)
+    03 85 05 00     # rd_a0 rs1_a1 lb                   ; return char in a0
+    83 25 41 00     # rd_a1 rs1_sp !4 lw                ; restore a1
+    03 26 81 00     # rd_a2 rs1_sp !8 lw                ; restore a2
+    13 01 C1 00     # rd_sp rs1_sp !12 addi             ; deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+
+# Malloc isn't actually required if the program being built fits in the initial memory
+# However, it doesn't take much to add it.
+# Requires MALLOC pointer to be initialized and a0 to have the number of desired bytes
+
+# :malloc ; (0x0600288)
+    13 01 C1 FF     # rd_sp rs1_sp !-4 addi             ; allocate stack
+    23 20 B1 00     # rs1_sp rs2_a1 sw                  ; protect a1
+
+    93 05 0B 00     # rd_a1 rs1_s6 mv                   ; Store the current pointer
+    33 05 65 01     # rd_a0 rs1_a0 rs2_s6 add           ; Request the number of desired bytes
+    93 08 60 0D     # rd_a7 !214 addi                   ; sys_brk
+    73 00 00 00     # ecall                             ; syscall
+    13 0B 05 00     # rd_s6 rs1_a0 mv                   ; Set our malloc pointer
+    13 85 05 00     # rd_a0 rs1_a1 mv                   ; Return the pointer
+
+    83 25 01 00     # rd_a1 rs1_sp lw                   ; restore a1
+    13 01 41 00     # rd_sp rs1_sp !4 addi              ; deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+# File_Print function
+# Receives CHAR* in a0
+# calls fputc for every non-null char
+# :File_Print ; (0x06002B4)
+    13 01 41 FF     # rd_sp rs1_sp !-12 addi            ; allocate stack
+    23 20 11 00     # rs1_sp rs2_ra sw                  ; protect ra
+    23 22 B1 00     # rs1_sp rs2_a1 @4 sw               ; protect a1
+    23 24 C1 00     # rs1_sp rs2_a2 @8 sw               ; protect a2
+    93 05 05 00     # rd_a1 rs1_a0 mv                   ; protect a0
+
+    63 0C 05 00     # rs1_a0 @File_Print_Done beqz      ; Protect against nulls
+                    # +24B
+
+# :File_Print_Loop ; (0x06002CC)
+    03 C5 05 00     # rd_a0 rs1_a1 lbu                  ; Read byte
+    63 08 05 00     # rs1_a0 @File_Print_Done beqz      ; Stop at NULL
+                    # +16B
+
+    EF 00 00 02     # rd_ra $fputc jal                  ; print it
+                    # +32B
+    93 85 15 00     # rd_a1 rs1_a1 !1 addi              ; S = S + 1
+    6F F0 1F FF     # $File_Print_Loop jal              ; Keep printing
+                    # -16B
+
+# :File_Print_Done ; (0x06002E0)
+    83 20 01 00     # rd_ra rs1_sp lw                   ; restore ra
+    83 25 41 00     # rd_a1 rs1_sp !4 lw                ; restore a1
+    03 26 81 00     # rd_a2 rs1_sp !8 lw                ; restore a2
+    13 01 C1 00     # rd_sp rs1_sp !12 addi             ; deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+# fputc function
+# receives CHAR in a0 and load FILE* from stdout
+# writes char and returns
+# :fputc ; (0x06002F4)
+    13 01 41 FF     # rd_sp rs1_sp !-12 addi            ; allocate stack
+    23 20 A1 00     # rs1_sp rs2_a0 sw                  ; protect a0
+    23 22 B1 00     # rs1_sp rs2_a1 @4 sw               ; protect a1
+    23 24 C1 00     # rs1_sp rs2_a2 @8 sw               ; protect a2
+
+    93 08 00 04     # rd_a7 !64 addi                    ; sys_write
+    13 05 10 00     # rd_a0 !1 addi                     ; write to stdout
+    93 05 01 00     # rd_a1 rs1_sp mv                   ; Get stack address
+    13 06 10 00     # rd_a2 !1 addi                     ; write 1 character
+    73 00 00 00     # ecall                             ; syscall
+
+    03 25 01 00     # rd_a0 rs1_sp lw                   ; restore a0
+    83 25 41 00     # rd_a1 rs1_sp !4 lw                ; restore a1
+    03 26 81 00     # rd_a2 rs1_sp !8 lw                ; restore a2
+    13 01 C1 00     # rd_sp rs1_sp !12 addi             ; deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+# :Done ; (0x060032C)
+    # Terminate program with 0 return code
+    93 08 D0 05     # rd_a7 !93 addi                    ; sys_exit
+    13 05 00 00     # rd_a0 mv                          ; Return code 0
+    73 00 00 00     # ecall                             ; syscall
+
+# :Fail ; (0x0600338)
+    # Terminate program with 1 return code
+    93 08 D0 05     # rd_a7 !93 addi                    ; sys_exit
+    13 05 10 00     # rd_a0 !1 addi                     ; Return code 1
+    73 00 00 00     # ecall                             ; syscall
+# PROGRAM END
+
+# :default_file ; (0x0600344)
+    6B 61 65 6D 2E 72 69 73 63 76 33 32 00                          ; kaem.riscv32
+# :prefix ; (0x0600351)
+    20 2B 3E 20 00                                      ; " +> "
+# :hard ; (0x0600356)
+    53 75 62 70 72 6F 63 65 73 73 20 65 72 72 6F 72 0A  ; "Subprocess error"
+    41 42 4F 52 54 49 4E 47 20 48 41 52 44 0A           ; "ABORTING HARD"
+    00
+# :info ; (0x0600376)
+    00 00 00 00
+
+# :ELF_end ; (0x060037A)

@@ -1,0 +1,406 @@
+# SPDX-FileCopyrightText: 2020 Jeremiah Orians <jeremiah@pdp10.guru>
+# SPDX-FileCopyrightText: 2023 Andrius Štikonas <andrius@stikonas.eu>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Register usage
+# * R12 status
+# * R13 script
+# * R14 MALLOC
+# * R15 command_done
+
+## ELF Header
+
+# :ELF_base ; (0x600000)
+	7F 45 4C 46             ## e_ident[EI_MAG0-3] ELF's magic number
+
+	02                      ## e_ident[EI_CLASS] Indicating 64 bit
+	01                      ## e_ident[EI_DATA] Indicating little endianness
+	01                      ## e_ident[EI_VERSION] Indicating original elf
+
+	03                      ## e_ident[EI_OSABI] Set at 3 because FreeBSD is strict
+	00                      ## e_ident[EI_ABIVERSION] Set at 0 because none cares
+
+	00 00 00 00 00 00 00    ## e_ident[EI_PAD]
+	02 00                   ## e_type Indicating Executable
+	3E 00                   ## e_machine Indicating AMD64
+	01 00 00 00             ## e_version Indicating original elf
+
+	78006000 00000000       ## e_entry Address of the entry point (Number of bytes this header is + Base Address)
+	40000000 00000000       ## e_phoff Address of program header table
+	00 00 00 00 00 00 00 00 ## e_shoff Address of section header table
+
+	00 00 00 00             ## e_flags
+	40 00                   ## e_ehsize Indicating our 64 Byte header
+
+	38 00                   ## e_phentsize size of a program header table
+	01 00                   ## e_phnum number of entries in program table
+
+	00 00                   ## e_shentsize size of a section header table
+	00 00                   ## e_shnum number of entries in section table
+
+	00 00                   ## e_shstrndx index of the section names
+
+## Program Header
+# :ELF_program_headers ; (0x600040)
+	01 00 00 00             ## p_type
+	07 00 00 00             ## ph_flags: PF-X|PF-W|PF-R = 7
+	00 00 00 00 00 00 00 00 ## p_offset
+
+	00006000 00000000       ## p_vaddr
+	00006000 00000000       ## p_physaddr
+
+	6A020000 00000000       ## p_filesz
+	6A020000 00000000       ## p_memsz
+
+	01 00 00 00 00 00 00 00 ## Required alignment
+
+# :ELF_text
+# :_start ; (0x0600078)
+	58                              ; pop_rax                             # Get the number of arguments
+	5F                              ; pop_rdi                             # Get the program name
+	5F                              ; pop_rdi                             # Get the actual input name
+	85FF                            ; test_edi,edi                        # Check for missing output
+	75 06                           ; jne8 !_start_out                    # Have real input
+	50                              ; push_rax                            # Need to adjust stack
+	BF 48026000                     ; mov_edi, &default_file              # Use "kaem.amd64"
+
+# :_start_out ; (0x600085)
+	31F6                            ; xor_esi,esi                         # prepare read_only
+	6A 02                           ; push !2
+	58                              ; pop_rax                             # the syscall number for open()
+	0F05                            ; syscall                             # Now open that damn file
+
+	85C0                            ; test_eax,eax                        # IF NULL We couldn't open the file
+	7E 66                           ; jle8 !Exit_Failure                  # Abort hard
+	4989C5                          ; mov_r13,rax                         # Set input pointer
+
+	58                              ; pop_rax                             # Get start of envp
+	4889E5                          ; mov_rbp,rsp                         # Protect envp
+
+	6A 0C                           ; push !12
+	58                              ; pop_rax                             # the Syscall # for SYS_BRK
+	31FF                            ; xor_edi,edi                         # Get current brk
+	0F05                            ; syscall                             # Let the kernel do the work
+	4989C6                          ; mov_r14,rax                         # Set our malloc pointer
+
+	# Where the main work gets done
+	# Using RDI for tokens and RSI for tokens[i]
+# :main_loop ; (0x6000A1)
+	31C0                            ; xor_eax,eax                         # Zero RAX
+	B4 08                           ; mov_ah, !0x8                        # Using 256 char* of space (0x800)
+	E8 33010000                     ; call %malloc                        # get it
+	4889C7                          ; mov_rdi,rax                         # set tokens
+
+	4889FE                          ; mov_rsi,rdi                         # I = 0
+	31C0                            ; xor_eax,eax                         # Using 0
+	4D31FF                          ; xor_r15,r15                         # command_done = 0
+
+	# Using RAX for result and RDI for tokens[i]
+# :collect_command ; (0x6000B5)
+	E8 95000000                     ; call %collect_token                 # Get another token
+	85C0                            ; test_eax,eax                        # if NULL == result
+	74 07                           ; je8 !collect_command_comment        # It is a comment, don't store
+
+	488906                          ; mov_[rsi],rax                       # tokens[i] = result
+	4883C6 08                       ; add_rsi, !8                         # i = i + 1 (adjusted for char* size)
+
+# :collect_command_comment ; (0x6000C5)
+	4D85FF                          ; test_r15,r15                        # IF 0 == command_done
+	74 EB                           ; je8 !collect_command                # keep looping
+
+	# Deal with line comments
+	4839FE                          ; cmp_rsi,rdi                         # if 0 < i
+	74 D2                           ; je8 !main_loop                      # It was a comment
+
+	E8 4D000000                     ; call %print_command                 # print the command
+	488B07                          ; mov_rax,[rdi]                       # program = tokens[0]
+	85C0                            ; test_eax,eax                        # IF NULL == program
+	74 1B                           ; je8 !Exit_Failure                   # Some shit went down, abort
+
+	57                              ; push_rdi                            # Protect Tokens
+	6A 39                           ; push !57
+	58                              ; pop_rax                             # FORKing
+	0F05                            ; syscall                             # int f = FORK()
+	5F                              ; pop_rdi                             # Restore Tokens
+
+	85C0                            ; test_eax,eax                        # Check fork
+	7C 10                           ; jl8 !Exit_Failure                   # IF f == -1 abort hard
+	75 13                           ; jne8 !collect_command_parent        # IF f == 0 it is child
+
+	# Deal with child case
+	6A 3B                           ; push !59
+	58                              ; pop_rax                             # EXECVE
+	4889EA                          ; mov_rdx,rbp                         # third arg = envp
+	4889FE                          ; mov_rsi,rdi                         # second arg = tokens
+	488B3F                          ; mov_rdi,[rdi]                       # program = tokens[0]
+	0F05                            ; syscall                             # execve(program, tokens, envp);
+
+# Exit_Failure function
+# Receives nothing
+# And aborts hard
+# DOES NOT RETURN
+# :Exit_Failure ; (0x6000F6)
+	6A 01                           ; push !1
+	5F                              ; pop_rdi                             # All is wrong
+	EB 21                           ; jmp8 !Exit                          # Exit
+
+# :collect_command_parent ; (0x6000FB)
+	4889C7                          ; mov_rdi,rax                         # first arg = f
+	50                              ; push_rax                            # allocate stack for status
+	4889E6                          ; mov_rsi,rsp                         # second arg = &status
+	31D2                            ; xor_edx,edx                         # third arg = NULL
+	6A 3D                           ; push !61
+	58                              ; pop_rax                             # WAITPID
+	0F05                            ; syscall                             # wait4pid(f, &status, 0, 0); [r10 = 0]
+
+	58                              ; pop_rax                             # Using status
+	85C0                            ; test_eax,eax                        # IF 0 == status
+	74 93                           ; je8 !main_loop                      # Loop forever
+
+	# Deal with very unhappy case
+	B8 58026000                     ; mov_eax, &hard                      # Using "Subprocess error\n"
+	E8 F9000000                     ; call %File_Print                    # Print it
+	EB DC                           ; jmp8 !Exit_Failure                  # return error
+
+
+# :Done ; (0x60011A)
+	# program completed Successfully
+	31FF                            ; xor_edi,edi                         # All is well
+# :Exit ; (0x60011C)
+	6A 3C                           ; push !60                            # SYS_exit
+	58                              ; pop_rax                             # put the exit syscall number in rax
+	0F05                            ; syscall                             # Call it a day
+
+# print_command function
+# Receives tokens[j] in RDI and tokens[i] in RSI
+# Modifies RAX
+# :print_command ; (0x600121)
+	57                              ; push_rdi                            # Protect RDI
+	B8 53026000                     ; mov_eax, &prefix                    # using " +> "
+	E8 E5000000                     ; call %File_Print                    # print it
+# :print_command_loop ; (0x60012C)
+	488B07                          ; mov_rax,[rdi]                       # using tokens[j]
+	E8 DD000000                     ; call %File_Print                    # print it
+	4883C7 08                       ; add_rdi, !8                         # j = j + 1
+	6A 20                           ; push !32
+	58                              ; pop_rax                             # using ' '
+	E8 F0000000                     ; call %fputc                         # print it
+	4839FE                          ; cmp_rsi,rdi                         # IF j < i
+	75 E7                           ; jne8 !print_command_loop            # otherwise keep looping
+
+	6A 0A                           ; push !10
+	58                              ; pop_rax                             # using '\n'
+	E8 E3000000                     ; call %fputc                         # print it
+	5F                              ; pop_rdi                             # Restore RDI
+	C3                              ; ret
+
+
+# collect_token function
+# Receives nothing
+# Overwrites RAX
+# Uses RAX as C, RDI as token and RSI as token[i]
+# :collect_token ; (0x60014F)
+	57                              ; push_rdi                            # Protect RDI
+	56                              ; push_rsi                            # Protect RSI
+	31C0                            ; xor_eax,eax                         # Zero RAX
+	B4 10                           ; mov_ah, !0x10                       # max_string = 4096 * sizeof(char)
+	E8 83000000                     ; call %malloc                        # allocate space
+	4889C7                          ; mov_rdi,rax                         # token = malloc(max_string);
+	4889C6                          ; mov_rsi,rax                         # i = 0; set token[i]
+
+# :collect_token_loop ; (0x600160)
+	E8 90000000                     ; call %fgetc                         # c = fgetc(input);
+	3C FC                           ; cmp_al, !-4                         # if C == EOF
+	74 B1                           ; je8 !Done                           # We are done
+
+	3C 20                           ; cmp_al, !32                         # IF C == ' '
+	74 37                           ; je8 !collect_token_done             # Space terminates token
+
+	3C 09                           ; cmp_al, !9                          # IF C == '\t'
+	74 33                           ; je8 !collect_token_done             # tab terminates token
+
+	3C 0A                           ; cmp_al, !10                         # IF C == '\n'
+	75 02                           ; jne8 !collect_token_string          # otherwise check next
+
+	# It is a newline
+	EB 14                           ; jmp8 !collect_token_set_command_done # Set command_done = TRUE
+
+# :collect_token_string ; (0x600177)
+	3C 22                           ; cmp_al, !34                         # IF C == '\"'
+	75 07                           ; jne8 !collect_token_comment         # otherwise check next
+
+	# It is a RAW STRING
+	E8 31000000                     ; call %collect_string                # Get the rest of the string
+	EB 22                           ; jmp8 !collect_token_done            # Be done
+
+# :collect_token_comment ; (0x600182)
+	3C 23                           ; cmp_al, !35                         # IF C == '#'
+	75 0B                           ; jne8 !collect_token_escape          # otherwise check next
+
+	# It is a line comment
+	E8 40000000                     ; call %collect_comment               # Read it all
+# : collect_token_set_command_done ; (0x60018B)
+	6A 01                           ; push !1
+	415F                            ; pop_r15                             # Set command_done = TRUE
+	EB 13                           ; jmp8 !collect_token_done            # Be done
+
+# :collect_token_escape ; (0x600191)
+	3C 5C                           ; cmp_al, !92                         # IF C == '\\'
+	75 07                           ; jne8 !collect_token_other           # otherwise just store it
+
+	# It is an escape char
+	E8 5B000000                     ; call %fgetc                         # Read the char to drop
+	EB 08                           ; jmp8 !collect_token_done            # Be done
+
+# :collect_token_other ; (0x60019C)
+	8806                            ; mov_[rsi],al                        # token[i] = C
+	4883C6 01                       ; add_rsi, !1                         # i = i + 1
+	EB BC                           ; jmp8 !collect_token_loop            # Keep going
+
+# :collect_token_done ; (0x6001A4)
+	4839FE                          ; cmp_rsi,rdi                         # IF i == 0
+	75 02                           ; jne8 !collect_token_good            # otherwise return the token
+	31FF                            ; xor_edi,edi                         # token = NULL
+
+# :collect_token_good ; (0x6001AB)
+	4889F8                          ; mov_rax,rdi                         # Return token
+	5E                              ; pop_rsi                             # Restore RSI
+	5F                              ; pop_rdi                             # Restore RDI
+	C3                              ; ret
+
+
+# collect_string function
+# Receives target[index] in RSI
+# Modifies RAX
+# Uses RAX as C
+# :collect_string ; (0x6001B1)
+	E8 3F000000                     ; call %fgetc                         # C = fgetc(input)
+	3C FC                           ; cmp_al, !-4                         # if C == EOF
+	0F84 38FFFFFF                   ; je %Exit_Failure                    # Something went horribly wrong
+
+	3C 22                           ; cmp_al, !34                         # IF C == '\"'
+	74 08                           ; je8 !collect_string_done            # be done
+
+	# deal with inside of string
+	8806                            ; mov_[rsi],al                        # target[index] = C
+	4883C6 01                       ; add_rsi, !1                         # index = index + 1
+	EB E7                           ; jmp8 !collect_string                # Keep going
+
+# :collect_string_done ; (0x6001CA)
+	C3                              ; ret
+
+
+# collect_comment function
+# Receives nothing
+# Modifies RAX
+# uses RAX as Int C
+# Just throws away everything it reads
+# :collect_comment ; (0x6001CB)
+	E8 25000000                     ; call %fgetc                         # C = fgetc(input)
+	3C FC                           ; cmp_al, !-4                         # IF C == EOF
+	0F84 1EFFFFFF                   ; je %Exit_Failure                    # abort hard
+
+	3C 0A                           ; cmp_al, !10                         # IF C == '\n'
+	75 EF                           ; jne8 !collect_comment               # otherwise keep looping
+	C3                              ; ret
+
+
+# Malloc isn't actually required if the program being built fits in the initial memory
+# However, it doesn't take much to add it.
+# Requires [MALLOC] to be initialized and RAX to have the number of desired bytes
+# :malloc ; (0x6001DD)
+	57                              ; push_rdi                            # Protect RDI
+	56                              ; push_rsi                            # Protect RSI
+	52                              ; push_rdx                            # Protect RDX
+	4C89F7                          ; mov_rdi,r14                         # Using the current pointer
+	4801C7                          ; add_rdi,rax                         # Request the number of desired bytes
+	6A 0C                           ; push !12
+	58                              ; pop_rax                             # the Syscall # for SYS_BRK
+	0F05                            ; syscall                             # call the Kernel
+	4C89F0                          ; mov_rax,r14                         # Return pointer
+	4989FE                          ; mov_r14,rdi                         # Update pointer
+	5A                              ; pop_rdx                             # Restore RDX
+	5E                              ; pop_rsi                             # Restore RSI
+	5F                              ; pop_rdi                             # Restore RDI
+	C3                              ; ret
+
+
+# fgetc function
+# Loads FILE* from [script]
+# Returns -4 (EOF) or char in RAX
+# :fgetc ; (0x6001F5)
+	57                              ; push_rdi                            # Protect RDI
+	56                              ; push_rsi                            # Protect RSI
+	52                              ; push_rdx                            # Protect RDX
+	6A FC                           ; push !-4
+	58                              ; pop_rax                             # Put EOF in RAX
+	50                              ; push_rax                            # Assume bad (If nothing read, value will remain EOF)
+	488D3424                        ; lea_rsi,[rsp]                       # Get stack address
+	4C89EF                          ; mov_rdi,r13                         # Where are we reading from
+	31C0                            ; xor_eax,eax                         # the syscall number for read
+	6A 01                           ; push !1
+	5A                              ; pop_rdx                             # set the size of chars we want
+	0F05                            ; syscall                             # call the Kernel
+	58                              ; pop_rax                             # Get either char or EOF
+	3C FC                           ; cmp_al, !-4                         # Check for EOF
+# :fgetc_done ; (0x60020D)
+	5A                              ; pop_rdx                             # Restore RDX
+	5E                              ; pop_rsi                             # Restore RSI
+	5F                              ; pop_rdi                             # Restore RDI
+	C3                              ; ret
+
+
+# File_Print function
+# Receives CHAR* in RAX
+# calls fputc for every non-null char
+# :File_Print ; (0x600211)
+	57                              ; push_rdi                            # Protect RDI
+	56                              ; push_rsi                            # Protect RSI
+	4889C7                          ; mov_rdi,rax                         # Protect S
+	85C0                            ; test_eax,eax                        # Protect against nulls
+	74 13                           ; je8 !File_Print_Done                # Simply don't try to print them
+# :File_Print_Loop ; (0x60021A)
+	31C0                            ; xor_eax,eax                         # Zero RAX
+	8A07                            ; mov_al,[rdi]                        # Read byte
+	85C0                            ; test_eax,eax                        # Check for NULL
+	74 0B                           ; je8 !File_Print_Done                # Stop at NULL
+
+	E8 09000000                     ; call %fputc                         # write it
+	4883C7 01                       ; add_rdi, !1                         # S = S + 1
+	EB ED                           ; jmp8 !File_Print_Loop               # Keep going
+
+# :File_Print_Done ; (0x60022D)
+	5E                              ; pop_rsi                             # Restore RSI
+	5F                              ; pop_rdi                             # Restore RDI
+	C3                              ; ret
+
+
+# fputc function
+# receives CHAR in RAX and load FILE* from stdout
+# writes char and returns
+# :fputc ; (0x600230)
+	57                              ; push_rdi                            # Protect RDI
+	56                              ; push_rsi                            # Protect RSI
+	52                              ; push_rdx                            # Protect RDX
+	50                              ; push_rax                            # We are writing rax
+	488D3424                        ; lea_rsi,[rsp]                       # Get stack address
+	6A 01                           ; push !1
+	5F                              ; pop_rdi                             # Write to target file
+	4889F8                          ; mov_rax,rdi                         # the syscall number for write
+	4889FA                          ; mov_rdx,rdi                         # set the size of chars we want
+	0F05                            ; syscall                             # call the Kernel
+	58                              ; pop_rax                             # Restore stack
+	5A                              ; pop_rdx                             # Restore RDX
+	5E                              ; pop_rsi                             # Restore RSI
+	5F                              ; pop_rdi                             # Restore RDI
+	C3                              ; ret
+
+
+# :default_file ; (0x600248)
+	6B 61 65 6D 2E 61 6D 64 36 34 00                      ; "kaem.amd64"
+# :prefix ; (0x600253)
+	20 2B 3E 20 00                                        ; " +> "
+# :hard ; (0x600258)
+	53 75 62 70 72 6F 63 65 73 73 20 65 72 72 6F 72 0A 00 ; "Subprocess error\n"
+# :ELF_end ; (0x60026A)

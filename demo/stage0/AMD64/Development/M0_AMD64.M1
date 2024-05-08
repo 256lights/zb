@@ -1,0 +1,958 @@
+# SPDX-FileCopyrightText: 2019 Jeremiah Orians <jeremiah@pdp10.guru>
+# SPDX-FileCopyrightText: 2023 Andrius Štikonas <andrius@stikonas.eu>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+DEFINE add_al, 04
+DEFINE add_ebx, 83C3
+DEFINE add_rax, 4805
+DEFINE add_rbx, 4881C3
+DEFINE add_rcx, 4881C1
+DEFINE add_rdx, 4881C2
+DEFINE add_rax,rcx 4801C8
+DEFINE add_rdi,rax 4801C7
+DEFINE and_rax, 4883E0
+DEFINE call E8
+DEFINE cmp_al, 3C
+DEFINE cmp_rax, 483D
+DEFINE cmp_rbx, 4881FB
+DEFINE cmp_rcx, 4881F9
+DEFINE cmp_rdx, 4881FA
+DEFINE cmp_rsi, 4881FE
+DEFINE cmp_rax,rbx 4839D8
+DEFINE cmp_rax,rcx 4839C8
+DEFINE cmp_rcx,rbx 4839D9
+DEFINE imul_rax, 486BC0
+DEFINE jbe8 76
+DEFINE je8 74
+DEFINE jg8 7F
+DEFINE jl8 7C
+DEFINE jmp8 EB
+DEFINE jne8 75
+DEFINE je 0F84
+DEFINE jmp E9
+DEFINE lea_rbx,[rip+DWORD] 488D1D
+DEFINE lea_rsi,[rsp] 488D3424
+DEFINE mov_rax, 48C7C0
+DEFINE mov_rcx, 48C7C1
+DEFINE mov_rdx, 48C7C2
+DEFINE mov_rdi, 48C7C7
+DEFINE mov_rsi, 48C7C6
+DEFINE mov_rax,rbx 4889D8
+DEFINE mov_rax,rcx 4889C8
+DEFINE mov_rax,rdx 4889D0
+DEFINE mov_rax,r12 4C89E0
+DEFINE mov_rax,r13 4C89E8
+DEFINE mov_rbx,rax 4889C3
+DEFINE mov_rbx,rcx 4889CB
+DEFINE mov_rbx,r13 4C89EB
+DEFINE mov_rcx,rax 4889C1
+DEFINE mov_rcx,rbx 4889D9
+DEFINE mov_rdx,rax 4889C2
+DEFINE mov_rdx,rbx 4889DA
+DEFINE mov_rdi,r12 4C89E7
+DEFINE mov_rdi,r14 4C89F7
+DEFINE mov_rdi,r15 4C89FF
+DEFINE mov_r12,rax 4989C4
+DEFINE mov_r12,rdi 4989FC
+DEFINE mov_r13,rax 4989C5
+DEFINE mov_r13,rdx 4989D5
+DEFINE mov_r14,rax 4989C6
+DEFINE mov_r15,rax 4989C7
+DEFINE mov_al,[rbx] 8A03
+DEFINE mov_al,[rbx+rcx] 8A040B
+DEFINE mov_al,[rcx] 8A01
+DEFINE mov_al,[rdx] 8A02
+DEFINE mov_bl,[rax] 8A18
+DEFINE mov_bl,[rdx] 8A1A
+DEFINE mov_cl,[rax] 8A08
+DEFINE mov_cl,[rbx] 8A0B
+DEFINE mov_cl,[rbx+BYTE] 8A4B
+DEFINE mov_rax,[rax] 488B00
+DEFINE mov_rax,[rcx] 488B01
+DEFINE mov_rbx,[rbx] 488B1B
+DEFINE mov_rcx,[rbx] 488B0B
+DEFINE mov_rcx,[rcx] 488B09
+DEFINE mov_rdx,[rdx] 488B12
+DEFINE mov_[ebx],al 678803
+DEFINE mov_[rcx],rax 488901
+DEFINE mov_[rbx],rax 488903
+DEFINE mov_[rdx],cl 880A
+DEFINE mov_[rdx],r13 4C892A
+DEFINE mov_rax,[rax+BYTE] 488B40
+DEFINE mov_rax,[rdx+BYTE] 488B42
+DEFINE mov_rax,[rbx+BYTE] 488B43
+DEFINE mov_rax,[rcx+BYTE] 488B41
+DEFINE mov_rbx,[rax+BYTE] 488B58
+DEFINE mov_rbx,[rcx+BYTE] 488B59
+DEFINE mov_rcx,[rax+BYTE] 488B48
+DEFINE mov_[rax+BYTE],rbx 488958
+DEFINE mov_[rcx+BYTE],rax 488941
+DEFINE mov_[rcx+BYTE],rbx 488959
+DEFINE mov_[rdx+BYTE],rax 488942
+DEFINE mov_[rdx+BYTE],rcx 48894A
+DEFINE movzx_rax,al 480FB6C0
+DEFINE movzx_rbx,bl 480FB6DB
+DEFINE movzx_rcx,cl 480FB6C9
+DEFINE popf 9D
+DEFINE pop_rax 58
+DEFINE pop_rbx 5B
+DEFINE pop_rcx 59
+DEFINE pop_rdx 5A
+DEFINE pop_rdi 5F
+DEFINE pop_rsi 5E
+DEFINE pop_r11 415B
+DEFINE pushf 9C
+DEFINE push_rax 50
+DEFINE push_rbx 53
+DEFINE push_rcx 51
+DEFINE push_rdx 52
+DEFINE push_rsi 56
+DEFINE push_r11 4153
+DEFINE ret C3
+DEFINE shl_rax, 48C1E0
+DEFINE shr_rax, 48C1E8
+DEFINE sub_rcx, 4883E9
+DEFINE xchg_rax,rbx 4893
+DEFINE syscall 0F05
+DEFINE xor_r13,r13 4D31ED
+
+    # Register usage:
+    # RAX, RSI, RDI => Temps
+    # R12 => MALLOC
+    # R13 => HEAD
+    # R14 => Output_file
+    # R15 => Input_file
+
+    # Struct format: (size 32)
+    # NEXT => 0
+    # TYPE => 8
+    # TEXT => 16
+    # EXPRESSION => 24
+
+    # Types
+    # None => 0
+    # MACRO => 1
+    # STRING => 2
+
+# Where the ELF Header is going to hit
+# Simply jump to _start
+# Our main function
+:_start
+    pop_rax                     # Get the number of arguments
+    pop_rdi                     # Get the program name
+    pop_rdi                     # Get the actual input name
+    mov_rsi, %0                 # prepare read_only
+    mov_rax, %2                 # the syscall number for open()
+    syscall                     # Now open that damn file
+    mov_r15,rax                 # Preserve the file pointer we were given
+
+    pop_rdi                     # Get the actual output name
+    mov_rsi, %577               # Prepare file as O_WRONLY|O_CREAT|O_TRUNC
+    mov_rdx, %384               # Prepare file as RW for owner only (600 in octal)
+    mov_rax, %2                 # the syscall number for open()
+    syscall                     # Now open that damn file
+    cmp_rax, %0                 # Check for missing output
+    jg8 !_start_out             # Have real input
+    mov_rax, %1                 # Use stdout
+
+:_start_out
+    mov_r14,rax                 # Preserve the file pointer we were given
+
+    mov_rax, %12                # the Syscall # for SYS_BRK
+    mov_rdi, %0                 # Get current brk
+    syscall                     # Let the kernel do the work
+    mov_r12,rax                 # Set our malloc pointer
+
+    xor_r13,r13                 # Set HEAD = NULL
+    call %Tokenize_Line         # Process it
+    mov_rax,r13                 # prepare for Reverse_List
+    call %Reverse_List          # Correct order
+    mov_r13,rax                 # Update HEAD
+    call %Identify_Macros       # Find the DEFINEs
+    call %Line_Macro            # Apply the DEFINEs
+    call %Process_String        # Handle strings
+    call %Eval_Immediates       # Handle Numbers
+    call %Preserve_Other        # Collect the remaining
+    call %Print_Hex             # Output our results
+
+:Done
+    # program completed Successfully
+    mov_rdi, %0                 # All is well
+    mov_rax, %0x3c              # put the exit syscall number in eax
+    syscall                     # Call it a good day
+
+
+# Tokenize_Line Function
+# Using input file R15 and Head R13
+# Creates a linked list of structs
+# Uses RBX for in_set strings, RCX for Int C and RDX for Struct Token* p
+:Tokenize_Line
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    push_rdx                    # Protect RDX
+
+:restart
+    call %fgetc                 # Read a char
+    cmp_rax, %-4                # Check for EOF
+    je8 !done                   # File is collected
+
+    movzx_rax,al                # We have to zero extend it to use it
+    mov_rcx,rax                 # Protect C
+
+    lea_rbx,[rip+DWORD] %comments # Get pointer to "#;"
+    call %In_Set                # Check for comments
+    cmp_rax, %1                 # If comments
+    je %Purge_LineComment       # try again
+
+    mov_rax,rcx                 # put C in place for check
+    lea_rbx,[rip+DWORD] %terminators # Get pointer to "\n\t "
+    call %In_Set                # Check for terminators
+    cmp_rax, %1                 # If terminator
+    je8 !restart                # try again
+
+    mov_rax, %32                # Malloc the struct P
+    call %malloc                # Get pointer to P
+    mov_rdx,rax                 # Protect P
+    mov_[rdx],r13               # P->NEXT = HEAD
+    mov_r13,rdx                 # HEAD = P
+
+    mov_rax,rcx                 # put C in place for check
+    lea_rbx,[rip+DWORD] %string_char # Get pointer to "\"'"
+    call %In_Set                # Check for string chars
+    cmp_rax, %1                 # If string char
+    je %Store_String            # Get string
+
+    call %Store_Atom            # Get whole token
+    jmp8 !restart
+
+:done
+    pop_rdx                     # Restore RDX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    ret
+
+
+# fgetc function
+# Receives FILE* in R15
+# Returns -4 (EOF) or char in RAX
+:fgetc
+    mov_rax, %-4                # Put EOF in rax
+    push_rax                    # Assume bad (If nothing read, value will remain EOF)
+    lea_rsi,[rsp]               # Get stack address
+    mov_rdi,r15                 # Where are we reading from
+    mov_rax, %0                 # the syscall number for read
+    push_rdx                    # Protect RDX
+    mov_rdx, %1                 # set the size of chars we want
+    push_r11                    # Protect r11
+    syscall                     # call the Kernel
+    pop_r11                     # Restore r11
+    pop_rdx                     # Restore RDX
+    pop_rax                     # Get either char or EOF
+    ret
+
+
+# Malloc isn't actually required if the program being built fits in the initial memory
+# However, it doesn't take much to add it.
+# Requires R12 to be initialized and RAX to have the number of desired bytes
+:malloc
+    mov_rdi,r12                 # Using the current pointer
+    add_rdi,rax                 # Request the number of desired bytes
+    mov_rax, %12                # the Syscall # for SYS_BRK
+    push_rcx                    # Protect rcx
+    push_r11                    # Protect r11
+    syscall                     # call the Kernel
+    pop_r11                     # Restore r11
+    pop_rcx                     # Restore rcx
+    mov_rax,r12                 # Return pointer
+    mov_r12,rdi                 # Update pointer
+    ret
+
+
+# Purge_LineComment function
+# Reads chars until LF and jumps to restart
+:Purge_LineComment
+    call %fgetc                 # Get a char
+    movzx_rax,al                # Zero extend
+    cmp_rax, %10                # While not LF
+    jne8 !Purge_LineComment     # Keep reading
+    jmp %restart
+
+
+# Store_String Function
+# Receives C in RCX, HEAD in RDX and Input file in R15
+# Uses RBX for terminator, RCX for C and RDX for string
+:Store_String
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    push_rdx                    # Protect RDX
+
+    mov_rax, %2                 # Using TYPE STRING
+    mov_[rdx+BYTE],rax !8       # HEAD->TYPE = STRING
+    mov_rax, %256               # Malloc the string
+    call %malloc                # Get pointer to P
+    mov_[rdx+BYTE],rax !16      # HEAD->TEXT = STRING
+    mov_rbx,rcx                 # Protect terminator
+    mov_rdx,rax                 # Protect string pointer
+:Store_String_Loop
+    mov_[rdx],cl                # write byte
+    call %fgetc                 # read next char
+    movzx_rax,al                # Zero extend it
+    mov_rcx,rax                 # Update C
+    add_rdx, %1                 # STRING = STRING + 1
+    cmp_rcx,rbx                 # See if we hit terminator
+    jne8 !Store_String_Loop     # Otherwise keep looping
+
+    pop_rdx                     # Restore RDX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    mov_rax,rdx                 # return HEAD
+    jmp %restart
+
+
+# Store_Atom Function
+# Receives C in RCX, HEAD in RDX and Input file in R15
+# Uses RBX for in_set strings, RCX for C and RDX for string
+:Store_Atom
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    push_rdx                    # Protect RDX
+
+    mov_rax, %256               # Malloc the string
+    call %malloc                # Get pointer to P
+    mov_[rdx+BYTE],rax !16      # HEAD->TEXT = STRING
+    lea_rbx,[rip+DWORD] %terminators # Get pointer to "\n\t "
+    mov_rdx,rax                 # Protect string pointer
+:Store_Atom_loop
+    mov_[rdx],cl                # write byte
+    call %fgetc                 # read next char
+    movzx_rax,al                # Zero extend it
+    mov_rcx,rax                 # Update C
+    add_rdx, %1                 # STRING = STRING + 1
+    call %In_Set                # Check for terminators
+    cmp_rax, %0                 # Check for "\n\t "
+    je8 !Store_Atom_loop        # Loop otherwise
+
+    pop_rdx                     # Restore RDX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    mov_rax,rdx                 # return HEAD
+    ret
+
+
+# In_Set function
+# Receives Char C in AL and CHAR* in RBX
+# Returns 1 if true, zero if false in RAX
+:In_Set
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+:In_Set_loop
+    mov_cl,[rbx]                # Read char
+    movzx_rcx,cl                # Zero extend it
+
+    cmp_rax,rcx                 # See if they match
+    je8 !In_Set_True            # return true
+
+    cmp_rcx, %0                 # Check for NULL
+    je8 !In_Set_False           # return false
+
+    add_rbx, %1                 # s = s + 1
+    jmp8 !In_Set_loop           # Keep looping
+
+:In_Set_True
+    mov_rax, %1                 # Set True
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    ret
+
+:In_Set_False
+    mov_rax, %0                 # Set FALSE
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    ret
+
+# Char sets
+:terminators
+    !10 !9 !32 !0               # "\n\t \0"
+
+:comments
+    !35 !59 !0                  # "#;\0"
+
+:string_char
+    !34 !39 !0                  # "\"'\0"
+
+
+# Reverse_List function
+# Receives List in RAX
+# Returns the list reversed in RAX
+:Reverse_List
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    mov_rbx,rax                 # Set HEAD
+    mov_rax, %0                 # ROOT = NULL
+:Reverse_List_Loop
+    cmp_rbx, %0                 # WHILE HEAD != NULL
+    je8 !Reverse_List_Done      # Stop otherwise
+
+    mov_rcx,[rbx]               # NEXT = HEAD->NEXT
+    mov_[rbx],rax               # HEAD->NEXT = ROOT
+    mov_rax,rbx                 # ROOT = HEAD
+    mov_rbx,rcx                 # HEAD = NEXT
+    jmp8 !Reverse_List_Loop     # Keep Going
+
+:Reverse_List_Done
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    ret
+
+
+# Identify_Macros function
+# Receives List in RAX
+# Updates the list in place; does not modify registers
+# Uses RBX for DEFINE, RCX for I
+:Identify_Macros
+    push_rax                    # Protect RAX
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    push_rdx                    # Protect RDX
+    lea_rbx,[rip+DWORD] %DEFINE_str # Setup define string
+    mov_rcx,rax                 # I = HEAD
+:Identify_Macros_Loop
+    mov_rax,[rcx+BYTE] !16      # I->TEXT
+    call %match                 # IF "DEFINE" == I->TEXT
+    cmp_rax, %0                 # Check if match
+    jne8 !Identify_Macros_Next  # Skip the work
+
+    # Deal with MACRO
+    mov_rax, %1                 # Using MACRO
+    mov_[rcx+BYTE],rax !8       # I->TYPE = MACRO
+
+    mov_rax,[rcx]               # I->NEXT
+    mov_rax,[rax+BYTE] !16      # I->NEXT->TEXT
+    mov_[rcx+BYTE],rax !16      # I->TEXT = I->NEXT->TEXT
+
+    mov_rax,[rcx]               # I->NEXT
+    mov_rax,[rax]               # I->NEXT->NEXT
+    mov_rax,[rax+BYTE] !16      # I->NEXT->NEXT->TEXT
+    mov_[rcx+BYTE],rax !24      # I->EXPRESSION = I->NEXT->NEXT->TEXT
+
+    mov_rax,[rcx]               # I->NEXT
+    mov_rax,[rax]               # I->NEXT->NEXT
+    mov_rax,[rax]               # I->NEXT->NEXT->NEXT
+    mov_[rcx],rax               # I->NEXT = I->NEXT->NEXT->NEXT
+
+:Identify_Macros_Next
+    mov_rcx,[rcx]               # I = I->NEXT
+    cmp_rcx, %0                 # Check for NULL
+    jne8 !Identify_Macros_Loop  # Keep looping otherwise
+
+    pop_rdx                     # Restore RDX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    pop_rax                     # Restore RAX
+    ret
+
+:DEFINE_str
+    !68 !69 !70 !73 !78 !69 !0  # "DEFINE"
+
+
+# match function
+# Receives CHAR* in RAX and CHAR* in RBX
+# Returns 0 (TRUE) or 1 (FALSE) in RAX
+:match
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    push_rdx                    # Protect RDX
+    mov_rcx,rax                 # S1 in place
+    mov_rdx,rbx                 # S2 in place
+:match_Loop
+    mov_al,[rcx]                # S1[0]
+    movzx_rax,al                # Make it useful
+    mov_bl,[rdx]                # S2[0]
+    movzx_rbx,bl                # Make it useful
+    cmp_rax,rbx                 # See if they match
+    jne8 !match_False           # If not
+
+    add_rcx, %1                 # S1 = S1 + 1
+    add_rdx, %1                 # S2 = S2 + 1
+    cmp_rax, %0                 # If reached end of string
+    je8 !match_Done             # Perfect match
+    jmp8 !match_Loop            # Otherwise keep looping
+
+:match_False
+    mov_rax, %1                 # Return false
+:match_Done
+    pop_rdx                     # Restore RDX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    ret
+
+
+# Line_Macro function
+# Receives List in RAX
+# Updates the list in place; does not modify registers
+# Uses RAX for I, RBX for I->TEXT, RCX for I->EXPRESSION
+:Line_Macro
+    push_rax                    # Protect RAX
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    push_rdx                    # Protect RDX
+:Line_Macro_Loop
+    mov_rbx,[rax+BYTE] !8       # I->TYPE
+    cmp_rbx, %1                 # IF MACRO == I->TYPE
+    jne8 !Line_Macro_Next       # Otherwise move on
+
+    # Is a macro apply
+    mov_rbx,[rax+BYTE] !16      # I->TEXT
+    mov_rcx,[rax+BYTE] !24      # I->EXPRESSION
+    mov_rax,[rax]               # I->NEXT
+    call %Set_Expression        # Apply it
+    jmp8 !Line_Macro_Loop       # Move on to next
+
+:Line_Macro_Next
+    mov_rax,[rax]               # I->NEXT
+    cmp_rax, %0                 # Check for NULL
+    jne8 !Line_Macro_Loop       # Keep going
+
+    pop_rdx                     # Restore RDX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    pop_rax                     # Restore RAX
+    ret
+
+
+# Set_Expression function
+# Receives List in RAX, CHAR* in RBX and CHAR* in RCX
+# Updates the list in place; does not modify registers
+# Uses RBX for C, RCX for EXP and RDX for I
+:Set_Expression
+    push_rax                    # Protect RAX
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    push_rdx                    # Protect RDX
+    mov_rdx,rax                 # Set I
+:Set_Expression_Loop
+    mov_rax,[rdx+BYTE] !8       # I->TYPE
+    cmp_rax, %1                 # IF MACRO == I->TYPE
+    je8 !Set_Expression_Next    # Ignore and move on
+
+    mov_rax,[rdx+BYTE] !16      # I->TEXT
+    call %match                 # Check for match
+    cmp_rax, %0                 # If match
+    jne8 !Set_Expression_Next   # Otherwise next
+
+    # We have a non-macro match
+    mov_[rdx+BYTE],rcx !24      # I->EXPRESSION = EXP
+
+:Set_Expression_Next
+    mov_rdx,[rdx]               # I = I->NEXT
+    cmp_rdx, %0                 # IF NULL == I
+    jne8 !Set_Expression_Loop   # Otherwise keep looping
+
+    pop_rdx                     # Restore RDX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    pop_rax                     # Restore RAX
+    ret
+
+
+# Process_String function
+# Receives List in RAX
+# Update the list in place; does not modify registers
+# Uses RBX for I->TEXT, RCX for I and RDX for S
+:Process_String
+    push_rax                    # Protect RAX
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    push_rdx                    # Protect RDX
+    mov_rcx,rax                 # I = HEAD
+:Process_String_loop
+    mov_rax,[rcx+BYTE] !8       # I->TYPE
+    cmp_rax, %2                 # IF STRING == I->TYPE
+    jne8 !Process_String_Next   # Skip to next
+
+    mov_rbx,[rcx+BYTE] !16      # I->TEXT
+    mov_al,[rbx]                # I->TEXT[0]
+    movzx_rax,al                # make it useful
+    cmp_rax, %39                # IF '\'' == I->TEXT[0]
+    jne8 !Process_String_Raw    # Deal with '"'
+
+    # Deal with '\''
+    add_rbx, %1                 # I->TEXT + 1
+    mov_[rcx+BYTE],rbx !24      # I->EXPRESSION = I->TEXT + 1
+    jmp8 !Process_String_Next   # Move on to next
+
+:Process_String_Raw
+    mov_rax,rbx                 # Get length of I->TEXT
+    call %string_length         # Do it
+    shr_rax, !2                 # LENGTH = LENGTH >> 2
+    add_rax, %1                 # LENGTH = LENGTH + 1
+    shl_rax, !3                 # LENGTH = LENGTH << 3
+    call %malloc                # Get string
+    mov_rdx,rbx                 # S = I->TEXT
+    add_rdx, %1                 # S = S + 1
+    mov_[rcx+BYTE],rax !24      # I->EXPRESSION = hexify
+    mov_rbx,rax                 # Put hexify buffer in rbx
+
+:Process_String_Raw_Loop
+    mov_al,[rdx]                # Read 1 chars
+    movzx_rax,al                # Make it useful
+    add_rdx, %1                 # S = S + 1
+    cmp_al, !0                  # Check for NULL
+    pushf                       # Protect condition
+    call %hex8                  # write them all
+    popf                        # restore condition
+    jne8 !Process_String_Raw_Loop # Keep looping
+
+:Process_String_Next
+    mov_rcx,[rcx]               # I = I->NEXT
+    cmp_rcx, %0                 # IF NULL == I
+    jne8 !Process_String_loop   # Otherwise keep looping
+
+    pop_rdx                     # Restore RDX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    pop_rax                     # Restore RAX
+    ret
+
+
+# string_length function
+# Receives CHAR* in RAX
+# Returns INT in RAX
+# Uses RAX for CH, RBX for S and RCX for INDEX
+:string_length
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    mov_rbx,rax                 # Set S
+    mov_rcx, %0                 # INDEX = 0
+:string_length_loop
+    mov_al,[rbx+rcx]            # S[0]
+    movzx_rax,al                # make it useful
+    cmp_rax, %0                 # IF NULL == S[0]
+    je8 !string_length_done     # Stop
+
+    add_rcx, %1                 # INDEX = INDEX + 1
+    jmp8 !string_length_loop    # Keep going
+
+:string_length_done
+    mov_rax,rcx                 # RETURN INDEX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    ret
+
+
+# Eval_Immediates function
+# Receives List in RAX
+# Updates the list in place; does not modify registers
+# Uses RBX for I->TEXT[0], RCX for I->TEXT[1] and RDX for I
+:Eval_Immediates
+    push_rax                    # Protect RAX
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    push_rdx                    # Protect RDX
+    mov_rdx,rax                 # I = HEAD
+:Eval_Immediates_Loop
+    # Check for MACRO
+    mov_rax,[rdx+BYTE] !8       # I->TYPE
+    cmp_rax, %1                 # IF MACRO == I->TYPE
+    je8 !Eval_Immediates_Next   # Skip to next
+
+    # Check for NULL EXPRESSION
+    mov_rax,[rdx+BYTE] !24      # I->EXPRESSION
+    cmp_rax, %0                 # IF NULL == I->EXPRESSION
+    jne8 !Eval_Immediates_Next  # Skip to next
+
+    # Check if number
+    mov_rax,[rdx+BYTE] !16      # I->TEXT
+    mov_bl,[rax]                # I->TEXT[0]
+    movzx_rbx,bl                # Extend to use
+    add_rax, %1                 # I->TEXT + 1
+    mov_cl,[rax]                # I->TEXT[1]
+    movzx_rcx,cl                # Extend to use
+    call %numerate_string       # Convert string to INT
+    cmp_rax, %0                 # IF 0 == numerate_string(I->TEXT + 1)
+    jne8 !Eval_Immediates_value # Has a value
+
+    # Last chance for Immediate
+    cmp_rcx, %48                # If '0' == I->TEXT[1]
+    jne8 !Eval_Immediates_Next  # Skip to next
+
+:Eval_Immediates_value
+    call %express_number        # Convert value to hex string
+    mov_[rdx+BYTE],rax !24      # I->EXPRESSION = express_number(value, I-TEXT[0])
+
+:Eval_Immediates_Next
+    mov_rdx,[rdx]               # I = I->NEXT
+    cmp_rdx, %0                 # IF NULL == I
+    jne8 !Eval_Immediates_Loop  # Otherwise keep looping
+
+    pop_rdx                     # Restore RDX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    pop_rax                     # Restore RAX
+    ret
+
+
+# numerate_string function
+# Receives CHAR* in RAX
+# Returns value of CHAR* in RAX
+# Uses RAX for VALUE, RBX for S, RCX for CH and RSI for NEGATIVE?
+:numerate_string
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    push_rdx                    # Protect RDX
+    push_rsi                    # Protect RSI
+    mov_rbx,rax                 # put S in correct place
+    mov_rax, %0                 # Initialize to Zero
+:numerate_string_loop
+    mov_cl,[rbx+BYTE] !1        # S[1]
+    movzx_rcx,cl                # make it useful
+    cmp_rcx, %120               # IF 'x' == S[1]
+    je8 !numerate_hex           # Deal with hex input
+
+    # Assume decimal input
+    mov_rsi, %0                 # Assume no negation
+    mov_cl,[rbx]                # S[0]
+    movzx_rcx,cl                # make it useful
+    cmp_rcx, %45                # IF '-' == S[0]
+    jne8 !numerate_decimal      # Skip negation
+
+    mov_rsi, %1                 # Set FLAG
+    add_rbx, %1                 # S = S + 1
+
+:numerate_decimal
+    mov_cl,[rbx]                # S[0]
+    movzx_rcx,cl                # make it useful
+    cmp_rcx, %0                 # IF NULL == S[0]
+    je8 !numerate_decimal_done  # We are done
+
+    imul_rax, !10               # VALUE = VALUE * 10
+    sub_rcx, !48                # CH = CH - '0'
+    cmp_rcx, %9                 # Check for illegal
+    jg8 !numerate_string_fail   # If CH > '9'
+    cmp_rcx, %0                 # Check for illegal
+    jl8 !numerate_string_fail   # IF CH < 0
+    add_rax,rcx                 # VALUE = VALUE + CH
+    add_rbx, %1                 # S = S + 1
+    jmp8 !numerate_decimal      # Keep looping
+
+:numerate_decimal_done
+    cmp_rsi, %1                 # Check if need to negate
+    jne8 !numerate_string_done  # Nope
+
+    imul_rax, !-1               # VALUE = VALUE * -1
+    jmp8 !numerate_string_done  # Done
+
+:numerate_hex
+    add_rbx, %2                 # S = S + 2
+:numerate_hex_loop
+    mov_cl,[rbx]                # S[0]
+    movzx_rcx,cl                # make it useful
+    cmp_rcx, %0                 # IF NULL == S[0]
+    je8 !numerate_string_done   # We are done
+
+    shl_rax, !4                 # VALUE = VALUE << 4
+    sub_rcx, !48                # CH = CH - '0'
+    cmp_rcx, %10                # IF 10 >= CH
+    jl8 !numerate_hex_digit     # NO
+    sub_rcx, !7                 # Push A-F into range
+:numerate_hex_digit
+    cmp_rcx, %15                # Check for illegal
+    jg8 !numerate_string_fail   # If CH > 'F'
+    cmp_rcx, %0                 # Check for illegal
+    jl8 !numerate_string_fail   # IF CH < 0
+    add_rax,rcx                 # VALUE = VALUE + CH
+    add_rbx, %1                 # S = S + 1
+    jmp8 !numerate_hex_loop     # Keep looping
+
+:numerate_string_fail
+    mov_rax, %0                 # return ZERO
+
+:numerate_string_done
+    pop_rsi                     # Restore RSI
+    pop_rdx                     # Restore RDX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    ret
+
+
+# express_number function
+# Receives INT in RAX and CHAR in RBX
+# Allocates a string and expresses the value in hex
+# Returns string in RAX
+# Uses RAX for VALUE, RBX for S and RCX for CH
+:express_number
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    push_rdx                    # Protect RDX
+    mov_rcx,rbx                 # Put CH in right place
+    mov_rbx,rax                 # Protect VALUE
+    cmp_rcx, %37                # IF '%' == CH
+    jne8 !express_number2       # Otherwise try @
+
+    mov_rax, %9                 # We need 9 bytes
+    call %malloc                # Get S pointer
+    xchg_rax,rbx                # Put S and VALUE in place
+    push_rbx                    # Protect S
+    call %hex32l                # Store 32bits
+    jmp8 !express_number_done   # done
+
+:express_number2
+    cmp_rcx, %64                # IF '@' == CH
+    jne8 !express_number1       # Othrewise try !
+
+    mov_rax, %5                 # We need 5 bytes
+    call %malloc                # Get S pointer
+    xchg_rax,rbx                # Put S and VALUE in place
+    push_rbx                    # Protect S
+    call %hex16l                # Store 16bits
+    jmp8 !express_number_done   # done
+
+:express_number1
+    mov_rax, %3                 # We need 3 bytes
+    call %malloc                # Get S pointer
+    xchg_rax,rbx                # Put S and VALUE in place
+    push_rbx                    # Protect S
+    call %hex8                  # Store 8bit
+
+:express_number_done
+    pop_rax                     # Restore S
+    pop_rdx                     # Restore RDX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    ret
+
+
+# HEX to ascii routine
+# Receives INT in RAX and CHAR* in RBX
+# Stores ascii of INT in CHAR*
+# Returns only modifying RAX
+:hex64l
+    push_rax                    # Protect top 32
+    call %hex32l                # Store it
+    pop_rax                     # do top 32
+    shr_rax, !32                # do bottom 32 first
+:hex32l
+    push_rax                    # Protect top 16
+    call %hex16l                # Store it
+    pop_rax                     # do top 16
+    shr_rax, !16                # do bottom 16 first
+:hex16l
+    push_rax                    # Protect top byte
+    call %hex8                  # Store it
+    pop_rax                     # do high byte
+    shr_rax, !8                 # do bottom byte first
+:hex8
+    push_rax                    # Protect bottom nibble
+    shr_rax, !4                 # do high nibble first
+    call %hex4                  # Store it
+    pop_rax                     # do low nibble
+:hex4
+    and_rax, !0xF               # isolate nibble
+    add_al, !0x30               # convert to ascii (add '0')
+    cmp_al, !0x39               # valid digit? (compare to '9')
+    jbe8 !hex1                  # yes
+    add_al, !7                  # use alpha range
+:hex1
+    mov_[ebx],al                # store result
+    add_ebx, !1                 # next position
+    ret
+
+
+# Preserve_Other function
+# Receives List in RAX
+# Updates the list in place; does not modify registers
+# Uses RAX for I, RBX for I->TEXT
+:Preserve_Other
+    push_rax                    # Protect RAX
+    push_rbx                    # Protect RBX
+    push_rcx                    # Protect RCX
+    push_rdx                    # Protect RDX
+:Preserve_Other_Loop
+    mov_rbx,[rax+BYTE] !24      # I->EXPRESSION
+    cmp_rbx, %0                 # IF NULL == I->EXPRESSION
+    jne8 !Preserve_Other_Next   # Otherwise next
+
+    # Needs preserving
+    mov_rbx,[rax+BYTE] !16      # I->TEXT
+    mov_[rax+BYTE],rbx !24      # I->EXPRESSION = I->TEXT
+
+:Preserve_Other_Next
+    mov_rax,[rax]               # I = I->NEXT
+    cmp_rax, %0                 # IF NULL == I
+    jne8 !Preserve_Other_Loop   # Otherwise keep looping
+
+    pop_rdx                     # Restore RDX
+    pop_rcx                     # Restore RCX
+    pop_rbx                     # Restore RBX
+    pop_rax                     # Restore RAX
+    ret
+
+
+# Print_Hex function
+# Receives list in RAX
+# walks the list and prints the I->EXPRESSION for all nodes followed by newline
+# Uses RBX for I
+:Print_Hex
+    push_rbx                    # Protect RBX
+    mov_rbx,r13                 # I = Head
+:Print_Hex_Loop
+    mov_rax,[rbx+BYTE] !8       # I->TYPE
+    cmp_rax, %1                 # IF MACRO == I->TYPE
+    je8 !Print_Hex_Next         # Skip
+
+    mov_rax,[rbx+BYTE] !24      # Using EXPRESSION
+    call %File_Print            # Print it
+    mov_rax, %10                # NEWLINE
+    call %fputc                 # Append it
+
+:Print_Hex_Next
+    mov_rbx,[rbx]               # Iterate to next Token
+    cmp_rbx, %0                 # Check for NULL
+    jne8 !Print_Hex_Loop        # Otherwise keep looping
+
+    pop_rbx                     # Restore RBX
+    ret
+
+
+# File_Print function
+# Receives CHAR* in RAX
+# calls fputc for every non-null char
+:File_Print
+    push_rbx                    # Protect RBX
+    mov_rbx,rax                 # Protect S
+    cmp_rax, %0                 # Protect against nulls
+    je8 !File_Print_Done        # Simply don't try to print them
+:File_Print_Loop
+    mov_al,[rbx]                # Read byte
+    movzx_rax,al                # zero extend
+    cmp_rax, %0                 # Check for NULL
+    je8 !File_Print_Done        # Stop at NULL
+
+    call %fputc                 # write it
+    add_rbx, %1                 # S = S + 1
+    jmp8 !File_Print_Loop       # Keep going
+
+:File_Print_Done
+    pop_rbx                     # Restore RBX
+    ret
+
+
+# fputc function
+# receives CHAR in RAX and FILE* in R14
+# writes char and returns
+:fputc
+    push_rax                    # We are writing rax
+    lea_rsi,[rsp]               # Get stack address
+    mov_rdi,r14                 # Write to target file
+    mov_rax, %1                 # the syscall number for write
+    push_rdx                    # Protect RDX
+    mov_rdx, %1                 # set the size of chars we want
+    push_r11                    # Protect HEAD
+    syscall                     # call the Kernel
+    pop_r11                     # Restore HEAD
+    pop_rdx                     # Restore RDX
+    pop_rax                     # Restore stack
+    ret
+
+:ELF_end

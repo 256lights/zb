@@ -1,0 +1,64 @@
+.\"Made with Love
+.TH get_machine 1 "JULY 2019" Linux "User Manuals"
+.SH NAME
+
+get_machine - identify running hardware architecture
+
+.SH SYNOPSIS
+.na
+
+get_machine [ --exact --override OVERRIDE --os ]
+
+.SH DESCRIPTION
+
+get_machine exists to make simple shell scripts that need
+to know that hardware architecture it is assuming or what
+host operating system is being used.
+.br
+
+At its core is figure out the general hardware architecture
+and return it as quickly as possible. Although it is sometimes
+useful to return something different; which is why --override
+exists and thus what ever is supplied by with it is returned.
+Scripts that wish to expose that can leverage the environment
+variable GET_MACHINE_FLAGS to allow efficient overriding in
+their scripts. Or if they wish to only override what Operating
+system is running the environment variable GET_MACHINE_OS_FLAGS
+should be used.
+.br
+If one wishes for something more exact than x86 or amd64, the
+option --exact will return more specific values like i686-pae.
+.br
+Should one desire to know the host operating system: --os
+.br
+A word of warning; --override always will take top precedence
+and can return anything you desire.
+
+.SH EXAMPLES
+
+Typically, get_machine will be in scripts used in bootstrapping
+.br
+# get_machine
+.br
+# get_machine --override "I am the very model of a modern major general"
+.br
+# get_machine ${GET_MACHINE_FLAGS}
+.br
+# get_machine ${GET_MACHINE_OS_FLAGS} --os
+.br
+
+.SH COMPATIBILITY
+
+get_machine is compatible with all Turing complete machines;
+even the ones that try to be Turing complete -1
+
+.SH AUTHORS
+Jeremiah Orians <Jeremiah@pdp10.guru>
+
+.SH COPYRIGHT
+Copyright 2016-2021 Jeremiah Orians <Jeremiah@pdp10.guru>
+.br
+License GPLv3+.
+
+.SH "SEE ALSO"
+M1(1), hex2(1), blood-elf(1), kaem(1), syscalls(2)

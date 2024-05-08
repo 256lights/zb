@@ -1,0 +1,191 @@
+M2-Planet is subset of the C programming language.
+
+Mostly by eliminating features that have yet to be proven useful in building compilers, linkers or assemblers.
+
+* AMD64 & AArch64 int initialization wrong
+right now the code in cc_core.c in the function void program() simply doesn't output the correct output for AArch64 or AMD64.
+As the function should numerate the string global_token to determine if the leading 32bits should be 0 or 0xFFFFFFFF and output %0 or %0xFFFFFFFF accordingly.
+
+** example of failing code
+#include<stdlib.h>
+#include<stdio.h>
+#include<string.h>
+
+void write_string(char* s, FILE* f)
+{
+	while(0 != s[0])
+	{
+		fputc(s[0], f);
+		s = s + 1;
+	}
+}
+
+void* empty = 0;
+
+int main()
+{
+	if (0 == empty)
+	{
+		write_string("Yes, is empty\n", stdout);
+	}
+	else
+	{
+		write_string("Oops, why not?\n", stdout);
+	}
+	return 0;
+}
+
+* Pointer arithmetic wrong
+It isn't uncommon for complex C programs to iterate over an array using a pointer.
+
+** example of failing code
+#include <stdio.h>
+#include <stdlib.h>
+
+void walk_array(char** array, char** array_end)
+{
+	char** i = array;
+	while(i < array_end)
+	{
+		fputs(i[0], stdout);
+		fputc('\n', stdout);
+		i = i + 1;
+	}
+}
+
+int main()
+{
+	char** array = calloc(10, sizeof(char*));
+	array[0] = "hello";
+	array[1] = "world";
+	array[2] = "how";
+	array[3] = "are";
+	array[4] = "you";
+	array[5] = "today";
+	array[6] = "I";
+	array[7] = "am";
+	array[8] = "doing";
+	array[9] = "fine";
+	walk_array(array, array + 10);
+	return 0;
+}
+
+** work around code
+#include <stdio.h>
+#include <stdlib.h>
+
+#if defined(__M2__)
+	#define pointer_size sizeof(char*)
+#else
+	#define pointer_size 1
+#endif
+
+void walk_array(char** array, char** array_end)
+{
+	char** i = array;
+	while(i < array_end)
+	{
+		fputs(i[0], stdout);
+		fputc('\n', stdout);
+		i = i + pointer_size;
+	}
+}
+
+int main()
+{
+	char** array = calloc(10, sizeof(char*));
+	array[0] = "hello";
+	array[1] = "world";
+	array[2] = "how";
+	array[3] = "are";
+	array[4] = "you";
+	array[5] = "today";
+	array[6] = "I";
+	array[7] = "am";
+	array[8] = "doing";
+	array[9] = "fine";
+	walk_array(array, array + (10 * pointer_size));
+	return 0;
+}
+
+* struct initialization
+M2-Planet doesn't support static initialization for structs yet.
+
+Simply because time hasn't been made available for the effort.
+
+Patches for adding support are welcome.
+
+* C style function pointers
+M2-Planet supports universal function pointer FUNCTION
+Simply delete the typedef and the code works fine in M2-Planet
+
+** example of failing code
+#include <stdio.h>
+typedef int (*FUNCTION) ();
+
+struct function
+{
+	FUNCTION function;
+	int arity;
+	char* name;
+};
+
+struct function fun_make_cell_;
+
+int make_cell_ ()
+{
+	char* i = fun_make_cell_.name;
+	while(0 != i[0])
+	{
+		fputc(i[0], stdout);
+		i = i + 1;
+	}
+	return fun_make_cell_.arity;
+}
+
+int main ()
+{
+	fun_make_cell_.function = make_cell_;
+	fun_make_cell_.arity = 2;
+	fun_make_cell_.name = "bar\n";
+	fun_make_cell_.function();
+}
+
+* logical and do not short circuit
+Both sides of && evaluate because it hasn't been shown to be worth the effort of implementation of short-circuit logic
+
+** example of failing code
+#include <stdlib.h>
+#include <stdio.h>
+
+int boom()
+{
+	exit(EXIT_FAILURE);
+}
+
+int main(int argc, char* argv)
+{
+	if((0 == argc) && boom())
+	{
+		fputs("impossible code\n", stderr);
+	}
+	return 0;
+}
+
+** work around code
+#include <stdlib.h>
+#include <stdio.h>
+
+int boom()
+{
+	exit(EXIT_FAILURE);
+}
+
+int main(int argc, char* argv)
+{
+	if(0 == argc)
+	{
+		if(boom())fputs("impossible code\n", stderr);
+	}
+	return 0;
+}

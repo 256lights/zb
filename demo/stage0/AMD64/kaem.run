@@ -1,0 +1,51 @@
+#! /usr/bin/env bash
+# Mes --- Maxwell Equations of Software
+# Copyright © 2017,2019 Jan Nieuwenhuizen <janneke@gnu.org>
+# Copyright © 2017,2019 Jeremiah Orians
+#
+# This file is part of Mes.
+#
+# Mes is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or (at
+# your option) any later version.
+#
+# Mes is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Mes.  If not, see <http://www.gnu.org/licenses/>.
+
+# To run in kaem simply: kaem --verbose --strict
+
+ARCH="amd64"
+ARCH_DIR="AMD64"
+M2LIBC="../M2libc"
+TOOLS="../${ARCH_DIR}/bin"
+BLOOD_FLAG="--64"
+BASE_ADDRESS="0x00600000"
+ENDIAN_FLAG="--little-endian"
+BINDIR="../${ARCH_DIR}/bin"
+BUILDDIR="../${ARCH_DIR}/artifact"
+TMPDIR="${BUILDDIR}"
+OPERATING_SYSTEM="Linux"
+
+################################################
+# Phase 12-15 Rebuild M2-Planet from C sources #
+################################################
+./${ARCH_DIR}/bin/kaem --verbose --strict --file ${ARCH_DIR}/mescc-tools-full-kaem.kaem
+
+######################################################
+# Phase 16-23 Build mescc-tools-extra from M2-Planet #
+######################################################
+cd mescc-tools-extra
+${BINDIR}/kaem --verbose --strict --file mescc-tools-extra.kaem
+cd ..
+./${ARCH_DIR}/bin/sha256sum -c ${ARCH}.answers
+
+#########################
+# Load after.kaem hook  #
+#########################
+exec ./${ARCH_DIR}/bin/kaem --verbose --strict --file ./after.kaem

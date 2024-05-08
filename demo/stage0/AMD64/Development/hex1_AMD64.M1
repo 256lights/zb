@@ -1,0 +1,311 @@
+# SPDX-FileCopyrightText: 2017 Jeremiah Orians <jeremiah@pdp10.guru>
+# SPDX-FileCopyrightText: 2023 Andrius Štikonas <andrius@stikonas.eu>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+DEFINE add_r13, 4983C5
+DEFINE add_rax,rcx 4801C8
+DEFINE add_rax,r14 4C01F0
+DEFINE call E8
+DEFINE cmp_al, 3C
+DEFINE cmp_r15, 4983FF
+DEFINE je8 74
+DEFINE jl8 7C
+DEFINE jmp E9
+DEFINE jmp8 EB
+DEFINE jne8 75
+DEFINE lea_rcx,[rip+DWORD] 488D0D
+DEFINE lea_rsi,[rip+DWORD] 488D35
+DEFINE mov_al, B0
+DEFINE mov_rax, 48C7C0
+DEFINE mov_rdi, 48C7C7
+DEFINE mov_rdx, 48C7C2
+DEFINE mov_rsi, 48C7C6
+DEFINE mov_r13, 49C7C5
+DEFINE mov_r14, 49C7C6
+DEFINE mov_r15, 49C7C7
+DEFINE mov_rdi,r9 4C89CF
+DEFINE mov_rdi,r10 4C89D7
+DEFINE mov_r9,rax 4989C1
+DEFINE mov_r10,rax 4989C2
+DEFINE mov_r14,rax 4989C6
+DEFINE mov_[rax],r13 4C8928
+DEFINE mov_rax,[rax] 488B00
+DEFINE mov_[rip+DWORD],al 8805
+DEFINE mov_[rip+DWORD],rax 488905
+DEFINE mov_al,[rip+DWORD] 8A05
+DEFINE movzx_rax,al 480FB6C0
+DEFINE not_r15 49F7D7
+DEFINE pop_rax 58
+DEFINE pop_rdi 5F
+DEFINE ret C3
+DEFINE shl_rax, 48C1E0
+DEFINE shl_r14, 49C1E6
+DEFINE sub_al, 2C
+DEFINE sub_rax,r13 4C29E8
+DEFINE syscall 0F05
+DEFINE test_rax,rax 4885C0
+DEFINE xor_eax,eax 31C0
+
+# Where the ELF Header is going to hit
+# Simply jump to _start
+# Our main function
+:_start
+	pop_rax                     # Get the number of arguments
+	pop_rdi                     # Get the program name
+	pop_rdi                     # Get the actual input name
+	mov_rsi, %0                 # prepare read_only
+	mov_rax, %2                 # the syscall number for open()
+	syscall                     # Now open that damn file
+	mov_r9,rax                  # Preserve the file pointer we were given
+
+	pop_rdi                     # Get the actual output name
+	mov_rsi, %577               # Prepare file as O_WRONLY|O_CREAT|O_TRUNC
+	mov_rdx, %448               # Prepare file as RWX for owner only (700 in octal)
+	mov_rax, %2                 # the syscall number for open()
+	syscall                     # Now open that damn file
+	mov_r10,rax                 # Preserve the file pointer we were given
+
+	mov_r15, %-1                # Our flag for byte processing
+	mov_r14, %0                 # temp storage for the sum
+	mov_r13, %0                 # Our starting IP
+	call %First_pass            # Process it
+
+	# rewind input file
+	mov_rdi,r9                  # Using our input file
+	mov_rsi, %0                 # Offset Zero
+	mov_rdx, %0                 # Whence Zero
+	mov_rax, %8                 # lseek
+	syscall
+
+	mov_r15, %-1                # Our flag for byte processing
+	mov_r14, %0                 # temp storage for the sum
+	mov_r13, %0                 # Our starting IP
+	call %Second_pass           # Process it
+
+	jmp %Done
+
+:First_pass
+	call %Read_byte
+
+	# Deal with EOF
+	cmp_al, !-4
+	je8 !First_pass_done
+
+	# Check for :
+	cmp_al, !0x3a
+	jne8 !First_pass_0
+
+	# Deal with label
+	call %StoreLabel
+
+:First_pass_0
+	# Check for %
+	cmp_al, !0x25
+	je8 !First_pass_pointer
+
+	# Deal with everything else
+	call %hex                   # Process our char
+
+	# Deal with EOF
+	cmp_al, !-4
+	je8 !First_pass_done
+
+	# deal with -1 values
+	cmp_al, !0
+	jl8 !First_pass
+
+	# deal with toggle
+	cmp_r15, !0
+	je8 !First_pass_1
+	add_r13, !1                 # Increment IP
+
+:First_pass_1
+	not_r15
+	jmp8 !First_pass
+
+:First_pass_pointer
+	# Deal with Pointer to label
+	call %Read_byte             # Drop the char
+	add_r13, !4                 # Increment IP
+	jmp8 !First_pass            # Loop again
+
+:First_pass_done
+	ret
+
+:hex
+	# deal with EOF
+	cmp_al, !-4
+	je8 !EOF
+	# deal with line comments starting with #
+	cmp_al, !0x23
+	je8 !ascii_comment
+	# deal with line comments starting with ;
+	cmp_al, !0x3b
+	je8 !ascii_comment
+	# deal all ascii less than 0
+	cmp_al, !0x30
+	jl8 !ascii_other
+	# deal with 0-9
+	cmp_al, !0x3a
+	jl8 !ascii_num
+	# deal with all ascii less than A
+	cmp_al, !0x41
+	jl8 !ascii_other
+	# deal with A-F
+	cmp_al, !0x47
+	jl8 !ascii_high
+	# deal with all ascii less than a
+	cmp_al, !0x61
+	jl8 !ascii_other
+	# deal with a-f
+	cmp_al, !0x67
+	jl8 !ascii_low
+	# The rest that remains needs to be ignored
+	jmp8 !ascii_other
+
+:Second_pass
+	call %Read_byte
+
+	# Deal with EOF
+	cmp_al, !-4
+	je8 !Second_pass_done
+
+	# Simply drop the label
+	cmp_al, !0x3a
+	jne8 !Second_pass_0
+
+	call %Read_byte
+	jmp8 !Second_pass
+
+:Second_pass_0
+	# Deal with % pointer
+	cmp_al, !0x25
+	jne8 !Second_pass_1
+
+	call %StorePointer
+	jmp8 !Second_pass
+
+:Second_pass_1
+	# Deal with everything else
+	call %hex                   # Process our char
+
+	# Deal with EOF
+	cmp_al, !-4
+	je8 !Second_pass_done
+
+	# deal with -1 values
+	cmp_al, !0
+	jl8 !Second_pass
+
+	# deal with toggle
+	cmp_r15, !0
+	je8 !print
+
+	# process first byte of pair
+	mov_r14,rax
+	mov_r15, %0
+	jmp8 !Second_pass
+
+:Second_pass_done
+:EOF
+	ret
+:ascii_num
+	sub_al, !0x30
+	ret
+:ascii_low
+	sub_al, !0x57
+	ret
+:ascii_high
+	sub_al, !0x37
+	ret
+:ascii_other
+	mov_al, !-1
+	ret
+:ascii_comment
+	call %Read_byte
+	cmp_al, !0xd
+	je8 !ascii_comment_cr
+	cmp_al, !0xa
+	jne8 !ascii_comment
+:ascii_comment_cr
+	mov_al, !-1
+	ret
+
+# process second byte of pair
+:print
+	# update the sum and store in output
+	shl_r14, !4
+	add_rax,r14
+	mov_[rip+DWORD],al %table
+
+	# flip the toggle
+	not_r15
+
+	# Print our first Hex
+	mov_rdx, %1                 # set the size of chars we want
+	call %print_chars
+
+	add_r13, !1                 # Increment IP
+	jmp %Second_pass
+
+:Done
+	# program completed Successfully
+	mov_rdi, %0                 # All is well
+	mov_rax, %0x3c              # put the exit syscall number in rax
+	syscall                     # Call it a good day
+
+:Read_byte
+	# Attempt to read 1 byte from STDIN
+	mov_rdx, %1                 # set the size of chars we want
+	lea_rsi,[rip+DWORD] %table  # Where to put it
+	mov_rdi,r9                  # Where are we reading from
+	xor_eax,eax                 # the syscall number for read
+	syscall                     # call the Kernel
+
+	test_rax,rax                # check what we got
+	je8 !Read_byte_1            # Got EOF call it done
+
+	# load byte
+	mov_al,[rip+DWORD] %table   # load char
+	movzx_rax,al                # We have to zero extend it to use it
+	ret
+
+# Deal with EOF
+:Read_byte_1
+	mov_al, !-4                 # Put EOF in rax
+	ret
+
+:print_chars
+	lea_rsi,[rip+DWORD] %table  # What we are writing
+	mov_rdi,r10                 # Write to target file
+	mov_rax, %1                 # the syscall number for write
+	syscall                     # call the Kernel
+	ret
+
+:Get_table_target
+	call %Read_byte             # Get single char label
+	shl_rax, !3                 # Each label in table takes 8 bytes to store
+	lea_rcx,[rip+DWORD] %table  # Get table
+	add_rax,rcx                 # Calculate offset
+	ret
+
+:StoreLabel
+	call %Get_table_target
+	mov_[rax],r13               # Write out pointer to table
+	xor_eax,eax                 # wipe higher bits of rax, so that cmp al works
+	ret
+
+:StorePointer
+	add_r13, !4                 # Increment IP
+	call %Get_table_target      # Get address of pointer
+	mov_rax,[rax]               # Get pointer
+	sub_rax,r13                 # target - ip
+	mov_[rip+DWORD],rax %table  # put value in output
+	mov_rdx, %4                 # set the size of chars we want
+	call %print_chars
+	ret
+
+:table
+
+:ELF_end

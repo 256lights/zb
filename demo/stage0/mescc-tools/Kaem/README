@@ -1,0 +1,6 @@
+kaem is the world's worst build tool.
+You really really should use make instead.
+
+This tool exists only as the bare bottom floor scriptable build tool for bootstrapping.
+
+Avoid as there be dragons here.

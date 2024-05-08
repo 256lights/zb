@@ -1,0 +1,315 @@
+# SPDX-FileCopyrightText: 2017 Jeremiah Orians <jeremiah@pdp10.guru>
+# SPDX-FileCopyrightText: 2023 Andrius Štikonas <andrius@stikonas.eu>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+## ELF Header
+#:ELF_base
+7F 45 4C 46        ## e_ident[EI_MAG0-3] ELF's magic number
+
+02                 ## e_ident[EI_CLASS] Indicating 64 bit
+01                 ## e_ident[EI_DATA] Indicating little endianness
+01                 ## e_ident[EI_VERSION] Indicating original elf
+
+03                 ## e_ident[EI_OSABI] Set at 3 because FreeBSD is strict
+00                 ## e_ident[EI_ABIVERSION] Set at 0 because none cares
+
+00 00 00 00 00 00 00 ## e_ident[EI_PAD]
+02 00              ## e_type Indicating Executable
+3E 00              ## e_machine Indicating AMD64
+01 00 00 00        ## e_version Indicating original elf
+
+78 00 60 00 00 00 00 00 ## e_entry Address of the entry point (Number of bytes this header is + Base Address)
+40 00 00 00 00 00 00 00 ## e_phoff Address of program header table
+00 00 00 00 00 00 00 00 ## e_shoff Address of section header table
+
+00 00 00 00        ## e_flags
+40 00              ## e_ehsize Indicating our 64 Byte header
+
+38 00              ## e_phentsize size of a program header table
+01 00              ## e_phnum number of entries in program table
+
+00 00              ## e_shentsize size of a section header table
+00 00              ## e_shnum number of entries in section table
+
+00 00              ## e_shstrndx index of the section names
+
+## Program Header
+#:ELF_program_headers
+01 00 00 00             ## p_type
+07 00 00 00             ## ph_flags: PF-X|PF-W|PF-R = 7
+00 00 00 00 00 00 00 00 ## p_offset
+
+00 00 60 00 00 00 00 00 ## p_vaddr
+00 00 60 00 00 00 00 00 ## p_physaddr
+
+6E 02 00 00 00 00 00 00 ## p_filesz
+6E 02 00 00 00 00 00 00 ## p_memsz
+
+01 00 00 00 00 00 00 00 ## Required alignment
+
+#:ELF_text
+
+# Where the ELF Header is going to hit
+# Simply jump to _start
+# Our main function
+
+# :_start (0x600078)
+	58                  ; pop_rax         # Get the number of arguments
+	5F                  ; pop_rdi         # Get the program name$
+	5F                  ; pop_rdi         # Get the actual input name
+	48C7C6 00000000     ; mov_rsi, %0     # prepare read_only
+	48C7C0 02000000     ; mov_rax, %2     # the syscall number for open()
+	0F05                ; syscall         # Now open that damn file
+	4989C1              ; mov_r9,rax      # Preserve the file pointer we were given
+
+	5F                  ; pop_rdi         # Get the actual output name
+	48C7C6 41020000     ; mov_rsi, %577   # Prepare file as O_WRONLY|O_CREAT|O_TRUNC
+	48C7C2 C0010000     ; mov_rdx, %448   # Prepare file as RWX for owner only (700 in octal)
+	48C7C0 02000000     ; mov_rax, %2     # the syscall number for open()
+	0F05                ; syscall         # Now open that damn file
+	4989C2              ; mov_r10,rax     # Preserve the file pointer we were given
+
+	49C7C7 FFFFFFFF     ; mov_r15, %-1    # Our flag for byte processing
+	49C7C6 00000000     ; mov_r14, %0     # temp storage for the sum
+	49C7C5 00000000     ; mov_r13, %0     # Our starting IP
+	E8 39000000         ; call %First_pass # Process it
+
+	# rewind input file
+	4C89CF              ; mov_rdi,r9      # Using our input file
+	48C7C6 00000000     ; mov_rsi, %0     # Offset Zero
+	48C7C2 00000000     ; mov_rdx, %0     # Whence Zero
+	48C7C0 08000000     ; mov_rax, %8     # lseek
+	0F05                ; syscall
+
+	49C7C7 FFFFFFFF     ; mov_r15, %-1    # Our flag for byte processing
+	49C7C6 00000000     ; mov_r14, %0     # temp storage for the sum
+	49C7C5 00000000     ; mov_r13, %0     # Our starting IP
+	E8 69000000         ; call %Second_pass # Process it
+
+	E9 E4000000         ; jmp %Done
+
+# :First_pass (0x6000FC)
+	E8 EF000000         ; call %Read_byte
+
+	# Deal with EOF
+	3C FC               ; cmp_al, !-4
+	74 34               ; je8 !First_pass_done
+
+	# Check for :
+	3C 3A               ; cmp_al, !0x3a
+	75 05               ; jne8 !First_pass_0
+
+	# Deal with label
+	E8 32010000         ; call %StoreLabel
+
+# :First_pass_0 (0x60010E)
+	# Check for %
+	3C 25               ; cmp_al, !0x25
+	74 1C               ; je8 !First_pass_pointer
+
+	# Deal with everything else
+	E8 23000000         ; call %hex       # Process our char
+
+	# Deal with EOF
+	3C FC               ; cmp_al, !-4
+	74 1E               ; je8 !First_pass_done
+
+	# deal with -1 values
+	3C 00               ; cmp_al, !0
+	7C DD               ; jl8 !First_pass
+
+	# deal with toggle
+	4983FF 00           ; cmp_r15, !0
+	74 04               ; je8 !First_pass_1
+	4983C5 01           ; add_r13, !1     # Increment IP
+
+# :First_pass_1 (0x600129)
+	49F7D7              ; not_r15
+	EB CE               ; jmp8 !First_pass
+
+# :First_pass_pointer (0x60012E)
+	# Deal with Pointer to label
+	E8 BD000000         ; call %Read_byte # Drop the char
+	4983C5 04           ; add_r13, !4     # Increment IP
+	EB C3               ; jmp8 !First_pass # Loop again
+
+# :First_pass_done (0x600139)
+	C3                  ; ret
+
+# :hex (0x60013A)
+	# deal with EOF
+	3C FC               ; cmp_al, !-4
+	74 60               ; je8 !EOF
+	# deal with line comments starting with #
+	3C 23               ; cmp_al, !0x23
+	74 69               ; je8 !ascii_comment
+	# deal with line comments starting with ;
+	3C 3B               ; cmp_al, !0x3b
+	74 65               ; je8 !ascii_comment
+	# deal all ascii less than 0
+	3C 30               ; cmp_al, !0x30
+	7C 5E               ; jl8 !ascii_other
+	# deal with 0-9
+	3C 3A               ; cmp_al, !0x3a
+	7C 51               ; jl8 !ascii_num
+	# deal with all ascii less than A
+	3C 41               ; cmp_al, !0x41
+	7C 56               ; jl8 !ascii_other
+	# deal with A-F
+	3C 47               ; cmp_al, !0x47
+	7C 4F               ; jl8 !ascii_high
+	# deal with all ascii less than a
+	3C 61               ; cmp_al, !0x61
+	7C 4E               ; jl8 !ascii_other
+	# deal with a-f
+	3C 67               ; cmp_al, !0x67
+	7C 44               ; jl8 !ascii_low
+	# The rest that remains needs to be ignored
+	EB 48               ; jmp8 !ascii_other
+
+# :Second_pass (0x600160)
+	E8 8B000000         ; call %Read_byte
+
+	# Deal with EOF
+	3C FC               ; cmp_al, !-4
+	74 35               ; je8 !Second_pass_done
+
+	# Simply drop the label
+	3C 3A               ; cmp_al, !0x3a
+	75 07               ; jne8 !Second_pass_0
+
+	E8 7E000000         ; call %Read_byte
+	EB EC               ; jmp8 !Second_pass
+
+# :Second_pass_0 (0x600174)
+	# Deal with % pointer
+	3C 25               ; cmp_al, !0x25
+	75 07               ; jne8 !Second_pass_1
+
+	E8 CE000000         ; call %StorePointer
+	EB E1               ; jmp8 !Second_pass
+
+# :Second_pass_1 (0x60017F)
+	# Deal with everything else
+	E8 B6FFFFFF         ; call %hex       # Process our char
+
+	# Deal with EOF
+	3C FC               ; cmp_al, !-4
+	74 16               ; je8 !Second_pass_done
+
+	# deal with -1 values
+	3C 00               ; cmp_al, !0
+	7C D4               ; jl8 !Second_pass
+
+	# deal with toggle
+	4983FF 00           ; cmp_r15, !0
+	74 29               ; je8 !print
+
+	# process first byte of pair
+	4989C6              ; mov_r14,rax
+	49C7C7 00000000     ; mov_r15, %0
+	EB C2               ; jmp8 !Second_pass
+
+# :Second_pass_done (0x60019E)
+# :EOF
+	C3                  ; ret
+# :ascii_num (0x60019F)
+	2C 30               ; sub_al, !0x30
+	C3                  ; ret
+# :ascii_low (0x6001A2)
+	2C 57               ; sub_al, !0x57
+	C3                  ; ret
+# :ascii_high (0x6001A5)
+	2C 37               ; sub_al, !0x37
+	C3                  ; ret
+# :ascii_other (0x6001A8)
+	B0 FF               ; mov_al, !-1
+	C3                  ; ret
+# :ascii_comment (0x6001AB)
+	E8 40000000         ; call %Read_byte
+	3C 0D               ; cmp_al, !0xd
+	74 04               ; je8 !ascii_comment_cr
+	3C 0A               ; cmp_al, !0xa
+	75 F3               ; jne8 !ascii_comment
+# :ascii_comment_cr (0x6001B8)
+	B0 FF               ; mov_al, !-1
+	C3                  ; ret
+
+# process second byte of pair
+# :print (0x6001BB)
+	# update the sum and store in output
+	49C1E6 04           ; shl_r14, !4
+	4C01F0              ; add_rax,r14
+	8805 A6000000       ; mov_[rip+DWORD],al %table
+
+	# flip the toggle
+	49F7D7              ; not_r15
+
+	# Print our first Hex
+	48C7C2 01000000     ; mov_rdx, %1     # set the size of chars we want
+	E8 41000000         ; call %print_chars
+
+	4983C5 01           ; add_r13, !1     # Increment IP
+	E9 80FFFFFF         ; jmp %Second_pass
+
+# :Done (0x6001E0)
+	# program completed Successfully
+	48C7C7 00000000     ; mov_rdi, %0     # All is well
+	48C7C0 3C000000     ; mov_rax, %0x3c  # put the exit syscall number in rax
+	0F05                ; syscall         # Call it a good day
+
+# :Read_byte (0x6001F0)
+	# Attempt to read 1 byte from STDIN
+	48C7C2 01000000     ; mov_rdx, %1     # set the size of chars we want
+	488D35 70000000     ; lea_rsi,[rip+DWORD] %table # Where to put it
+	4C89CF              ; mov_rdi,r9      # Where are we reading from
+	31C0                ; xor_eax,eax     # the syscall number for read
+	0F05                ; syscall         # call the Kernel
+
+	4885C0              ; test_rax,rax    # check what we got
+	74 0B               ; je8 !Read_byte_1 # Got EOF call it done
+
+	# load byte
+	8A05 5E000000       ; mov_al,[rip+DWORD] %table # load char
+	480FB6C0            ; movzx_rax,al    # We have to zero extend it to use it
+	C3                  ; ret
+
+# Deal with EOF
+# :Read_byte_1 (0x600215)
+	B0 FC               ; mov_al, !-4     # Put EOF in rax
+	C3                  ; ret
+
+# :print_chars (0x600218)
+	488D35 4F000000     ; lea_rsi,[rip+DWORD] %table # What we are writing
+	4C89D7              ; mov_rdi,r10     # Write to target file
+	48C7C0 01000000     ; mov_rax, %1     # the syscall number for write
+	0F05                ; syscall         # call the Kernel
+	C3                  ; ret
+
+# :Get_table_target (0x60022C)
+	E8 BFFFFFFF         ; call %Read_byte # Get single char label
+	48C1E0 03           ; shl_rax, !3     # Each label in table takes 8 bytes to store
+	488D0D 32000000     ; lea_rcx,[rip+DWORD] %table # Get table
+	4801C8              ; add_rax,rcx     # Calculate offset
+	C3                  ; ret
+
+# :StoreLabel (0x600240)
+	E8 E7FFFFFF         ; call %Get_table_target
+	4C8928              ; mov_[rax],r13   # Write out pointer to table
+	31C0                ; xor_eax,eax     # wipe higher bits of rax, so that cmp al works
+	C3                  ; ret
+
+# :StorePointer (0x60024B)
+	4983C5 04           ; add_r13, !4     # Increment IP
+	E8 D8FFFFFF         ; call %Get_table_target # Get address of pointer
+	488B00              ; mov_rax,[rax]   # Get pointer
+	4C29E8              ; sub_rax,r13     # target - ip
+	488905 0D000000     ; mov_[rip+DWORD],rax %table # put value in output
+	48C7C2 04000000     ; mov_rdx, %4     # set the size of chars we want
+	E8 ABFFFFFF         ; call %print_chars
+	C3                  ; ret
+
+# :table (0x60026E)
+
+# :ELF_end

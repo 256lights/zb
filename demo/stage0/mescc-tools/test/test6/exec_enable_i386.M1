@@ -1,0 +1,72 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of stage0.
+##
+## stage0 is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## stage0 is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with stage0.  If not, see <http://www.gnu.org/licenses/>.
+
+DEFINE POP_eax 58
+DEFINE POP_ebx 5B
+DEFINE CMP_EAX_TO_IMMEDIATE8 83F8
+DEFINE JNE8 75
+DEFINE LOADI32_ECX B9
+DEFINE LOADI32_EAX B8
+DEFINE LOADI32_EBX BB
+DEFINE LOADI32_EDX BA
+DEFINE INT_80 CD80
+
+:_start
+	# first check that we got the correct number of inputs
+	POP_eax                     # Get the number of arguments
+	POP_ebx                     # Get the program name
+	POP_ebx                     # Get the actual argument
+
+	# Check if we have the correct number of inputs
+	CMP_EAX_TO_IMMEDIATE8 !02
+
+	# Jump to Bail if the number is not correct
+	JNE8 !Bail
+
+	# Load our preferred mode (0777)
+	LOADI32_ECX %0x1ff
+
+	# Load the syscall number for chmod
+	LOADI32_EAX %15
+
+	# Call the kernel
+	INT_80
+
+:Done
+	# program completed Successfully
+	LOADI32_EBX %0              # All is well
+	LOADI32_EAX %1              # put the exit syscall number in eax
+	INT_80                      # Call it a good day
+
+:Bail
+	# first let the user know what was wrong
+	LOADI32_EDX %0x1a           # third argument: message length
+	LOADI32_ECX &msg            # second argument: pointer to message to write
+	LOADI32_EBX %1              # first argument: file handle (stdout)
+	LOADI32_EAX %4              # system call number (sys_write)
+	INT_80                      # call kernel
+
+	# Second terminate with an error
+	LOADI32_EBX %1              # there was an error
+	LOADI32_EAX %1              # put the exit syscall number in eax
+	INT_80                      # bail out
+
+:msg
+"needs a proper file name
+"
+
+:ELF_end
+

@@ -1,0 +1,170 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of stage0.
+##
+## stage0 is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## stage0 is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with stage0.  If not, see <http://www.gnu.org/licenses/>.
+
+DEFINE ADD_ebp_TO_eax 01E8
+DEFINE CALLI32 E8
+DEFINE CMP_eax_Immediate8 83F8
+DEFINE CMP_edi_Immediate8 83FF
+DEFINE INT_80 CD80
+DEFINE JE32 0F84
+DEFINE JE8 74
+DEFINE JGE8 7D
+DEFINE JL8 7C
+DEFINE JMP32 E9
+DEFINE JMP8 EB
+DEFINE LOAD32I_eax B8
+DEFINE LOAD32I_ebp BD
+DEFINE LOAD32I_ebx BB
+DEFINE LOAD32I_ecx B9
+DEFINE LOAD32I_edi BF
+DEFINE LOAD32I_edx BA
+DEFINE LOAD8_al_Absolute32 A0
+DEFINE MOVE_eax_TO_ebp 89C5
+DEFINE MOVZBL_eax_al 0FB6C0
+DEFINE NULL 00000000
+DEFINE RET C3
+DEFINE SHL_ebp_Immediate8 C1E5
+DEFINE STORE8_al_Absolute32 A2
+DEFINE SUB_eax_Immediate8 83E8
+DEFINE TEST_eax_eax 85C0
+
+# Where the ELF Header is going to hit :_start first
+
+:read_byte
+	# Attempt to read 1 byte from STDIN
+	LOAD32I_edx %1              # set the size of chars we want
+	LOAD32I_ecx &input          # Where to put it
+	LOAD32I_ebx %0              # Where are we reading from
+	LOAD32I_eax %3              # the syscall number for read
+	INT_80                      # call the Kernel
+
+	TEST_eax_eax                # check what we got
+	JE32 %Done                  # Got EOF call it done
+
+	# load byte
+	LOAD8_al_Absolute32 &input  # load char
+	MOVZBL_eax_al               # We have to zero extend it to use it
+	RET
+
+:print_byte
+	# Print our first Hex
+	LOAD32I_edx %1              # set the size of chars we want
+	LOAD32I_ecx &output         # What we are writing
+	LOAD32I_ebx %1              # Stdout File Descriptor
+	LOAD32I_eax %4              # the syscall number for write
+	INT_80                      # call the Kernel
+
+:hex
+	# Deal with #
+	CMP_eax_Immediate8 !35
+	JE8 !ascii_comment
+	# deal with ;
+	CMP_eax_Immediate8 !59
+	JE8 !ascii_comment
+	# deal all ascii less than 0
+	CMP_eax_Immediate8 !48
+	JL8 !ascii_other
+	# deal with 0-9
+	CMP_eax_Immediate8 !58
+	JL8 !ascii_num
+	# deal with all ascii less than A
+	CMP_eax_Immediate8 !65
+	JL8 !ascii_other
+	# deal with A-F
+	CMP_eax_Immediate8 !71
+	JL8 !ascii_high
+	#deal with all ascii less than a
+	CMP_eax_Immediate8 !97
+	JL8 !ascii_other
+	#deal with a-f
+	CMP_eax_Immediate8 !103
+	JL8 !ascii_low
+	# The rest that remains needs to be ignored
+	JMP8 !ascii_other
+
+:ascii_num
+	SUB_eax_Immediate8 !48
+	RET
+:ascii_low
+	SUB_eax_Immediate8 !87
+	RET
+:ascii_high
+	SUB_eax_Immediate8 !55
+	RET
+:ascii_other
+	LOAD32I_eax %-1
+	RET
+:ascii_comment
+	CALLI32 %read_byte
+	CMP_eax_Immediate8 !10
+	JE8 !ascii_other
+	JMP8 !ascii_comment
+
+:_start
+	# Our flag for byte processing
+	LOAD32I_edi %-1
+
+	# temp storage for the sum
+	LOAD32I_ebp %0
+
+:loop
+	# Read in a byte
+	CALLI32 %read_byte
+
+	# process byte
+	CALLI32 %hex
+
+	# deal with -1 values
+	CMP_eax_Immediate8 !0
+	JL8 !loop
+
+	# deal with toggle
+	CMP_edi_Immediate8 !0
+	JGE8 !print
+
+	# process first byte of pair
+	MOVE_eax_TO_ebp
+	LOAD32I_edi %0
+	JMP8 !loop
+
+# process second byte of pair
+:print
+	# update the sum and store in output
+	SHL_ebp_Immediate8 !4
+	ADD_ebp_TO_eax
+	STORE8_al_Absolute32 &output
+
+	# flip the toggle
+	LOAD32I_edi %-1
+
+	CALLI32 %print_byte
+
+	JMP8 !loop
+
+:Done
+	# program completed Successfully
+	LOAD32I_ebx %0              # All is well
+	LOAD32I_eax %1              # put the exit syscall number in eax
+	INT_80                      # Call it a good day
+
+# Our writable space
+:input
+	NULL
+:output
+	NULL
+
+:ELF_end
+

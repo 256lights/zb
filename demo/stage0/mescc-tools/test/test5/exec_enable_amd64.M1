@@ -1,0 +1,71 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of stage0.
+##
+## stage0 is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## stage0 is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with stage0.  If not, see <http://www.gnu.org/licenses/>.
+
+DEFINE POP_RAX 58
+DEFINE POP_RDI 5F
+DEFINE CMP_RAX_TO_IMMEDIATE8 4883f8
+DEFINE JNE8 75
+DEFINE LOADI32_RSI 48C7C6
+DEFINE LOADI32_RAX 48C7C0
+DEFINE LOADI32_RDI 48C7C7
+DEFINE LOADI32_RDX 48C7C2
+DEFINE SYSCALL 0F05
+
+:_start
+	# first check that we got the correct number of inputs
+	POP_RAX                     # Get the number of arguments
+	POP_RDI                     # Get the program name
+	POP_RDI                     # Get the actual argument
+
+	# Check if we have the correct number of inputs
+	CMP_RAX_TO_IMMEDIATE8 !02
+
+	# Jump to Bail if the number is not correct
+	JNE8 !Bail
+
+	# Load our preferred mode (0777)
+	LOADI32_RSI %0x1ff
+
+	# Load the syscall number for chmod
+	LOADI32_RAX %90
+
+	# Call the kernel
+	SYSCALL
+
+:Done
+	# program completed Successfully
+	LOADI32_RDI %0              # All is well
+	LOADI32_RAX %60             # put the exit syscall number in rax
+	SYSCALL                     # Call it a good day
+
+:Bail
+	# first let the user know what was wrong
+	LOADI32_RDX %0x1a           # third argument: message length
+	LOADI32_RSI &message        # second argument: pointer to message to write
+	LOADI32_RDI %1              # first argument: file handle (stdout)
+	LOADI32_RAX %1              # system call number (sys_write)
+	SYSCALL                     # call kernel
+
+	# Second terminate with an error
+	LOADI32_RDI %1              # there was an error
+	LOADI32_RAX %60             # put the exit syscall number in eax
+	SYSCALL                     # bail out
+
+:message
+"needs a proper file name
+"
+
+:ELF_end

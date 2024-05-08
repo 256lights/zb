@@ -1,0 +1,290 @@
+-*-mode:org-*-
+
+M2-Planet being based on the goal of bootstrapping the Minimal C compiler
+required to support C macros, structs, arrays, inline assembly and self hosting;
+is rather small, around 3Kloc according to sloccount
+
+* SETUP
+The most obvious way to setup for M2-Planet development is to clone --recursive
+and setup mescc-tools first (https://github.com/oriansj/mescc-tools.git)
+Then be sure to install any C compiler and make clone of your choice.
+
+* BUILD
+The standard C based approach to building M2-Planet is simply running:
+make M2-Planet
+
+Should you wish to verify that M2-Planet was built correctly run:
+make test
+
+* ROADMAP
+M2-Planet V1.0 is the bedrock of all future M2-Planet versions. Any future
+release that will depend upon a more advanced version to be compiled, will
+require the version prior to it to be named. V2.0 and the same properties apply
+To all future release of M2-Planet. All minor releases are buildable by the last
+major release and All major releases are buildable by the last major release.
+
+* DEBUG
+To get a properly debuggable binary of M2-Planet: make M2-Planet
+M2-Planet also can create debuggable binaries with the help of blood-elf and the
+--debug option. if you are comfortable with gdb, knowing that function names are
+prefixed with FUNCTION_ M2-Planet built binaries are quite debuggable.
+
+* Bugs
+M2-Planet assumes a very heavily restricted subset of the C language and many C
+programs will break hard when passed to M2-Planet.
+
+M2-Planet does not actually implement any primitive functionality, it is assumed
+that will be written in inline assembly by the programmer or leveraged via M2libc
+which is the C library written in the M2-Planet C subset.
+
+* Magic
+** argument and local stack
+In M2-Planet the stack is first the EDI pointer which is preserved as should an
+argument be a function which returns a value, it may be overwritten and cause
+issues, this is followed by the previous frame's base pointer (EBP) as it will
+need to be restored upon return from the function call. This is then followed by
+the arguments which are pushed onto the stack from the left to the right,
+followed by the RETURN Pointer generated from the function call, after which the
+locals are placed upon the stack first to last followed by any Temporary values:
+       +----------------------+
+EDI -> | Previous EDI pointer |
+       +----------------------+
+EBP -> | Previous EBP pointer |
+       +----------------------+
+1st -> | Argument 1           |
+       +----------------------+
+2nd -> | Argument 2           |
+       +----------------------+
+... -> ........................
+       +----------------------+
+Nth -> | Argument N           |
+       +----------------------+
+RET -> | RETURN Pointer       |
+       +----------------------+
+1st -> | Local 1              |
+       +----------------------+
+2nd -> | Local 2              |
+       +----------------------+
+... -> ........................
+       +----------------------+
+Nth -> | Local N              |
+       +----------------------+
+temps-> .......................
+
+** AArch64 port notes
+Some details about design, implementation and generated code; maybe of
+interest for new targets, to M1 users, compiler hackers and curious
+minds in general.
+
+*** Target ISA related issues
+
+In the ARMv8 AArch64 A64 instruction set that we target, immediate
+values into instructions are not aligned to 4 bits, which is the size
+of the convenient single hexadecimal digit (that served well so far,
+for other ports). Other groups of bits are affected. For example,
+those to encode registers are usually 5 bits long and horror stories
+about non-contiguous chunks (due to endianess interactions with M1, a
+big bit endian language) are told, so not even using octal nor binary
+encodings solve our problem.
+
+Because of that, we have less flexible and reusable definitions than
+usual (see aarch64_defs.M1). Also, we resort to unconventional (for
+M2-Planet standards) workarounds and generate worse code. Anyway,
+neither size nor speed are high priorities and there's room for
+improvement.
+
+On the bright side, affected codepaths/definitions and working tactics
+are better known now, being this the first target of M2-Planet with
+such features. That might be helpful in future ports (RISC-V comes to
+mind, which has weird structure too... designed "so that as many bits
+as possible are in the same position in every instruction" but not for
+basic tools).
+
+Some notable workarounds are:
+
+- Create one independent definition per _needed_ operation, instead of
+  reusing common parts like we do for other archs. The resulting set is
+  quite small even following this simple rule consistently. See how
+  the SKIP_INST_* family seems nicely aligned for more fine-grained
+  hex but we don't exploit that; or the PUSH/POP ones that also kind
+  of do, but watch out for the general case if you plan to create your
+  own set of general purpose definitions.
+
+One interesting example reflects that creating new definitions is
+avoided unless readability suffers: the pair LOAD_W2_AHEAD,
+LSHIFT_X0_X0_X2 exists because our two main registers are in use in
+postfix_expr_array() and the common shift is inconvenient in this
+particular case. It's possible to reuse definitions (preliminary
+patches did this) using multiplication and addition (quite natural by
+the way, even if suboptimal); or dancing with the stack to fit
+everything into place (harder to reason about). It felt too alien in
+the codebase so a couple of definitions were added.
+
+- Use the register-based instructions instead of those using
+  immediates. This forces us to generate more code in order to put the
+  data in the register. Data is mixed with the code (not even in a
+  fancy pool) to be loaded from and then skipped at run-time. See some
+  of the multiple instances of the LOAD_W0_AHEAD then SKIP_32_DATA
+  pattern.
+
+- For control flow structures, the problem about immediates bits us
+  again (hits, bites, bytes; sorry, can't resist) for conditional
+  PC-relative branching. The jump is arbitrary, because any amount of
+  code can be present in any given block to be skipped. AArch64
+  PC-relative conditional branch instructions [that I found, newbie on
+  board!] are based on immediate values, and we have to avoid
+  arbitrary immediate values as usual.
+
+There's an *unconditional* absolute branch instruction that accepts
+the target addr from a register (which we can set at will using the
+"load_ahead+skip" pattern). So, we construct an unconditional
+over-the-block jump and skip this jump with the conditional one
+("inverted", more about this in a moment). The point is that now we
+know exactly the distance to jump: it's the size of that
+construction. We can define a couple of conditional branch
+instructions because the immediate is not arbitrary anymore, nice!
+
+Maybe this pseudo-code explains it better:
+
+  if(cond) block_foo; else block_bar;
+  more;
+
+... is compiled to:
+
+  if cond then skip past the unconditional-branch // To get to foo-code.
+  // We know the space used by this code...
+  set register to addr of else-label
+  // ... and this one, that completes the jump to the alternative block.
+  unconditional-branch to addr in register
+
+  foo-code
+  [Here we jump to the endif-label, omitted for clarity.]
+else-label:
+  bar-code
+endif-label:
+  more-code
+
+Similar approach is used for other control flow structures. See
+CBZ_X0_PAST_BR (cbz x0, #20) and CBNZ_X0_PAST_BR (cbnz x0, #20) used
+as part of the generation of 'if', 'for', 'do' and 'while'
+statements. Notice how the test is inverted: when Knight does JUMP.Z
+we do CBNZ (process_if); when JUMP.NZ we CBZ (process_do).
+
+CSEL was considered but required an additional register, more labels
+and code. A bit too invasive a change to make to the codebase.
+
+As you can imagine, the ISA colored the port development from the very
+beginning. It's a lot of fun to come up with basic solutions under
+those limitations. The port works as expected but there's room for
+experimentation.
+
+*** Function call
+
+The Base Pointer and its relation to arguments in function calls and
+locals during function execution is a bit different compared to other
+supported architectures. This simplifies some calculations. See how
+unsurprising the depths are in collect_arguments() and
+collect_local().
+
+Note how this calculations are related to the "push/pop size". See
+`Wasted stack space`.
+
+Let's follow a couple of M2-Planet functions generating code for
+prologue, call and epilogue with the help of some artsy-less ascii-art
+stack graphs for clarity. The expected stack is "full" (the stack
+pointer register contains the address of the last pushed element) and
+descending (grows towards zero).
+
+Most of the work is done by function_call(). First, we save (the
+generated code does it at runtime of the compiled program, but please
+bear with me about the point of view) three registers on the stack. We
+include a scratch one ("tmp" value in the graphs) that we're going to
+use for two different purposes. On the one hand, to store the actual
+stack pointer (which is going to be the reference address --Base
+Pointer-- during the execution of the called function). On the other
+hand, when the BP is already set (which can't be done right now
+because we need the actual BP to evaluate the arguments in caller
+context) we use the register to store the addr of the function to be
+called. The other two registers are the Link Register (X30) and Base
+Pointer (X17 also know as IP1) itself, to allow for recursion. Both
+are prefixed with "o" in the following graphs, as in "old".
+
+This structure gives us a simple reference for both the args and the
+locals, without extra elements between those two sets. We rely on the
+semantics of BLR (more on this in a bit) which doesn't use the stack
+to save the return address, but a register. For other archs this is
+not possible (or not exploited, see how for ARM-7 the LR is saved in
+the stack just around the call proper; this puts it between the args
+and the locals) so it's a difference worth documenting.
+
+                                 ---> Address 0
+tmp | oLR | oBP |
+                ^
+                |
+                --- SP
+                |
+                --- BP-to-be
+
+Now we're ready to evaluate and push arguments. Note that M2-Planet
+doesn't follow AAPCS64. The evaluation might involve function calls
+itself and arbitrary use of the stack, but everything will be like
+this after all.
+
+tmp | oLR | oBP | arg1 | arg2 | ... | argN |
+                ^                          ^
+                |                          |
+                --- BP-to-be               --- SP (omitted from now on)
+
+At this point we set the BP from the scratch register and execute
+branch-and-link (BLR) to the function reusing the (now free) X16
+register (also know as IP0). This instruction saves the address of the
+next instruction on X30 (LR, which we saved earlier to allow for
+recursion).
+
+tmp | oLR | oBP | arg1 | arg2 | ... | argN |
+                ^
+                |
+                --- BP
+
+During the called function the locals are pushed on the stack as usual
+in M2-Planet.
+
+tmp | oLR | oBP | arg1 | arg2 | ... | argN | loc1 | loc2 | ... | locN |
+                ^
+                |
+                --- BP
+
+When the function is about to return, we remove the locals from the
+stack and execute the return proper, jumping to the address in LR
+thanks to RET. This is handled by return_result().
+
+tmp | oLR | oBP | arg1 | arg2 | ... | argN |
+                ^
+                |
+                --- BP
+
+Back in function_call() we remove the args from the stack.
+
+tmp | oLR | oBP |
+                ^
+                |
+                --- BP
+
+Finally, we restore the saved registers (so X16, LR and BP contain
+tmp, oLR and oBP again) leaving everything as it was before this
+journey. Well... one important thing changed: following M2-Planet
+conventions the value returned from the function, if any, is on X0.
+
+*** Stack pointer
+
+Due to alignment (128 bits) restriction for "push" and "pop" based on
+the architectural register, we initialize and use X18 as stack pointer
+instead.
+
+The M1 definitions referring to SP use X18; stack operations too.
+
+For example:
+
+DEFINE LDR_X0_[SP] 400240f9 is ldr x0, [x18]
+DEFINE PUSH_LR 5e8e1ff8 is str x30, [x18, #-8]!
+DEFINE INIT_SP f2030091 is mov x18, sp

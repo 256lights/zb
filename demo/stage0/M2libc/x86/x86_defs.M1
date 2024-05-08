@@ -1,0 +1,102 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of M2-Planet.
+##
+## M2-Planet is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## M2-Planet is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with M2-Planet.  If not, see <http://www.gnu.org/licenses/>.
+
+
+DEFINE add_eax, 81C0
+DEFINE add_ebp, 81C5
+DEFINE add_ebx,eax 01C3
+DEFINE add_eax,ebp 01E8
+DEFINE add_eax,ebx 01D8
+DEFINE and_eax,ebx 21D8
+DEFINE call E8
+DEFINE call_eax FFD0
+DEFINE cmp 39C3
+DEFINE cdq 99
+DEFINE div_ebx F7F3
+DEFINE idiv_ebx F7FB
+DEFINE int CD
+DEFINE je 0F84
+DEFINE jne 0F85
+DEFINE jmp E9
+DEFINE lea_eax,[ebp+DWORD] 8D85
+DEFINE lea_eax,[esp+DWORD] 8D8424
+DEFINE lea_ebx,[esp+DWORD] 8D9C24
+DEFINE lea_ecx,[esp+DWORD] 8D8C24
+DEFINE lea_edx,[esp+DWORD] 8D9424
+DEFINE lea_esi,[esp+DWORD] 8DB424
+DEFINE lea_edi,[esp+DWORD] 8DBC24
+DEFINE mov_eax,[esp+DWORD] 8B8424
+DEFINE mov_eax,ebp 89E8
+DEFINE mov_eax,ebx 89D8
+DEFINE mov_eax,ebx 89D8
+DEFINE mov_eax,edx 89D0
+DEFINE mov_ebx,eax 89C3
+DEFINE mov_ecx,eax 89C1
+DEFINE mov_ecx,esp 89E1
+DEFINE mov_edi,esp 89E7
+DEFINE mov_ebp,edi 89fd
+DEFINE mov_ebp,esp 89E5
+DEFINE mov_eax, B8
+DEFINE mov_ebx, BB
+DEFINE mov_edx, BA
+DEFINE mov_eax,[eax] 8B00
+DEFINE mov_ebx,[ebx] 8B1B
+DEFINE mov_ecx,[ecx] 8B09
+DEFINE mov_edx,[edx] 8B12
+DEFINE mov_esi,[esi] 8B36
+DEFINE mov_edi,[edi] 8B3F
+DEFINE mov_[ebx],al 8803
+DEFINE mov_[ebx],ax 668903
+DEFINE mov_[ebx],eax 8903
+DEFINE movsx_eax,BYTE_PTR_[eax] 0FBE00
+DEFINE movsx_ebx,BYTE_PTR_[ebx] 0FBE1B
+DEFINE movsx_eax,WORD_PTR_[eax] 0FBF00
+DEFINE movzx_eax,BYTE_PTR_[eax] 0FB600
+DEFINE movzx_eax,WORD_PTR_[eax] 0FB700
+DEFINE movzx_eax,al 0FB6C0
+DEFINE mul_ebx F7E3
+DEFINE imul_ebx F7EB
+DEFINE NULL 00000000
+DEFINE not_eax F7D0
+DEFINE or_eax,ebx 09D8
+DEFINE pop_eax 58
+DEFINE pop_ebx 5B
+DEFINE pop_ebp 5D
+DEFINE pop_edi 5F
+DEFINE push_eax 50
+DEFINE push_ebx 53
+DEFINE push_ebp 55
+DEFINE push_edi 57
+DEFINE ret C3
+DEFINE sal_eax, C1E0
+DEFINE sal_eax,cl D3E0
+DEFINE shl_eax,cl D3E0
+DEFINE sar_eax,cl D3F8
+DEFINE shr_eax,cl D3E8
+DEFINE seta_al 0F97C0
+DEFINE setae_al 0F93C0
+DEFINE setb_al 0F92C0
+DEFINE setbe_al 0F96C0
+DEFINE sete_al 0F94C0
+DEFINE setle_al 0F9EC0
+DEFINE setl_al 0F9CC0
+DEFINE setge_al 0F9DC0
+DEFINE setg_al 0F9FC0
+DEFINE setne_al 0F95C0
+DEFINE sub_ebx,eax 29C3
+DEFINE test_eax,eax 85C0
+DEFINE xchg_ebx,eax 93
+DEFINE xor_eax,ebx 31D8

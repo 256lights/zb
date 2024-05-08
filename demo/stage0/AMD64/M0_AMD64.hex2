@@ -1,0 +1,845 @@
+# SPDX-FileCopyrightText: 2019 Jeremiah Orians <jeremiah@pdp10.guru>
+# SPDX-FileCopyrightText: 2023 Andrius Štikonas <andrius@stikonas.eu>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+    # Register usage:
+    # RAX, RSI, RDI => Temps
+    # R12 => MALLOC
+    # R13 => HEAD
+    # R14 => Output_file
+    # R15 => Input_file
+
+    # Struct format: (size 32)
+    # NEXT => 0
+    # TYPE => 8
+    # TEXT => 16
+    # EXPRESSION => 24
+
+    # Types
+    # None => 0
+    # MACRO => 1
+    # STRING => 2
+
+# Where the ELF Header is going to hit
+# Simply jump to _start
+# Our main function
+:_start
+    58                      ; pop_rax                     # Get the number of arguments
+    5F                      ; pop_rdi                     # Get the program name
+    5F                      ; pop_rdi                     # Get the actual input name
+    48C7C6 00000000         ; mov_rsi, %0                 # prepare read_only
+    48C7C0 02000000         ; mov_rax, %2                 # the syscall number for open()
+    0F05                    ; syscall                     # Now open that damn file
+    4989C7                  ; mov_r15,rax                 # Preserve the file pointer we were given
+
+    5F                      ; pop_rdi                     # Get the actual output name
+    48C7C6 41020000         ; mov_rsi, %577               # Prepare file as O_WRONLY|O_CREAT|O_TRUNC
+    48C7C2 80010000         ; mov_rdx, %384               # Prepare file as RW for owner only (600 in octal)
+    48C7C0 02000000         ; mov_rax, %2                 # the syscall number for open()
+    0F05                    ; syscall                     # Now open that damn file
+    483D 00000000           ; cmp_rax, %0                 # Check for missing output
+    7F !_start_out          ; jg8 !_start_out             # Have real input
+    48C7C0 01000000         ; mov_rax, %1                 # Use stdout
+
+:_start_out
+    4989C6                  ; mov_r14,rax                 # Preserve the file pointer we were given
+
+    48C7C0 0C000000         ; mov_rax, %12                # the Syscall # for SYS_BRK
+    48C7C7 00000000         ; mov_rdi, %0                 # Get current brk
+    0F05                    ; syscall                     # Let the kernel do the work
+    4989C4                  ; mov_r12,rax                 # Set our malloc pointer
+
+    4D31ED                  ; xor_r13,r13                 # Set HEAD = NULL
+    E8 %Tokenize_Line       ; call %Tokenize_Line         # Get all lines
+    4C89E8                  ; mov_rax,r13                 # prepare for Reverse_List
+    E8 %Reverse_List        ; call %Reverse_List          # Correct order
+    4989C5                  ; mov_r13,rax                 # Update HEAD
+    E8 %Identify_Macros     ; call %Identify_Macros       # Find the DEFINEs
+    E8 %Line_Macro          ; call %Line_Macro            # Apply the DEFINEs
+    E8 %Process_String      ; call %Process_String        # Handle strings
+    E8 %Eval_Immediates     ; call %Eval_Immediates       # Handle Numbers
+    E8 %Preserve_Other      ; call %Preserve_Other        # Collect the remaining
+    E8 %Print_Hex           ; call %Print_Hex             # Output our results
+
+:Done
+    # program completed Successfully
+    48C7C7 00000000         ; mov_rdi, %0                 # All is well
+    48C7C0 3C000000         ; mov_rax, %0x3c              # put the exit syscall number in eax
+    0F05                    ; syscall                     # Call it a good day
+
+
+# Tokenize_Line Function
+# Using input file R15 and Head R13
+# Creates a linked list of structs
+# Uses RBX for in_set strings, RCX for Int C and RDX for Struct Token* p
+:Tokenize_Line
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    52                      ; push_rdx                    # Protect RDX
+
+:restart
+    E8 %fgetc               ; call %fgetc                 # Read a char
+    483D FCFFFFFF           ; cmp_rax, %-4                # Check for EOF
+    74 !done                ; je8 !done                   # File is collected
+
+    480FB6C0                ; movzx_rax,al                # We have to zero extend it to use it
+    4889C1                  ; mov_rcx,rax                 # Protect C
+
+    488D1D %comments        ; lea_rbx,[rip+DWORD] %comments # Get pointer to "#;"
+    E8 %In_Set              ; call %In_Set                # Check for comments
+    483D 01000000           ; cmp_rax, %1                 # If comments
+    0F84 %Purge_LineComment ; je %Purge_LineComment       # try again
+
+    4889C8                  ; mov_rax,rcx                 # put C in place for check
+    488D1D %terminators     ; lea_rbx,[rip+DWORD] %terminators # Get pointer to "\n\t "
+    E8 %In_Set              ; call %In_Set                # Check for terminators
+    483D 01000000           ; cmp_rax, %1                 # If terminator
+    74 !restart             ; je8 !restart                # try again
+
+    48C7C0 20000000         ; mov_rax, %32                # Malloc the struct P
+    E8 %malloc              ; call %malloc                # Get pointer to P
+    4889C2                  ; mov_rdx,rax                 # Protect P
+    4C892A                  ; mov_[rdx],r13               # P->NEXT = HEAD
+    4989D5                  ; mov_r13,rdx                 # HEAD = P
+
+    4889C8                  ; mov_rax,rcx                 # put C in place for check
+    488D1D %string_char     ; lea_rbx,[rip+DWORD] %string_char # Get pointer to "\"'"
+    E8 %In_Set              ; call %In_Set                # Check for string chars
+    483D 01000000           ; cmp_rax, %1                 # If string char
+    0F84 %Store_String      ; je %Store_String            # Get string
+
+    E8 %Store_Atom          ; call %Store_Atom            # Get whole token
+    EB !restart             ; jmp8 !restart
+
+:done
+    5A                      ; pop_rdx                     # Restore RDX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    C3                      ; ret
+
+
+# fgetc function
+# Receives FILE* in R15
+# Returns -4 (EOF) or char in RAX
+:fgetc
+    48C7C0 FCFFFFFF         ; mov_rax, %-4                # Put EOF in rax
+    50                      ; push_rax                    # Assume bad (If nothing read, value will remain EOF)ill remain EOF)
+    488D3424                ; lea_rsi,[rsp]               # Get stack address
+    4C89FF                  ; mov_rdi,r15                 # Where are we reading from
+    48C7C0 00000000         ; mov_rax, %0                 # the syscall number for read
+    52                      ; push_rdx                    # Protect RDX
+    48C7C2 01000000         ; mov_rdx, %1                 # set the size of chars we want
+    4153                    ; push_r11                    # Protect r11
+    0F05                    ; syscall                     # call the Kernel
+    415B                    ; pop_r11                     # Restore r11
+    5A                      ; pop_rdx                     # Restore RDX
+    58                      ; pop_rax                     # Get either char or EOF
+    C3                      ; ret
+
+
+# Malloc isn't actually required if the program being built fits in the initial memory
+# However, it doesn't take much to add it.
+# Requires R12 to be initialized and RAX to have the number of desired bytes
+:malloc
+    4C89E7                  ; mov_rdi,r12                 # Using the current pointer
+    4801C7                  ; add_rdi,rax                 # Request the number of desired bytes
+    48C7C0 0C000000         ; mov_rax, %12                # the Syscall # for SYS_BRK
+    51                      ; push_rcx                    # Protect rcx
+    4153                    ; push_r11                    # Protect r11
+    0F05                    ; syscall                     # call the Kernel
+    415B                    ; pop_r11                     # Restore r11
+    59                      ; pop_rcx                     # Restore rcx
+    4C89E0                  ; mov_rax,r12                 # Return pointer
+    4989FC                  ; mov_r12,rdi                 # Update pointer
+    C3                      ; ret
+
+
+# Purge_LineComment function
+# Reads chars until LF and jumps to restart
+:Purge_LineComment
+    E8 %fgetc               ; call %fgetc                 # Get a char
+    480FB6C0                ; movzx_rax,al                # Zero extend
+    4883F8 0A               ; cmp_rax, %10                # While not LF
+    75 !Purge_LineComment   ; jne8 !Purge_LineComment     # Keep reading
+    E9 %restart             ; jmp %restart
+
+
+# Store_String Function
+# Receives C in RCX, HEAD in RDX and Input file in R14
+# Uses RBX for terminator, RCX for C and RDX for string
+:Store_String
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    52                      ; push_rdx                    # Protect RDX
+
+    48C7C0 02000000         ; mov_rax, %2                 # Using TYPE STRING
+    488942 08               ; mov_[rdx+BYTE],rax !8       # HEAD->TYPE = STRINGE = STRING
+    48C7C0 00010000         ; mov_rax, %256               # Malloc the string
+    E8 %malloc              ; call %malloc                # Get pointer to P
+    488942 10               ; mov_[rdx+BYTE],rax !16      # HEAD->TEXT = STRINGXT = STRING
+    4889CB                  ; mov_rbx,rcx                 # Protect terminator
+    4889C2                  ; mov_rdx,rax                 # Protect string pointer
+:Store_String_Loop
+    880A                    ; mov_[rdx],cl                # write byte
+    E8 %fgetc               ; call %fgetc                 # read next char
+    480FB6C0                ; movzx_rax,al                # Zero extend it
+    4889C1                  ; mov_rcx,rax                 # Update C
+    4883C2 01               ; add_rdx, %1                 # STRING = STRING + 1
+    4839D9                  ; cmp_rcx,rbx                 # See if we hit terminator
+    75 !Store_String_Loop   ; jne8 !Store_String_Loop     # Otherwise keep looping
+
+    5A                      ; pop_rdx                     # Restore RDX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    4889D0                  ; mov_rax,rdx                 # return HEAD
+    E9 %restart             ; jmp %restart
+
+
+# Store_Atom Function
+# Receives C in RCX, HEAD in RDX and Input file in R15
+# Uses RBX for in_set strings, RCX for C and RDX for string
+:Store_Atom
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    52                      ; push_rdx                    # Protect RDX
+
+    48C7C0 00010000         ; mov_rax, %256               # Malloc the string
+    E8 %malloc              ; call %malloc                # Get pointer to P
+    488942 10               ; mov_[rdx+BYTE],rax !16      # HEAD->TEXT = STRING
+    488D1D %terminators     ; lea_rbx,[rip+DWORD] %terminators # Get pointer to "\n\t "
+    4889C2                  ; mov_rdx,rax                 # Protect string pointer
+:Store_Atom_loop
+    880A                    ; mov_[rdx],cl                # write byte
+    E8 %fgetc               ; call %fgetc                 # read next char
+    480FB6C0                ; movzx_rax,al                # Zero extend it
+    4889C1                  ; mov_rcx,rax                 # Update C
+    4883C2 01               ; add_rdx, %1                 # STRING = STRING + 1
+    E8 %In_Set              ; call %In_Set                # Check for terminators
+    4883F8 00               ; cmp_rax, %0                 # Check for "\n\t "
+    74 !Store_Atom_loop     ; je8 !Store_Atom_loop        # Loop otherwise
+
+    5A                      ; pop_rdx                     # Restore RDX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    4889D0                  ; mov_rax,rdx                 # return HEAD
+    C3                      ; ret
+
+
+# In_Set function
+# Receives Char C in RAX and CHAR* in RBX
+# Returns 1 if true, zero if false in RAX
+:In_Set
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+:In_Set_loop
+    8A0B                    ; mov_cl,[rbx]                # Read char
+    480FB6C9                ; movzx_rcx,cl                # Zero extend it
+
+    4839C8                  ; cmp_rax,rcx                 # See if they match
+    74 !In_Set_True         ; je8 !In_Set_True            # return true
+
+    4881F9 00000000         ; cmp_rcx, %0                 # Check for NULL
+    74 !In_Set_False        ; je8 !In_Set_False           # return false
+
+    4881C3 01000000         ; add_rbx, %1                 # s = s + 1
+    EB !In_Set_loop         ; jmp8 !In_Set_loop           # Keep looping
+
+:In_Set_True
+    48C7C0 01000000         ; mov_rax, %1                 # Set True
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    C3                      ; ret
+
+:In_Set_False
+    48C7C0 00000000         ; mov_rax, %0                 # Set FALSE
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    C3                      ; ret
+
+# Char sets
+:terminators
+    0A 09 20 00             # "\n\t \0"
+
+:comments
+    23 3B 00                # "#;\0"
+
+:string_char
+    22 27 00                # "\"'\0"
+
+
+# Reverse_List function
+# Receives List in RAX
+# Returns the list reversed in RAX
+:Reverse_List
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    4889C3                  ; mov_rbx,rax                 # Set HEAD
+    48C7C0 00000000         ; mov_rax, %0                 # ROOT = NULL
+:Reverse_List_Loop
+    4883FB 00               ; cmp_rbx, %0                 # WHILE HEAD != NULL
+    74 !Reverse_List_Done   ; je8 !Reverse_List_Done      # Stop otherwise
+
+    488B0B                  ; mov_rcx,[rbx]               # NEXT = HEAD->NEXT
+    488903                  ; mov_[rbx],rax               # HEAD->NEXT = ROOT
+    4889D8                  ; mov_rax,rbx                 # ROOT = HEAD
+    4889CB                  ; mov_rbx,rcx                 # HEAD = NEXT
+    EB !Reverse_List_Loop   ; jmp8 !Reverse_List_Loop     # Keep Going
+
+:Reverse_List_Done
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    C3                      ; ret
+
+
+# Identify_Macros function
+# Receives List in RAX
+# Updates the list in place; does not modify registers
+# Uses RBX for DEFINE, RCX for I
+:Identify_Macros
+    50                      ; push_rax                    # Protect RAX
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    52                      ; push_rdx                    # Protect RDX
+    488D1D %DEFINE_str      ; lea_rbx,[rip+DWORD] %DEFINE_str # Setup define string
+    4889C1                  ; mov_rcx,rax                 # I = HEAD
+:Identify_Macros_Loop
+    488B41 10               ; mov_rax,[rcx+BYTE] !16      # I->TEXT
+    E8 %match               ; call %match                 # IF "DEFINE" == I->TEXT
+    4883F8 00               ; cmp_rax, %0                 # Check if match
+    75 !Identify_Macros_Next ; jne8 !Identify_Macros_Next # Skip the work
+
+    # Deal with MACRO
+    48C7C0 01000000         ; mov_rax, %1                 # Using MACRO
+    488941 08               ; mov_[rcx+BYTE],rax !8       # I->TYPE = MACRO
+
+    488B01                  ; mov_rax,[rcx]               # I->NEXT
+    488B40 10               ; mov_rax,[rax+BYTE] !16      # I->NEXT->TEXT
+    488941 10               ; mov_[rcx+BYTE],rax !16      # I->TEXT = I->NEXT->TEXT
+
+    488B01                  ; mov_rax,[rcx]               # I->NEXT
+    488B00                  ; mov_rax,[rax]               # I->NEXT->NEXT
+    488B40 10               ; mov_rax,[rax+BYTE] !16      # I->NEXT->NEXT->TEXT
+    488941 18               ; mov_[rcx+BYTE],rax !24      # I->EXPRESSION = I->NEXT->NEXT->TEXT
+
+    488B01                  ; mov_rax,[rcx]               # I->NEXT
+    488B00                  ; mov_rax,[rax]               # I->NEXT->NEXT
+    488B00                  ; mov_rax,[rax]               # I->NEXT->NEXT->NEXT
+    488901                  ; mov_[rcx],rax               # I->NEXT = I->NEXT->NEXT->NEXT
+
+:Identify_Macros_Next
+    488B09                  ; mov_rcx,[rcx]               # I = I->NEXT
+    4883F9 00               ; cmp_rcx, %0                 # Check for NULL
+    75 !Identify_Macros_Loop ; jne8 !Identify_Macros_Loop # Keep looping otherwise
+
+    5A                      ; pop_rdx                     # Restore RDX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    58                      ; pop_rax                     # Restore RAX
+    C3                      ; ret
+
+:DEFINE_str
+    44 45 46 49 4E 45 00    # "DEFINE"
+
+
+# match function
+# Receives CHAR* in RAX and CHAR* in RBX
+# Returns 0 (TRUE) or 1 (FALSE) in RAX
+:match
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    52                      ; push_rdx                    # Protect RDX
+    4889C1                  ; mov_rcx,rax                 # S1 in place
+    4889DA                  ; mov_rdx,rbx                 # S2 in place
+:match_Loop
+    8A01                    ; mov_al,[rcx]                # S1[0]
+    480FB6C0                ; movzx_rax,al                # Make it useful
+    8A1A                    ; mov_bl,[rdx]                # S2[0]
+    480FB6DB                ; movzx_rbx,bl                # Make it useful
+    4839D8                  ; cmp_rax,rbx                 # See if they match
+    75 !match_False         ; jne8 !match_False           # If not
+
+    4883C1 01               ; add_rcx, %1                 # S1 = S1 + 1
+    4883C2 01               ; add_rdx, %1                 # S2 = S2 + 1
+    4883F8 00               ; cmp_rax, %0                 # If reached end of string
+    74 !match_Done          ; je8 !match_Done             # Perfect match
+    EB !match_Loop          ; jmp8 !match_Loop            # Otherwise keep looping
+
+:match_False
+    48C7C0 01000000         ; mov_rax, %1                 # Return false
+:match_Done
+    5A                      ; pop_rdx                     # Restore RDX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    C3                      ; ret
+
+
+# Line_Macro function
+# Receives List in RAX
+# Updates the list in place; does not modify registers
+# Uses RAX for I, RBX for I->TEXT, RCX for I->EXPRESSION
+:Line_Macro
+    50                      ; push_rax                    # Protect RAX
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    52                      ; push_rdx                    # Protect RDX
+:Line_Macro_Loop
+    488B58 08               ; mov_rbx,[rax+BYTE] !8       # I->TYPE
+    4883FB 01               ; cmp_rbx, %1                 # IF MACRO == I->TYPE
+    75 !Line_Macro_Next     ; jne8 !Line_Macro_Next       # Otherwise move on
+
+    # Is a macro apply
+    488B58 10               ; mov_rbx,[rax+BYTE] !16      # I->TEXT
+    488B48 18               ; mov_rcx,[rax+BYTE] !24      # I->EXPRESSION
+    488B00                  ; mov_rax,[rax]               # I->NEXT
+    E8 %Set_Expression      ; call %Set_Expression        # Apply it
+    EB !Line_Macro_Loop     ; jmp8 !Line_Macro_Loop       # Move on to next
+
+:Line_Macro_Next
+    488B00                  ; mov_rax,[rax]               # I->NEXT
+    4883F8 00               ; cmp_rax, %0                 # Check for NULL
+    75 !Line_Macro_Loop     ; jne8 !Line_Macro_Loop       # Keep going
+
+    5A                      ; pop_rdx                     # Restore RDX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    58                      ; pop_rax                     # Restore RAX
+    C3                      ; ret
+
+
+# Set_Expression function
+# Receives List in RAX, CHAR* in RBX and CHAR* in RCX
+# Updates the list in place; does not modify registers
+# Uses RBX for C, RCX for EXP and RDX for I
+:Set_Expression
+    50                      ; push_rax                    # Protect RAX
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    52                      ; push_rdx                    # Protect RDX
+    4889C2                  ; mov_rdx,rax                 # Set I
+:Set_Expression_Loop
+    488B42 08               ; mov_rax,[rdx+BYTE] !8       # I->TYPE
+    4883F8 01               ; cmp_rax, %1                 # IF MACRO == I->TYPE
+    74 !Set_Expression_Next ; je8 !Set_Expression_Next    # Ignore and move on
+
+    488B42 10               ; mov_rax,[rdx+BYTE] !16      # I->TEXT
+    E8 %match               ; call %match                 # Check for match
+    4883F8 00               ; cmp_rax, %0                 # If match
+    75 !Set_Expression_Next ; jne8 !Set_Expression_Next   # Otherwise next
+
+    # We have a non-macro match
+    48894A 18               ; mov_[rdx+BYTE],rcx !24      # I->EXPRESSION = EXP
+
+:Set_Expression_Next
+    488B12                  ; mov_rdx,[rdx]               # I = I->NEXT
+    4883FA 00               ; cmp_rdx, %0                 # IF NULL == I
+    75 !Set_Expression_Loop ; jne8 !Set_Expression_Loop   # Otherwise keep looping
+
+    5A                      ; pop_rdx                     # Restore RDX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    58                      ; pop_rax                     # Restore RAX
+    C3                      ; ret
+
+
+# Process_String function
+# Receives List in RAX
+# Update the list in place; does not modify registers
+# Uses RBX for I->TEXT, RCX for I and RDX for S
+:Process_String
+    50                      ; push_rax                    # Protect RAX
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    52                      ; push_rdx                    # Protect RDX
+    4889C1                  ; mov_rcx,rax                 # I = HEAD
+:Process_String_loop
+    488B41 08               ; mov_rax,[rcx+BYTE] !8       # I->TYPE
+    4883F8 02               ; cmp_rax, %2                 # IF STRING == I->TYPE
+    75 !Process_String_Next ; jne8 !Process_String_Next   # Skip to next
+
+    488B59 10               ; mov_rbx,[rcx+BYTE] !16      # I->TEXT
+    8A03                    ; mov_al,[rbx]                # I->TEXT[0]
+    480FB6C0                ; movzx_rax,al                # make it useful
+    4883F8 27               ; cmp_rax, %39                # IF '\'' == I->TEXT[0]
+    75 !Process_String_Raw  ; jne8 !Process_String_Raw    # Deal with '"'
+
+    # Deal with '\''
+    4883C3 01               ; add_rbx, %1                 # I->TEXT + 1
+    488959 18               ; mov_[rcx+BYTE],rbx !24      # I->EXPRESSION = I->TEXT + 1
+    EB !Process_String_Next ; jmp8 !Process_String_Next   # Move on to next
+
+:Process_String_Raw
+    4889D8                  ; mov_rax,rbx                 # Get length of I->TEXT
+    E8 %string_length       ; call %string_length         # Do it
+    48C1E8 02               ; shr_rax, !2                 # LENGTH = LENGTH >> 2
+    4883C0 01               ; add_rax, %1                 # LENGTH = LENGTH + 1
+    48C1E0 03               ; shl_rax, !3                 # LENGTH = LENGTH << 3
+    E8 %malloc              ; call %malloc                # Get string
+    4889DA                  ; mov_rdx,rbx                 # S = I->TEXT
+    4883C2 01               ; add_rdx, %1                 # S = S + 1
+    488941 18               ; mov_[rcx+BYTE],rax !24      # I->EXPRESSION = hexify
+    4889C3                  ; mov_rbx,rax                 # Put hexify buffer in rbx
+
+:Process_String_Raw_Loop
+    8A02                    ; mov_al,[rdx]                # Read 1 chars
+    480FB6C0                ; movzx_rax,al                # Make it useful
+    4883C2 01               ; add_rdx, %1                 # S = S + 1
+    3C 00                   ; cmp_al, !0                  # Check for NULL
+    9C                      ; pushf                       # Protect condition
+    E8 %hex8                ; call %hex8                  # write them all
+    9D                      ; popf                        # restore condition
+    75 !Process_String_Raw_Loop ; jne8 !Process_String_Raw_Loop # Keep looping
+
+:Process_String_Next
+    488B09                  ; mov_rcx,[rcx]               # I = I->NEXT
+    4883F9 00               ; cmp_rcx, %0                 # IF NULL == I
+    75 !Process_String_loop ; jne8 !Process_String_loop   # Otherwise keep looping
+
+    5A                      ; pop_rdx                     # Restore RDX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    58                      ; pop_rax                     # Restore RAX
+    C3                      ; ret
+
+
+# string_length function
+# Receives CHAR* in RAX
+# Returns INT in RAX
+# Uses RAX for CH, RBX for S and RCX for INDEX
+:string_length
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    4889C3                  ; mov_rbx,rax                 # Set S
+    B9 00000000             ; mov_rcx, %0                 # INDEX = 0
+:string_length_loop
+    8A040B                  ; mov_al,[rbx+rcx]            # S[0]
+    480FB6C0                ; movzx_rax,al                # make it useful
+    4883F8 00               ; cmp_rax, %0                 # IF NULL == S[0]
+    74 !string_length_done  ; je8 !string_length_done     # Stop
+
+    4883C1 01               ; add_rcx, %1                 # INDEX = INDEX + 1
+    EB !string_length_loop  ; jmp8 !string_length_loop    # Keep going
+
+:string_length_done
+    4889C8                  ; mov_rax,rcx                 # RETURN INDEX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    C3                      ; ret
+
+
+# Eval_Immediates function
+# Receives List in RAX
+# Updates the list in place; does not modify registers
+# Uses RBX for I->TEXT[0], RCX for I->TEXT[1] and RDX for I
+:Eval_Immediates
+    50                      ; push_rax                    # Protect RAX
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    52                      ; push_rdx                    # Protect RDX
+    4889C2                  ; mov_rdx,rax                 # I = HEAD
+:Eval_Immediates_Loop
+    # Check for MACRO
+    488B42 08               ; mov_rax,[rdx+BYTE] !8       # I->TYPE
+    4883F8 01               ; cmp_rax, %1                 # IF MACRO == I->TYPE
+    74 !Eval_Immediates_Next ; je8 !Eval_Immediates_Next  # Skip to next
+
+    # Check for NULL EXPRESSION
+    488B42 18               ; mov_rax,[rdx+BYTE] !24      # I->EXPRESSION
+    4883F8 00               ; cmp_rax, %0                 # IF NULL == I->EXPRESSION
+    75 !Eval_Immediates_Next ; jne8 !Eval_Immediates_Next # Skip to next
+
+    # Check if number
+    488B42 10               ; mov_rax,[rdx+BYTE] !16      # I->TEXT
+    8A18                    ; mov_bl,[rax]                # I->TEXT[0]
+    480FB6DB                ; movzx_rbx,bl                # Extend to use
+    4883C0 01               ; add_rax, %1                 # I->TEXT + 1
+    8A08                    ; mov_cl,[rax]                # I->TEXT[1]
+    480FB6C9                ; movzx_rcx,cl                # Extend to use
+    E8 %numerate_string     ; call %numerate_string       # Convert string to INT
+    4883F8 00               ; cmp_rax, %0                 # IF 0 == numerate_string(I->TEXT + 1)
+    75 !Eval_Immediates_value ; jne8 !Eval_Immediates_value # Has a value
+
+    # Last chance for Immediate
+    4883F9 30               ; cmp_rcx, %48                # If '0' == I->TEXT[1]
+    75 !Eval_Immediates_Next ; jne8 !Eval_Immediates_Next # Skip to next
+
+:Eval_Immediates_value
+    E8 %express_number      ; call %express_number        # Convert value to hex string
+    488942 18               ; mov_[rdx+BYTE],rax !24      # I->EXPRESSION = express_number(value, I-TEXT[0])
+
+:Eval_Immediates_Next
+    488B12                  ; mov_rdx,[rdx]               # I = I->NEXT
+    4883FA 00               ; cmp_rdx, %0                 # IF NULL == I
+    75 !Eval_Immediates_Loop ; jne8 !Eval_Immediates_Loop # Otherwise keep looping
+
+    5A                      ; pop_rdx                     # Restore RDX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    58                      ; pop_rax                     # Restore RAX
+    C3                      ; ret
+
+
+# numerate_string function
+# Receives CHAR* in RAX
+# Returns value of CHAR* in RAX
+# Only supports negative decimals and Uppercase Hex (eg 5, -3 and 0xCC)
+# Uses RAX for VALUE, RBX for S, RCX for CH and RSI for NEGATIVE?
+:numerate_string
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    52                      ; push_rdx                    # Protect RDX
+    56                      ; push_rsi                    # Protect RSI
+    4889C3                  ; mov_rbx,rax                 # put S in correct place
+    48C7C0 00000000         ; mov_rax, %0                 # Initialize to Zero
+:numerate_string_loop
+    8A4B 01                 ; mov_cl,[rbx+BYTE] !1        # S[1]
+    480FB6C9                ; movzx_rcx,cl                # make it useful
+    4883F9 78               ; cmp_rcx, %120               # IF 'x' == S[1]
+    74 !numerate_hex        ; je8 !numerate_hex           # Deal with hex input
+
+    # Assume decimal input
+    48C7C6 00000000         ; mov_rsi, %0                 # Assume no negation
+    8A0B                    ; mov_cl,[rbx]                # S[0]
+    480FB6C9                ; movzx_rcx,cl                # make it useful
+    4883F9 2D               ; cmp_rcx, %45                # IF '-' == S[0]
+    75 !numerate_decimal    ; jne8 !numerate_decimal      # Skip negation
+
+    48C7C6 01000000         ; mov_rsi, %1                 # Set FLAG
+    4883C3 01               ; add_rbx, %1                 # S = S + 1
+
+:numerate_decimal
+    8A0B                    ; mov_cl,[rbx]                # S[0]
+    480FB6C9                ; movzx_rcx,cl                # make it useful
+    4883F9 00               ; cmp_rcx, %0                 # IF NULL == S[0]
+    74 !numerate_decimal_done ; je8 !numerate_decimal_done # We are done
+
+    486BC0 0A               ; imul_rax, !10               # VALUE = VALUE * 10
+    4883E9 30               ; sub_rcx, !48                # CH = CH - '0'
+    4883F9 09               ; cmp_rcx, %9                 # Check for illegal
+    7F !numerate_string_fail ; jg8 !numerate_string_fail  # If CH > '9'
+    4883F9 00               ; cmp_rcx, %0                 # Check for illegal
+    7C !numerate_string_fail ; jl8 !numerate_string_fail  # IF CH < 0
+    4801C8                  ; add_rax,rcx                 # VALUE = VALUE + CH
+    4883C3 01               ; add_rbx, %1                 # S = S + 1
+    EB !numerate_decimal    ; jmp8 !numerate_decimal      # Keep looping
+
+:numerate_decimal_done
+    4883FE 01               ; cmp_rsi, %1                 # Check if need to negate
+    75 !numerate_string_done ; jne8 !numerate_string_done # Nope
+
+    486BC0 FF               ; imul_rax, !-1               # VALUE = VALUE * -1
+    EB !numerate_string_done ; jmp8 !numerate_string_done # Done
+
+:numerate_hex
+    4883C3 02               ; add_rbx, %2                 # S = S + 2
+:numerate_hex_loop
+    8A0B                    ; mov_cl,[rbx]                # S[0]
+    480FB6C9                ; movzx_rcx,cl                # make it useful
+    4883F9 00               ; cmp_rcx, %0                 # IF NULL == S[0]
+    0F84 %numerate_string_done ; je8 !numerate_string_done # We are done
+
+    48C1E0 04               ; shl_rax, !4                 # VALUE = VALUE << 4
+    4883E9 30               ; sub_rcx, !48                # CH = CH - '0'
+    4883F9 0A               ; cmp_rcx, %10                # IF 10 >= CH
+    7C !numerate_hex_digit  ; jl8 !numerate_hex_digit     # NO
+    4883E9 07               ; sub_rcx, !7                 # Push A-F into range
+:numerate_hex_digit
+    4883F9 0F               ; cmp_rcx, %15                # Check for illegal
+    7F !numerate_string_fail ; jg8 !numerate_string_fail  # If CH > 'F'
+    4883F9 00               ; cmp_rcx, %0                 # Check for illegal
+    7C !numerate_string_fail ; jl8 !numerate_string_fail  # IF CH < 0
+    4801C8                  ; add_rax,rcx                 # VALUE = VALUE + CH
+    4883C3 01               ; add_rbx, %1                 # S = S + 1
+    EB !numerate_hex_loop   ; jmp8 !numerate_hex_loop     # Keep looping
+
+:numerate_string_fail
+    48C7C0 00000000         ; mov_rax, %0                 # return ZERO
+
+:numerate_string_done
+    5E                      ; pop_rsi                     # Restore RSI
+    5A                      ; pop_rdx                     # Restore RDX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    C3                      ; ret
+
+
+# express_number function
+# Receives INT in RAX and CHAR in RBX
+# Allocates a string and expresses the value in hex
+# Returns string in RAX
+# Uses RAX for VALUE, RBX for S and RCX for CH
+:express_number
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    52                      ; push_rdx                    # Protect RDX
+    4889D9                  ; mov_rcx,rbx                 # Put CH in right place
+    4889C3                  ; mov_rbx,rax                 # Protect VALUE
+    4883F9 25               ; cmp_rcx, %37                # IF '%' == CH
+    75 !express_number2     ; jne8 !express_number2       # Otherwise try @
+
+    48C7C0 09000000         ; mov_rax, %9                 # We need 9 bytes
+    E8 %malloc              ; call %malloc                # Get S pointer
+    4893                    ; xchg_rax,rbx                # Put S and VALUE in place
+    53                      ; push_rbx                    # Protect S
+    E8 %hex32l              ; call %hex32l                # Store 32bits
+    EB !express_number_done ; jmp8 !express_number_done   # done
+
+:express_number2
+    4883F9 40               ; cmp_rcx, %64                # IF '@' == CH
+    75 !express_number1     ; jne8 !express_number1       # Othrewise try !
+
+    48C7C0 05000000         ; mov_rax, %5                 # We need 5 bytes
+    E8 %malloc              ; call %malloc                # Get S pointer
+    4893                    ; xchg_rax,rbx                # Put S and VALUE in place
+    53                      ; push_rbx                    # Protect S
+    E8 %hex16l              ; call %hex16l                # Store 16bits
+    EB !express_number_done ; jmp8 !express_number_done   # done
+
+:express_number1
+    48C7C0 03000000         ; mov_rax, %3                 # We need 3 bytes
+    E8 %malloc              ; call %malloc                # Get S pointer
+    4893                    ; xchg_rax,rbx                # Put S and VALUE in place
+    53                      ; push_rbx                    # Protect S
+    E8 %hex8                ; call %hex8                  # Store 8bit
+
+:express_number_done
+    58                      ; pop_rax                     # Restore S
+    5A                      ; pop_rdx                     # Restore RDX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    C3                      ; ret
+
+
+# HEX to ascii routine
+# Receives INT in RAX and CHAR* in RBX
+# Stores ascii of INT in CHAR*
+# Returns only modifying RAX
+:hex64l
+    50                      ; push_rax                    # Protect top 32
+    E8 %hex32l              ; call %hex32l                # Store it
+    58                      ; pop_rax                     # do top 32
+    48C1E8 20               ; shr_rax, !32                # do bottom 32 first
+:hex32l
+    50                      ; push_rax                    # Protect top 16
+    E8 %hex16l              ; call %hex16l                # Store it
+    58                      ; pop_rax                     # do top 16
+    48C1E8 10               ; shr_rax, !16                # do bottom 16 first
+:hex16l
+    50                      ; push_rax                    # Protect top byte
+    E8 %hex8                ; call %hex8                  # Store it
+    58                      ; pop_rax                     # do high byte
+    48C1E8 08               ; shr_rax, !8                 # do bottom byte first
+:hex8
+    50                      ; push_rax                    # Protect bottom nibble
+    48C1E8 04               ; shr_rax, !4                 # do high nibble first
+    E8 %hex4                ; call %hex4                  # Store it
+    58                      ; pop_rax                     # do low nibble
+:hex4
+    4883E0 0F               ; and_rax, !0xF               # isolate nibble
+    04 30                   ; add_al, !0x30               # convert to ascii (add '0')
+    3C 39                   ; cmp_al, !0x39               # valid digit? (compare to '9')
+    76 !hex1                ; jbe8 !hex1                  # yes
+    04 07                   ; add_al, !7                  # use alpha range
+:hex1
+    8803                    ; mov_[ebx],al                # store result
+    4883C3 01               ; add_ebx, !1                 # next position
+    C3                      ; ret
+
+
+# Preserve_Other function
+# Receives List in RAX
+# Updates the list in place; does not modify registers
+# Uses RAX for I, RBX for I->TEXT
+:Preserve_Other
+    50                      ; push_rax                    # Protect RAX
+    53                      ; push_rbx                    # Protect RBX
+    51                      ; push_rcx                    # Protect RCX
+    52                      ; push_rdx                    # Protect RDX
+:Preserve_Other_Loop
+    488B58 18               ; mov_rbx,[rax+BYTE] !24      # I->EXPRESSION
+    4883FB 00               ; cmp_rbx, %0                 # IF NULL == I->EXPRESSION
+    75 !Preserve_Other_Next ; jne8 !Preserve_Other_Next   # Otherwise next
+
+    # Needs preserving
+    488B58 10               ; mov_rbx,[rax+BYTE] !16      # I->TEXT
+    488958 18               ; mov_[rax+BYTE],rbx !24      # I->EXPRESSION = I->TEXT
+
+:Preserve_Other_Next
+    488B00                  ; mov_rax,[rax]               # I = I->NEXT
+    4883F8 00               ; cmp_rax, %0                 # IF NULL == I
+    75 !Preserve_Other_Loop ; jne8 !Preserve_Other_Loop   # Otherwise keep looping
+
+    5A                      ; pop_rdx                     # Restore RDX
+    59                      ; pop_rcx                     # Restore RCX
+    5B                      ; pop_rbx                     # Restore RBX
+    58                      ; pop_rax                     # Restore RAX
+    C3                      ; ret
+
+
+# Print_Hex function
+# Receives list in RAX
+# walks the list and prints the I->EXPRESSION for all nodes followed by newline
+# Uses RBX for I
+:Print_Hex
+    53                      ; push_rbx                    # Protect RBX
+    4C89EB                  ; mov_rbx,r13                 # I = Head
+:Print_Hex_Loop
+    488B43 08               ; mov_rax,[rbx+BYTE] !8       # I->TYPE
+    4883F8 01               ; cmp_rax, %1                 # IF MACRO == I->TYPE
+    74 !Print_Hex_Next      ; je8 !Print_Hex_Next         # Skip
+
+    488B43 18               ; mov_rax,[rbx+BYTE] !24      # Using EXPRESSION
+    E8 %File_Print          ; call %File_Print            # Print it
+    48C7C0 0A000000         ; mov_rax, %10                # NEWLINE
+    E8 %fputc               ; call %fputc                 # Append it
+
+:Print_Hex_Next
+    488B1B                  ; mov_rbx,[rbx]               # Iterate to next Token
+    4883FB 00               ; cmp_rbx, %0                 # Check for NULL
+    75 !Print_Hex_Loop      ; jne8 !Print_Hex_Loop        # Otherwise keep looping
+
+    5B                      ; pop_rbx                     # Restore RBX
+    C3                      ; ret
+
+
+# File_Print function
+# Receives CHAR* in RAX
+# calls fputc for every non-null char
+:File_Print
+    53                      ; push_rbx                    # Protect RBX
+    4889C3                  ; mov_rbx,rax                 # Protect S
+    4883F8 00               ; cmp_rax, %0                 # Protect against nulls
+    74 !File_Print_Done     ; je8 !File_Print_Done        # Simply don't try to print them
+:File_Print_Loop
+    8A03                    ; mov_al,[rbx]                # Read byte
+    480FB6C0                ; movzx_rax,al                # zero extend
+    4883F8 00               ; cmp_rax, %0                 # Check for NULL
+    74 !File_Print_Done     ; je8 !File_Print_Done        # Stop at NULL
+
+    E8 %fputc               ; call %fputc                 # write it
+    4883C3 01               ; add_rbx, %1                 # S = S + 1
+    EB !File_Print_Loop     ; jmp8 !File_Print_Loop       # Keep going
+
+:File_Print_Done
+    5B                      ; pop_rbx                     # Restore RBX
+    C3                      ; ret
+
+
+# fputc function
+# receives CHAR in RAX and FILE* in R14
+# writes char and returns
+:fputc
+    50                      ; push_rax                    # We are writing rax
+    488D3424                ; lea_rsi,[rsp]               # Get stack address
+    4C89F7                  ; mov_rdi,r14                 # Write to target file
+    48C7C0 01000000         ; mov_rax, %1                 # the syscall number for write
+    52                      ; push_rdx                    # Protect RDX
+    48C7C2 01000000         ; mov_rdx, %1                 # set the size of chars we want
+    4153                    ; push_r11                    # Protect HEAD
+    0F05                    ; syscall                     # call the Kernel
+    415B                    ; pop_r11                     # Restore HEAD
+    5A                      ; pop_rdx                     # Restore RDX
+    58                      ; pop_rax                     # Restore stack
+    C3                      ; ret
+
+:ELF_end

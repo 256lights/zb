@@ -1,0 +1,27 @@
+## Copyright (C) 2017 Jeremiah Orians
+## This file is part of stage0.
+##
+## stage0 is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## stage0 is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with stage0.  If not, see <http://www.gnu.org/licenses/>.
+
+DEFINE SYSCALL 000000EF
+DEFINE LOADI_ALWAYS A0E3
+DEFINE R0 0
+DEFINE R7 7
+
+:_start
+!42 R0 '0' LOADI_ALWAYS
+!1 R7 '0' LOADI_ALWAYS
+SYSCALL
+
+:ELF_end

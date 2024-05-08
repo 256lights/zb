@@ -1,0 +1,214 @@
+# SPDX-FileCopyrightText: 2017 Jeremiah Orians <jeremiah@pdp10.guru>
+# SPDX-FileCopyrightText: 2023 Andrius Štikonas <andrius@stikonas.eu>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+## ELF Header
+#:ELF_base
+7F 45 4C 46        ## e_ident[EI_MAG0-3] ELF's magic number
+
+02                 ## e_ident[EI_CLASS] Indicating 64 bit
+01                 ## e_ident[EI_DATA] Indicating little endianness
+01                 ## e_ident[EI_VERSION] Indicating original elf
+
+03                 ## e_ident[EI_OSABI] Set at 3 because FreeBSD is strict
+00                 ## e_ident[EI_ABIVERSION] Set at 0 because none cares
+
+00 00 00 00 00 00 00 ## e_ident[EI_PAD]
+02 00              ## e_type Indicating Executable
+3E 00              ## e_machine Indicating AMD64
+01 00 00 00        ## e_version Indicating original elf
+
+78 00 60 00 00 00 00 00 ## e_entry Address of the entry point (Number of bytes this header is + Base Address)
+40 00 00 00 00 00 00 00 ## e_phoff Address of program header table
+00 00 00 00 00 00 00 00 ## e_shoff Address of section header table
+
+00 00 00 00        ## e_flags
+40 00              ## e_ehsize Indicating our 64 Byte header
+
+38 00              ## e_phentsize size of a program header table
+01 00              ## e_phnum number of entries in program table
+
+00 00              ## e_shentsize size of a section header table
+00 00              ## e_shnum number of entries in section table
+
+00 00              ## e_shstrndx index of the section names
+
+## Program Header
+#:ELF_program_headers
+01 00 00 00             ## p_type
+07 00 00 00             ## ph_flags: PF-X|PF-W|PF-R = 7
+00 00 00 00 00 00 00 00 ## p_offset
+
+00 00 60 00 00 00 00 00 ## p_vaddr
+00 00 60 00 00 00 00 00 ## p_physaddr
+
+24 01 00 00 00 00 00 00 ## p_filesz
+24 01 00 00 00 00 00 00 ## p_memsz
+
+01 00 00 00 00 00 00 00 ## Required alignment
+
+#:ELF_text
+
+# Where the ELF Header is going to hit
+# Simply jump to _start
+# Our main function
+#:_start (0x600078)
+	58                  ; pop_rax         # Get the number of arguments
+	5F                  ; pop_rdi         # Get the program name
+	5F                  ; pop_rdi         # Get the actual input name
+	31F6                ; xor_esi,esi     # prepare read_only, rsi = 0
+	6A 02               ; push !2         # prepare syscall number
+	58                  ; pop_rax         # the syscall number for open()
+	0F05                ; syscall         # Now open that damn file
+	4989C1              ; mov_r9,rax      # Preserve the file pointer we were given
+
+	5F                  ; pop_rdi         # Get the actual output name
+	66BE 4102           ; mov_si, @577    # Prepare file as O_WRONLY|O_CREAT|O_TRUNC
+	66BA C001           ; mov_dx, @448    # Prepare file as RWX for owner only (700 in octal)
+	6A 02               ; push !2         # prepare syscall number
+	58                  ; pop_rax         # the syscall number for open()
+	0F05                ; syscall         # Now open that damn file
+	4989C2              ; mov_r10,rax     # Preserve the file pointer we were given
+
+	# Our flag for byte processing
+	6A FF               ; push !-1
+	5B                  ; pop_rbx         # rbx = -1
+
+	# temp storage for the sum
+	31ED                ; xor_ebp,ebp     # rbp = 0
+
+#:loop (0x60009B)
+	# Read a byte
+	E8 69000000         ; call %read_byte
+
+	# process byte
+	E8 1C000000         ; call %hex
+
+	# deal with -1 values
+	85C0                ; test_eax,eax
+	7C F2               ; jl !loop
+
+	# deal with toggle
+	85DB                ; test_ebx,ebx    # jump if rbx >= 0
+	7D 06               ; jge !print
+
+	# process first byte of pair
+	89C5                ; mov_ebp,eax
+	31DB                ; xor_ebx,ebx     # rbx = 0
+	EB E8               ; jmp !loop
+
+# process second byte of pair
+#:print (0x6000B3)
+	# update the sum and store in output
+	C1E5 04             ; shl_ebp, !4
+	01E8                ; add_eax,ebp
+
+	# flip the toggle
+	FFCB                ; dec_ebx         # rbx = -1
+
+	E8 39000000         ; call %write_byte
+
+	EB DA               ; jmp !loop
+
+#:hex (0x6000C1)
+	# Purge Comment Lines (#)
+	3C 23               ; cmp_al, !35
+	74 1E               ; je !purge_comment
+
+	# Purge Comment Lines (;)
+	3C 3B               ; cmp_al, !59
+	74 1A               ; je !purge_comment
+
+	# deal all ascii less than '0'
+	3C 30               ; cmp_al, !48
+	7C 1F               ; jl !ascii_other
+
+	# deal with 0-9
+	3C 3A               ; cmp_al, !58
+	7C 1F               ; jl !ascii_num
+
+	# deal with all ascii less than 'A'
+	3C 41               ; cmp_al, !65
+	7C 17               ; jl !ascii_other
+
+	# deal with 'A'-'F'
+	3C 47               ; cmp_al, !71
+	7C 1C               ; jl !ascii_high
+
+	# deal with all ascii less than 'a'
+	3C 61               ; cmp_al, !97
+	7C 0F               ; jl !ascii_other
+
+	# deal with 'a'-'f'
+	3C 67               ; cmp_al, !103
+	7C 12               ; jl !ascii_low
+
+	# The rest that remains needs to be ignored
+	EB 09               ; jmp !ascii_other
+
+#:purge_comment (0x6000E3)
+	# Read a byte
+	E8 21000000         ; call %read_byte
+
+	# Loop if not LF
+	3C 0A               ; cmp_al, !10
+	75 F7               ; jne !purge_comment
+
+	# Otherwise return -1
+
+#:ascii_other (0x6000EC)
+	6A FF               ; push !-1
+	58                  ; pop_rax         # return = -1
+	C3                  ; ret
+
+#:ascii_num (0x6000F0)
+	2C 30               ; sub_al, !48
+	C3                  ; ret
+
+#:ascii_low (0x6000F3)
+	2C 20               ; sub_al, !32    # convert to uppercase
+
+#:ascii_high (0x6000F5)
+	2C 37               ; sub_al, !55
+	C3                  ; ret
+
+# Writes byte stored in al
+#:write_byte (0x6000F8)
+	# Print our Hex
+	6A 01               ; push !1         # prepare to set rdx to 1
+	5A                  ; pop_rdx         # set the size of chars we want
+	50                  ; push_rax        # Move output to stack
+	4889E6              ; mov_rsi,rsp     # What we are writing
+	4C89D7              ; mov_rdi,r10     # Where are we writing to
+	6A 01               ; push !1         # prepare syscall number for write
+	58                  ; pop_rax         # get the syscall number for write
+	0F05                ; syscall         # call the Kernel
+	5F                  ; pop_rdi         # deallocate stack
+	C3                  ; ret
+
+#:read_byte (0x600109)
+	# Attempt to read 1 byte from STDIN
+	6A 01               ; push !1         # prepare to set rdx to 1
+	5A                  ; pop_rdx         # set the size of chars we want
+	55                  ; push_rbp        # allocate stack
+	4889E6              ; mov_rsi,rsp     # Where to put it
+	4C89CF              ; mov_rdi,r9      # Where are we reading from
+	31C0                ; xor_eax,eax     # the syscall number for read
+	0F05                ; syscall         # call the Kernel
+
+	85C0                ; test_eax,eax    # check what we got
+	74 02               ; je !Done        # Got EOF call it done
+
+	# load byte
+	58                  ; pop_rax         # load char
+	C3                  ; ret
+
+#:Done (0x60011D)
+	# program completed Successfully
+	31FF                ; xor_edi,edi     # All is well, rdi = 0
+	6A 3C               ; push !60        # syscall number for exit is 60
+	58                  ; pop_rax         # put the exit syscall number in rax
+	0F05                ; syscall         # Call it a good day
+
+#:ELF_end

@@ -1,0 +1,74 @@
+### Copyright (C) 2016 Jeremiah Orians
+### Copyright (C) 2017 Jan Nieuwenhuizen <janneke@gnu.org>
+### This file is part of M2-Planet.
+###
+### M2-Planet is free software: you can redistribute it and/or modify
+### it under the terms of the GNU General Public License as published by
+### the Free Software Foundation, either version 3 of the License, or
+### (at your option) any later version.
+###
+### M2-Planet is distributed in the hope that it will be useful,
+### but WITHOUT ANY WARRANTY; without even the implied warranty of
+### MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+### GNU General Public License for more details.
+###
+### You should have received a copy of the GNU General Public License
+### along with M2-Planet.  If not, see <http://www.gnu.org/licenses/>.
+
+### stage0's hex2 format
+###    !<label>          1 byte relative
+###    $<label>          2 byte address
+###    @<label>          2 byte relative
+###    &<label>          4 byte address
+###    %<label>          4 byte relative
+
+### if you wish to use this header, you need to add :ELF_end to the end of your
+### M1 or hex2 files.
+
+## ELF Header
+
+:ELF_base
+7F 45 4C 46                    # e_ident[EI_MAG0-3] ELF's magic number
+
+01                             # e_ident[EI_CLASS] Indicating 32 bit
+01                             # e_ident[EI_DATA] Indicating little endianness
+01                             # e_ident[EI_VERSION] Indicating original elf
+
+03                             # e_ident[EI_OSABI] Set at 3 because FreeBSD is strict
+00                             # e_ident[EI_ABIVERSION] See above
+
+00 00 00 00 00 00 00           # e_ident[EI_PAD]
+
+02 00                          # e_type Indicating Executable
+28 00                          # e_machine Indicating 32bit ARM
+01 00 00 00                    # e_version Indicating original elf
+
+&_start                        # e_entry Address of the entry point
+%ELF_program_headers>ELF_base  # e_phoff Address of program header table
+%ELF_section_headers>ELF_base  # e_shoff Address of section header table
+
+00 02 00 05                    # e_flags
+
+34 00                          # e_ehsize Indicating our 52 Byte header
+
+20 00                          # e_phentsize size of a program header table
+01 00                          # e_phnum number of entries in program table
+
+28 00                          # e_shentsize size of a section header table
+05 00                          # e_shnum number of entries in section table
+
+02 00                          # e_shstrndx index of the section names
+
+
+:ELF_program_headers
+:ELF_program_header__text
+01 00 00 00                    # ph_type: PT-LOAD = 1
+00 00 00 00                    # ph_offset
+&ELF_base                      # ph_vaddr
+&ELF_base                      # ph_physaddr
+%ELF_end>ELF_base              # ph_filesz
+%ELF_end>ELF_base              # ph_memsz
+07 00 00 00                    # ph_flags: PF-X|PF-W|PF-R = 7
+00 00 01 00                    # ph_alignment
+
+:ELF_text
