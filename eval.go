@@ -77,7 +77,15 @@ func NewEval(storeDir nix.StoreDirectory) *Eval {
 		eval.l.Close()
 		panic(err)
 	}
+
+	// Pop base library.
 	eval.l.Pop(1)
+
+	// Load other standard libraries.
+	if err := lua.Require(&eval.l, lua.TableLibraryName, true, lua.OpenTable); err != nil {
+		eval.l.Close()
+		panic(err)
+	}
 
 	// Run prelude.
 	if err := eval.l.LoadString(preludeSource, "=(prelude)", "t"); err != nil {

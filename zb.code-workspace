@@ -25,7 +25,7 @@
 			"os": "disable",
 			"package": "disable",
 			"string": "disable",
-			"table": "disable",
+			"table": "enable",
 			"utf8": "disable",
 		}
 	}
