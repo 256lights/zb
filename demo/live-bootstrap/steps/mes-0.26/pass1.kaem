@@ -1,0 +1,414 @@
+#!/bin/sh
+
+# SPDX-FileCopyrightText: 2020-2023 Andrius Štikonas <andrius@stikonas.eu>
+# SPDX-FileCopyrightText: 2020-2022 fosslinux <fosslinux@aussies.space>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+set -ex
+
+# Variables
+MES_ARENA=20000000
+MES_MAX_ARENA=20000000
+MES_STACK=6000000
+MES=${BINDIR}/mes-m2
+LIBDIR=${MES_PREFIX}/lib
+
+if match ${ARCH} x86; then
+    MES_ARCH=x86
+    ARCH_BITS=32
+fi
+if match ${ARCH} amd64; then
+    MES_ARCH=x86_64
+    ARCH_BITS=64
+fi
+if match ${ARCH} riscv64; then
+    MES_ARCH=riscv64
+    ARCH_BITS=64
+fi
+
+# Check tarball checksums
+checksum-transcriber sources
+sha256sum -c sources.SHA256SUM
+
+# Unpack
+mkdir build
+cd build
+ungz --file ${DISTFILES}/${NYACC_PKG}-lb1.tar.gz --output ${NYACC_PKG}.tar
+ungz --file ${DISTFILES}/${MES_PKG}.tar.gz --output ${MES_PKG}.tar
+untar --file ${NYACC_PKG}.tar
+untar --non-strict --file ${MES_PKG}.tar # ignore symlinks
+mes_run=${MES_PREFIX}/kaem.run
+replace --file ${mes_run} --output ${mes_run} --match-on 0x1000000 --replace-with 0x8048000
+
+rm ${NYACC_PKG}.tar ${MES_PKG}.tar
+
+cp ../files/config.h ${MES_PREFIX}/include/mes
+
+cd ${MES_PREFIX}
+mkdir include/arch
+cp include/linux/${MES_ARCH}/syscall.h include/arch/syscall.h
+cp include/linux/${MES_ARCH}/kernel-stat.h include/arch/kernel-stat.h
+
+# Remove pregenerated files
+rm mes/module/mes/psyntax.pp mes/module/mes/psyntax.pp.header
+
+# These files are symlinked in the repo
+cp mes/module/srfi/srfi-9-struct.mes mes/module/srfi/srfi-9.mes
+cp mes/module/srfi/srfi-9/gnu-struct.mes mes/module/srfi/srfi-9/gnu.mes
+
+# Build mes-m2
+kaem --verbose --strict --file kaem.${MES_ARCH}
+cp bin/mes-m2 ${BINDIR}/mes-m2
+chmod 755 ${BINDIR}/mes-m2
+
+# Rebuild pregenerated files in nyacc
+cd ../${NYACC_PKG}
+rm module/nyacc/lang/c99/mach.d/c99-act.scm module/nyacc/lang/c99/mach.d/c99-tab.scm \
+    module/nyacc/lang/c99/mach.d/c99cx-act.scm module/nyacc/lang/c99/mach.d/c99cx-tab.scm \
+    module/nyacc/lang/c99/mach.d/c99x-act.scm module/nyacc/lang/c99/mach.d/c99x-tab.scm \
+    module/nyacc/lang/c99/mach.d/cpp-act.scm module/nyacc/lang/c99/mach.d/cpp-tab.scm
+${MES} -L module gen-cpp-files.scm
+# More RAM for this one!
+MES_ARENA=32000000
+${MES} -L module gen-c99-files.scm
+MES_ARENA=20000000
+${MES} -L module gen-c99cx-files.scm
+cd ../${MES_PKG}
+
+# Create mescc.scm
+mescc_in=scripts/mescc.scm.in
+replace --file ${mescc_in} --output ${mescc_in} --match-on @prefix@ --replace-with ${PREFIX}
+replace --file ${mescc_in} --output ${mescc_in} --match-on @VERSION@ --replace-with ${MES_VERSION}
+replace --file ${mescc_in} --output ${mescc_in} --match-on @mes_cpu@ --replace-with ${MES_ARCH}
+replace --file ${mescc_in} --output ${mescc_in} --match-on @mes_kernel@ --replace-with linux
+
+# Patch out double compilation bug
+replace --file ${mescc_in} --output ${mescc_in} --match-on "(mescc:main (command-line))" --replace-with ");"
+
+mescc_scm=${BINDIR}/mescc.scm
+cp ${mescc_in} ${mescc_scm}
+chmod 755 ${mescc_scm}
+
+
+# Recompile Mes and Mes C library using mes-m2 bootstrapped Mes
+
+alias mescc="${MES} -e main ${BINDIR}/mescc.scm -D HAVE_CONFIG_H=1 -I include -I include/linux/${MES_ARCH} -c"
+
+# Start with crt1.o
+mescc lib/linux/${MES_ARCH}-mes-mescc/crt1.c -o lib/${MES_ARCH}-mes/crt1.o
+
+# Now for libc-mini.a
+mescc lib/mes/__init_io.c
+mescc lib/mes/eputs.c
+mescc lib/mes/oputs.c
+mescc lib/mes/globals.c
+mescc lib/stdlib/exit.c
+mescc lib/linux/${MES_ARCH}-mes-mescc/_exit.c
+mescc lib/linux/${MES_ARCH}-mes-mescc/_write.c
+mescc lib/stdlib/puts.c
+mescc lib/string/strlen.c
+catm ${LIBDIR}/${MES_ARCH}-mes/libc-mini.a __init_io.o eputs.o oputs.o globals.o exit.o _exit.o _write.o puts.o strlen.o
+catm ${LIBDIR}/${MES_ARCH}-mes/libc-mini.s __init_io.s eputs.s oputs.s globals.s exit.s _exit.s _write.s puts.s strlen.s
+
+# libmescc.a
+mescc lib/linux/${MES_ARCH}-mes-mescc/syscall-internal.c
+catm ${LIBDIR}/${MES_ARCH}-mes/libmescc.a globals.o syscall-internal.o
+catm ${LIBDIR}/${MES_ARCH}-mes/libmescc.s globals.s syscall-internal.s
+
+# libc.a
+mescc lib/ctype/isnumber.c
+mescc lib/mes/abtol.c
+mescc lib/mes/cast.c
+mescc lib/mes/eputc.c
+mescc lib/mes/fdgetc.c
+mescc lib/mes/fdputc.c
+mescc lib/mes/fdputs.c
+mescc lib/mes/fdungetc.c
+mescc lib/mes/itoa.c
+mescc lib/mes/ltoa.c
+mescc lib/mes/ltoab.c
+mescc lib/mes/mes_open.c
+mescc lib/mes/ntoab.c
+mescc lib/mes/oputc.c
+mescc lib/mes/ultoa.c
+mescc lib/mes/utoa.c
+mescc lib/ctype/isdigit.c
+mescc lib/ctype/isspace.c
+mescc lib/ctype/isxdigit.c
+mescc lib/mes/assert_msg.c
+mescc lib/posix/write.c
+mescc lib/stdlib/atoi.c
+mescc lib/linux/lseek.c
+mescc lib/mes/__assert_fail.c
+mescc lib/mes/__buffered_read.c
+mescc lib/mes/__mes_debug.c
+mescc lib/posix/execv.c
+mescc lib/posix/getcwd.c
+mescc lib/posix/getenv.c
+mescc lib/posix/isatty.c
+mescc lib/posix/open.c
+mescc lib/posix/buffered-read.c
+mescc lib/posix/setenv.c
+mescc lib/posix/wait.c
+mescc lib/dirent/closedir.c
+mescc lib/dirent/opendir.c
+mescc lib/stdio/fgetc.c
+mescc lib/stdio/fputc.c
+mescc lib/stdio/fputs.c
+mescc lib/stdio/getc.c
+mescc lib/stdio/getchar.c
+mescc lib/stdio/putc.c
+mescc lib/stdio/putchar.c
+mescc lib/stdio/ungetc.c
+mescc lib/stdlib/calloc.c
+mescc lib/stdlib/free.c
+mescc lib/stdlib/realloc.c
+mescc lib/string/memchr.c
+mescc lib/string/memcmp.c
+mescc lib/string/memcpy.c
+mescc lib/string/memmove.c
+mescc lib/string/memset.c
+mescc lib/string/strcmp.c
+mescc lib/string/strcpy.c
+mescc lib/string/strncmp.c
+mescc lib/posix/raise.c
+mescc lib/linux/access.c
+mescc lib/linux/brk.c
+mescc lib/linux/chdir.c
+mescc lib/linux/chmod.c
+mescc lib/linux/clock_gettime.c
+mescc lib/linux/dup.c
+mescc lib/linux/dup2.c
+mescc lib/linux/execve.c
+mescc lib/linux/fork.c
+mescc lib/linux/fsync.c
+mescc lib/linux/_getcwd.c
+mescc lib/linux/gettimeofday.c
+mescc lib/linux/ioctl3.c
+mescc lib/linux/malloc.c
+mescc lib/linux/_open3.c
+mescc lib/linux/_read.c
+mescc lib/linux/readdir.c
+mescc lib/linux/rename.c
+mescc lib/linux/time.c
+mescc lib/linux/umask.c
+mescc lib/linux/uname.c
+mescc lib/linux/unlink.c
+mescc lib/linux/utimensat.c
+mescc lib/linux/wait4.c
+mescc lib/linux/waitpid.c
+mescc lib/linux/${MES_ARCH}-mes-mescc/syscall.c
+mescc lib/linux/getpid.c
+mescc lib/linux/kill.c
+mescc lib/linux/pipe.c
+mescc lib/linux/stat.c
+mescc lib/linux/lstat.c
+mescc lib/linux/mkdir.c
+mescc lib/linux/rmdir.c
+mescc lib/linux/link.c
+mescc lib/linux/symlink.c
+mescc lib/linux/close.c
+mescc lib/linux/nanosleep.c
+mescc lib/linux/fcntl.c
+mescc lib/linux/fstat.c
+mescc lib/linux/getdents.c
+catm ${LIBDIR}/${MES_ARCH}-mes/libc.a __init_io.o eputs.o oputs.o globals.o exit.o _exit.o _write.o puts.o strlen.o isnumber.o abtol.o cast.o eputc.o fdgetc.o fdputc.o fdputs.o fdungetc.o itoa.o ltoa.o ltoab.o mes_open.o ntoab.o oputc.o ultoa.o utoa.o isdigit.o isspace.o isxdigit.o assert_msg.o write.o atoi.o lseek.o __assert_fail.o __buffered_read.o __mes_debug.o execv.o getcwd.o getenv.o isatty.o open.o buffered-read.o setenv.o wait.o closedir.o opendir.o fgetc.o fputc.o fputs.o getc.o getchar.o putc.o putchar.o ungetc.o calloc.o free.o malloc.o realloc.o memchr.o memcmp.o memcpy.o memmove.o memset.o strcmp.o strcpy.o strncmp.o raise.o access.o brk.o chdir.o chmod.o clock_gettime.o dup.o dup2.o execve.o fork.o fsync.o _getcwd.o gettimeofday.o ioctl3.o _open3.o _read.o readdir.o rename.o time.o umask.o uname.o unlink.o utimensat.o wait4.o waitpid.o syscall.o getpid.o kill.o pipe.o stat.o lstat.o mkdir.o rmdir.o link.o symlink.o close.o nanosleep.o fcntl.o fstat.o getdents.o
+catm ${LIBDIR}/${MES_ARCH}-mes/libc.s __init_io.s eputs.s oputs.s globals.s exit.s _exit.s _write.s puts.s strlen.s isnumber.s abtol.s cast.s eputc.s fdgetc.s fdputc.s fdputs.s fdungetc.s itoa.s ltoa.s ltoab.s mes_open.s ntoab.s oputc.s ultoa.s utoa.s isdigit.s isspace.s isxdigit.s assert_msg.s write.s atoi.s lseek.s __assert_fail.s __buffered_read.s __mes_debug.s execv.s getcwd.s getenv.s isatty.s open.s buffered-read.s setenv.s wait.s closedir.s opendir.s fgetc.s fputc.s fputs.s getc.s getchar.s putc.s putchar.s ungetc.s calloc.s free.s malloc.s realloc.s memchr.s memcmp.s memcpy.s memmove.s memset.s strcmp.s strcpy.s strncmp.s raise.s access.s brk.s chdir.s chmod.s clock_gettime.s dup.s dup2.s execve.s fork.s fsync.s _getcwd.s gettimeofday.s ioctl3.s _open3.s _read.s readdir.s rename.s time.s umask.s uname.s unlink.s utimensat.s wait4.s waitpid.s syscall.s getpid.s kill.s pipe.s stat.s lstat.s mkdir.s rmdir.s link.s symlink.s close.s nanosleep.s fcntl.s fstat.s getdents.s
+
+# Build mes itself
+mescc src/builtins.c
+mescc src/cc.c
+mescc src/core.c
+mescc src/display.c
+mescc src/eval-apply.c
+mescc src/gc.c
+mescc src/globals.c
+mescc src/hash.c
+mescc src/lib.c
+mescc src/math.c
+mescc src/mes.c
+mescc src/module.c
+mescc src/posix.c
+mescc src/reader.c
+mescc src/stack.c
+mescc src/string.c
+mescc src/struct.c
+mescc src/symbol.c
+mescc src/variable.c
+mescc src/vector.c
+
+# Link everything into new mes executable
+${MES} -e main ${mescc_scm} -- --base-address 0x08048000 -L ${LIBDIR} -o ${BINDIR}/mes builtins.o cc.o core.o display.o eval-apply.o gc.o globals.o hash.o lib.o math.o mes.o module.o posix.o reader.o stack.o string.o struct.o symbol.o variable.o vector.o -lc -lmescc
+
+# libc+tcc.a
+alias mescc="${BINDIR}/mes -e main ${BINDIR}/mescc.scm -D HAVE_CONFIG_H=1 -I include -I include/linux/${MES_ARCH} -c"
+mescc lib/ctype/islower.c
+mescc lib/ctype/isupper.c
+mescc lib/ctype/tolower.c
+mescc lib/ctype/toupper.c
+mescc lib/mes/abtod.c
+mescc lib/mes/dtoab.c
+mescc lib/mes/search-path.c
+mescc lib/posix/execvp.c
+mescc lib/stdio/fclose.c
+mescc lib/stdio/fdopen.c
+mescc lib/stdio/ferror.c
+mescc lib/stdio/fflush.c
+mescc lib/stdio/fopen.c
+mescc lib/stdio/fprintf.c
+mescc lib/stdio/fread.c
+mescc lib/stdio/fseek.c
+mescc lib/stdio/ftell.c
+mescc lib/stdio/fwrite.c
+mescc lib/stdio/printf.c
+mescc lib/stdio/remove.c
+mescc lib/stdio/snprintf.c
+mescc lib/stdio/sprintf.c
+mescc lib/stdio/sscanf.c
+mescc lib/stdio/vfprintf.c
+mescc lib/stdio/vprintf.c
+mescc lib/stdio/vsnprintf.c
+mescc lib/stdio/vsprintf.c
+mescc lib/stdio/vsscanf.c
+mescc lib/stdlib/abort.c
+mescc lib/stdlib/qsort.c
+mescc lib/stdlib/strtod.c
+mescc lib/stdlib/strtof.c
+mescc lib/stdlib/strtol.c
+mescc lib/stdlib/strtold.c
+mescc lib/stdlib/strtoll.c
+mescc lib/stdlib/strtoul.c
+mescc lib/stdlib/strtoull.c
+mescc lib/string/memmem.c
+mescc lib/string/strcat.c
+mescc lib/string/strchr.c
+mescc lib/string/strlwr.c
+mescc lib/string/strncpy.c
+mescc lib/string/strrchr.c
+mescc lib/string/strstr.c
+mescc lib/string/strupr.c
+mescc lib/stub/sigaction.c
+mescc lib/stub/ldexp.c
+mescc lib/stub/mprotect.c
+mescc lib/stub/localtime.c
+mescc lib/stub/sigemptyset.c
+mescc lib/${MES_ARCH}-mes-mescc/setjmp.c
+mescc lib/linux/close.c
+mescc lib/linux/rmdir.c
+mescc lib/linux/stat.c
+catm ${LIBDIR}/${MES_ARCH}-mes/libc+tcc.a ${LIBDIR}/${MES_ARCH}-mes/libc.a islower.o isupper.o tolower.o toupper.o abtod.o dtoab.o search-path.o execvp.o fclose.o fdopen.o ferror.o fflush.o fopen.o fprintf.o fread.o fseek.o ftell.o fwrite.o printf.o remove.o snprintf.o sprintf.o sscanf.o vfprintf.o vprintf.o vsnprintf.o vsprintf.o vsscanf.o abort.o qsort.o strtod.o strtof.o strtol.o strtold.o strtoll.o strtoul.o strtoull.o memmem.o strcat.o strchr.o strlwr.o strncpy.o strrchr.o strstr.o strupr.o sigaction.o ldexp.o mprotect.o localtime.o sigemptyset.o setjmp.o close.o rmdir.o stat.o
+catm ${LIBDIR}/${MES_ARCH}-mes/libc+tcc.s ${LIBDIR}/${MES_ARCH}-mes/libc.s islower.s isupper.s tolower.s toupper.s abtod.s dtoab.s search-path.s execvp.s fclose.s fdopen.s ferror.s fflush.s fopen.s fprintf.s fread.s fseek.s ftell.s fwrite.s printf.s remove.s snprintf.s sprintf.s sscanf.s vfprintf.s vprintf.s vsnprintf.s vsprintf.s vsscanf.s abort.s qsort.s strtod.s strtof.s strtol.s strtold.s strtoll.s strtoul.s strtoull.s memmem.s strcat.s strchr.s strlwr.s strncpy.s strrchr.s strstr.s strupr.s sigaction.s ldexp.s mprotect.s localtime.s sigemptyset.s setjmp.s close.s rmdir.s stat.s
+
+# Make directories
+mkdir ${PREFIX}/lib/linux ${INCDIR}/mes ${INCDIR}/sys ${INCDIR}/linux ${INCDIR}/arch
+mkdir ${PREFIX}/lib/${MES_ARCH}-mes ${PREFIX}/lib/linux/${MES_ARCH}-mes ${INCDIR}/linux/${MES_ARCH}
+
+# Install libraries
+cp ${LIBDIR}/${MES_ARCH}-mes/libc.a ${PREFIX}/lib/${MES_ARCH}-mes/
+cp ${LIBDIR}/${MES_ARCH}-mes/libc+tcc.a ${PREFIX}/lib/${MES_ARCH}-mes/
+cp ${LIBDIR}/${MES_ARCH}-mes/libmescc.a ${PREFIX}/lib/${MES_ARCH}-mes/
+cp ${LIBDIR}/${MES_ARCH}-mes/libc.s ${PREFIX}/lib/${MES_ARCH}-mes/
+cp ${LIBDIR}/${MES_ARCH}-mes/libc+tcc.s ${PREFIX}/lib/${MES_ARCH}-mes/
+cp ${LIBDIR}/${MES_ARCH}-mes/libmescc.s ${PREFIX}/lib/${MES_ARCH}-mes/
+cp ${LIBDIR}/${MES_ARCH}-mes/${MES_ARCH}.M1 ${PREFIX}/lib/${MES_ARCH}-mes/
+cp ${LIBDIR}/${MES_ARCH}-mes/crt1.o ${PREFIX}/lib/${MES_ARCH}-mes/
+cp ${LIBDIR}/${MES_ARCH}-mes/crt1.s ${PREFIX}/lib/${MES_ARCH}-mes/
+cp ${LIBDIR}/linux/${MES_ARCH}-mes/elf${ARCH_BITS}-footer-single-main.hex2 ${PREFIX}/lib/linux/${MES_ARCH}-mes/
+cp ${LIBDIR}/linux/${MES_ARCH}-mes/elf${ARCH_BITS}-header.hex2 ${PREFIX}/lib/linux/${MES_ARCH}-mes/
+
+# Install header files
+cp include/alloca.h ${INCDIR}/alloca.h
+cp include/argz.h ${INCDIR}/argz.h
+cp include/ar.h ${INCDIR}/ar.h
+cp include/assert.h ${INCDIR}/assert.h
+cp include/ctype.h ${INCDIR}/ctype.h
+cp include/dirent.h ${INCDIR}/dirent.h
+cp include/dirstream.h ${INCDIR}/dirstream.h
+cp include/dlfcn.h ${INCDIR}/dlfcn.h
+cp include/endian.h ${INCDIR}/endian.h
+cp include/errno.h ${INCDIR}/errno.h
+cp include/fcntl.h ${INCDIR}/fcntl.h
+cp include/features.h ${INCDIR}/features.h
+cp include/float.h ${INCDIR}/float.h
+cp include/getopt.h ${INCDIR}/getopt.h
+cp include/grp.h ${INCDIR}/grp.h
+cp include/inttypes.h ${INCDIR}/inttypes.h
+cp include/libgen.h ${INCDIR}/libgen.h
+cp include/limits.h ${INCDIR}/limits.h
+cp include/locale.h ${INCDIR}/locale.h
+cp include/math.h ${INCDIR}/math.h
+cp include/memory.h ${INCDIR}/memory.h
+cp include/pwd.h ${INCDIR}/pwd.h
+cp include/setjmp.h ${INCDIR}/setjmp.h
+cp include/signal.h ${INCDIR}/signal.h
+cp include/stdarg.h ${INCDIR}/stdarg.h
+cp include/stdbool.h ${INCDIR}/stdbool.h
+cp include/stddef.h ${INCDIR}/stddef.h
+cp include/stdint.h ${INCDIR}/stdint.h
+cp include/stdio.h ${INCDIR}/stdio.h
+cp include/stdlib.h ${INCDIR}/stdlib.h
+cp include/stdnoreturn.h ${INCDIR}/stdnoreturn.h
+cp include/string.h ${INCDIR}/string.h
+cp include/strings.h ${INCDIR}/strings.h
+cp include/termio.h ${INCDIR}/termio.h
+cp include/time.h ${INCDIR}/time.h
+cp include/unistd.h ${INCDIR}/unistd.h
+
+cp include/arch/kernel-stat.h ${INCDIR}/arch/kernel-stat.h
+cp include/arch/syscall.h ${INCDIR}/arch/syscall.h
+
+cp include/linux/syscall.h ${INCDIR}/linux/syscall.h
+cp include/linux/${MES_ARCH}/syscall.h ${INCDIR}/linux/${MES_ARCH}/syscall.h
+
+cp include/mes/builtins.h ${INCDIR}/mes/builtins.h
+cp include/mes/cc.h ${INCDIR}/mes/cc.h
+catm ${INCDIR}/mes/config.h
+cp include/mes/constants.h ${INCDIR}/mes/constants.h
+cp include/mes/lib.h ${INCDIR}/mes/lib.h
+cp include/mes/lib-cc.h ${INCDIR}/mes/lib-cc.h
+cp include/mes/lib-mini.h ${INCDIR}/mes/lib-mini.h
+cp include/mes/mes.h ${INCDIR}/mes/mes.h
+cp include/mes/symbols.h ${INCDIR}/mes/symbols.h
+
+cp include/sys/cdefs.h ${INCDIR}/sys/cdefs.h
+cp include/sys/dir.h ${INCDIR}/sys/dir.h
+cp include/sys/file.h ${INCDIR}/sys/file.h
+cp include/sys/ioctl.h ${INCDIR}/sys/ioctl.h
+cp include/sys/mman.h ${INCDIR}/sys/mman.h
+cp include/sys/param.h ${INCDIR}/sys/param.h
+cp include/sys/resource.h ${INCDIR}/sys/resource.h
+cp include/sys/select.h ${INCDIR}/sys/select.h
+cp include/sys/stat.h ${INCDIR}/sys/stat.h
+cp include/sys/timeb.h ${INCDIR}/sys/timeb.h
+cp include/sys/time.h ${INCDIR}/sys/time.h
+cp include/sys/times.h ${INCDIR}/sys/times.h
+cp include/sys/types.h ${INCDIR}/sys/types.h
+cp include/sys/ucontext.h ${INCDIR}/sys/ucontext.h
+cp include/sys/user.h ${INCDIR}/sys/user.h
+cp include/sys/wait.h ${INCDIR}/sys/wait.h
+
+cd ../..
+
+# Checksums
+if match x${UPDATE_CHECKSUMS} xTrue; then
+    sha256sum -o ${pkg}.${ARCH}.checksums \
+        /usr/bin/mes \
+        /usr/bin/mes-m2 \
+        /usr/bin/mescc.scm \
+        /usr/lib/${MES_ARCH}-mes/crt1.s \
+        /usr/lib/${MES_ARCH}-mes/crt1.o \
+        /usr/lib/${MES_ARCH}-mes/${MES_ARCH}.M1 \
+        /usr/lib/${MES_ARCH}-mes/libmescc.s \
+        /usr/lib/${MES_ARCH}-mes/libc+tcc.s \
+        /usr/lib/${MES_ARCH}-mes/libc.s \
+        /usr/lib/${MES_ARCH}-mes/libmescc.a \
+        /usr/lib/${MES_ARCH}-mes/libc+tcc.a \
+        /usr/lib/${MES_ARCH}-mes/libc.a \
+        /usr/lib/linux/${MES_ARCH}-mes/elf${ARCH_BITS}-header.hex2 \
+        /usr/lib/linux/${MES_ARCH}-mes/elf${ARCH_BITS}-footer-single-main.hex2
+
+    cp ${pkg}.${ARCH}.checksums ${SRCDIR}
+else
+    sha256sum -c ${pkg}.${ARCH}.checksums
+fi

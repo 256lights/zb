@@ -1,0 +1,83 @@
+#!/bin/sh
+
+# SPDX-FileCopyrightText: 2021-22 fosslinux <fosslinux@aussies.space>
+# SPDX-FileCopyrightText: 2021 Andrius Štikonas <andrius@stikonas.eu>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+set -ex
+
+# Check tarball checksums
+checksum-transcriber sources
+sha256sum -c sources.SHA256SUM
+
+# Extract
+mkdir build
+cd build
+unbz2 --file ${DISTFILES}/${pkg}.tar.bz2 --output ${pkg}.tar
+ungz --file ${DISTFILES}/${MES_PKG}.tar.gz --output ${MES_PKG}.tar
+untar --file ${pkg}.tar
+simple-patch tcc-0.9.27/tcctools.c \
+    ../simple-patches/remove-fileopen.before ../simple-patches/remove-fileopen.after
+simple-patch tcc-0.9.27/tcctools.c \
+    ../simple-patches/addback-fileopen.before ../simple-patches/addback-fileopen.after
+simple-patch tcc-0.9.27/tccelf.c \
+    ../simple-patches/fiwix-paddr.before ../simple-patches/fiwix-paddr.after
+# Fix SIGSEGV while building lwext4
+simple-patch tcc-0.9.27/tccelf.c \
+    ../simple-patches/check-reloc-null.before ../simple-patches/check-reloc-null.after
+untar --non-strict --file ${MES_PKG}.tar
+cd ${pkg}
+
+# Create config.h
+catm config.h
+
+# Compile
+tcc-0.9.26 \
+    -v \
+    -static \
+    -o ${BINDIR}/tcc \
+    -D TCC_TARGET_I386=1 \
+    -D CONFIG_TCCDIR=\"${LIBDIR}/tcc\" \
+    -D CONFIG_TCC_CRTPREFIX=\"${LIBDIR}\" \
+    -D CONFIG_TCC_ELFINTERP=\"/mes/loader\" \
+    -D CONFIG_TCC_LIBPATHS=\"${LIBDIR}:${LIBDIR}/tcc\" \
+    -D CONFIG_TCC_SYSINCLUDEPATHS=\"${PREFIX}/include/mes\" \
+    -D TCC_LIBGCC=\"${LIBDIR}/libc.a\" \
+    -D CONFIG_TCC_STATIC=1 \
+    -D CONFIG_USE_LIBGCC=1 \
+    -D TCC_VERSION=\"0.9.27\" \
+    -D ONE_SOURCE=1 \
+    tcc.c
+
+# Recompile the mes C library
+cd ../${MES_PKG}
+
+# Create unified libc file
+cd lib
+catm ../unified-libc.c ctype/isalnum.c ctype/isalpha.c ctype/isascii.c ctype/iscntrl.c ctype/isdigit.c ctype/isgraph.c ctype/islower.c ctype/isnumber.c ctype/isprint.c ctype/ispunct.c ctype/isspace.c ctype/isupper.c ctype/isxdigit.c ctype/tolower.c ctype/toupper.c dirent/closedir.c dirent/__getdirentries.c dirent/opendir.c linux/readdir.c linux/access.c linux/brk.c linux/chdir.c linux/chmod.c linux/clock_gettime.c linux/close.c linux/dup2.c linux/dup.c linux/execve.c linux/fcntl.c linux/fork.c linux/fsync.c linux/fstat.c linux/_getcwd.c linux/getdents.c linux/getegid.c linux/geteuid.c linux/getgid.c linux/getpid.c linux/getppid.c linux/getrusage.c linux/gettimeofday.c linux/getuid.c linux/ioctl.c linux/ioctl3.c linux/kill.c linux/link.c linux/lseek.c linux/lstat.c linux/malloc.c linux/mkdir.c linux/mknod.c linux/nanosleep.c linux/_open3.c linux/pipe.c linux/_read.c linux/readlink.c linux/rename.c linux/rmdir.c linux/setgid.c linux/settimer.c linux/setuid.c linux/signal.c linux/sigprogmask.c linux/symlink.c linux/stat.c linux/time.c linux/unlink.c linux/waitpid.c linux/x86-mes-gcc/_exit.c linux/x86-mes-gcc/syscall.c linux/x86-mes-gcc/_write.c math/ceil.c math/fabs.c math/floor.c mes/abtod.c mes/abtol.c mes/__assert_fail.c mes/assert_msg.c mes/__buffered_read.c mes/__init_io.c mes/cast.c mes/dtoab.c mes/eputc.c mes/eputs.c mes/fdgetc.c mes/fdgets.c mes/fdputc.c mes/fdputs.c mes/fdungetc.c mes/globals.c mes/itoa.c mes/ltoab.c mes/ltoa.c mes/__mes_debug.c mes/mes_open.c mes/ntoab.c mes/oputc.c mes/oputs.c mes/search-path.c mes/ultoa.c mes/utoa.c posix/alarm.c posix/buffered-read.c posix/execl.c posix/execlp.c posix/execv.c posix/execvp.c posix/getcwd.c posix/getenv.c posix/isatty.c posix/mktemp.c posix/open.c posix/raise.c posix/sbrk.c posix/setenv.c posix/sleep.c posix/unsetenv.c posix/wait.c posix/write.c stdio/clearerr.c stdio/fclose.c stdio/fdopen.c stdio/feof.c stdio/ferror.c stdio/fflush.c stdio/fgetc.c stdio/fgets.c stdio/fileno.c stdio/fopen.c stdio/fprintf.c stdio/fputc.c stdio/fputs.c stdio/fread.c stdio/freopen.c stdio/fscanf.c stdio/fseek.c stdio/ftell.c stdio/fwrite.c stdio/getc.c stdio/getchar.c stdio/perror.c stdio/printf.c stdio/putc.c stdio/putchar.c stdio/remove.c stdio/snprintf.c stdio/sprintf.c stdio/sscanf.c stdio/ungetc.c stdio/vfprintf.c stdio/vfscanf.c stdio/vprintf.c stdio/vsnprintf.c stdio/vsprintf.c stdio/vsscanf.c stdlib/abort.c stdlib/abs.c stdlib/alloca.c stdlib/atexit.c stdlib/atof.c stdlib/atoi.c stdlib/atol.c stdlib/calloc.c stdlib/__exit.c stdlib/exit.c stdlib/free.c stdlib/mbstowcs.c stdlib/puts.c stdlib/qsort.c stdlib/realloc.c stdlib/strtod.c stdlib/strtof.c stdlib/strtol.c stdlib/strtold.c stdlib/strtoll.c stdlib/strtoul.c stdlib/strtoull.c string/bcmp.c string/bcopy.c string/bzero.c string/index.c string/memchr.c string/memcmp.c string/memcpy.c string/memmem.c string/memmove.c string/memset.c string/rindex.c string/strcat.c string/strchr.c string/strcmp.c string/strcpy.c string/strcspn.c string/strdup.c string/strerror.c string/strlen.c string/strlwr.c string/strncat.c string/strncmp.c string/strncpy.c string/strpbrk.c string/strrchr.c string/strspn.c string/strstr.c string/strupr.c stub/atan2.c stub/bsearch.c stub/chown.c stub/__cleanup.c stub/cos.c stub/ctime.c stub/exp.c stub/fpurge.c stub/freadahead.c stub/frexp.c stub/getgrgid.c stub/getgrnam.c stub/getlogin.c stub/getpgid.c stub/getpgrp.c stub/getpwnam.c stub/getpwuid.c stub/gmtime.c stub/ldexp.c stub/localtime.c stub/log.c stub/mktime.c stub/modf.c stub/mprotect.c stub/pclose.c stub/popen.c stub/pow.c stub/rand.c stub/rewind.c stub/setbuf.c stub/setgrent.c stub/setlocale.c stub/setvbuf.c stub/sigaction.c stub/sigaddset.c stub/sigblock.c stub/sigdelset.c stub/sigemptyset.c stub/sigsetmask.c stub/sin.c stub/sys_siglist.c stub/system.c stub/sqrt.c stub/strftime.c stub/times.c stub/ttyname.c stub/umask.c stub/utime.c x86-mes-gcc/setjmp.c
+cd ..
+
+# Recompile libc: crt{1,n,i}, libtcc.a, libc.a
+tcc -c -D HAVE_CONFIG_H=1 -I include -I include/linux/x86 -o ${LIBDIR}/crt1.o lib/linux/x86-mes-gcc/crt1.c
+tcc -c -D HAVE_CONFIG_H=1 -I include -I include/linux/x86 -o ${LIBDIR}/crtn.o lib/linux/x86-mes-gcc/crtn.c
+tcc -c -D HAVE_CONFIG_H=1 -I include -I include/linux/x86 -o ${LIBDIR}/crti.o lib/linux/x86-mes-gcc/crti.c
+tcc -c -D HAVE_CONFIG_H=1 -D HAVE_LONG_LONG_STUB=1 -I include -I include/linux/x86 lib/libtcc1.c
+tcc -c -D TCC_TARGET_I386=1 ../${pkg}/lib/libtcc1.c
+tcc -ar cr ${LIBDIR}/tcc/libtcc1.a libtcc1.o
+tcc -c -D HAVE_CONFIG_H=1 -I include -I include/linux/x86 -o unified-libc.o unified-libc.c
+tcc -ar cr ${LIBDIR}/libc.a unified-libc.o
+cd ../..
+
+# Test
+tcc -version
+
+# Checksums
+if match x${UPDATE_CHECKSUMS} xTrue; then
+    sha256sum -o ${pkg}.checksums \
+        /usr/bin/tcc
+
+    cp ${pkg}.checksums ${SRCDIR}
+else
+    sha256sum -c ${pkg}.checksums
+fi

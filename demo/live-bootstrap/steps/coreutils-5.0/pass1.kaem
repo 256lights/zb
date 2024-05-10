@@ -1,0 +1,123 @@
+#!/bin/sh
+
+# SPDX-FileCopyrightText: 2021 Andrius Štikonas <andrius@stikonas.eu>
+# SPDX-FileCopyrightText: 2021 Paul Dersey <pdersey@gmail.com>
+# SPDX-FileCopyrightText: 2021-22 fosslinux <fosslinux@aussies.space>
+# SPDX-FileCopyrightText: 2023 Emily Trau <emily@downunderctf.com>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+set -ex
+
+# Check tarball checksums
+checksum-transcriber sources
+sha256sum -c sources.SHA256SUM
+
+mkdir build src
+cd build
+
+# Extract
+cp ${DISTFILES}/${pkg}.tar.bz2 ../src/
+bunzip2 -f ../src/${pkg}.tar.bz2
+tar xf ../src/${pkg}.tar
+rm -r ../src
+cd ${pkg}
+cp ../../mk/main.mk Makefile
+
+# Patch and prepare
+cp lib/fnmatch_.h lib/fnmatch.h
+cp lib/ftw_.h lib/ftw.h
+cp lib/search_.h lib/search.h
+catm config.h
+
+# We will rebuild it
+rm src/false.c
+
+rm src/dircolors.h
+
+patch -Np0 -i ../../patches/modechange.patch
+patch -Np0 -i ../../patches/mbstate.patch
+patch -Np0 -i ../../patches/ls-strcmp.patch
+patch -Np0 -i ../../patches/touch-getdate.patch
+patch -Np0 -i ../../patches/touch-dereference.patch
+patch -Np0 -i ../../patches/tac-uint64.patch
+patch -Np0 -i ../../patches/expr-strcmp.patch
+patch -Np0 -i ../../patches/sort-locale.patch
+patch -Np0 -i ../../patches/uniq-fopen.patch
+
+# Build and install
+make -f Makefile PREFIX=${PREFIX}
+make -f Makefile PREFIX=${PREFIX} install
+
+cd ../..
+rm -r src/
+
+# Checksums
+if match x${UPDATE_CHECKSUMS} xTrue; then
+    sha256sum -o ${pkg}.checksums \
+        /usr/bin/install \
+        /usr/bin/basename \
+        /usr/bin/cat \
+        /usr/bin/chmod \
+        /usr/bin/cksum \
+        /usr/bin/cp \
+        /usr/bin/csplit \
+        /usr/bin/cut \
+        /usr/bin/dirname \
+        /usr/bin/echo \
+        /usr/bin/expand \
+        /usr/bin/expr \
+        /usr/bin/factor \
+        /usr/bin/false \
+        /usr/bin/fmt \
+        /usr/bin/fold \
+        /usr/bin/head \
+        /usr/bin/hostname \
+        /usr/bin/id \
+        /usr/bin/join \
+        /usr/bin/kill \
+        /usr/bin/link \
+        /usr/bin/ln \
+        /usr/bin/logname \
+        /usr/bin/mkfifo \
+        /usr/bin/mkdir \
+        /usr/bin/mknod \
+        /usr/bin/nl \
+        /usr/bin/od \
+        /usr/bin/paste \
+        /usr/bin/pathchk \
+        /usr/bin/pr \
+        /usr/bin/printf \
+        /usr/bin/ptx \
+        /usr/bin/pwd \
+        /usr/bin/readlink \
+        /usr/bin/rmdir \
+        /usr/bin/seq \
+        /usr/bin/sleep \
+        /usr/bin/sort \
+        /usr/bin/split \
+        /usr/bin/sum \
+        /usr/bin/tail \
+        /usr/bin/tee \
+        /usr/bin/tr \
+        /usr/bin/tsort \
+        /usr/bin/unexpand \
+        /usr/bin/uniq \
+        /usr/bin/unlink \
+        /usr/bin/wc \
+        /usr/bin/whoami \
+        /usr/bin/tac \
+        /usr/bin/test \
+        /usr/bin/touch \
+        /usr/bin/true \
+        /usr/bin/yes \
+        /usr/bin/ls \
+        /usr/bin/md5sum \
+        /usr/bin/mv \
+        /usr/bin/rm \
+        /usr/bin/sha1sum
+
+    install ${pkg}.checksums ${SRCDIR}
+else
+    sha256sum -c ${pkg}.checksums
+fi
