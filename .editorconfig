@@ -1,0 +1,6 @@
+[*.lua]
+indent_style = space
+indent_size = 2
+space_around_concat_operator = false
+table_separator_style = semicolon
+end_statement_with_semicolon = same_line
