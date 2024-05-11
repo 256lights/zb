@@ -14,7 +14,7 @@ local function shDerivation(args)
   end
   -- TODO(someday): Use a kaem shell modified to support $out.
   drvArgs.builder = shell
-  drvArgs.args = { "-c"; args.command }
+  drvArgs.args = { "-c", args.command }
   return derivation(drvArgs)
 end
 
@@ -124,10 +124,10 @@ local mescc_tools_src = path "mescc-tools"
 local blood_elf_0_m1 = M2 {
   name = "blood-elf-0.M1";
   srcs = {
-    stage0.M2libc.."/amd64/linux/bootstrap.c";
-    stage0.M2libc.."/bootstrappable.c";
-    mescc_tools_src.."/stringify.c";
-    mescc_tools_src.."/blood-elf.c";
+    stage0.M2libc.."/amd64/linux/bootstrap.c",
+    stage0.M2libc.."/bootstrappable.c",
+    mescc_tools_src.."/stringify.c",
+    mescc_tools_src.."/blood-elf.c",
   };
   bootstrap = true;
 }
@@ -159,10 +159,10 @@ end
 local m1_macro_0_m1 = M2 {
   name = "M1-macro-0.M1";
   srcs = {
-    stage0.M2libc.."/amd64/linux/bootstrap.c";
-    stage0.M2libc.."/bootstrappable.c";
-    mescc_tools_src.."/stringify.c";
-    mescc_tools_src.."/M1-macro.c";
+    stage0.M2libc.."/amd64/linux/bootstrap.c",
+    stage0.M2libc.."/bootstrappable.c",
+    mescc_tools_src.."/stringify.c",
+    mescc_tools_src.."/M1-macro.c",
   };
   bootstrap = true;
   debug = true;
@@ -197,30 +197,30 @@ local hex2_linker_1_m1 = M2 {
   name = "hex2_linker-1.M1";
   debug = true;
   srcs = {
-    stage0.M2libc.."/sys/types.h";
-    stage0.M2libc.."/stddef.h";
-    stage0.M2libc.."/amd64/linux/fcntl.c";
-    stage0.M2libc.."/fcntl.c";
-    stage0.M2libc.."/sys/utsname.h";
-    stage0.M2libc.."/amd64/linux/unistd.c";
-    stage0.M2libc.."/amd64/linux/sys/stat.c";
-    stage0.M2libc.."/stdlib.c";
-    stage0.M2libc.."/stdio.h";
-    stage0.M2libc.."/stdio.c";
-    stage0.M2libc.."/bootstrappable.c";
-    mescc_tools_src.."/hex2.h";
-    mescc_tools_src.."/hex2_linker.c";
-    mescc_tools_src.."/hex2_word.c";
-    mescc_tools_src.."/hex2.c";
+    stage0.M2libc.."/sys/types.h",
+    stage0.M2libc.."/stddef.h",
+    stage0.M2libc.."/amd64/linux/fcntl.c",
+    stage0.M2libc.."/fcntl.c",
+    stage0.M2libc.."/sys/utsname.h",
+    stage0.M2libc.."/amd64/linux/unistd.c",
+    stage0.M2libc.."/amd64/linux/sys/stat.c",
+    stage0.M2libc.."/stdlib.c",
+    stage0.M2libc.."/stdio.h",
+    stage0.M2libc.."/stdio.c",
+    stage0.M2libc.."/bootstrappable.c",
+    mescc_tools_src.."/hex2.h",
+    mescc_tools_src.."/hex2_linker.c",
+    mescc_tools_src.."/hex2_word.c",
+    mescc_tools_src.."/hex2.c",
   };
 }
 local hex2_linker_1_hex2 = M1 {
   name = "hex2_linker-1.hex2";
   srcs = {
-    stage0.M2libc.."/amd64/amd64_defs.M1";
-    stage0.M2libc.."/amd64/libc-full.M1";
-    hex2_linker_1_m1;
-    bloodelf("hex2_linker-1-footer.M1", hex2_linker_1_m1);
+    stage0.M2libc.."/amd64/amd64_defs.M1",
+    stage0.M2libc.."/amd64/libc-full.M1",
+    hex2_linker_1_m1,
+    bloodelf("hex2_linker-1-footer.M1", hex2_linker_1_m1),
   };
 }
 stage0["hex2-1"] = hex2_0("hex2-1", catm("hex2_linker-1-0.hex2",
@@ -253,18 +253,18 @@ local function cprogram(args)
     name = args.iname..".hex2";
     M1 = args.M1;
     srcs = {
-      stage0.M2libc.."/amd64/amd64_defs.M1";
-      stage0.M2libc.."/amd64/libc-full.M1";
-      asm;
-      bloodelf(args.iname.."-footer.M1", asm, args.bloodelf);
+      stage0.M2libc.."/amd64/amd64_defs.M1",
+      stage0.M2libc.."/amd64/libc-full.M1",
+      asm,
+      bloodelf(args.iname.."-footer.M1", asm, args.bloodelf),
     };
   }
   return hex2 {
     name = args.name;
     hex2 = args.hex2;
     srcs = {
-      stage0.M2libc.."/amd64/ELF-amd64-debug.hex2";
-      obj;
+      stage0.M2libc.."/amd64/ELF-amd64-debug.hex2",
+      obj,
     };
   }
 end
@@ -274,19 +274,19 @@ stage0.M1 = cprogram {
   name = "M1";
   iname = "M1-macro-1";
   srcs = {
-    stage0.M2libc.."/sys/types.h";
-    stage0.M2libc.."/stddef.h";
-    stage0.M2libc.."/amd64/linux/fcntl.c";
-    stage0.M2libc.."/fcntl.c";
-    stage0.M2libc.."/sys/utsname.h";
-    stage0.M2libc.."/amd64/linux/unistd.c";
-    stage0.M2libc.."/string.c";
-    stage0.M2libc.."/stdlib.c";
-    stage0.M2libc.."/stdio.h";
-    stage0.M2libc.."/stdio.c";
-    stage0.M2libc.."/bootstrappable.c";
-    mescc_tools_src.."/stringify.c";
-    mescc_tools_src.."/M1-macro.c";
+    stage0.M2libc.."/sys/types.h",
+    stage0.M2libc.."/stddef.h",
+    stage0.M2libc.."/amd64/linux/fcntl.c",
+    stage0.M2libc.."/fcntl.c",
+    stage0.M2libc.."/sys/utsname.h",
+    stage0.M2libc.."/amd64/linux/unistd.c",
+    stage0.M2libc.."/string.c",
+    stage0.M2libc.."/stdlib.c",
+    stage0.M2libc.."/stdio.h",
+    stage0.M2libc.."/stdio.c",
+    stage0.M2libc.."/bootstrappable.c",
+    mescc_tools_src.."/stringify.c",
+    mescc_tools_src.."/M1-macro.c",
   };
 }
 
@@ -296,21 +296,21 @@ stage0.hex2 = cprogram {
   iname = "hex2_linker-2";
   M1 = stage0.M1;
   srcs = {
-    stage0.M2libc.."/sys/types.h";
-    stage0.M2libc.."/stddef.h";
-    stage0.M2libc.."/amd64/linux/fcntl.c";
-    stage0.M2libc.."/fcntl.c";
-    stage0.M2libc.."/sys/utsname.h";
-    stage0.M2libc.."/amd64/linux/unistd.c";
-    stage0.M2libc.."/amd64/linux/sys/stat.c";
-    stage0.M2libc.."/stdlib.c";
-    stage0.M2libc.."/stdio.h";
-    stage0.M2libc.."/stdio.c";
-    stage0.M2libc.."/bootstrappable.c";
-    mescc_tools_src.."/hex2.h";
-    mescc_tools_src.."/hex2_linker.c";
-    mescc_tools_src.."/hex2_word.c";
-    mescc_tools_src.."/hex2.c";
+    stage0.M2libc.."/sys/types.h",
+    stage0.M2libc.."/stddef.h",
+    stage0.M2libc.."/amd64/linux/fcntl.c",
+    stage0.M2libc.."/fcntl.c",
+    stage0.M2libc.."/sys/utsname.h",
+    stage0.M2libc.."/amd64/linux/unistd.c",
+    stage0.M2libc.."/amd64/linux/sys/stat.c",
+    stage0.M2libc.."/stdlib.c",
+    stage0.M2libc.."/stdio.h",
+    stage0.M2libc.."/stdio.c",
+    stage0.M2libc.."/bootstrappable.c",
+    mescc_tools_src.."/hex2.h",
+    mescc_tools_src.."/hex2_linker.c",
+    mescc_tools_src.."/hex2_word.c",
+    mescc_tools_src.."/hex2.c",
   };
 }
 
@@ -321,21 +321,21 @@ stage0.kaem = cprogram {
   M1 = stage0.M1;
   hex2 = stage0.hex2;
   srcs = {
-    stage0.M2libc.."/sys/types.h";
-    stage0.M2libc.."/stddef.h";
-    stage0.M2libc.."/string.c";
-    stage0.M2libc.."/amd64/linux/fcntl.c";
-    stage0.M2libc.."/fcntl.c";
-    stage0.M2libc.."/sys/utsname.h";
-    stage0.M2libc.."/amd64/linux/unistd.c";
-    stage0.M2libc.."/stdlib.c";
-    stage0.M2libc.."/stdio.h";
-    stage0.M2libc.."/stdio.c";
-    stage0.M2libc.."/bootstrappable.c";
-    mescc_tools_src.."/Kaem/kaem.h";
-    mescc_tools_src.."/Kaem/variable.c";
-    mescc_tools_src.."/Kaem/kaem_globals.c";
-    mescc_tools_src.."/Kaem/kaem.c";
+    stage0.M2libc.."/sys/types.h",
+    stage0.M2libc.."/stddef.h",
+    stage0.M2libc.."/string.c",
+    stage0.M2libc.."/amd64/linux/fcntl.c",
+    stage0.M2libc.."/fcntl.c",
+    stage0.M2libc.."/sys/utsname.h",
+    stage0.M2libc.."/amd64/linux/unistd.c",
+    stage0.M2libc.."/stdlib.c",
+    stage0.M2libc.."/stdio.h",
+    stage0.M2libc.."/stdio.c",
+    stage0.M2libc.."/bootstrappable.c",
+    mescc_tools_src.."/Kaem/kaem.h",
+    mescc_tools_src.."/Kaem/variable.c",
+    mescc_tools_src.."/Kaem/kaem_globals.c",
+    mescc_tools_src.."/Kaem/kaem.c",
   };
 }
 
@@ -350,7 +350,7 @@ local function kaem(args)
   end
   drvArgs.builder = shell
   ---@diagnostic disable-next-line: param-type-mismatch
-  drvArgs.args = { "-f"; toFile(args.name.."-builder.sh", args.script) }
+  drvArgs.args = { "-f", toFile(args.name.."-builder.sh", args.script) }
   return derivation(drvArgs)
 end
 
@@ -362,26 +362,26 @@ stage0["M2-Mesoplanet"] = cprogram {
   M1 = stage0.M1;
   hex2 = stage0.hex2;
   srcs = {
-    stage0.M2libc.."/sys/types.h";
-    stage0.M2libc.."/stddef.h";
-    stage0.M2libc.."/amd64/linux/fcntl.c";
-    stage0.M2libc.."/fcntl.c";
-    stage0.M2libc.."/sys/utsname.h";
-    stage0.M2libc.."/amd64/linux/unistd.c";
-    stage0.M2libc.."/amd64/linux/sys/stat.c";
-    stage0.M2libc.."/stdlib.c";
-    stage0.M2libc.."/stdio.h";
-    stage0.M2libc.."/stdio.c";
-    stage0.M2libc.."/string.c";
-    stage0.M2libc.."/bootstrappable.c";
-    m2_mesoplanet_src.."/cc.h";
-    m2_mesoplanet_src.."/cc_globals.c";
-    m2_mesoplanet_src.."/cc_env.c";
-    m2_mesoplanet_src.."/cc_reader.c";
-    m2_mesoplanet_src.."/cc_spawn.c";
-    m2_mesoplanet_src.."/cc_core.c";
-    m2_mesoplanet_src.."/cc_macro.c";
-    m2_mesoplanet_src.."/cc.c";
+    stage0.M2libc.."/sys/types.h",
+    stage0.M2libc.."/stddef.h",
+    stage0.M2libc.."/amd64/linux/fcntl.c",
+    stage0.M2libc.."/fcntl.c",
+    stage0.M2libc.."/sys/utsname.h",
+    stage0.M2libc.."/amd64/linux/unistd.c",
+    stage0.M2libc.."/amd64/linux/sys/stat.c",
+    stage0.M2libc.."/stdlib.c",
+    stage0.M2libc.."/stdio.h",
+    stage0.M2libc.."/stdio.c",
+    stage0.M2libc.."/string.c",
+    stage0.M2libc.."/bootstrappable.c",
+    m2_mesoplanet_src.."/cc.h",
+    m2_mesoplanet_src.."/cc_globals.c",
+    m2_mesoplanet_src.."/cc_env.c",
+    m2_mesoplanet_src.."/cc_reader.c",
+    m2_mesoplanet_src.."/cc_spawn.c",
+    m2_mesoplanet_src.."/cc_core.c",
+    m2_mesoplanet_src.."/cc_macro.c",
+    m2_mesoplanet_src.."/cc.c",
   };
 }
 
@@ -392,18 +392,18 @@ stage0["blood-elf"] = cprogram {
   M1 = stage0.M1;
   hex2 = stage0.hex2;
   srcs = {
-    stage0.M2libc.."/sys/types.h";
-    stage0.M2libc.."/stddef.h";
-    stage0.M2libc.."/amd64/linux/fcntl.c";
-    stage0.M2libc.."/fcntl.c";
-    stage0.M2libc.."/sys/utsname.h";
-    stage0.M2libc.."/amd64/linux/unistd.c";
-    stage0.M2libc.."/stdlib.c";
-    stage0.M2libc.."/stdio.h";
-    stage0.M2libc.."/stdio.c";
-    stage0.M2libc.."/bootstrappable.c";
-    mescc_tools_src.."/stringify.c";
-    mescc_tools_src.."/blood-elf.c";
+    stage0.M2libc.."/sys/types.h",
+    stage0.M2libc.."/stddef.h",
+    stage0.M2libc.."/amd64/linux/fcntl.c",
+    stage0.M2libc.."/fcntl.c",
+    stage0.M2libc.."/sys/utsname.h",
+    stage0.M2libc.."/amd64/linux/unistd.c",
+    stage0.M2libc.."/stdlib.c",
+    stage0.M2libc.."/stdio.h",
+    stage0.M2libc.."/stdio.c",
+    stage0.M2libc.."/bootstrappable.c",
+    mescc_tools_src.."/stringify.c",
+    mescc_tools_src.."/blood-elf.c",
   };
 }
 
@@ -415,17 +415,17 @@ stage0.get_machine = cprogram {
   hex2 = stage0.hex2;
   bloodelf = stage0["blood-elf"];
   srcs = {
-    stage0.M2libc.."/sys/types.h";
-    stage0.M2libc.."/stddef.h";
-    stage0.M2libc.."/sys/utsname.h";
-    stage0.M2libc.."/amd64/linux/unistd.c";
-    stage0.M2libc.."/amd64/linux/fcntl.c";
-    stage0.M2libc.."/fcntl.c";
-    stage0.M2libc.."/stdlib.c";
-    stage0.M2libc.."/stdio.h";
-    stage0.M2libc.."/stdio.c";
-    stage0.M2libc.."/bootstrappable.c";
-    mescc_tools_src.."/get_machine.c";
+    stage0.M2libc.."/sys/types.h",
+    stage0.M2libc.."/stddef.h",
+    stage0.M2libc.."/sys/utsname.h",
+    stage0.M2libc.."/amd64/linux/unistd.c",
+    stage0.M2libc.."/amd64/linux/fcntl.c",
+    stage0.M2libc.."/fcntl.c",
+    stage0.M2libc.."/stdlib.c",
+    stage0.M2libc.."/stdio.h",
+    stage0.M2libc.."/stdio.c",
+    stage0.M2libc.."/bootstrappable.c",
+    mescc_tools_src.."/get_machine.c",
   };
 }
 
@@ -437,24 +437,24 @@ stage0["M2-Planet"] = cprogram {
   hex2 = stage0.hex2;
   bloodelf = stage0["blood-elf"];
   srcs = {
-    stage0.M2libc.."/sys/types.h";
-    stage0.M2libc.."/stddef.h";
-    stage0.M2libc.."/sys/utsname.h";
-    stage0.M2libc.."/amd64/linux/unistd.c";
-    stage0.M2libc.."/amd64/linux/fcntl.c";
-    stage0.M2libc.."/fcntl.c";
-    stage0.M2libc.."/stdlib.c";
-    stage0.M2libc.."/stdio.h";
-    stage0.M2libc.."/stdio.c";
-    stage0.M2libc.."/bootstrappable.c";
-    m2_planet_src.."/cc.h";
-    m2_planet_src.."/cc_globals.c";
-    m2_planet_src.."/cc_reader.c";
-    m2_planet_src.."/cc_strings.c";
-    m2_planet_src.."/cc_types.c";
-    m2_planet_src.."/cc_core.c";
-    m2_planet_src.."/cc_macro.c";
-    m2_planet_src.."/cc.c";
+    stage0.M2libc.."/sys/types.h",
+    stage0.M2libc.."/stddef.h",
+    stage0.M2libc.."/sys/utsname.h",
+    stage0.M2libc.."/amd64/linux/unistd.c",
+    stage0.M2libc.."/amd64/linux/fcntl.c",
+    stage0.M2libc.."/fcntl.c",
+    stage0.M2libc.."/stdlib.c",
+    stage0.M2libc.."/stdio.h",
+    stage0.M2libc.."/stdio.c",
+    stage0.M2libc.."/bootstrappable.c",
+    m2_planet_src.."/cc.h",
+    m2_planet_src.."/cc_globals.c",
+    m2_planet_src.."/cc_reader.c",
+    m2_planet_src.."/cc_strings.c",
+    m2_planet_src.."/cc_types.c",
+    m2_planet_src.."/cc_core.c",
+    m2_planet_src.."/cc_macro.c",
+    m2_planet_src.."/cc.c",
   };
 }
 
@@ -473,20 +473,20 @@ local mkdir = cprogram {
   hex2 = stage0.hex2;
   bloodelf = stage0["blood-elf"];
   srcs = {
-    stage0.M2libc.."/sys/types.h";
-    stage0.M2libc.."/stddef.h";
-    stage0.M2libc.."/sys/utsname.h";
-    stage0.M2libc.."/amd64/linux/unistd.c";
-    stage0.M2libc.."/amd64/linux/fcntl.c";
-    stage0.M2libc.."/fcntl.c";
-    stage0.M2libc.."/stdlib.c";
-    stage0.M2libc.."/stdio.h";
-    stage0.M2libc.."/stdio.c";
-    stage0.M2libc.."/string.c";
-    stage0.M2libc.."/sys/stat.h";
-    stage0.M2libc.."/amd64/linux/sys/stat.c";
-    stage0.M2libc.."/bootstrappable.c";
-    mescc_tools_extra_src.."/mkdir.c";
+    stage0.M2libc.."/sys/types.h",
+    stage0.M2libc.."/stddef.h",
+    stage0.M2libc.."/sys/utsname.h",
+    stage0.M2libc.."/amd64/linux/unistd.c",
+    stage0.M2libc.."/amd64/linux/fcntl.c",
+    stage0.M2libc.."/fcntl.c",
+    stage0.M2libc.."/stdlib.c",
+    stage0.M2libc.."/stdio.h",
+    stage0.M2libc.."/stdio.c",
+    stage0.M2libc.."/string.c",
+    stage0.M2libc.."/sys/stat.h",
+    stage0.M2libc.."/amd64/linux/sys/stat.c",
+    stage0.M2libc.."/bootstrappable.c",
+    mescc_tools_extra_src.."/mkdir.c",
   };
 }
 
@@ -497,18 +497,18 @@ local cp = cprogram {
   hex2 = stage0.hex2;
   bloodelf = stage0["blood-elf"];
   srcs = {
-    stage0.M2libc.."/sys/types.h";
-    stage0.M2libc.."/stddef.h";
-    stage0.M2libc.."/sys/utsname.h";
-    stage0.M2libc.."/amd64/linux/unistd.c";
-    stage0.M2libc.."/amd64/linux/fcntl.c";
-    stage0.M2libc.."/fcntl.c";
-    stage0.M2libc.."/stdlib.c";
-    stage0.M2libc.."/stdio.h";
-    stage0.M2libc.."/stdio.c";
-    stage0.M2libc.."/string.c";
-    stage0.M2libc.."/bootstrappable.c";
-    mescc_tools_extra_src.."/cp.c";
+    stage0.M2libc.."/sys/types.h",
+    stage0.M2libc.."/stddef.h",
+    stage0.M2libc.."/sys/utsname.h",
+    stage0.M2libc.."/amd64/linux/unistd.c",
+    stage0.M2libc.."/amd64/linux/fcntl.c",
+    stage0.M2libc.."/fcntl.c",
+    stage0.M2libc.."/stdlib.c",
+    stage0.M2libc.."/stdio.h",
+    stage0.M2libc.."/stdio.c",
+    stage0.M2libc.."/string.c",
+    stage0.M2libc.."/bootstrappable.c",
+    mescc_tools_extra_src.."/cp.c",
   };
 }
 
@@ -519,31 +519,31 @@ local chmod = cprogram {
   hex2 = stage0.hex2;
   bloodelf = stage0["blood-elf"];
   srcs = {
-    stage0.M2libc.."/sys/types.h";
-    stage0.M2libc.."/stddef.h";
-    stage0.M2libc.."/sys/utsname.h";
-    stage0.M2libc.."/amd64/linux/unistd.c";
-    stage0.M2libc.."/amd64/linux/fcntl.c";
-    stage0.M2libc.."/fcntl.c";
-    stage0.M2libc.."/stdlib.c";
-    stage0.M2libc.."/stdio.h";
-    stage0.M2libc.."/stdio.c";
-    stage0.M2libc.."/string.c";
-    stage0.M2libc.."/sys/stat.h";
-    stage0.M2libc.."/amd64/linux/sys/stat.c";
-    stage0.M2libc.."/bootstrappable.c";
-    mescc_tools_extra_src.."/chmod.c";
+    stage0.M2libc.."/sys/types.h",
+    stage0.M2libc.."/stddef.h",
+    stage0.M2libc.."/sys/utsname.h",
+    stage0.M2libc.."/amd64/linux/unistd.c",
+    stage0.M2libc.."/amd64/linux/fcntl.c",
+    stage0.M2libc.."/fcntl.c",
+    stage0.M2libc.."/stdlib.c",
+    stage0.M2libc.."/stdio.h",
+    stage0.M2libc.."/stdio.c",
+    stage0.M2libc.."/string.c",
+    stage0.M2libc.."/sys/stat.h",
+    stage0.M2libc.."/amd64/linux/sys/stat.c",
+    stage0.M2libc.."/bootstrappable.c",
+    mescc_tools_extra_src.."/chmod.c",
   };
 }
 
 local bindir_tool_names = {
-  "M1";
-  "hex2";
-  "blood-elf";
-  "kaem";
-  "M2-Mesoplanet";
-  "get_machine";
-  "M2-Planet";
+  "M1",
+  "hex2",
+  "blood-elf",
+  "kaem",
+  "M2-Mesoplanet",
+  "get_machine",
+  "M2-Planet",
 }
 local bindir_chmod_args = "555"
 for _, name in ipairs(bindir_tool_names) do
