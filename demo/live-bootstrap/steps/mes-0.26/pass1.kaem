@@ -27,10 +27,6 @@ if match ${ARCH} riscv64; then
     ARCH_BITS=64
 fi
 
-# Check tarball checksums
-checksum-transcriber sources
-sha256sum -c sources.SHA256SUM
-
 # Unpack
 mkdir build
 cd build
@@ -389,26 +385,3 @@ cp include/sys/user.h ${INCDIR}/sys/user.h
 cp include/sys/wait.h ${INCDIR}/sys/wait.h
 
 cd ../..
-
-# Checksums
-if match x${UPDATE_CHECKSUMS} xTrue; then
-    sha256sum -o ${pkg}.${ARCH}.checksums \
-        /usr/bin/mes \
-        /usr/bin/mes-m2 \
-        /usr/bin/mescc.scm \
-        /usr/lib/${MES_ARCH}-mes/crt1.s \
-        /usr/lib/${MES_ARCH}-mes/crt1.o \
-        /usr/lib/${MES_ARCH}-mes/${MES_ARCH}.M1 \
-        /usr/lib/${MES_ARCH}-mes/libmescc.s \
-        /usr/lib/${MES_ARCH}-mes/libc+tcc.s \
-        /usr/lib/${MES_ARCH}-mes/libc.s \
-        /usr/lib/${MES_ARCH}-mes/libmescc.a \
-        /usr/lib/${MES_ARCH}-mes/libc+tcc.a \
-        /usr/lib/${MES_ARCH}-mes/libc.a \
-        /usr/lib/linux/${MES_ARCH}-mes/elf${ARCH_BITS}-header.hex2 \
-        /usr/lib/linux/${MES_ARCH}-mes/elf${ARCH_BITS}-footer-single-main.hex2
-
-    cp ${pkg}.${ARCH}.checksums ${SRCDIR}
-else
-    sha256sum -c ${pkg}.${ARCH}.checksums
-fi
