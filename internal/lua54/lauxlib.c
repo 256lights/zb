@@ -23,6 +23,7 @@
 */
 
 #include "lua.h"
+#include "lmem.h"
 
 #include "lauxlib.h"
 
@@ -42,6 +43,8 @@
 
 #define LEVELS1	10	/* size of the first part of the stack */
 #define LEVELS2	11	/* size of the second part of the stack */
+
+LUAI_FUNC size_t luaS_contextlen (const char * const *context);
 
 
 
@@ -593,8 +596,19 @@ LUALIB_API void luaL_addstring (luaL_Buffer *B, const char *s) {
 
 LUALIB_API void luaL_pushresult (luaL_Buffer *B) {
   lua_State *L = B->L;
+  void *ud;
+  lua_Alloc allocf = lua_getallocf(L, &ud);
   checkbufferlevel(B, -1);
-  lua_pushlstring(L, B->b, B->n);
+  lua_pushlstringcontext(L, B->b, B->n, (const char * const *)B->context);
+  if (B->context != NULL) {
+    size_t veclen = luaS_contextlen((const char * const *)B->context);
+    size_t i;
+    for (i = 0; i < veclen; i++) {
+      allocf(ud, B->context[i], (strlen(B->context[i]) + 1) * sizeof(char), 0);
+    }
+    allocf(ud, B->context, (veclen + 1) * sizeof(char *), 0);
+    B->context = NULL;
+  }
   if (buffonstack(B))
     lua_closeslot(L, -2);  /* close the box */
   lua_remove(L, -2);  /* remove box or placeholder from the stack */
@@ -618,11 +632,34 @@ LUALIB_API void luaL_pushresultsize (luaL_Buffer *B, size_t sz) {
 */
 LUALIB_API void luaL_addvalue (luaL_Buffer *B) {
   lua_State *L = B->L;
-  size_t len;
+  size_t len, extracontextlen;
   const char *s = lua_tolstring(L, -1, &len);
   char *b = prepbuffsize(B, len, -2);
+  const char * const *extracontext;
   memcpy(b, s, len * sizeof(char));
   luaL_addsize(B, len);
+
+  extracontext = lua_stringcontext(L, -1);
+  extracontextlen = luaS_contextlen(extracontext);
+  if (extracontextlen > 0) {
+    void *ud;
+    lua_Alloc allocf = lua_getallocf(L, &ud);
+    size_t oldcontextlen = luaS_contextlen((const char * const *)B->context);
+    size_t i;
+    B->context = allocf(
+      ud,
+      B->context,
+      B->context ? (oldcontextlen + 1) * sizeof(char*) : 0,
+      (oldcontextlen + extracontextlen + 1) * sizeof(char*));
+    B->context[oldcontextlen + extracontextlen] = NULL;
+    for (i = 0; i < extracontextlen; i++) {
+      size_t n = strlen(extracontext[i]) + 1;
+      char *dst = allocf(ud, NULL, 0, n * sizeof(char));
+      memcpy(dst, extracontext[i], n);
+      B->context[oldcontextlen + i] = dst;
+    }
+  }
+
   lua_pop(L, 1);  /* pop string */
 }
 
@@ -631,6 +668,7 @@ LUALIB_API void luaL_buffinit (lua_State *L, luaL_Buffer *B) {
   B->L = L;
   B->b = B->init.b;
   B->n = 0;
+  B->context = NULL;
   B->size = LUAL_BUFFERSIZE;
   lua_pushlightuserdata(L, (void*)B);  /* push placeholder */
 }
