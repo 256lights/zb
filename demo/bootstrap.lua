@@ -54,6 +54,33 @@ local function mkStepDir(step, manifest)
   return table.concat(parts)
 end
 
+-- simple-patch
+do
+  local pname = "simple-patch"
+  local version = "1.0"
+  local step = path {
+    name = "live-bootstrap-steps-simple-patch-1.0";
+    path = "live-bootstrap/steps/simple-patch-1.0";
+  }
+
+  boot.simple_patch = kaemDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+    outputHash = "sha256-iGYOqJtieglsgjox7M66SdAc4Fx6DzbasSH/VBIaQk4=";
+    outputHashMode = "recursive";
+
+    PATH = stage0.stage0.."/bin";
+    M2LIBC_PATH = stage0.M2libc;
+
+    step = step;
+
+    script = "\z
+      mkdir ${out} ${out}/bin\n\z
+      M2-Mesoplanet --architecture ${ARCH} -f ${step}/src/simple-patch.c -o ${out}/bin/simple-patch\n";
+  }
+end
+
 -- mes
 do
   local pname = "mes"
