@@ -384,4 +384,207 @@ cp include/sys/ucontext.h ${INCDIR}/sys/ucontext.h
 cp include/sys/user.h ${INCDIR}/sys/user.h
 cp include/sys/wait.h ${INCDIR}/sys/wait.h
 
+# Copy modules to output for subsequent steps.
+mkdir ${PREFIX}/share ${PREFIX}/share/mes ${PREFIX}/share/mes/module
+cp mes/module/mescc.mes ${PREFIX}/share/mes/module/mescc.mes
+
+# Copy everything from root module.
+# We exclude mes/guile.scm and mes/mes-0.scm
+# because they are overridden by copies in mes/module.
+mkdir ${PREFIX}/share/mes/module/mes ${PREFIX}/share/mes/module/mescc ${PREFIX}/share/mes/module/mescc/armv4 ${PREFIX}/share/mes/module/mescc/i386 ${PREFIX}/share/mes/module/mescc/riscv64 ${PREFIX}/share/mes/module/mescc/x86_64
+cp module/mes/getopt-long.scm ${PREFIX}/share/mes/module/mes/getopt-long.scm
+cp module/mes/misc.scm ${PREFIX}/share/mes/module/mes/misc.scm
+cp module/mes/test.scm ${PREFIX}/share/mes/module/mes/test.scm
+cp module/mescc.scm ${PREFIX}/share/mes/module/mescc.scm
+cp module/mescc/M1.scm ${PREFIX}/share/mes/module/mescc/M1.scm
+cp module/mescc/armv4/as.scm ${PREFIX}/share/mes/module/mescc/armv4/as.scm
+cp module/mescc/armv4/info.scm ${PREFIX}/share/mes/module/mescc/armv4/info.scm
+cp module/mescc/as.scm ${PREFIX}/share/mes/module/mescc/as.scm
+cp module/mescc/compile.scm ${PREFIX}/share/mes/module/mescc/compile.scm
+cp module/mescc/i386/as.scm ${PREFIX}/share/mes/module/mescc/i386/as.scm
+cp module/mescc/i386/info.scm ${PREFIX}/share/mes/module/mescc/i386/info.scm
+cp module/mescc/info.scm ${PREFIX}/share/mes/module/mescc/info.scm
+cp module/mescc/mescc.scm ${PREFIX}/share/mes/module/mescc/mescc.scm
+cp module/mescc/preprocess.scm ${PREFIX}/share/mes/module/mescc/preprocess.scm
+cp module/mescc/riscv64/as.scm ${PREFIX}/share/mes/module/mescc/riscv64/as.scm
+cp module/mescc/riscv64/info.scm ${PREFIX}/share/mes/module/mescc/riscv64/info.scm
+cp module/mescc/x86_64/as.scm ${PREFIX}/share/mes/module/mescc/x86_64/as.scm
+cp module/mescc/x86_64/info.scm ${PREFIX}/share/mes/module/mescc/x86_64/info.scm
+
+mkdir ${PREFIX}/share/mes/module/ice-9
+cp mes/module/ice-9/ftw.scm ${PREFIX}/share/mes/module/ice-9/ftw.scm
+cp mes/module/ice-9/getopt-long.scm ${PREFIX}/share/mes/module/ice-9/getopt-long.scm
+cp mes/module/ice-9/i18n.scm ${PREFIX}/share/mes/module/ice-9/i18n.scm
+cp mes/module/ice-9/match.scm ${PREFIX}/share/mes/module/ice-9/match.scm
+cp mes/module/ice-9/optargs.scm ${PREFIX}/share/mes/module/ice-9/optargs.scm
+cp mes/module/ice-9/popen.scm ${PREFIX}/share/mes/module/ice-9/popen.scm
+cp mes/module/ice-9/pregexp.upstream.scm ${PREFIX}/share/mes/module/ice-9/pregexp.upstream.scm
+cp mes/module/ice-9/pretty-print.scm ${PREFIX}/share/mes/module/ice-9/pretty-print.scm
+cp mes/module/ice-9/rdelim.scm ${PREFIX}/share/mes/module/ice-9/rdelim.scm
+cp mes/module/ice-9/receive.scm ${PREFIX}/share/mes/module/ice-9/receive.scm
+cp mes/module/ice-9/regex.scm ${PREFIX}/share/mes/module/ice-9/regex.scm
+
+cp mes/module/mes/base.mes ${PREFIX}/share/mes/module/mes/base.mes
+cp mes/module/mes/boot-0.scm ${PREFIX}/share/mes/module/mes/boot-0.scm
+cp mes/module/mes/boot-00.scm ${PREFIX}/share/mes/module/mes/boot-00.scm
+cp mes/module/mes/boot-01.scm ${PREFIX}/share/mes/module/mes/boot-01.scm
+cp mes/module/mes/boot-02.scm ${PREFIX}/share/mes/module/mes/boot-02.scm
+cp mes/module/mes/boot-03.scm ${PREFIX}/share/mes/module/mes/boot-03.scm
+cp mes/module/mes/boot-5.scm ${PREFIX}/share/mes/module/mes/boot-5.scm
+cp mes/module/mes/catch.mes ${PREFIX}/share/mes/module/mes/catch.mes
+cp mes/module/mes/display.mes ${PREFIX}/share/mes/module/mes/display.mes
+cp mes/module/mes/fluids.mes ${PREFIX}/share/mes/module/mes/fluids.mes
+cp mes/module/mes/getopt-long.mes ${PREFIX}/share/mes/module/mes/getopt-long.mes
+cp mes/module/mes/guile-module.mes ${PREFIX}/share/mes/module/mes/guile-module.mes
+cp mes/module/mes/guile.mes ${PREFIX}/share/mes/module/mes/guile.mes
+cp mes/module/mes/guile.scm ${PREFIX}/share/mes/module/mes/guile.scm
+cp mes/module/mes/lalr.mes ${PREFIX}/share/mes/module/mes/lalr.mes
+cp mes/module/mes/lalr.scm ${PREFIX}/share/mes/module/mes/lalr.scm
+cp mes/module/mes/let.mes ${PREFIX}/share/mes/module/mes/let.mes
+cp mes/module/mes/main.mes ${PREFIX}/share/mes/module/mes/main.mes
+cp mes/module/mes/main.scm ${PREFIX}/share/mes/module/mes/main.scm
+cp mes/module/mes/match.mes ${PREFIX}/share/mes/module/mes/match.mes
+cp mes/module/mes/match.scm ${PREFIX}/share/mes/module/mes/match.scm
+cp mes/module/mes/mes-0.scm ${PREFIX}/share/mes/module/mes/mes-0.scm
+cp mes/module/mes/mescc.mes ${PREFIX}/share/mes/module/mes/mescc.mes
+cp mes/module/mes/misc.mes ${PREFIX}/share/mes/module/mes/misc.mes
+cp mes/module/mes/module.mes ${PREFIX}/share/mes/module/mes/module.mes
+cp mes/module/mes/optargs.mes ${PREFIX}/share/mes/module/mes/optargs.mes
+cp mes/module/mes/pmatch.mes ${PREFIX}/share/mes/module/mes/pmatch.mes
+cp mes/module/mes/posix.mes ${PREFIX}/share/mes/module/mes/posix.mes
+cp mes/module/mes/pretty-print.mes ${PREFIX}/share/mes/module/mes/pretty-print.mes
+cp mes/module/mes/psyntax-0.mes ${PREFIX}/share/mes/module/mes/psyntax-0.mes
+cp mes/module/mes/psyntax-1.mes ${PREFIX}/share/mes/module/mes/psyntax-1.mes
+cp mes/module/mes/psyntax.mes ${PREFIX}/share/mes/module/mes/psyntax.mes
+cp mes/module/mes/psyntax.ss ${PREFIX}/share/mes/module/mes/psyntax.ss
+cp mes/module/mes/quasiquote.mes ${PREFIX}/share/mes/module/mes/quasiquote.mes
+cp mes/module/mes/quasisyntax.mes ${PREFIX}/share/mes/module/mes/quasisyntax.mes
+cp mes/module/mes/quasisyntax.scm ${PREFIX}/share/mes/module/mes/quasisyntax.scm
+cp mes/module/mes/repl.mes ${PREFIX}/share/mes/module/mes/repl.mes
+cp mes/module/mes/repl.scm ${PREFIX}/share/mes/module/mes/repl.scm
+cp mes/module/mes/scm.mes ${PREFIX}/share/mes/module/mes/scm.mes
+cp mes/module/mes/simple-format.mes ${PREFIX}/share/mes/module/mes/simple-format.mes
+cp mes/module/mes/syntax.mes ${PREFIX}/share/mes/module/mes/syntax.mes
+cp mes/module/mes/syntax.scm ${PREFIX}/share/mes/module/mes/syntax.scm
+cp mes/module/mes/test.mes ${PREFIX}/share/mes/module/mes/test.mes
+cp mes/module/mes/tiny-0.mes ${PREFIX}/share/mes/module/mes/tiny-0.mes
+cp mes/module/mes/type-0.mes ${PREFIX}/share/mes/module/mes/type-0.mes
+
+cp mes/module/mescc/M1.mes ${PREFIX}/share/mes/module/mescc/M1.mes
+cp mes/module/mescc/armv4/as.mes ${PREFIX}/share/mes/module/mescc/armv4/as.mes
+cp mes/module/mescc/armv4/info.mes ${PREFIX}/share/mes/module/mescc/armv4/info.mes
+cp mes/module/mescc/as.mes ${PREFIX}/share/mes/module/mescc/as.mes
+cp mes/module/mescc/bytevectors.mes ${PREFIX}/share/mes/module/mescc/bytevectors.mes
+cp mes/module/mescc/compile.mes ${PREFIX}/share/mes/module/mescc/compile.mes
+cp mes/module/mescc/i386/as.mes ${PREFIX}/share/mes/module/mescc/i386/as.mes
+cp mes/module/mescc/i386/info.mes ${PREFIX}/share/mes/module/mescc/i386/info.mes
+cp mes/module/mescc/info.mes ${PREFIX}/share/mes/module/mescc/info.mes
+cp mes/module/mescc/mescc.mes ${PREFIX}/share/mes/module/mescc/mescc.mes
+cp mes/module/mescc/preprocess.mes ${PREFIX}/share/mes/module/mescc/preprocess.mes
+cp mes/module/mescc/riscv64/as.mes ${PREFIX}/share/mes/module/mescc/riscv64/as.mes
+cp mes/module/mescc/riscv64/info.mes ${PREFIX}/share/mes/module/mescc/riscv64/info.mes
+cp mes/module/mescc/x86_64/as.mes ${PREFIX}/share/mes/module/mescc/x86_64/as.mes
+cp mes/module/mescc/x86_64/info.mes ${PREFIX}/share/mes/module/mescc/x86_64/info.mes
+
+mkdir ${PREFIX}/share/mes/module/nyacc ${PREFIX}/share/mes/module/nyacc/lang ${PREFIX}/share/mes/module/nyacc/lang/c99 ${PREFIX}/share/mes/module/nyacc/lang/calc
+cp mes/module/nyacc/compat18.scm ${PREFIX}/share/mes/module/nyacc/compat18.scm
+cp mes/module/nyacc/lalr.mes ${PREFIX}/share/mes/module/nyacc/lalr.mes
+cp mes/module/nyacc/lang/c99/cpp.mes ${PREFIX}/share/mes/module/nyacc/lang/c99/cpp.mes
+cp mes/module/nyacc/lang/c99/parser.mes ${PREFIX}/share/mes/module/nyacc/lang/c99/parser.mes
+cp mes/module/nyacc/lang/c99/pprint.mes ${PREFIX}/share/mes/module/nyacc/lang/c99/pprint.mes
+cp mes/module/nyacc/lang/c99/pprint.scm ${PREFIX}/share/mes/module/nyacc/lang/c99/pprint.scm
+cp mes/module/nyacc/lang/c99/util.mes ${PREFIX}/share/mes/module/nyacc/lang/c99/util.mes
+cp mes/module/nyacc/lang/calc/parser.mes ${PREFIX}/share/mes/module/nyacc/lang/calc/parser.mes
+cp mes/module/nyacc/lang/sx-util.mes ${PREFIX}/share/mes/module/nyacc/lang/sx-util.mes
+cp mes/module/nyacc/lang/util.mes ${PREFIX}/share/mes/module/nyacc/lang/util.mes
+cp mes/module/nyacc/lex.mes ${PREFIX}/share/mes/module/nyacc/lex.mes
+cp mes/module/nyacc/parse.mes ${PREFIX}/share/mes/module/nyacc/parse.mes
+cp mes/module/nyacc/util.mes ${PREFIX}/share/mes/module/nyacc/util.mes
+cp mes/module/nyacc/version.mes ${PREFIX}/share/mes/module/nyacc/version.mes
+
+mkdir ${PREFIX}/share/mes/module/rnrs ${PREFIX}/share/mes/module/rnrs/arithmetic ${PREFIX}/share/mes/module/rnrs/io
+cp mes/module/rnrs/arithmetic/bitwise.mes ${PREFIX}/share/mes/module/rnrs/arithmetic/bitwise.mes
+cp mes/module/rnrs/bytevectors.scm ${PREFIX}/share/mes/module/rnrs/bytevectors.scm
+cp mes/module/rnrs/io/ports.scm ${PREFIX}/share/mes/module/rnrs/io/ports.scm
+
+mkdir ${PREFIX}/share/mes/module/srfi ${PREFIX}/share/mes/module/srfi/srfi-9
+cp mes/module/srfi/srfi-0.mes ${PREFIX}/share/mes/module/srfi/srfi-0.mes
+cp mes/module/srfi/srfi-1-guile.scm ${PREFIX}/share/mes/module/srfi/srfi-1-guile.scm
+cp mes/module/srfi/srfi-1.mes ${PREFIX}/share/mes/module/srfi/srfi-1.mes
+cp mes/module/srfi/srfi-1.scm ${PREFIX}/share/mes/module/srfi/srfi-1.scm
+cp mes/module/srfi/srfi-11.scm ${PREFIX}/share/mes/module/srfi/srfi-11.scm
+cp mes/module/srfi/srfi-13.mes ${PREFIX}/share/mes/module/srfi/srfi-13.mes
+cp mes/module/srfi/srfi-132.scm ${PREFIX}/share/mes/module/srfi/srfi-132.scm
+cp mes/module/srfi/srfi-14.mes ${PREFIX}/share/mes/module/srfi/srfi-14.mes
+cp mes/module/srfi/srfi-14.scm ${PREFIX}/share/mes/module/srfi/srfi-14.scm
+cp mes/module/srfi/srfi-16.mes ${PREFIX}/share/mes/module/srfi/srfi-16.mes
+cp mes/module/srfi/srfi-16.scm ${PREFIX}/share/mes/module/srfi/srfi-16.scm
+cp mes/module/srfi/srfi-2.scm ${PREFIX}/share/mes/module/srfi/srfi-2.scm
+cp mes/module/srfi/srfi-26.mes ${PREFIX}/share/mes/module/srfi/srfi-26.mes
+cp mes/module/srfi/srfi-26.scm ${PREFIX}/share/mes/module/srfi/srfi-26.scm
+cp mes/module/srfi/srfi-37.scm ${PREFIX}/share/mes/module/srfi/srfi-37.scm
+cp mes/module/srfi/srfi-43.mes ${PREFIX}/share/mes/module/srfi/srfi-43.mes
+cp mes/module/srfi/srfi-43.scm ${PREFIX}/share/mes/module/srfi/srfi-43.scm
+cp mes/module/srfi/srfi-8.mes ${PREFIX}/share/mes/module/srfi/srfi-8.mes
+cp mes/module/srfi/srfi-9-struct.mes ${PREFIX}/share/mes/module/srfi/srfi-9-struct.mes
+cp mes/module/srfi/srfi-9-vector.mes ${PREFIX}/share/mes/module/srfi/srfi-9-vector.mes
+cp mes/module/srfi/srfi-9.mes ${PREFIX}/share/mes/module/srfi/srfi-9.mes
+cp mes/module/srfi/srfi-9.scm ${PREFIX}/share/mes/module/srfi/srfi-9.scm
+cp mes/module/srfi/srfi-9/gnu-struct.mes ${PREFIX}/share/mes/module/srfi/srfi-9/gnu-struct.mes
+cp mes/module/srfi/srfi-9/gnu-vector.mes ${PREFIX}/share/mes/module/srfi/srfi-9/gnu-vector.mes
+cp mes/module/srfi/srfi-9/gnu.mes ${PREFIX}/share/mes/module/srfi/srfi-9/gnu.mes
+cp mes/module/srfi/srfi-9/gnu.scm ${PREFIX}/share/mes/module/srfi/srfi-9/gnu.scm
+
+mkdir ${PREFIX}/share/mes/module/sxml
+cp mes/module/sxml/fold.scm ${PREFIX}/share/mes/module/sxml/fold.scm
+cp mes/module/sxml/xpath.mes ${PREFIX}/share/mes/module/sxml/xpath.mes
+cp mes/module/sxml/xpath.scm ${PREFIX}/share/mes/module/sxml/xpath.scm
+
+mkdir ${PREFIX}/share/mes/module/system ${PREFIX}/share/mes/module/system/base
+cp mes/module/system/base/lalr.scm ${PREFIX}/share/mes/module/system/base/lalr.scm
+cp mes/module/system/base/pmatch.scm ${PREFIX}/share/mes/module/system/base/pmatch.scm
+
+cd ../${NYACC_PKG}
+mkdir ${PREFIX}/share/nyacc ${PREFIX}/share/nyacc/module ${PREFIX}/share/nyacc/module/rnrs ${PREFIX}/share/nyacc/module/rnrs/arithmetic
+cp module/rnrs/arithmetic/bitwise.scm ${PREFIX}/share/nyacc/module/rnrs/arithmetic/bitwise.scm
+mkdir ${PREFIX}/share/nyacc/module/system
+cp module/system/foreign.scm ${PREFIX}/share/nyacc/module/system/foreign.scm
+cp module/system/ffi-help-rt.scm ${PREFIX}/share/nyacc/module/system/ffi-help-rt.scm
+mkdir ${PREFIX}/share/nyacc/module/scripts
+cp module/scripts/compile-ffi.scm ${PREFIX}/share/nyacc/module/scripts/compile-ffi.scm
+mkdir ${PREFIX}/share/nyacc/module/nyacc
+cp module/nyacc/util.scm ${PREFIX}/share/nyacc/module/nyacc/util.scm
+mkdir ${PREFIX}/share/nyacc/module/nyacc/lang
+cp module/nyacc/lang/util.scm ${PREFIX}/share/nyacc/module/nyacc/lang/util.scm
+cp module/nyacc/lang/sx-util.scm ${PREFIX}/share/nyacc/module/nyacc/lang/sx-util.scm
+mkdir ${PREFIX}/share/nyacc/module/nyacc/lang/c99
+cp module/nyacc/lang/c99/util.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/util.scm
+cp module/nyacc/lang/c99/cppmach.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/cppmach.scm
+cp module/nyacc/lang/c99/pprint.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/pprint.scm
+cp module/nyacc/lang/c99/cxmach.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/cxmach.scm
+mkdir ${PREFIX}/share/nyacc/module/nyacc/lang/c99/mach.d
+cp module/nyacc/lang/c99/mach.d/cpp-act.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/mach.d/cpp-act.scm
+cp module/nyacc/lang/c99/mach.d/c99x-act.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/mach.d/c99x-act.scm
+cp module/nyacc/lang/c99/mach.d/c99cx-act.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/mach.d/c99cx-act.scm
+cp module/nyacc/lang/c99/mach.d/c99-act.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/mach.d/c99-act.scm
+cp module/nyacc/lang/c99/mach.d/cpp-tab.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/mach.d/cpp-tab.scm
+cp module/nyacc/lang/c99/mach.d/c99cx-tab.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/mach.d/c99cx-tab.scm
+cp module/nyacc/lang/c99/mach.d/c99-tab.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/mach.d/c99-tab.scm
+cp module/nyacc/lang/c99/mach.d/c99x-tab.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/mach.d/c99x-tab.scm
+cp module/nyacc/lang/c99/parser.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/parser.scm
+cp module/nyacc/lang/c99/body.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/body.scm
+cp module/nyacc/lang/c99/cpp.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/cpp.scm
+cp module/nyacc/lang/c99/ffi-help.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/ffi-help.scm
+cp module/nyacc/lang/c99/cxeval.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/cxeval.scm
+cp module/nyacc/lang/c99/munge.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/munge.scm
+cp module/nyacc/lang/c99/mach.scm ${PREFIX}/share/nyacc/module/nyacc/lang/c99/mach.scm
+cp module/nyacc/lex.scm ${PREFIX}/share/nyacc/module/nyacc/lex.scm
+cp module/nyacc/export.scm ${PREFIX}/share/nyacc/module/nyacc/export.scm
+cp module/nyacc/import.scm ${PREFIX}/share/nyacc/module/nyacc/import.scm
+cp module/nyacc/compat18.scm ${PREFIX}/share/nyacc/module/nyacc/compat18.scm
+cp module/nyacc/parse.scm ${PREFIX}/share/nyacc/module/nyacc/parse.scm
+cp module/nyacc/lalr.scm ${PREFIX}/share/nyacc/module/nyacc/lalr.scm
+cp module/nyacc/version.scm ${PREFIX}/share/nyacc/module/nyacc/version.scm
+cp module/nyacc/bison.scm ${PREFIX}/share/nyacc/module/nyacc/bison.scm
+
 cd ../..

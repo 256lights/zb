@@ -11,15 +11,11 @@ MES_STACK=15000000
 MES_ARENA=30000000
 MES_MAX_ARENA=30000000
 MES_LIB=${MES_PREFIX}/lib
-MES_SOURCE=${MES_PREFIX}
-MES=${BINDIR}/mes
+MES_SOURCE=${MES_PREFIX}/share/mes
+MES=${MES_PREFIX}/bin/mes
 
 TCC_TAR=tcc-0.9.26
 TCC_PKG=tcc-0.9.26-1147-gee75a10c
-
-# Check tarball checksums
-checksum-transcriber sources
-sha256sum -c sources.SHA256SUM
 
 # Unpack
 mkdir build
@@ -60,7 +56,7 @@ if match ${ARCH} riscv64; then
 fi
 
 
-${MES} --no-auto-compile -e main ${BINDIR}/mescc.scm -- \
+${MES} --no-auto-compile -e main ${MES_PREFIX}/bin/mescc.scm -- \
     -S \
     -o tcc.s \
     -I ${INCDIR} \
@@ -73,7 +69,7 @@ ${MES} --no-auto-compile -e main ${BINDIR}/mescc.scm -- \
     -D CONFIG_SYSROOT=\"/\" \
     -D CONFIG_TCC_CRTPREFIX=\"${LIBDIR}\" \
     -D CONFIG_TCC_ELFINTERP=\"/mes/loader\" \
-    -D CONFIG_TCC_SYSINCLUDEPATHS=\"${PREFIX}/include/mes\" \
+    -D CONFIG_TCC_SYSINCLUDEPATHS=\"${INCDIR}\" \
     -D TCC_LIBGCC=\"${LIBDIR}/libc.a\" \
     -D CONFIG_TCC_LIBTCC1_MES=0 \
     -D CONFIG_TCCBOOT=1 \
@@ -82,7 +78,7 @@ ${MES} --no-auto-compile -e main ${BINDIR}/mescc.scm -- \
     -D TCC_VERSION=\"0.9.26\" \
     -D ONE_SOURCE=1 \
     tcc.c
-${MES} --no-auto-compile -e main ${BINDIR}/mescc.scm -- \
+${MES} --no-auto-compile -e main ${MES_PREFIX}/bin/mescc.scm -- \
     --base-address 0x08048000 \
     -o tcc-mes \
     -L ${LIBDIR} \
@@ -148,13 +144,13 @@ tcc-mes \
     -D HAVE_LONG_LONG=1 \
     -D HAVE_SETJMP=1 \
     -I . \
-    -I ${PREFIX}/include/mes \
+    -I ${INCDIR} \
     -D TCC_TARGET_${TCC_TARGET_ARCH}=1 \
     -D CONFIG_TCCDIR=\"${LIBDIR}/tcc\" \
     -D CONFIG_TCC_CRTPREFIX=\"${LIBDIR}\" \
     -D CONFIG_TCC_ELFINTERP=\"/mes/loader\" \
     -D CONFIG_TCC_LIBPATHS=\"${LIBDIR}:${LIBDIR}/tcc\" \
-    -D CONFIG_TCC_SYSINCLUDEPATHS=\"${PREFIX}/include/mes\" \
+    -D CONFIG_TCC_SYSINCLUDEPATHS=\"${INCDIR}\" \
     -D TCC_LIBGCC=\"${LIBDIR}/libc.a\" \
     -D TCC_LIBTCC1=\"libtcc1.a\" \
     -D CONFIG_TCCBOOT=1 \
@@ -203,13 +199,13 @@ tcc-boot0 \
     -D HAVE_LONG_LONG=1 \
     -D HAVE_SETJMP=1 \
     -I . \
-    -I ${PREFIX}/include/mes \
+    -I ${INCDIR} \
     -D TCC_TARGET_${TCC_TARGET_ARCH}=1 \
     -D CONFIG_TCCDIR=\"${LIBDIR}/tcc\" \
     -D CONFIG_TCC_CRTPREFIX=\"${LIBDIR}\" \
     -D CONFIG_TCC_ELFINTERP=\"/mes/loader\" \
     -D CONFIG_TCC_LIBPATHS=\"${LIBDIR}:${LIBDIR}/tcc\" \
-    -D CONFIG_TCC_SYSINCLUDEPATHS=\"${PREFIX}/include/mes\" \
+    -D CONFIG_TCC_SYSINCLUDEPATHS=\"${INCDIR}\" \
     -D TCC_LIBGCC=\"${LIBDIR}/libc.a\" \
     -D TCC_LIBTCC1=\"libtcc1.a\" \
     -D CONFIG_TCCBOOT=1 \
@@ -255,13 +251,13 @@ tcc-boot1 \
     -D HAVE_LONG_LONG=1 \
     -D HAVE_SETJMP=1 \
     -I . \
-    -I ${PREFIX}/include/mes \
+    -I ${INCDIR} \
     -D TCC_TARGET_${TCC_TARGET_ARCH}=1 \
     -D CONFIG_TCCDIR=\"${LIBDIR}/tcc\" \
     -D CONFIG_TCC_CRTPREFIX=\"${LIBDIR}\" \
     -D CONFIG_TCC_ELFINTERP=\"/mes/loader\" \
     -D CONFIG_TCC_LIBPATHS=\"${LIBDIR}:${LIBDIR}/tcc\" \
-    -D CONFIG_TCC_SYSINCLUDEPATHS=\"${PREFIX}/include/mes\" \
+    -D CONFIG_TCC_SYSINCLUDEPATHS=\"${INCDIR}\" \
     -D TCC_LIBGCC=\"${LIBDIR}/libc.a\" \
     -D TCC_LIBTCC1=\"libtcc1.a\" \
     -D CONFIG_TCCBOOT=1 \
@@ -309,22 +305,3 @@ tcc -c -D HAVE_CONFIG_H=1 -I include -I include/linux/${MES_ARCH} lib/posix/geto
 tcc -ar cr ${LIBDIR}/libgetopt.a getopt.o
 
 cd ../..
-
-# Checksums
-if match x${UPDATE_CHECKSUMS} xTrue; then
-    sha256sum -o ${pkg}.${ARCH}.checksums \
-        /usr/bin/tcc-mes \
-        /usr/bin/tcc-boot0 \
-        /usr/bin/tcc-boot1 \
-        /usr/bin/tcc \
-        /usr/lib/mes/libc.a \
-        /usr/lib/mes/libgetopt.a \
-        /usr/lib/mes/crt1.o \
-        /usr/lib/mes/crti.o \
-        /usr/lib/mes/crtn.o \
-        /usr/lib/mes/tcc/libtcc1.a
-
-    cp ${pkg}.${ARCH}.checksums ${SRCDIR}
-else
-    sha256sum -c ${pkg}.${ARCH}.checksums
-fi
