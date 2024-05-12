@@ -49,6 +49,16 @@ local function kaemDerivation(args)
   return derivation(actualArgs)
 end
 
+---@param pname string
+---@param version string
+---@return string
+local function stepPath(pname, version)
+  return path {
+    name = "live-bootstrap-steps-"..pname.."-"..version;
+    path = "live-bootstrap/steps/"..pname.."-"..version;
+  }
+end
+
 --- Issue cp commands for the directory.
 ---@param manifest string[]
 ---@return string
@@ -74,10 +84,7 @@ end
 do
   local pname <const> = "simple-patch"
   local version <const> = "1.0"
-  local step <const> = path {
-    name = "live-bootstrap-steps-simple-patch-1.0";
-    path = "live-bootstrap/steps/simple-patch-1.0";
-  }
+  local step <const> = stepPath(pname, version)
 
   boot.simple_patch = kaemDerivation {
     name = pname.."-"..version;
@@ -108,10 +115,7 @@ do
     url = "https://archive.org/download/live-bootstrap-sources/nyacc-1.00.2-lb1.tar.gz";
     hash = "sha256:708c943f89c972910e9544ee077771acbd0a2c0fc6d33496fe158264ddb65327";
   }
-  local step <const> = path {
-    name = "live-bootstrap-steps-mes-0.26";
-    path = "live-bootstrap/steps/mes-0.26";
-  }
+  local step <const> = stepPath(pname, version)
 
   boot.mes = kaemDerivation {
     name = pname.."-"..version;
@@ -169,10 +173,7 @@ do
     url = "https://lilypond.org/janneke/tcc/tcc-"..version..".tar.gz";
     hash = "sha256:6b8cbd0a5fed0636d4f0f763a603247bc1935e206e1cc5bda6a2818bab6e819f";
   }
-  local step <const> = path {
-    name = "live-bootstrap-steps-tcc-0.9.26";
-    path = "live-bootstrap/steps/tcc-0.9.26";
-  }
+  local step <const> = stepPath(pname, "0.9.26")
 
   boot.tcc["0.9.26"] = kaemDerivation {
     name = pname.."-"..version;
@@ -229,10 +230,7 @@ local tcc_0_9_27_tarball = fetchurl {
 do
   local pname <const> = "tcc"
   local version <const> = "0.9.27"
-  local step <const> = path {
-    name = "live-bootstrap-steps-tcc-0.9.27";
-    path = "live-bootstrap/steps/tcc-0.9.27";
-  }
+  local step <const> = stepPath(pname, version)
 
   boot.tcc["0.9.27-pass1"] = kaemDerivation {
     name = pname.."-"..version;
@@ -287,10 +285,7 @@ boot.make = {}
 do
   local pname <const> = "make"
   local version <const> = "3.82"
-  local step <const> = path {
-    name = "live-bootstrap-steps-make-3.82";
-    path = "live-bootstrap/steps/make-3.82";
-  }
+  local step <const> = stepPath(pname, version)
   local tarball <const> = fetchGNU {
     path = "make/make-"..version..".tar.bz2";
     hash = "sha256:e2c1a73f179c40c71e2fe8abf8a8a0688b8499538512984da4a76958d0402966";
@@ -336,10 +331,7 @@ boot.patch = {}
 do
   local pname <const> = "patch"
   local version <const> = "2.5.9"
-  local step <const> = path {
-    name = "live-bootstrap-steps-patch-2.5.9";
-    path = "live-bootstrap/steps/patch-2.5.9";
-  }
+  local step <const> = stepPath(pname, version)
   local tarball <const> = fetchGNU {
     path = "patch/patch-"..version..".tar.gz";
     hash = "sha256:ecb5c6469d732bcf01d6ec1afe9e64f1668caba5bfdb103c28d7f537ba3cdb8a";
@@ -388,10 +380,7 @@ boot.gzip = {}
 do
   local pname <const> = "gzip"
   local version <const> = "1.2.4"
-  local step <const> = path {
-    name = "live-bootstrap-steps-gzip-1.2.4";
-    path = "live-bootstrap/steps/gzip-1.2.4";
-  }
+  local step <const> = stepPath(pname, version)
   local tarball <const> = fetchGNU {
     path = "gzip/gzip-"..version..".tar.gz";
     hash = "sha256:1ca41818a23c9c59ef1d5e1d00c0d5eaa2285d931c0fb059637d7c0cc02ad967";
@@ -434,6 +423,59 @@ do
       "mk/main.mk",
       "patches/makecrc-write-to-file.patch",
       "patches/removecrc.patch",
+    }).."\z
+        exec kaem -f pass1.kaem\n";
+  }
+end
+
+-- tar-1.12
+boot.tar = {}
+do
+  local pname <const> = "tar"
+  local version <const> = "1.12"
+  local step <const> = stepPath(pname, version)
+  local tarball <const> = fetchGNU {
+    path = "tar/tar-"..version..".tar.gz";
+    hash = "sha256:c6c37e888b136ccefab903c51149f4b7bd659d69d4aea21245f61053a57aa60a";
+  }
+
+  boot.tar[version] = kaemDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    PATH = mkBinPath {
+      boot.gzip["1.2.4"],
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      boot.tcc["0.9.27-pass1"],
+      boot.simple_patch,
+      stage0.stage0,
+    };
+
+    tarball = tarball;
+
+    script = "\z
+      PREFIX=${out}\n\z
+      BINDIR=${PREFIX}/bin\n\z
+      PATH=${BINDIR}:${PATH}\n\z
+      \z
+      mkdir ${PREFIX} ${BINDIR}\n\z
+      \z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.gz\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      cd ${SRCDIR}/${name}\n\z
+      mkdir files mk\n\z
+      "..mkStepDir(step, {
+      "pass1.kaem",
+      "files/getdate_stub.c",
+      "files/stat_override.c",
+      "mk/main.mk",
     }).."\z
         exec kaem -f pass1.kaem\n";
   }
