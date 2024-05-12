@@ -533,4 +533,57 @@ do
   }
 end
 
+-- bzip2 pass1
+boot.bzip2 = {}
+do
+  local pname <const> = "bzip2"
+  local version <const> = "1.0.8"
+  local step <const> = stepPath(pname, version)
+  local tarball <const> = fetchurl {
+    url = "https://mirrors.kernel.org/slackware/slackware-14.0/patches/source/bzip2/bzip2-"..version..".tar.xz";
+    hash = "sha256:47fd74b2ff83effad0ddf62074e6fad1f6b4a77a96e121ab421c20a216371a1f";
+  }
+
+  boot.bzip2.pass1 = kaemDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    PATH = mkBinPath {
+      boot.tar["1.12"],
+      boot.gzip["1.2.4"],
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      boot.tcc["0.9.27-pass1"],
+      boot.simple_patch,
+      stage0.stage0,
+    };
+
+    tarball = tarball;
+
+    script = "\z
+      PREFIX=${out}\n\z
+      BINDIR=${PREFIX}/bin\n\z
+      PATH=${BINDIR}:${PATH}\n\z
+      \z
+      mkdir ${PREFIX} ${BINDIR}\n\z
+      \z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.xz\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      cd ${SRCDIR}/${name}\n\z
+      mkdir patches\n\z
+      "..mkStepDir(step, {
+      "pass1.kaem",
+      "patches/coreutils.patch",
+      "patches/mes-libc.patch",
+    }).."\z
+        exec kaem -f pass1.kaem\n";
+  }
+end
+
 return boot
