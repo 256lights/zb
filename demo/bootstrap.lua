@@ -206,8 +206,8 @@ do
       cp ${mes_tarball} ${DISTFILES}/${MES_PKG}.tar.gz\n\z
       \z
       SRCDIR=${TEMPDIR}/src\n\z
-      mkdir ${SRCDIR} ${SRCDIR}/tcc-0.9.26\n\z
-      cd ${SRCDIR}/tcc-0.9.26\n\z
+      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      cd ${SRCDIR}/${name}\n\z
       mkdir simple-patches\n\z
       "..mkStepDir(step, {
       "pass1.kaem",
@@ -246,9 +246,6 @@ do
     MES_PREFIX = boot.mes;
     INCDIR = boot.mes.."/include";
     GUILE_LOAD_PATH = guile_load_path;
-    -- The 64-bit build will hang indefinitely.
-    -- Force 32-bit for this build.
-    ARCH = "x86";
 
     mes_tarball = mes_tarball;
     tcc_tarball = tcc_0_9_27_tarball;
@@ -263,12 +260,12 @@ do
       \z
       DISTFILES=${TEMPDIR}/distfiles\n\z
       mkdir ${DISTFILES}\n\z
-      cp ${tcc_tarball} ${DISTFILES}/tcc-0.9.27.tar.bz2\n\z
+      cp ${tcc_tarball} ${DISTFILES}/${name}.tar.bz2\n\z
       cp ${mes_tarball} ${DISTFILES}/${MES_PKG}.tar.gz\n\z
       \z
       SRCDIR=${TEMPDIR}/src\n\z
-      mkdir ${SRCDIR} ${SRCDIR}/tcc-0.9.26\n\z
-      cd ${SRCDIR}/tcc-0.9.26\n\z
+      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      cd ${SRCDIR}/${name}\n\z
       mkdir simple-patches\n\z
       "..mkStepDir(step, {
       "pass1.kaem",
@@ -280,6 +277,55 @@ do
       "simple-patches/check-reloc-null.before",
       "simple-patches/remove-fileopen.after",
       "simple-patches/remove-fileopen.before",
+    }).."\z
+        exec kaem -f pass1.kaem\n";
+  }
+end
+
+-- make-3.82
+boot.make = {}
+do
+  local pname = "make"
+  local version = "3.82"
+  local step = path {
+    name = "live-bootstrap-steps-make-3.82";
+    path = "live-bootstrap/steps/make-3.82";
+  }
+  local tarball = fetchGNU {
+    path = "make/make-"..version..".tar.bz2";
+    hash = "sha256:e2c1a73f179c40c71e2fe8abf8a8a0688b8499538512984da4a76958d0402966";
+  }
+
+  boot.make["3.82-pass1"] = kaemDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    PATH = mkBinPath { boot.tcc["0.9.27-pass1"], boot.simple_patch, stage0.stage0 };
+    INCDIR = boot.tcc["0.9.27-pass1"].INCDIR;
+    tcc = boot.tcc["0.9.27-pass1"];
+
+    tarball = tarball;
+
+    script = "\z
+      PREFIX=${out}\n\z
+      BINDIR=${PREFIX}/bin\n\z
+      PATH=${BINDIR}:${PATH}\n\z
+      \z
+      mkdir ${PREFIX} ${BINDIR}\n\z
+      \z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.bz2\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      cd ${SRCDIR}/${name}\n\z
+      mkdir files\n\z
+      "..mkStepDir(step, {
+      "pass1.kaem",
+      "files/putenv_stub.c",
     }).."\z
         exec kaem -f pass1.kaem\n";
   }
