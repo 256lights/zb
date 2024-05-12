@@ -396,7 +396,6 @@ do
       boot.patch["2.5.9"],
       boot.make["3.82-pass1"],
       boot.tcc["0.9.27-pass1"],
-      boot.simple_patch,
       stage0.stage0,
     };
 
@@ -450,7 +449,6 @@ do
       boot.patch["2.5.9"],
       boot.make["3.82-pass1"],
       boot.tcc["0.9.27-pass1"],
-      boot.simple_patch,
       stage0.stage0,
     };
 
@@ -504,7 +502,6 @@ do
       boot.patch["2.5.9"],
       boot.make["3.82-pass1"],
       boot.tcc["0.9.27-pass1"],
-      boot.simple_patch,
       stage0.stage0,
     };
 
@@ -556,7 +553,6 @@ do
       boot.patch["2.5.9"],
       boot.make["3.82-pass1"],
       boot.tcc["0.9.27-pass1"],
-      boot.simple_patch,
       stage0.stage0,
     };
 
@@ -611,7 +607,6 @@ do
       boot.patch["2.5.9"],
       boot.make["3.82-pass1"],
       boot.tcc["0.9.27-pass1"],
-      boot.simple_patch,
       stage0.stage0,
     };
 
@@ -644,6 +639,59 @@ do
       "patches/touch-dereference.patch",
       "patches/touch-getdate.patch",
       "patches/uniq-fopen.patch",
+    }).."\z
+        exec kaem -f pass1.kaem\n";
+  }
+end
+
+-- byacc
+do
+  local pname <const> = "byacc"
+  local version <const> = "20240109"
+  local step <const> = stepPath(pname, version)
+  local tarball <const> = fetchurl {
+    url = "https://invisible-island.net/archives/"..pname.."/"..pname.."-"..version..".tgz";
+    hash = "sha256:f2897779017189f1a94757705ef6f6e15dc9208ef079eea7f28abec577e08446";
+  }
+
+  boot.byacc = kaemDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    PATH = mkBinPath {
+      boot.coreutils["5.0-pass1"],
+      boot.sed.pass1,
+      boot.tar["1.12"],
+      boot.gzip["1.2.4"],
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      boot.tcc["0.9.27-pass1"],
+      stage0.stage0,
+    };
+
+    tarball = tarball;
+
+    script = "\z
+      PREFIX=${out}\n\z
+      BINDIR=${PREFIX}/bin\n\z
+      PATH=${BINDIR}:${PATH}\n\z
+      \z
+      mkdir ${PREFIX} ${BINDIR}\n\z
+      \z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tgz\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      cd ${SRCDIR}/${name}\n\z
+      mkdir files patches\n\z
+      "..mkStepDir(step, {
+      "pass1.kaem",
+      "files/Makefile",
+      "patches/meslibc.patch",
     }).."\z
         exec kaem -f pass1.kaem\n";
   }
