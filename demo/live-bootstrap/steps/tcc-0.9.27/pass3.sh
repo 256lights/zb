@@ -12,7 +12,7 @@ src_prepare() {
 src_compile() {
     # We first have to recompile using tcc-0.9.26 as tcc-0.9.27 is not self-hosting,
     # but when linked with musl it is.
-    ln -sf "${PREFIX}/lib/mes/tcc/libtcc1.a" ./libtcc1.a
+    ln -sf "${tcc:?}/lib/tcc/libtcc1.a" ./libtcc1.a
 
     for TCC in tcc-0.9.26 ./tcc-musl; do
         "${TCC}" \
@@ -21,10 +21,10 @@ src_compile() {
             -o tcc-musl \
             -D TCC_TARGET_I386=1 \
             -D CONFIG_TCCDIR=\""${LIBDIR}/tcc"\" \
-            -D CONFIG_TCC_CRTPREFIX=\""${LIBDIR}"\" \
+            -D CONFIG_TCC_CRTPREFIX=\""${musl:?}/lib"\" \
             -D CONFIG_TCC_ELFINTERP=\"/musl/loader\" \
-            -D CONFIG_TCC_LIBPATHS=\""${LIBDIR}:${LIBDIR}/tcc"\" \
-            -D CONFIG_TCC_SYSINCLUDEPATHS=\""${PREFIX}/include"\" \
+            -D CONFIG_TCC_LIBPATHS=\""${LIBDIR}:${LIBDIR}/tcc:${musl:?}/lib"\" \
+            -D CONFIG_TCC_SYSINCLUDEPATHS=\""${INCDIR}"\" \
             -D TCC_LIBGCC=\""${LIBDIR}/libc.a"\" \
             -D CONFIG_TCC_STATIC=1 \
             -D CONFIG_USE_LIBGCC=1 \
