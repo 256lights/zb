@@ -691,15 +691,11 @@ do
       cp ${tarball} ${DISTFILES}/${name}.tgz\n\z
       \z
       SRCDIR=${TEMPDIR}/src\n\z
-      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      mkdir ${SRCDIR}\n\z
+      cp -R "..step.." ${SRCDIR}/${name}\n\z
       cd ${SRCDIR}/${name}\n\z
-      mkdir files patches\n\z
-      "..mkStepDir(step, {
-      "pass1.kaem",
-      "files/Makefile",
-      "patches/meslibc.patch",
-    }).."\z
-        exec kaem -f pass1.kaem\n";
+      chmod -R +w .\n\z
+      exec kaem -f pass1.kaem\n";
   }
 end
 
@@ -746,23 +742,93 @@ do
       cp ${tarball} ${DISTFILES}/${name}.tar.bz2\n\z
       \z
       SRCDIR=${TEMPDIR}/src\n\z
-      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      mkdir ${SRCDIR}\n\z
+      cp -R "..step.." ${SRCDIR}/${name}\n\z
       cd ${SRCDIR}/${name}\n\z
-      mkdir mk patches\n\z
-      "..mkStepDir(step, {
-      "pass1.kaem",
-      "mk/builtins.mk",
-      "mk/common.mk",
-      "mk/main.mk",
-      "patches/dev-tty.patch",
-      "patches/extern.patch",
-      "patches/locale.patch",
-      "patches/mes-libc.patch",
-      "patches/missing-defines.patch",
-      "patches/size.patch",
-      "patches/tinycc.patch",
-    }).."\z
-        exec kaem -f pass1.kaem\n";
+      chmod -R +w .\n\z
+      exec kaem -f pass1.kaem\n";
+  }
+end
+
+---@param args table
+local function bashDerivation(args)
+  local actualArgs = {
+    system = "x86_64-linux";
+
+    OPERATING_SYSTEM = "Linux";
+    ARCH = "amd64";
+
+    builder = boot.bash["2.05b-pass1"].."/bin/bash",
+  }
+  for k, v in pairs(args) do
+    if k ~= "script" then
+      actualArgs[k] = v
+    end
+  end
+  local scriptChunks = {
+    "\z
+      #!/usr/bin/env bash\n\z
+      set -e\n\z
+      export PREFIX=${out}\n\z
+      export DESTDIR=''\n\z
+      export BINDIR=${PREFIX}/bin\n\z
+      PATH=${BINDIR}:${PATH}\n\z
+      mkdir ${PREFIX} ${BINDIR}\n",
+    ". ",
+    path "live-bootstrap/steps/helpers.sh",
+    "\n",
+    args.script,
+  }
+  local script = table.concat(scriptChunks)
+  actualArgs.args = { toFile(args.name.."-builder.sh", script) }
+  return derivation(actualArgs)
+end
+
+-- tcc 0.9.27 pass2
+do
+  local pname <const> = "tcc"
+  local version <const> = "0.9.27"
+  local step <const> = stepPath(pname, version)
+  local tcc = boot.tcc["0.9.26"]
+
+  boot.tcc["0.9.27-pass2"] = bashDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    revision = 1;
+    PATH = mkBinPath {
+      boot.bash,
+      boot.byacc,
+      boot.coreutils["5.0-pass1"],
+      boot.sed.pass1,
+      boot.tar["1.12"],
+      boot.bzip2.pass1,
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      tcc,
+      stage0.stage0,
+    };
+    INCDIR = boot.mes.."/include";
+    tcc = tcc;
+
+    tarball = tcc_0_9_27_tarball;
+
+    script = "\z
+      export LIBDIR=${PREFIX}/lib\n\z
+      cp -R ${tcc}/lib $LIBDIR\n\z
+      chmod -R +w $LIBDIR\n\z
+      \z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.bz2\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR}\n\z
+      cp -R "..step.." ${SRCDIR}/${name}\n\z
+      chmod -R +w ${SRCDIR}/${name}\n\z
+      build ${pkg}\n";
   }
 end
 
