@@ -481,4 +481,56 @@ do
   }
 end
 
+-- sed pass1
+boot.sed = {}
+do
+  local pname <const> = "sed"
+  local version <const> = "4.0.9"
+  local step <const> = stepPath(pname, version)
+  local tarball <const> = fetchGNU {
+    path = "sed/sed-"..version..".tar.gz";
+    hash = "sha256:c365874794187f8444e5d22998cd5888ffa47f36def4b77517a808dec27c0600";
+  }
+
+  boot.sed.pass1 = kaemDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    PATH = mkBinPath {
+      boot.tar["1.12"],
+      boot.gzip["1.2.4"],
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      boot.tcc["0.9.27-pass1"],
+      boot.simple_patch,
+      stage0.stage0,
+    };
+
+    tarball = tarball;
+
+    script = "\z
+      PREFIX=${out}\n\z
+      BINDIR=${PREFIX}/bin\n\z
+      PATH=${BINDIR}:${PATH}\n\z
+      \z
+      mkdir ${PREFIX} ${BINDIR}\n\z
+      \z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.gz\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      cd ${SRCDIR}/${name}\n\z
+      mkdir mk\n\z
+      "..mkStepDir(step, {
+      "pass1.kaem",
+      "mk/main.mk",
+    }).."\z
+        exec kaem -f pass1.kaem\n";
+  }
+end
+
 return boot
