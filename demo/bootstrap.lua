@@ -357,8 +357,6 @@ do
       boot.simple_patch,
       stage0.stage0,
     };
-    INCDIR = boot.tcc["0.9.27-pass1"].INCDIR;
-    tcc = boot.tcc["0.9.27-pass1"];
 
     tarball = tarball;
 
@@ -380,6 +378,62 @@ do
       "..mkStepDir(step, {
       "pass1.kaem",
       "mk/main.mk",
+    }).."\z
+        exec kaem -f pass1.kaem\n";
+  }
+end
+
+-- gzip-1.2.4
+boot.gzip = {}
+do
+  local pname <const> = "gzip"
+  local version <const> = "1.2.4"
+  local step <const> = path {
+    name = "live-bootstrap-steps-gzip-1.2.4";
+    path = "live-bootstrap/steps/gzip-1.2.4";
+  }
+  local tarball <const> = fetchGNU {
+    path = "gzip/gzip-"..version..".tar.gz";
+    hash = "sha256:1ca41818a23c9c59ef1d5e1d00c0d5eaa2285d931c0fb059637d7c0cc02ad967";
+  }
+
+  boot.gzip[version] = kaemDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    PATH = mkBinPath {
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      boot.tcc["0.9.27-pass1"],
+      boot.simple_patch,
+      stage0.stage0,
+    };
+
+    tarball = tarball;
+
+    script = "\z
+      PREFIX=${out}\n\z
+      BINDIR=${PREFIX}/bin\n\z
+      PATH=${BINDIR}:${PATH}\n\z
+      \z
+      mkdir ${PREFIX} ${BINDIR}\n\z
+      \z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.gz\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      cd ${SRCDIR}/${name}\n\z
+      mkdir files mk patches\n\z
+      "..mkStepDir(step, {
+      "pass1.kaem",
+      "files/stat_override.c",
+      "mk/main.mk",
+      "patches/makecrc-write-to-file.patch",
+      "patches/removecrc.patch",
     }).."\z
         exec kaem -f pass1.kaem\n";
   }
