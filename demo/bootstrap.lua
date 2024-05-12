@@ -834,7 +834,7 @@ do
   }
 end
 
--- musl-1.1.24
+-- musl-1.1.24 pass1
 boot.musl = {}
 local musl_1_1_24_tarball = fetchurl {
   url = "https://musl.libc.org/releases/musl-1.1.24.tar.gz";
@@ -917,6 +917,47 @@ do
       DISTFILES=${TEMPDIR}/distfiles\n\z
       mkdir ${DISTFILES}\n\z
       cp ${tarball} ${DISTFILES}/${name}.tar.bz2\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR}\n\z
+      cp -R "..step.." ${SRCDIR}/${name}\n\z
+      chmod -R +w ${SRCDIR}/${name}\n\z
+      build ${pkg}\n";
+  }
+end
+
+-- musl-1.1.24 pass2
+do
+  local pname <const> = "musl"
+  local version <const> = "1.1.24"
+  local step <const> = stepPath(pname, version)
+
+  boot.musl[version.."-pass2"] = bashDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    revision = 1;
+    PATH = mkBinPath {
+      boot.tcc["0.9.27-pass3"],
+      boot.bash["2.05b-pass1"],
+      boot.byacc,
+      boot.coreutils["5.0-pass1"],
+      boot.sed.pass1,
+      boot.tar["1.12"],
+      boot.gzip["1.2.4"],
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      stage0.stage0,
+    };
+
+    tarball = musl_1_1_24_tarball;
+
+    script = "\z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.gz\n\z
       \z
       SRCDIR=${TEMPDIR}/src\n\z
       mkdir ${SRCDIR}\n\z
