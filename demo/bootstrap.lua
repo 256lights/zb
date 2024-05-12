@@ -238,7 +238,11 @@ do
     version = version;
 
     pkg = pname.."-"..version;
-    PATH = mkBinPath { stage0.stage0, boot.simple_patch, boot.tcc["0.9.26"] };
+    PATH = mkBinPath {
+      boot.tcc["0.9.26"],
+      boot.simple_patch,
+      stage0.stage0,
+    };
     M2LIBC_PATH = stage0.M2libc;
     MES_PKG = "mes-0.26";
     MES_PREFIX = boot.mes;
@@ -246,6 +250,7 @@ do
     GUILE_LOAD_PATH = guile_load_path;
 
     mes_tarball = mes_tarball;
+    tcc = boot.tcc["0.9.26"];
     tcc_tarball = tcc_0_9_27_tarball;
 
     script = "\z
@@ -276,7 +281,8 @@ do
       "simple-patches/remove-fileopen.after",
       "simple-patches/remove-fileopen.before",
     }).."\z
-        exec kaem -f pass1.kaem\n";
+        kaem -f pass1.kaem\n\z
+        cp ${tcc}/lib/libgetopt.a ${LIBDIR}/libgetopt.a\n";
   }
 end
 
@@ -692,6 +698,69 @@ do
       "pass1.kaem",
       "files/Makefile",
       "patches/meslibc.patch",
+    }).."\z
+        exec kaem -f pass1.kaem\n";
+  }
+end
+
+-- bash pass1
+boot.bash = {}
+local bash_2_05_tarball <const> = fetchurl {
+  url = "https://src.fedoraproject.org/repo/pkgs/bash/bash-2.05b.tar.bz2/f3e5428ed52a4f536f571a945d5de95d/bash-2.05b.tar.bz2";
+  hash = "sha256:1ce4e5b47a6354531389f0adefb54dee2823227bf6e1e59a31c0e9317a330822";
+}
+do
+  local pname <const> = "bash"
+  local version <const> = "2.05b"
+  local step <const> = stepPath(pname, version)
+
+  boot.bash["2.05b-pass1"] = kaemDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    PATH = mkBinPath {
+      boot.byacc,
+      boot.coreutils["5.0-pass1"],
+      boot.sed.pass1,
+      boot.tar["1.12"],
+      boot.bzip2.pass1,
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      boot.tcc["0.9.27-pass1"],
+      stage0.stage0,
+    };
+
+    tarball = bash_2_05_tarball;
+
+    script = "\z
+      PREFIX=${out}\n\z
+      BINDIR=${PREFIX}/bin\n\z
+      PATH=${BINDIR}:${PATH}\n\z
+      \z
+      mkdir ${PREFIX} ${BINDIR}\n\z
+      \z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.bz2\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      cd ${SRCDIR}/${name}\n\z
+      mkdir mk patches\n\z
+      "..mkStepDir(step, {
+      "pass1.kaem",
+      "mk/builtins.mk",
+      "mk/common.mk",
+      "mk/main.mk",
+      "patches/dev-tty.patch",
+      "patches/extern.patch",
+      "patches/locale.patch",
+      "patches/mes-libc.patch",
+      "patches/missing-defines.patch",
+      "patches/size.patch",
+      "patches/tinycc.patch",
     }).."\z
         exec kaem -f pass1.kaem\n";
   }

@@ -23,7 +23,7 @@ cp ../../files/Makefile .
 patch -Np0 -i ../../patches/meslibc.patch
 
 # Build yacc
-make CC=tcc AR=tcc\ -ar CFLAGS=-DMAXPATHLEN=100\ -DEILSEQ=84\ -DMB_LEN_MAX=100 LDFLAGS=-static RANLIB=true
+make CC=tcc AR=tcc\ -ar CFLAGS=-DMAXPATHLEN=100\ -DEILSEQ=84\ -DMB_LEN_MAX=100 LDFLAGS=-lgetopt\ -static RANLIB=true
 
 # Install yacc
 install yacc ${BINDIR}/yacc
