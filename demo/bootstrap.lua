@@ -586,4 +586,67 @@ do
   }
 end
 
+-- coreutils pass1
+boot.coreutils = {}
+local coreutils_5_0_tarball <const> = fetchGNU {
+  path = "coreutils/coreutils-5.0.tar.bz2";
+  hash = "sha256:c25b36b8af6e0ad2a875daf4d6196bd0df28a62be7dd252e5f99a4d5d7288d95";
+}
+do
+  local pname <const> = "coreutils"
+  local version <const> = "5.0"
+  local step <const> = stepPath(pname, version)
+
+  boot.coreutils["5.0-pass1"] = kaemDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    PATH = mkBinPath {
+      boot.bzip2.pass1,
+      boot.sed.pass1,
+      boot.tar["1.12"],
+      boot.gzip["1.2.4"],
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      boot.tcc["0.9.27-pass1"],
+      boot.simple_patch,
+      stage0.stage0,
+    };
+
+    tarball = coreutils_5_0_tarball;
+
+    script = "\z
+      PREFIX=${out}\n\z
+      BINDIR=${PREFIX}/bin\n\z
+      PATH=${BINDIR}:${PATH}\n\z
+      \z
+      mkdir ${PREFIX} ${BINDIR}\n\z
+      \z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.bz2\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      cd ${SRCDIR}/${name}\n\z
+      mkdir mk patches\n\z
+      "..mkStepDir(step, {
+      "pass1.kaem",
+      "mk/main.mk",
+      "patches/expr-strcmp.patch",
+      "patches/ls-strcmp.patch",
+      "patches/mbstate.patch",
+      "patches/modechange.patch",
+      "patches/sort-locale.patch",
+      "patches/tac-uint64.patch",
+      "patches/touch-dereference.patch",
+      "patches/touch-getdate.patch",
+      "patches/uniq-fopen.patch",
+    }).."\z
+        exec kaem -f pass1.kaem\n";
+  }
+end
+
 return boot
