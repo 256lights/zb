@@ -130,10 +130,10 @@ do
     script = "\z
       PREFIX=${out}\n\z
       BINDIR=${PREFIX}/bin\n\z
-      LIBDIR=${PREFIX}/lib/mes\n\z
-      INCDIR=${PREFIX}/include/mes\n\z
+      LIBDIR=${PREFIX}/lib\n\z
+      INCDIR=${PREFIX}/include\n\z
       \z
-      mkdir ${PREFIX} ${BINDIR} ${PREFIX}/lib ${PREFIX}/include ${INCDIR}\n\z
+      mkdir ${PREFIX} ${BINDIR} ${LIBDIR} ${INCDIR}\n\z
       \z
       DISTFILES=${TEMPDIR}/distfiles\n\z
       mkdir ${DISTFILES}\n\z
@@ -161,6 +161,7 @@ local guile_load_path <const> = table.concat({
 }, ":")
 
 -- tcc-0.9.26
+boot.tcc = {}
 do
   local pname = "tcc"
   local version = "0.9.26-1147-gee75a10c"
@@ -173,7 +174,7 @@ do
     path = "live-bootstrap/steps/tcc-0.9.26";
   }
 
-  boot.tcc_0_9_26 = kaemDerivation {
+  boot.tcc["0.9.26"] = kaemDerivation {
     name = pname.."-"..version;
     pname = pname;
     version = version;
@@ -182,6 +183,7 @@ do
     M2LIBC_PATH = stage0.M2libc;
     MES_PKG = "mes-0.26";
     MES_PREFIX = boot.mes;
+    INCDIR = boot.mes.."/include";
     GUILE_LOAD_PATH = guile_load_path;
     -- The 64-bit build will hang indefinitely.
     -- Force 32-bit for this build.
@@ -193,11 +195,10 @@ do
     script = "\z
       PREFIX=${out}\n\z
       BINDIR=${PREFIX}/bin\n\z
-      LIBDIR=${PREFIX}/lib/mes\n\z
-      INCDIR=${MES_PREFIX}/include/mes\n\z
+      LIBDIR=${PREFIX}/lib\n\z
       PATH=${BINDIR}:${PATH}\n\z
       \z
-      mkdir ${PREFIX} ${BINDIR} ${PREFIX}/lib ${LIBDIR}\n\z
+      mkdir ${PREFIX} ${BINDIR} ${LIBDIR}\n\z
       \z
       DISTFILES=${TEMPDIR}/distfiles\n\z
       mkdir ${DISTFILES}\n\z
@@ -213,6 +214,70 @@ do
       "tcc-0.9.26.x86.checksums",
       "simple-patches/addback-fileopen.after",
       "simple-patches/addback-fileopen.before",
+      "simple-patches/remove-fileopen.after",
+      "simple-patches/remove-fileopen.before",
+    }).."\z
+        exec kaem -f pass1.kaem\n";
+  }
+end
+
+-- tcc-0.9.27 (pass1)
+local tcc_0_9_27_tarball = fetchurl {
+  url = "https://download.savannah.gnu.org/releases/tinycc/tcc-0.9.27.tar.bz2";
+  hash = "sha256:de23af78fca90ce32dff2dd45b3432b2334740bb9bb7b05bf60fdbfc396ceb9c";
+}
+do
+  local pname = "tcc"
+  local version = "0.9.27"
+  local step = path {
+    name = "live-bootstrap-steps-tcc-0.9.27";
+    path = "live-bootstrap/steps/tcc-0.9.27";
+  }
+
+  boot.tcc["0.9.27-pass1"] = kaemDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    PATH = mkBinPath { stage0.stage0, boot.simple_patch, boot.tcc["0.9.26"] };
+    M2LIBC_PATH = stage0.M2libc;
+    MES_PKG = "mes-0.26";
+    MES_PREFIX = boot.mes;
+    INCDIR = boot.mes.."/include";
+    GUILE_LOAD_PATH = guile_load_path;
+    -- The 64-bit build will hang indefinitely.
+    -- Force 32-bit for this build.
+    ARCH = "x86";
+
+    mes_tarball = mes_tarball;
+    tcc_tarball = tcc_0_9_27_tarball;
+
+    script = "\z
+      PREFIX=${out}\n\z
+      BINDIR=${PREFIX}/bin\n\z
+      LIBDIR=${PREFIX}/lib\n\z
+      PATH=${BINDIR}:${PATH}\n\z
+      \z
+      mkdir ${PREFIX} ${BINDIR} ${LIBDIR} ${LIBDIR}/tcc\n\z
+      \z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tcc_tarball} ${DISTFILES}/tcc-0.9.27.tar.bz2\n\z
+      cp ${mes_tarball} ${DISTFILES}/${MES_PKG}.tar.gz\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR} ${SRCDIR}/tcc-0.9.26\n\z
+      cd ${SRCDIR}/tcc-0.9.26\n\z
+      mkdir simple-patches\n\z
+      "..mkStepDir(step, {
+      "pass1.kaem",
+      "simple-patches/addback-fileopen.after",
+      "simple-patches/addback-fileopen.before",
+      "simple-patches/fiwix-paddr.after",
+      "simple-patches/fiwix-paddr.before",
+      "simple-patches/check-reloc-null.after",
+      "simple-patches/check-reloc-null.before",
       "simple-patches/remove-fileopen.after",
       "simple-patches/remove-fileopen.before",
     }).."\z
