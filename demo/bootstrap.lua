@@ -83,8 +83,6 @@ do
     name = pname.."-"..version;
     pname = pname;
     version = version;
-    outputHash = "sha256-iGYOqJtieglsgjox7M66SdAc4Fx6DzbasSH/VBIaQk4=";
-    outputHashMode = "recursive";
 
     PATH = stage0.stage0.."/bin";
     M2LIBC_PATH = stage0.M2libc;
@@ -124,6 +122,7 @@ do
     M2LIBC_PATH = stage0.M2libc;
     NYACC_PKG = "nyacc-1.00.2";
     MES_PKG = "mes-0.26";
+    ARCH = "x86"; -- 64-bit doesn't build correctly.
 
     mes_tarball = mes_tarball;
     nyacc_tarball = nyacc_tarball;
@@ -166,7 +165,7 @@ do
   local pname = "tcc"
   local version = "0.9.26-1147-gee75a10c"
   local tcc_tarball = fetchurl {
-    url = "https://lilypond.org/janneke/tcc/tcc-0.9.26-1147-gee75a10c.tar.gz";
+    url = "https://lilypond.org/janneke/tcc/tcc-"..version..".tar.gz";
     hash = "sha256:6b8cbd0a5fed0636d4f0f763a603247bc1935e206e1cc5bda6a2818bab6e819f";
   }
   local step = path {
@@ -184,6 +183,9 @@ do
     MES_PKG = "mes-0.26";
     MES_PREFIX = boot.mes;
     GUILE_LOAD_PATH = guile_load_path;
+    -- The 64-bit build will hang indefinitely.
+    -- Force 32-bit for this build.
+    ARCH = "x86";
 
     mes_tarball = mes_tarball;
     tcc_tarball = tcc_tarball;
@@ -195,7 +197,7 @@ do
       INCDIR=${MES_PREFIX}/include/mes\n\z
       PATH=${BINDIR}:${PATH}\n\z
       \z
-      mkdir ${PREFIX} ${BINDIR} ${PREFIX}/lib ${LIBDIR} ${PREFIX}/include\n\z
+      mkdir ${PREFIX} ${BINDIR} ${PREFIX}/lib ${LIBDIR}\n\z
       \z
       DISTFILES=${TEMPDIR}/distfiles\n\z
       mkdir ${DISTFILES}\n\z

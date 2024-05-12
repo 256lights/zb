@@ -586,7 +586,7 @@ stage0.stage0 = kaem {
   name = "stage0";
 
   OPERATING_SYSTEM = "Linux";
-  ARCH = "x86";
+  ARCH = "x86"; -- stage0-posix unconditionally sets this.
   PATH = bindir.."/bin";
   M2LIBC_PATH = stage0.M2libc;
   EXE_SUFFIX = "";
