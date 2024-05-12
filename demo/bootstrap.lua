@@ -757,8 +757,9 @@ local function bashDerivation(args)
 
     OPERATING_SYSTEM = "Linux";
     ARCH = "amd64";
+    MAKEJOBS = "-j1";
 
-    builder = boot.bash["2.05b-pass1"].."/bin/bash",
+    builder = boot.bash["2.05b-pass1"].."/bin/bash";
   }
   for k, v in pairs(args) do
     if k ~= "script" then
@@ -768,12 +769,13 @@ local function bashDerivation(args)
   local scriptChunks = {
     "\z
       #!/usr/bin/env bash\n\z
-      set -e\n\z
+      set -ex\n\z
       export PREFIX=${out}\n\z
       export DESTDIR=''\n\z
       export BINDIR=${PREFIX}/bin\n\z
+      export LIBDIR=${PREFIX}/lib\n\z
       PATH=${BINDIR}:${PATH}\n\z
-      mkdir ${PREFIX} ${BINDIR}\n",
+      mkdir ${PREFIX}\n",
     ". ",
     path "live-bootstrap/steps/helpers.sh",
     "\n",
@@ -781,6 +783,7 @@ local function bashDerivation(args)
   }
   local script = table.concat(scriptChunks)
   actualArgs.args = { toFile(args.name.."-builder.sh", script) }
+  actualArgs.SHELL = actualArgs.builder
   return derivation(actualArgs)
 end
 
@@ -799,7 +802,7 @@ do
     pkg = pname.."-"..version;
     revision = 1;
     PATH = mkBinPath {
-      boot.bash,
+      boot.bash["2.05b-pass1"],
       boot.byacc,
       boot.coreutils["5.0-pass1"],
       boot.sed.pass1,
@@ -816,13 +819,58 @@ do
     tarball = tcc_0_9_27_tarball;
 
     script = "\z
-      export LIBDIR=${PREFIX}/lib\n\z
       cp -R ${tcc}/lib $LIBDIR\n\z
       chmod -R +w $LIBDIR\n\z
       \z
       DISTFILES=${TEMPDIR}/distfiles\n\z
       mkdir ${DISTFILES}\n\z
       cp ${tarball} ${DISTFILES}/${name}.tar.bz2\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR}\n\z
+      cp -R "..step.." ${SRCDIR}/${name}\n\z
+      chmod -R +w ${SRCDIR}/${name}\n\z
+      build ${pkg}\n";
+  }
+end
+
+-- musl-1.1.24
+boot.musl = {}
+local musl_1_1_24_tarball = fetchurl {
+  url = "https://musl.libc.org/releases/musl-1.1.24.tar.gz";
+  hash = "sha256:1370c9a812b2cf2a7d92802510cca0058cc37e66a7bedd70051f0a34015022a3";
+}
+do
+  local pname <const> = "musl"
+  local version <const> = "1.1.24"
+  local step <const> = stepPath(pname, version)
+
+  boot.musl[version.."-pass1"] = bashDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    revision = 0;
+    PATH = mkBinPath {
+      boot.tcc["0.9.27-pass2"],
+      boot.bash["2.05b-pass1"],
+      boot.byacc,
+      boot.coreutils["5.0-pass1"],
+      boot.sed.pass1,
+      boot.tar["1.12"],
+      boot.gzip["1.2.4"],
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      stage0.stage0,
+    };
+
+    tarball = musl_1_1_24_tarball;
+
+    script = "\z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.gz\n\z
       \z
       SRCDIR=${TEMPDIR}/src\n\z
       mkdir ${SRCDIR}\n\z
