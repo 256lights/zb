@@ -102,13 +102,13 @@ local mes_tarball = fetchGNU {
   hash = "sha256:0f2210ad5896249466a0fc9a509e86c9a16db2b722741c6dfb5e8f7b33e385d4";
 }
 do
-  local pname = "mes"
-  local version = mes_version
-  local nyacc_tarball = fetchurl {
+  local pname <const> = "mes"
+  local version <const> = mes_version
+  local nyacc_tarball <const> = fetchurl {
     url = "https://archive.org/download/live-bootstrap-sources/nyacc-1.00.2-lb1.tar.gz";
     hash = "sha256:708c943f89c972910e9544ee077771acbd0a2c0fc6d33496fe158264ddb65327";
   }
-  local step = path {
+  local step <const> = path {
     name = "live-bootstrap-steps-mes-0.26";
     path = "live-bootstrap/steps/mes-0.26";
   }
@@ -163,13 +163,13 @@ local guile_load_path <const> = table.concat({
 -- tcc-0.9.26
 boot.tcc = {}
 do
-  local pname = "tcc"
-  local version = "0.9.26-1147-gee75a10c"
-  local tcc_tarball = fetchurl {
+  local pname <const> = "tcc"
+  local version <const> = "0.9.26-1147-gee75a10c"
+  local tcc_tarball <const> = fetchurl {
     url = "https://lilypond.org/janneke/tcc/tcc-"..version..".tar.gz";
     hash = "sha256:6b8cbd0a5fed0636d4f0f763a603247bc1935e206e1cc5bda6a2818bab6e819f";
   }
-  local step = path {
+  local step <const> = path {
     name = "live-bootstrap-steps-tcc-0.9.26";
     path = "live-bootstrap/steps/tcc-0.9.26";
   }
@@ -227,9 +227,9 @@ local tcc_0_9_27_tarball = fetchurl {
   hash = "sha256:de23af78fca90ce32dff2dd45b3432b2334740bb9bb7b05bf60fdbfc396ceb9c";
 }
 do
-  local pname = "tcc"
-  local version = "0.9.27"
-  local step = path {
+  local pname <const> = "tcc"
+  local version <const> = "0.9.27"
+  local step <const> = path {
     name = "live-bootstrap-steps-tcc-0.9.27";
     path = "live-bootstrap/steps/tcc-0.9.27";
   }
@@ -282,21 +282,21 @@ do
   }
 end
 
--- make-3.82
+-- make-3.82 pass1
 boot.make = {}
 do
-  local pname = "make"
-  local version = "3.82"
-  local step = path {
+  local pname <const> = "make"
+  local version <const> = "3.82"
+  local step <const> = path {
     name = "live-bootstrap-steps-make-3.82";
     path = "live-bootstrap/steps/make-3.82";
   }
-  local tarball = fetchGNU {
+  local tarball <const> = fetchGNU {
     path = "make/make-"..version..".tar.bz2";
     hash = "sha256:e2c1a73f179c40c71e2fe8abf8a8a0688b8499538512984da4a76958d0402966";
   }
 
-  boot.make["3.82-pass1"] = kaemDerivation {
+  boot.make[version.."-pass1"] = kaemDerivation {
     name = pname.."-"..version;
     pname = pname;
     version = version;
@@ -326,6 +326,60 @@ do
       "..mkStepDir(step, {
       "pass1.kaem",
       "files/putenv_stub.c",
+    }).."\z
+        exec kaem -f pass1.kaem\n";
+  }
+end
+
+-- patch-2.5.9
+boot.patch = {}
+do
+  local pname <const> = "patch"
+  local version <const> = "2.5.9"
+  local step <const> = path {
+    name = "live-bootstrap-steps-patch-2.5.9";
+    path = "live-bootstrap/steps/patch-2.5.9";
+  }
+  local tarball <const> = fetchGNU {
+    path = "patch/patch-"..version..".tar.gz";
+    hash = "sha256:ecb5c6469d732bcf01d6ec1afe9e64f1668caba5bfdb103c28d7f537ba3cdb8a";
+  }
+
+  boot.patch[version] = kaemDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    PATH = mkBinPath {
+      boot.make["3.82-pass1"],
+      boot.tcc["0.9.27-pass1"],
+      boot.simple_patch,
+      stage0.stage0,
+    };
+    INCDIR = boot.tcc["0.9.27-pass1"].INCDIR;
+    tcc = boot.tcc["0.9.27-pass1"];
+
+    tarball = tarball;
+
+    script = "\z
+      PREFIX=${out}\n\z
+      BINDIR=${PREFIX}/bin\n\z
+      PATH=${BINDIR}:${PATH}\n\z
+      \z
+      mkdir ${PREFIX} ${BINDIR}\n\z
+      \z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.gz\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
+      cd ${SRCDIR}/${name}\n\z
+      mkdir mk\n\z
+      "..mkStepDir(step, {
+      "pass1.kaem",
+      "mk/main.mk",
     }).."\z
         exec kaem -f pass1.kaem\n";
   }
