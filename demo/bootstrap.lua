@@ -61,12 +61,16 @@ local function kaemDerivation(args)
 end
 
 ---@param pname string
----@param version string
+---@param version string?
 ---@return string
 local function stepPath(pname, version)
+  local name = pname
+  if version then
+    name = name.."-"..version
+  end
   return path {
-    name = "live-bootstrap-steps-"..pname.."-"..version;
-    path = "live-bootstrap/steps/"..pname.."-"..version;
+    name = "live-bootstrap-steps-"..name;
+    path = "live-bootstrap/steps/"..name;
   }
 end
 
@@ -829,7 +833,7 @@ local function bashStep(args)
       SRCDIR=${TEMPDIR}/src\n\z
       mkdir ${SRCDIR}\n\z
       cp -R "
-  scriptChunks[#scriptChunks + 1] = stepPath(pname, version)
+  scriptChunks[#scriptChunks + 1] = stepPath(actualArgs.pkg)
   scriptChunks[#scriptChunks + 1] = " ${SRCDIR}/${pkg}\n\z
       chmod -R +w ${SRCDIR}/${pkg}\n\z
       build ${pkg}\n"
@@ -1305,14 +1309,89 @@ boot.gawk["3.0.4"] = bashStep {
     stage0.stage0,
   };
 
-  setup = "set -x";
-
   tarballs = {
     fetchGNU {
       path = "gawk/gawk-3.0.4.tar.gz";
       hash = "sha256:5cc35def1ff4375a8b9a98c2ff79e95e80987d24f0d42fdbb7b7039b3ddb3fb0";
-    }
-  }
+    },
+  };
 }
+
+boot.perl = {}
+do
+  local perlSources <const> = {
+    {
+      version = "5.000";
+      url = "https://github.com/Perl/perl5/archive/perl-5.000.tar.gz";
+      hash = "sha256:1ae43c8d2983404b9eec61c96e3ffa27e7b07e08215c95c015a4ab0095373ef3";
+    },
+    {
+      version = "5.003";
+      url = "https://github.com/Perl/perl5/archive/perl-5.003.tar.gz";
+      hash = "sha256:9fa29beb2fc4a3c373829fc051830796de301f32a719d0b52a400d1719bbd7b1";
+    },
+    {
+      version = "5.004-05";
+      url = "https://www.cpan.org/src/5.0/perl5.004_05.tar.gz";
+      hash = "sha256:1184478b298978b164a383ed5661e3a117c48ab97d6d0ab7ef614cdbe918b9eb";
+      pkg = "perl5.004-05";
+    },
+    {
+      version = "5.005-03";
+      url = "https://www.cpan.org/src/5.0/perl5.005_03.tar.gz";
+      hash = "sha256:93f41cd87ab8ee83391cfa39a63b076adeb7c3501d2efa31b98d0ef037122bd1";
+      pkg = "perl5.005-03";
+    },
+    {
+      version = "5.6.2";
+      url = "https://www.cpan.org/src/5.0/perl-5.6.2.tar.gz";
+      hash = "sha256:a5e66f6ebf701b0567f569f57cae82abf5ce57af70a2b45ae71323b61f49134e";
+    },
+  }
+
+  local perls <const> = {}
+  for i, src in ipairs(perlSources) do
+    local pathDrvs <const> = {
+      boot.gawk["3.0.4"],
+      boot.diffutils["2.7"],
+      boot.grep["2.4"],
+      boot.bison["3.4.1"],
+      boot.flex["2.6.4"],
+      boot.m4["1.4.7"],
+      boot.tcc["0.9.27-pass4"],
+      boot.bash["2.05b-pass1"],
+      boot.coreutils["6.10"],
+      boot.coreutils["5.0-pass2"],
+      boot.sed["4.0.9-pass1"],
+      boot.tar["1.12"],
+      boot.gzip["1.2.4"],
+      boot.bzip2.pass2,
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      stage0.stage0,
+    }
+    if i > 1 then
+      table.insert(pathDrvs, 1, perls[#perls])
+    end
+    perls[i] = bashStep {
+      pname = "perl";
+      version = src.version;
+      pkg = src.pkg;
+
+      PATH = mkBinPath(pathDrvs);
+
+      musl = boot.musl["1.1.24-pass2"];
+
+      tarballs = {
+        fetchurl {
+          url = src.url;
+          hash = src.hash;
+        },
+      };
+    }
+  end
+  local lastPerl <const> = perls[#perls]
+  boot.perl[lastPerl.version] = lastPerl
+end
 
 return boot
