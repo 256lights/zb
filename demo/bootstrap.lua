@@ -983,4 +983,146 @@ boot.bzip2.pass2 = bashStep {
   tarball = bzip2_tarball;
 }
 
+boot.m4 = {}
+boot.m4["1.4.7"] = bashStep {
+  pname = "m4";
+  version = "1.4.7";
+
+  PATH = mkBinPath {
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["5.0-pass1"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  tarball = fetchGNU {
+    path = "m4/m4-1.4.7.tar.bz2";
+    hash = "sha256:a88f3ddaa7c89cf4c34284385be41ca85e9135369c333fdfa232f3bf48223213";
+  };
+}
+
+local heirloom_devtools = bashStep {
+  pname = "heirloom-devtools";
+  version = "070527";
+
+  PATH = mkBinPath {
+    boot.m4["1.4.7"],
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.byacc,
+    boot.coreutils["5.0-pass1"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  tarball = fetchurl {
+    url = "http://downloads.sourceforge.net/project/heirloom/heirloom-devtools/070527/heirloom-devtools-070527.tar.bz2";
+    hash = "sha256:9f233d8b78e4351fe9dd2d50d83958a0e5af36f54e9818521458a08e058691ba";
+  };
+}
+
+boot.flex = {}
+boot.flex["2.5.11"] = bashStep {
+  pname = "flex";
+  version = "2.5.11";
+
+  PATH = mkBinPath {
+    heirloom_devtools,
+    boot.byacc,
+    boot.m4["1.4.7"],
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["5.0-pass1"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  LIBRARY_PATH = heirloom_devtools.."/lib";
+
+  tarball = fetchurl {
+    url = "http://download.nust.na/pub2/openpkg1/sources/DST/flex/flex-2.5.11.tar.gz";
+    hash = "sha256:bc79b890f35ca38d66ff89a6e3758226131e51ccbd10ef78d5ff150b7bd73689";
+  };
+}
+boot.flex["2.6.4"] = bashStep {
+  pname = "flex";
+  version = "2.6.4";
+
+  PATH = mkBinPath {
+    boot.flex["2.5.11"],
+    boot.byacc,
+    boot.m4["1.4.7"],
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["5.0-pass1"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  LIBRARY_PATH = heirloom_devtools.."/lib";
+
+  tarball = fetchurl {
+    url = "https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz";
+    hash = "sha256:e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995";
+  };
+}
+
+boot.bison = {}
+do
+  local yacc = boot.byacc
+  local tarball <const> = fetchGNU {
+    path = "bison/bison-3.4.1.tar.xz";
+    hash = "sha256:27159ac5ebf736dffd5636fd2cd625767c9e437de65baa63cb0de83570bd820d";
+  }
+  for i = 1, 3 do
+    yacc = bashStep {
+      pname = "bison";
+      version = "3.4.1";
+      revision = i - 1;
+
+      m4 = boot.m4["1.4.7"];
+
+      PATH = mkBinPath {
+        yacc,
+        boot.flex["2.6.4"],
+        boot.m4["1.4.7"],
+        boot.tcc["0.9.27-pass4"],
+        boot.bash["2.05b-pass1"],
+        boot.coreutils["5.0-pass1"],
+        boot.sed["4.0.9-pass1"],
+        boot.tar["1.12"],
+        boot.gzip["1.2.4"],
+        boot.bzip2.pass2,
+        boot.patch["2.5.9"],
+        boot.make["3.82-pass1"],
+        stage0.stage0,
+      };
+
+      tarball = tarball;
+    }
+  end
+  boot.bison["3.4.1"] = yacc
+end
+
 return boot

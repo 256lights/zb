@@ -7,6 +7,10 @@ src_prepare() {
 
     mv lib/textstyle.in.h lib/textstyle.h
 
+    # Update configuration for Nix.
+    sed -i -e "/M4/s:/usr/:${m4:?}/:" config.h
+    sed -i -e "/PKGDATADIR/s:/usr/:${PREFIX:?}/:" configmake.h
+
     # Remove pre-generated flex/bison files
     rm src/parse-gram.c src/parse-gram.h
     rm src/scan-code.c
