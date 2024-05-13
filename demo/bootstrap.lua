@@ -1250,6 +1250,7 @@ boot.coreutils["5.0-pass2"] = bashStep {
 
   tarballs = { coreutils_5_0_tarball };
 }
+-- This coreutils only builds date, mktemp, and sha256sum.
 boot.coreutils["6.10"] = bashStep {
   pname = "coreutils";
   version = "6.10";
@@ -1278,6 +1279,40 @@ boot.coreutils["6.10"] = bashStep {
       hash = "sha256:8b05bba1b2726a164e444c314e3f359604b58216be704bed8f2e028449cc6204";
     },
   };
+}
+
+boot.gawk = {}
+boot.gawk["3.0.4"] = bashStep {
+  pname = "gawk";
+  version = "3.0.4";
+
+  PATH = mkBinPath {
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["6.10"],
+    boot.coreutils["5.0-pass2"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  setup = "set -x";
+
+  tarballs = {
+    fetchGNU {
+      path = "gawk/gawk-3.0.4.tar.gz";
+      hash = "sha256:5cc35def1ff4375a8b9a98c2ff79e95e80987d24f0d42fdbb7b7039b3ddb3fb0";
+    }
+  }
 }
 
 return boot
