@@ -810,7 +810,7 @@ local function bashStep(args)
     scriptChunks[#scriptChunks + 1] = i
     scriptChunks[#scriptChunks + 1] = " $tarballs)\" ${DISTFILES}/"
     ---@diagnostic disable-next-line: param-type-mismatch
-    scriptChunks[#scriptChunks + 1] = baseNameOf(t.url)
+    scriptChunks[#scriptChunks + 1] = baseNameOf(t.name)
     scriptChunks[#scriptChunks + 1] = "\n"
   end
   scriptChunks[#scriptChunks + 1] = "\z
@@ -1154,5 +1154,34 @@ do
   end
   boot.bison["3.4.1"] = yacc
 end
+
+boot.grep = {}
+boot.grep["2.4"] = bashStep {
+  pname = "grep";
+  version = "2.4";
+
+  PATH = mkBinPath {
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["5.0-pass1"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  tarballs = {
+    fetchGNU {
+      path = "grep/grep-2.4.tar.gz";
+      hash = "sha256:a32032bab36208509466654df12f507600dfe0313feebbcd218c32a70bf72a16";
+    },
+  };
+}
 
 return boot
