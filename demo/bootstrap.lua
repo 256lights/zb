@@ -1184,4 +1184,34 @@ boot.grep["2.4"] = bashStep {
   };
 }
 
+boot.diffutils = {}
+boot.diffutils["2.7"] = bashStep {
+  pname = "diffutils";
+  version = "2.7";
+
+  PATH = mkBinPath {
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["5.0-pass1"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  tarballs = {
+    fetchGNU {
+      path = "diffutils/diffutils-2.7.tar.gz";
+      hash = "sha256:d5f2489c4056a31528e3ada4adacc23d498532b0af1a980f2f76158162b139d6";
+    },
+  };
+}
+
 return boot
