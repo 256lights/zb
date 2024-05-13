@@ -7,12 +7,23 @@ local gnuMirrors <const> = {
   "https://ftp.gnu.org/gnu/",
 }
 
+local badGNUURLs <const> = {
+  -- Nix's fetchurl seems to un-lzma the tarball on this URL.
+  -- Unclear why.
+  "https://mirrors.kernel.org/gnu/coreutils/coreutils-6.10.tar.lzma",
+}
+
 ---@param args {path: string, hash: string}
 local function fetchGNU(args)
-  return fetchurl({
-    url = gnuMirrors[1]..args.path;
-    hash = args.hash;
-  })
+  for _, mirror in ipairs(gnuMirrors) do
+    local url = mirror..args.path
+    if not table.elem(url, badGNUURLs) then
+      return fetchurl({
+        url = url;
+        hash = args.hash;
+      })
+    end
+  end
 end
 
 ---Construct a binary search path (such as `$PATH`)
@@ -1238,6 +1249,35 @@ boot.coreutils["5.0-pass2"] = bashStep {
   };
 
   tarballs = { coreutils_5_0_tarball };
+}
+boot.coreutils["6.10"] = bashStep {
+  pname = "coreutils";
+  version = "6.10";
+
+  PATH = mkBinPath {
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["5.0-pass1"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  tarballs = {
+    fetchGNU {
+      path = "coreutils/coreutils-6.10.tar.lzma";
+      hash = "sha256:8b05bba1b2726a164e444c314e3f359604b58216be704bed8f2e028449cc6204";
+    },
+  };
 }
 
 return boot
