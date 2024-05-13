@@ -538,21 +538,21 @@ end
 
 -- bzip2 pass1
 boot.bzip2 = {}
+local bzip2_version <const> = "1.0.8"
+local bzip2_tarball <const> = fetchurl {
+  url = "https://mirrors.kernel.org/slackware/slackware-14.0/patches/source/bzip2/bzip2-"..bzip2_version..".tar.xz";
+  hash = "sha256:47fd74b2ff83effad0ddf62074e6fad1f6b4a77a96e121ab421c20a216371a1f";
+}
 do
   local pname <const> = "bzip2"
-  local version <const> = "1.0.8"
-  local step <const> = stepPath(pname, version)
-  local tarball <const> = fetchurl {
-    url = "https://mirrors.kernel.org/slackware/slackware-14.0/patches/source/bzip2/bzip2-"..version..".tar.xz";
-    hash = "sha256:47fd74b2ff83effad0ddf62074e6fad1f6b4a77a96e121ab421c20a216371a1f";
-  }
+  local step <const> = stepPath(pname, bzip2_version)
 
   boot.bzip2.pass1 = kaemDerivation {
-    name = pname.."-"..version;
+    name = pname.."-"..bzip2_version;
     pname = pname;
-    version = version;
+    version = bzip2_version;
 
-    pkg = pname.."-"..version;
+    pkg = pname.."-"..bzip2_version;
     PATH = mkBinPath {
       boot.tar["1.12"],
       boot.gzip["1.2.4"],
@@ -562,7 +562,7 @@ do
       stage0.stage0,
     };
 
-    tarball = tarball;
+    tarball = bzip2_tarball;
 
     script = "\z
       PREFIX=${out}\n\z
@@ -1045,6 +1045,45 @@ do
       DISTFILES=${TEMPDIR}/distfiles\n\z
       mkdir ${DISTFILES}\n\z
       cp ${tarball} ${DISTFILES}/${name}.tar.gz\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR}\n\z
+      cp -R "..step.." ${SRCDIR}/${name}\n\z
+      chmod -R +w ${SRCDIR}/${name}\n\z
+      build ${pkg}\n";
+  }
+end
+
+-- bzip2 pass2
+do
+  local pname <const> = "bzip2"
+  local step <const> = stepPath(pname, bzip2_version)
+
+  boot.bzip2.pass2 = bashDerivation {
+    name = pname.."-"..bzip2_version;
+    pname = pname;
+    version = bzip2_version;
+
+    pkg = pname.."-"..bzip2_version;
+    revision = 1;
+    PATH = mkBinPath {
+      boot.tcc["0.9.27-pass4"],
+      boot.bash["2.05b-pass1"],
+      boot.coreutils["5.0-pass1"],
+      boot.sed["4.0.9-pass1"],
+      boot.tar["1.12"],
+      boot.gzip["1.2.4"],
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      stage0.stage0,
+    };
+
+    tarball = bzip2_tarball;
+
+    script = "\z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.xz\n\z
       \z
       SRCDIR=${TEMPDIR}/src\n\z
       mkdir ${SRCDIR}\n\z
