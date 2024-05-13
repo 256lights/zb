@@ -48,3 +48,9 @@ function table.map(f, list) end
 ---@param xs T[]
 ---@return boolean
 function table.elem(x, xs) end
+
+---Concatenate lists into a single list.
+---@generic T
+---@param ... T[]
+---@return T[]
+function table.concatLists(...) end

@@ -44,3 +44,15 @@ function table.elem(x, xs)
   end
   return false
 end
+
+---@generic T
+---@param ... T[]
+---@return T[]
+function table.concatLists(...)
+  local result = {}
+  for i = 1, select("#", ...) do
+    local t = select(i, ...)
+    table.move(t, 1, #t, #result + 1, result)
+  end
+  return result
+end
