@@ -27,6 +27,10 @@
 			"string": "disable",
 			"table": "enable",
 			"utf8": "disable",
-		}
+		},
+		"Lua.workspace.ignoreDir": [
+			".vscode",
+			"/prelude.lua",
+		]
 	}
 }

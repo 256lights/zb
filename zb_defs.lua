@@ -34,3 +34,10 @@ function baseNameOf(path) end
 ---@param args {url: string, hash: string, name: string?, executable: boolean?}
 ---@return derivation
 function fetchurl(args) end
+
+---Apply the function f to each element in list.
+---@generic T, U
+---@param f fun(T): U
+---@param list T[]
+---@return U[]
+function table.map(f, list) end

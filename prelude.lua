@@ -21,3 +21,15 @@ function fetchurl(args)
     impureEnvVars = { "http_proxy", "https_proxy", "ftp_proxy", "all_proxy", "no_proxy" };
   }
 end
+
+---@generic T, U
+---@param f fun(T): U
+---@param list T[]
+---@return U[]
+function table.map(f, list)
+  local result = {}
+  for i, x in ipairs(list) do
+    result[i] = f(x)
+  end
+  return result
+end
