@@ -8,7 +8,7 @@ stage0.hex0 = path "bootstrap-seeds/POSIX/AMD64/hex0-seed"
 ---@param args {name: string, command: string, [string]: string|number|boolean|(string|number|boolean)[]}
 local function shDerivation(args)
   ---@type table<string, any>
-  local drvArgs = { system = system; }
+  local drvArgs = { system = system }
   for k, v in pairs(args) do
     drvArgs[k] = v
   end
@@ -342,7 +342,7 @@ stage0.kaem = cprogram {
 ---@param args {name: string, script: string, [string]: boolean|number|string|derivation|(boolean|number|string|derivation)[]}
 local function kaem(args)
   ---@type table<string, any>
-  local drvArgs = { system = system; }
+  local drvArgs = { system = system }
   for k, v in pairs(args) do
     if k ~= "script" then
       drvArgs[k] = v

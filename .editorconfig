@@ -4,3 +4,4 @@ indent_size = 2
 space_around_concat_operator = false
 table_separator_style = only_kv_colon
 end_statement_with_semicolon = same_line
+trailing_table_separator = smart
