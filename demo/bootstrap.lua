@@ -487,16 +487,16 @@ end
 
 -- sed pass1
 boot.sed = {}
+local sed_4_0_9_tarball <const> = fetchGNU {
+  path = "sed/sed-4.0.9.tar.gz";
+  hash = "sha256:c365874794187f8444e5d22998cd5888ffa47f36def4b77517a808dec27c0600";
+}
 do
   local pname <const> = "sed"
   local version <const> = "4.0.9"
   local step <const> = stepPath(pname, version)
-  local tarball <const> = fetchGNU {
-    path = "sed/sed-"..version..".tar.gz";
-    hash = "sha256:c365874794187f8444e5d22998cd5888ffa47f36def4b77517a808dec27c0600";
-  }
 
-  boot.sed.pass1 = kaemDerivation {
+  boot.sed[version.."-pass1"] = kaemDerivation {
     name = pname.."-"..version;
     pname = pname;
     version = version;
@@ -511,7 +511,7 @@ do
       stage0.stage0,
     };
 
-    tarball = tarball;
+    tarball = sed_4_0_9_tarball;
 
     script = "\z
       PREFIX=${out}\n\z
@@ -607,7 +607,7 @@ do
     pkg = pname.."-"..version;
     PATH = mkBinPath {
       boot.bzip2.pass1,
-      boot.sed.pass1,
+      boot.sed["4.0.9-pass1"],
       boot.tar["1.12"],
       boot.gzip["1.2.4"],
       boot.patch["2.5.9"],
@@ -668,7 +668,7 @@ do
     pkg = pname.."-"..version;
     PATH = mkBinPath {
       boot.coreutils["5.0-pass1"],
-      boot.sed.pass1,
+      boot.sed["4.0.9-pass1"],
       boot.tar["1.12"],
       boot.gzip["1.2.4"],
       boot.patch["2.5.9"],
@@ -719,7 +719,7 @@ do
     PATH = mkBinPath {
       boot.byacc,
       boot.coreutils["5.0-pass1"],
-      boot.sed.pass1,
+      boot.sed["4.0.9-pass1"],
       boot.tar["1.12"],
       boot.bzip2.pass1,
       boot.patch["2.5.9"],
@@ -805,7 +805,7 @@ do
       boot.bash["2.05b-pass1"],
       boot.byacc,
       boot.coreutils["5.0-pass1"],
-      boot.sed.pass1,
+      boot.sed["4.0.9-pass1"],
       boot.tar["1.12"],
       boot.bzip2.pass1,
       boot.patch["2.5.9"],
@@ -857,7 +857,7 @@ do
       boot.bash["2.05b-pass1"],
       boot.byacc,
       boot.coreutils["5.0-pass1"],
-      boot.sed.pass1,
+      boot.sed["4.0.9-pass1"],
       boot.tar["1.12"],
       boot.gzip["1.2.4"],
       boot.patch["2.5.9"],
@@ -899,7 +899,7 @@ do
       boot.bash["2.05b-pass1"],
       boot.byacc,
       boot.coreutils["5.0-pass1"],
-      boot.sed.pass1,
+      boot.sed["4.0.9-pass1"],
       boot.tar["1.12"],
       boot.bzip2.pass1,
       boot.patch["2.5.9"],
@@ -944,7 +944,7 @@ do
       boot.bash["2.05b-pass1"],
       boot.byacc,
       boot.coreutils["5.0-pass1"],
-      boot.sed.pass1,
+      boot.sed["4.0.9-pass1"],
       boot.tar["1.12"],
       boot.gzip["1.2.4"],
       boot.patch["2.5.9"],
@@ -986,7 +986,7 @@ do
       boot.bash["2.05b-pass1"],
       boot.byacc,
       boot.coreutils["5.0-pass1"],
-      boot.sed.pass1,
+      boot.sed["4.0.9-pass1"],
       boot.tar["1.12"],
       boot.bzip2.pass1,
       boot.patch["2.5.9"],
@@ -1004,6 +1004,47 @@ do
       DISTFILES=${TEMPDIR}/distfiles\n\z
       mkdir ${DISTFILES}\n\z
       cp ${tarball} ${DISTFILES}/${name}.tar.bz2\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR}\n\z
+      cp -R "..step.." ${SRCDIR}/${name}\n\z
+      chmod -R +w ${SRCDIR}/${name}\n\z
+      build ${pkg}\n";
+  }
+end
+
+-- sed pass2
+do
+  local pname <const> = "sed"
+  local version <const> = "4.0.9"
+  local step <const> = stepPath(pname, version)
+
+  boot.sed[version.."-pass2"] = bashDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    revision = 1;
+    PATH = mkBinPath {
+      boot.tcc["0.9.27-pass4"],
+      boot.bash["2.05b-pass1"],
+      boot.byacc,
+      boot.coreutils["5.0-pass1"],
+      boot.sed["4.0.9-pass1"],
+      boot.tar["1.12"],
+      boot.gzip["1.2.4"],
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      stage0.stage0,
+    };
+
+    tarball = sed_4_0_9_tarball;
+
+    script = "\z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.gz\n\z
       \z
       SRCDIR=${TEMPDIR}/src\n\z
       mkdir ${SRCDIR}\n\z
