@@ -750,7 +750,14 @@ do
   }
 end
 
----@param args table
+---@class bashStepArgs
+---@field pname string
+---@field version string
+---@field setup string?
+---@field tarballs derivation[]
+---@field [string] any
+
+---@param args bashStepArgs
 local function bashStep(args)
   local pname <const> = args.pname
   local version <const> = args.version
@@ -772,6 +779,9 @@ local function bashStep(args)
       actualArgs[k] = v
     end
   end
+  actualArgs.SHELL = actualArgs.builder
+
+  ---@type (string|number|derivation)[]
   local scriptChunks <const> = {
     "\z
       #!/usr/bin/env bash\n\z
@@ -789,20 +799,32 @@ local function bashStep(args)
     "\n\z
       DISTFILES=${TEMPDIR}/distfiles\n\z
       mkdir ${DISTFILES}\n\z
-      cp ${tarball} ${DISTFILES}/",
-    baseNameOf(args.tarball.url),
-    "\n\z
+      select() {\n\z
+        local i=\"$1\"\n\z
+        shift\n\z
+        eval \"echo \\$$i\"\n\z
+      }\n",
+  }
+  for i, t in ipairs(args.tarballs) do
+    scriptChunks[#scriptChunks + 1] = "cp \"$(select "
+    scriptChunks[#scriptChunks + 1] = i
+    scriptChunks[#scriptChunks + 1] = " $tarballs)\" ${DISTFILES}/"
+    ---@diagnostic disable-next-line: param-type-mismatch
+    scriptChunks[#scriptChunks + 1] = baseNameOf(t.url)
+    scriptChunks[#scriptChunks + 1] = "\n"
+  end
+  scriptChunks[#scriptChunks + 1] = "\z
+      unset select\n\z
       SRCDIR=${TEMPDIR}/src\n\z
       mkdir ${SRCDIR}\n\z
-      cp -R ",
-    stepPath(pname, version),
-    " ${SRCDIR}/${pkg}\n\z
+      cp -R "
+  scriptChunks[#scriptChunks + 1] = stepPath(pname, version)
+  scriptChunks[#scriptChunks + 1] = " ${SRCDIR}/${pkg}\n\z
       chmod -R +w ${SRCDIR}/${pkg}\n\z
-      build ${pkg}\n",
-  }
+      build ${pkg}\n"
   local script <const> = table.concat(scriptChunks)
   actualArgs.args = { toFile(actualArgs.name.."-builder.sh", script) }
-  actualArgs.SHELL = actualArgs.builder
+
   return derivation(actualArgs)
 end
 
@@ -829,7 +851,7 @@ do
     INCDIR = boot.mes.."/include";
     tcc = tcc;
 
-    tarball = tcc_0_9_27_tarball;
+    tarballs = { tcc_0_9_27_tarball };
 
     setup = "\z
       cp -R ${tcc}/lib $LIBDIR\n\z
@@ -860,7 +882,7 @@ boot.musl["1.1.24-pass1"] = bashStep {
     stage0.stage0,
   };
 
-  tarball = musl_1_1_24_tarball;
+  tarballs = { musl_1_1_24_tarball };
 }
 
 do
@@ -888,7 +910,7 @@ do
     tcc = tcc;
     musl = musl;
 
-    tarball = tcc_0_9_27_tarball;
+    tarballs = { tcc_0_9_27_tarball };
   }
 end
 
@@ -910,7 +932,7 @@ boot.musl["1.1.24-pass2"] = bashStep {
     stage0.stage0,
   };
 
-  tarball = musl_1_1_24_tarball;
+  tarballs = { musl_1_1_24_tarball };
 }
 
 do
@@ -938,7 +960,7 @@ do
     tcc = tcc;
     musl = musl;
 
-    tarball = tcc_0_9_27_tarball;
+    tarballs = { tcc_0_9_27_tarball };
   }
 end
 
@@ -960,7 +982,7 @@ boot.sed["4.0.9-pass2"] = bashStep {
     stage0.stage0,
   };
 
-  tarball = sed_4_0_9_tarball;
+  tarballs = { sed_4_0_9_tarball };
 }
 
 boot.bzip2.pass2 = bashStep {
@@ -980,7 +1002,7 @@ boot.bzip2.pass2 = bashStep {
     stage0.stage0,
   };
 
-  tarball = bzip2_tarball;
+  tarballs = { bzip2_tarball };
 }
 
 boot.m4 = {}
@@ -1001,9 +1023,11 @@ boot.m4["1.4.7"] = bashStep {
     stage0.stage0,
   };
 
-  tarball = fetchGNU {
-    path = "m4/m4-1.4.7.tar.bz2";
-    hash = "sha256:a88f3ddaa7c89cf4c34284385be41ca85e9135369c333fdfa232f3bf48223213";
+  tarballs = {
+    fetchGNU {
+      path = "m4/m4-1.4.7.tar.bz2";
+      hash = "sha256:a88f3ddaa7c89cf4c34284385be41ca85e9135369c333fdfa232f3bf48223213";
+    },
   };
 }
 
@@ -1026,9 +1050,11 @@ local heirloom_devtools = bashStep {
     stage0.stage0,
   };
 
-  tarball = fetchurl {
-    url = "http://downloads.sourceforge.net/project/heirloom/heirloom-devtools/070527/heirloom-devtools-070527.tar.bz2";
-    hash = "sha256:9f233d8b78e4351fe9dd2d50d83958a0e5af36f54e9818521458a08e058691ba";
+  tarballs = {
+    fetchurl {
+      url = "http://downloads.sourceforge.net/project/heirloom/heirloom-devtools/070527/heirloom-devtools-070527.tar.bz2";
+      hash = "sha256:9f233d8b78e4351fe9dd2d50d83958a0e5af36f54e9818521458a08e058691ba";
+    },
   };
 }
 
@@ -1055,9 +1081,11 @@ boot.flex["2.5.11"] = bashStep {
 
   LIBRARY_PATH = heirloom_devtools.."/lib";
 
-  tarball = fetchurl {
-    url = "http://download.nust.na/pub2/openpkg1/sources/DST/flex/flex-2.5.11.tar.gz";
-    hash = "sha256:bc79b890f35ca38d66ff89a6e3758226131e51ccbd10ef78d5ff150b7bd73689";
+  tarballs = {
+    fetchurl {
+      url = "http://download.nust.na/pub2/openpkg1/sources/DST/flex/flex-2.5.11.tar.gz";
+      hash = "sha256:bc79b890f35ca38d66ff89a6e3758226131e51ccbd10ef78d5ff150b7bd73689";
+    },
   };
 }
 boot.flex["2.6.4"] = bashStep {
@@ -1082,9 +1110,11 @@ boot.flex["2.6.4"] = bashStep {
 
   LIBRARY_PATH = heirloom_devtools.."/lib";
 
-  tarball = fetchurl {
-    url = "https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz";
-    hash = "sha256:e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995";
+  tarballs = {
+    fetchurl {
+      url = "https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz";
+      hash = "sha256:e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995";
+    },
   };
 }
 
@@ -1119,7 +1149,7 @@ do
         stage0.stage0,
       };
 
-      tarball = tarball;
+      tarballs = { tarball };
     }
   end
   boot.bison["3.4.1"] = yacc
