@@ -751,22 +751,28 @@ do
 end
 
 ---@param args table
-local function bashDerivation(args)
-  local actualArgs = {
+local function bashStep(args)
+  local pname <const> = args.pname
+  local version <const> = args.version
+  local defaultName <const> = pname.."-"..version
+  local actualArgs <const> = {
+    name = defaultName;
     system = "x86_64-linux";
 
     OPERATING_SYSTEM = "Linux";
     ARCH = "amd64";
     MAKEJOBS = "-j1";
+    pkg = defaultName;
+    revision = 0;
 
     builder = boot.bash["2.05b-pass1"].."/bin/bash";
   }
   for k, v in pairs(args) do
-    if k ~= "script" then
+    if k ~= "setup" then
       actualArgs[k] = v
     end
   end
-  local scriptChunks = {
+  local scriptChunks <const> = {
     "\z
       #!/usr/bin/env bash\n\z
       set -e\n\z
@@ -779,28 +785,35 @@ local function bashDerivation(args)
     ". ",
     path "live-bootstrap/steps/helpers.sh",
     "\n",
-    args.script,
+    args.setup or "",
+    "\n\z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/",
+    baseNameOf(args.tarball.url),
+    "\n\z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR}\n\z
+      cp -R ",
+    stepPath(pname, version),
+    " ${SRCDIR}/${pkg}\n\z
+      chmod -R +w ${SRCDIR}/${pkg}\n\z
+      build ${pkg}\n",
   }
-  local script = table.concat(scriptChunks)
-  actualArgs.args = { toFile(args.name.."-builder.sh", script) }
+  local script <const> = table.concat(scriptChunks)
+  actualArgs.args = { toFile(actualArgs.name.."-builder.sh", script) }
   actualArgs.SHELL = actualArgs.builder
   return derivation(actualArgs)
 end
 
--- tcc 0.9.27 pass2
 do
-  local pname <const> = "tcc"
-  local version <const> = "0.9.27"
-  local step <const> = stepPath(pname, version)
   local tcc = boot.tcc["0.9.26"]
 
-  boot.tcc["0.9.27-pass2"] = bashDerivation {
-    name = pname.."-"..version;
-    pname = pname;
-    version = version;
-
-    pkg = pname.."-"..version;
+  boot.tcc["0.9.27-pass2"] = bashStep {
+    pname = "tcc";
+    version = "0.9.27";
     revision = 1;
+
     PATH = mkBinPath {
       boot.bash["2.05b-pass1"],
       boot.byacc,
@@ -818,83 +831,47 @@ do
 
     tarball = tcc_0_9_27_tarball;
 
-    script = "\z
+    setup = "\z
       cp -R ${tcc}/lib $LIBDIR\n\z
-      chmod -R +w $LIBDIR\n\z
-      \z
-      DISTFILES=${TEMPDIR}/distfiles\n\z
-      mkdir ${DISTFILES}\n\z
-      cp ${tarball} ${DISTFILES}/${name}.tar.bz2\n\z
-      \z
-      SRCDIR=${TEMPDIR}/src\n\z
-      mkdir ${SRCDIR}\n\z
-      cp -R "..step.." ${SRCDIR}/${name}\n\z
-      chmod -R +w ${SRCDIR}/${name}\n\z
-      build ${pkg}\n";
+      chmod -R +w $LIBDIR\n";
   }
 end
 
--- musl-1.1.24 pass1
-boot.musl = {}
 local musl_1_1_24_tarball = fetchurl {
   url = "https://musl.libc.org/releases/musl-1.1.24.tar.gz";
   hash = "sha256:1370c9a812b2cf2a7d92802510cca0058cc37e66a7bedd70051f0a34015022a3";
 }
+boot.musl = {}
+boot.musl["1.1.24-pass1"] = bashStep {
+  pname = "musl";
+  version = "1.1.24";
+  revision = 0;
+
+  PATH = mkBinPath {
+    boot.tcc["0.9.27-pass2"],
+    boot.bash["2.05b-pass1"],
+    boot.byacc,
+    boot.coreutils["5.0-pass1"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  tarball = musl_1_1_24_tarball;
+}
+
 do
-  local pname <const> = "musl"
-  local version <const> = "1.1.24"
-  local step <const> = stepPath(pname, version)
-
-  boot.musl[version.."-pass1"] = bashDerivation {
-    name = pname.."-"..version;
-    pname = pname;
-    version = version;
-
-    pkg = pname.."-"..version;
-    revision = 0;
-    PATH = mkBinPath {
-      boot.tcc["0.9.27-pass2"],
-      boot.bash["2.05b-pass1"],
-      boot.byacc,
-      boot.coreutils["5.0-pass1"],
-      boot.sed["4.0.9-pass1"],
-      boot.tar["1.12"],
-      boot.gzip["1.2.4"],
-      boot.patch["2.5.9"],
-      boot.make["3.82-pass1"],
-      stage0.stage0,
-    };
-
-    tarball = musl_1_1_24_tarball;
-
-    script = "\z
-      DISTFILES=${TEMPDIR}/distfiles\n\z
-      mkdir ${DISTFILES}\n\z
-      cp ${tarball} ${DISTFILES}/${name}.tar.gz\n\z
-      \z
-      SRCDIR=${TEMPDIR}/src\n\z
-      mkdir ${SRCDIR}\n\z
-      cp -R "..step.." ${SRCDIR}/${name}\n\z
-      chmod -R +w ${SRCDIR}/${name}\n\z
-      build ${pkg}\n";
-  }
-end
-
--- tcc 0.9.27 pass3
-do
-  local pname <const> = "tcc"
-  local version <const> = "0.9.27"
-  local step <const> = stepPath(pname, version)
   local tcc <const> = boot.tcc["0.9.26"]
-  local musl <const> = boot.musl["1.1.24-pass1"];
+  local musl <const> = boot.musl["1.1.24-pass1"]
 
-  boot.tcc[version.."-pass3"] = bashDerivation {
-    name = pname.."-"..version;
-    pname = pname;
-    version = version;
-
-    pkg = pname.."-"..version;
+  boot.tcc["0.9.27-pass3"] = bashStep {
+    pname = "tcc";
+    version = "0.9.27";
     revision = 2;
+
     PATH = mkBinPath {
       boot.bash["2.05b-pass1"],
       boot.byacc,
@@ -912,76 +889,39 @@ do
     musl = musl;
 
     tarball = tcc_0_9_27_tarball;
-
-    script = "\z
-      DISTFILES=${TEMPDIR}/distfiles\n\z
-      mkdir ${DISTFILES}\n\z
-      cp ${tarball} ${DISTFILES}/${name}.tar.bz2\n\z
-      \z
-      SRCDIR=${TEMPDIR}/src\n\z
-      mkdir ${SRCDIR}\n\z
-      cp -R "..step.." ${SRCDIR}/${name}\n\z
-      chmod -R +w ${SRCDIR}/${name}\n\z
-      build ${pkg}\n";
   }
 end
 
--- musl-1.1.24 pass2
+boot.musl["1.1.24-pass2"] = bashStep {
+  pname = "musl";
+  version = "1.1.24";
+  revision = 1;
+
+  PATH = mkBinPath {
+    boot.tcc["0.9.27-pass3"],
+    boot.bash["2.05b-pass1"],
+    boot.byacc,
+    boot.coreutils["5.0-pass1"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  tarball = musl_1_1_24_tarball;
+}
+
 do
-  local pname <const> = "musl"
-  local version <const> = "1.1.24"
-  local step <const> = stepPath(pname, version)
-
-  boot.musl[version.."-pass2"] = bashDerivation {
-    name = pname.."-"..version;
-    pname = pname;
-    version = version;
-
-    pkg = pname.."-"..version;
-    revision = 1;
-    PATH = mkBinPath {
-      boot.tcc["0.9.27-pass3"],
-      boot.bash["2.05b-pass1"],
-      boot.byacc,
-      boot.coreutils["5.0-pass1"],
-      boot.sed["4.0.9-pass1"],
-      boot.tar["1.12"],
-      boot.gzip["1.2.4"],
-      boot.patch["2.5.9"],
-      boot.make["3.82-pass1"],
-      stage0.stage0,
-    };
-
-    tarball = musl_1_1_24_tarball;
-
-    script = "\z
-      DISTFILES=${TEMPDIR}/distfiles\n\z
-      mkdir ${DISTFILES}\n\z
-      cp ${tarball} ${DISTFILES}/${name}.tar.gz\n\z
-      \z
-      SRCDIR=${TEMPDIR}/src\n\z
-      mkdir ${SRCDIR}\n\z
-      cp -R "..step.." ${SRCDIR}/${name}\n\z
-      chmod -R +w ${SRCDIR}/${name}\n\z
-      build ${pkg}\n";
-  }
-end
-
--- tcc 0.9.27 pass4
-do
-  local pname <const> = "tcc"
-  local version <const> = "0.9.27"
-  local step <const> = stepPath(pname, version)
   local tcc <const> = boot.tcc["0.9.27-pass3"]
-  local musl <const> = boot.musl["1.1.24-pass2"];
+  local musl <const> = boot.musl["1.1.24-pass2"]
 
-  boot.tcc[version.."-pass4"] = bashDerivation {
-    name = pname.."-"..version;
-    pname = pname;
-    version = version;
-
-    pkg = pname.."-"..version;
+  boot.tcc["0.9.27-pass4"] = bashStep {
+    pname = "tcc";
+    version = "0.9.27";
     revision = 3;
+
     PATH = mkBinPath {
       boot.bash["2.05b-pass1"],
       boot.byacc,
@@ -999,98 +939,48 @@ do
     musl = musl;
 
     tarball = tcc_0_9_27_tarball;
-
-    script = "\z
-      DISTFILES=${TEMPDIR}/distfiles\n\z
-      mkdir ${DISTFILES}\n\z
-      cp ${tarball} ${DISTFILES}/${name}.tar.bz2\n\z
-      \z
-      SRCDIR=${TEMPDIR}/src\n\z
-      mkdir ${SRCDIR}\n\z
-      cp -R "..step.." ${SRCDIR}/${name}\n\z
-      chmod -R +w ${SRCDIR}/${name}\n\z
-      build ${pkg}\n";
   }
 end
 
--- sed pass2
-do
-  local pname <const> = "sed"
-  local version <const> = "4.0.9"
-  local step <const> = stepPath(pname, version)
+boot.sed["4.0.9-pass2"] = bashStep {
+  pname = "sed";
+  version = "4.0.9";
+  revision = 1;
 
-  boot.sed[version.."-pass2"] = bashDerivation {
-    name = pname.."-"..version;
-    pname = pname;
-    version = version;
+  PATH = mkBinPath {
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.byacc,
+    boot.coreutils["5.0-pass1"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
 
-    pkg = pname.."-"..version;
-    revision = 1;
-    PATH = mkBinPath {
-      boot.tcc["0.9.27-pass4"],
-      boot.bash["2.05b-pass1"],
-      boot.byacc,
-      boot.coreutils["5.0-pass1"],
-      boot.sed["4.0.9-pass1"],
-      boot.tar["1.12"],
-      boot.gzip["1.2.4"],
-      boot.patch["2.5.9"],
-      boot.make["3.82-pass1"],
-      stage0.stage0,
-    };
+  tarball = sed_4_0_9_tarball;
+}
 
-    tarball = sed_4_0_9_tarball;
+boot.bzip2.pass2 = bashStep {
+  pname = "bzip2";
+  version = bzip2_version;
+  revision = 1;
 
-    script = "\z
-      DISTFILES=${TEMPDIR}/distfiles\n\z
-      mkdir ${DISTFILES}\n\z
-      cp ${tarball} ${DISTFILES}/${name}.tar.gz\n\z
-      \z
-      SRCDIR=${TEMPDIR}/src\n\z
-      mkdir ${SRCDIR}\n\z
-      cp -R "..step.." ${SRCDIR}/${name}\n\z
-      chmod -R +w ${SRCDIR}/${name}\n\z
-      build ${pkg}\n";
-  }
-end
+  PATH = mkBinPath {
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["5.0-pass1"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
 
--- bzip2 pass2
-do
-  local pname <const> = "bzip2"
-  local step <const> = stepPath(pname, bzip2_version)
-
-  boot.bzip2.pass2 = bashDerivation {
-    name = pname.."-"..bzip2_version;
-    pname = pname;
-    version = bzip2_version;
-
-    pkg = pname.."-"..bzip2_version;
-    revision = 1;
-    PATH = mkBinPath {
-      boot.tcc["0.9.27-pass4"],
-      boot.bash["2.05b-pass1"],
-      boot.coreutils["5.0-pass1"],
-      boot.sed["4.0.9-pass1"],
-      boot.tar["1.12"],
-      boot.gzip["1.2.4"],
-      boot.patch["2.5.9"],
-      boot.make["3.82-pass1"],
-      stage0.stage0,
-    };
-
-    tarball = bzip2_tarball;
-
-    script = "\z
-      DISTFILES=${TEMPDIR}/distfiles\n\z
-      mkdir ${DISTFILES}\n\z
-      cp ${tarball} ${DISTFILES}/${name}.tar.xz\n\z
-      \z
-      SRCDIR=${TEMPDIR}/src\n\z
-      mkdir ${SRCDIR}\n\z
-      cp -R "..step.." ${SRCDIR}/${name}\n\z
-      chmod -R +w ${SRCDIR}/${name}\n\z
-      build ${pkg}\n";
-  }
-end
+  tarball = bzip2_tarball;
+}
 
 return boot
