@@ -888,7 +888,7 @@ do
   local tcc <const> = boot.tcc["0.9.26"]
   local musl <const> = boot.musl["1.1.24-pass1"];
 
-  boot.tcc["0.9.27-pass3"] = bashDerivation {
+  boot.tcc[version.."-pass3"] = bashDerivation {
     name = pname.."-"..version;
     pname = pname;
     version = version;
@@ -958,6 +958,52 @@ do
       DISTFILES=${TEMPDIR}/distfiles\n\z
       mkdir ${DISTFILES}\n\z
       cp ${tarball} ${DISTFILES}/${name}.tar.gz\n\z
+      \z
+      SRCDIR=${TEMPDIR}/src\n\z
+      mkdir ${SRCDIR}\n\z
+      cp -R "..step.." ${SRCDIR}/${name}\n\z
+      chmod -R +w ${SRCDIR}/${name}\n\z
+      build ${pkg}\n";
+  }
+end
+
+-- tcc 0.9.27 pass4
+do
+  local pname <const> = "tcc"
+  local version <const> = "0.9.27"
+  local step <const> = stepPath(pname, version)
+  local tcc <const> = boot.tcc["0.9.27-pass3"]
+  local musl <const> = boot.musl["1.1.24-pass2"];
+
+  boot.tcc[version.."-pass4"] = bashDerivation {
+    name = pname.."-"..version;
+    pname = pname;
+    version = version;
+
+    pkg = pname.."-"..version;
+    revision = 3;
+    PATH = mkBinPath {
+      boot.bash["2.05b-pass1"],
+      boot.byacc,
+      boot.coreutils["5.0-pass1"],
+      boot.sed.pass1,
+      boot.tar["1.12"],
+      boot.bzip2.pass1,
+      boot.patch["2.5.9"],
+      boot.make["3.82-pass1"],
+      tcc,
+      stage0.stage0,
+    };
+    INCDIR = musl.."/include";
+    tcc = tcc;
+    musl = musl;
+
+    tarball = tcc_0_9_27_tarball;
+
+    script = "\z
+      DISTFILES=${TEMPDIR}/distfiles\n\z
+      mkdir ${DISTFILES}\n\z
+      cp ${tarball} ${DISTFILES}/${name}.tar.bz2\n\z
       \z
       SRCDIR=${TEMPDIR}/src\n\z
       mkdir ${SRCDIR}\n\z
