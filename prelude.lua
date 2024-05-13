@@ -33,3 +33,14 @@ function table.map(f, list)
   end
   return result
 end
+
+---@generic T
+---@param x T
+---@param xs T[]
+---@return boolean
+function table.elem(x, xs)
+  for _, y in ipairs(xs) do
+    if x == y then return true end
+  end
+  return false
+end

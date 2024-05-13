@@ -41,3 +41,10 @@ function fetchurl(args) end
 ---@param list T[]
 ---@return U[]
 function table.map(f, list) end
+
+---Reports whether a value equal to x occurs in list xs.
+---@generic T
+---@param x T
+---@param xs T[]
+---@return boolean
+function table.elem(x, xs) end
