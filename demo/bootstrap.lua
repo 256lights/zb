@@ -814,14 +814,14 @@ local function bashStep(args)
     "\n\z
       DISTFILES=${TEMPDIR}/distfiles\n\z
       mkdir ${DISTFILES}\n\z
-      select() {\n\z
+      _select() {\n\z
         local i=\"$1\"\n\z
         shift\n\z
         eval \"echo \\$$i\"\n\z
       }\n",
   }
   for i, t in ipairs(args.tarballs) do
-    scriptChunks[#scriptChunks + 1] = "cp \"$(select "
+    scriptChunks[#scriptChunks + 1] = "cp \"$(_select "
     scriptChunks[#scriptChunks + 1] = i
     scriptChunks[#scriptChunks + 1] = " $tarballs)\" ${DISTFILES}/"
     ---@diagnostic disable-next-line: param-type-mismatch
@@ -829,7 +829,7 @@ local function bashStep(args)
     scriptChunks[#scriptChunks + 1] = "\n"
   end
   scriptChunks[#scriptChunks + 1] = "\z
-      unset select\n\z
+      unset _select\n\z
       SRCDIR=${TEMPDIR}/src\n\z
       mkdir ${SRCDIR}\n\z
       cp -R "
