@@ -8,7 +8,7 @@ src_prepare() {
     AUTOMAKE=automake-1.10 ACLOCAL=aclocal-1.10 AUTOM4TE=autom4te-2.61 AUTOCONF=autoconf-2.61 autoreconf-2.61 -f
 
     # Install autoconf data files into versioned directory
-    for file in */*/Makefile.in */Makefile.in Makefile.in; do
+    for file in Makefile.in bin/Makefile.in doc/Makefile.in lib/Autom4te/Makefile.in lib/Makefile.in lib/autoconf/Makefile.in lib/autoscan/Makefile.in lib/autotest/Makefile.in lib/emacs/Makefile.in lib/m4sugar/Makefile.in man/Makefile.in tests/Makefile.in; do
         sed -i '/^pkgdatadir/s:$:-@VERSION@:' "$file"
     done
 }
