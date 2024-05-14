@@ -4,7 +4,7 @@
 
 src_prepare() {
     rm bin/autoconf.in
-    rm -- Makefile.in */Makefile.in */*/Makefile.in aclocal.m4 configure
+    rm -- Makefile.in bin/Makefile.in config/Makefile.in doc/Makefile.in lib/Autom4te/Makefile.in lib/Makefile.in lib/autoconf/Makefile.in lib/autoscan/Makefile.in lib/autotest/Makefile.in lib/emacs/Makefile.in lib/m4sugar/Makefile.in man/Makefile.in tests/Makefile.in aclocal.m4 configure
     rm doc/standards.info doc/autoconf.info
 
     # Do not use pregenerated manpages
@@ -14,13 +14,10 @@ src_prepare() {
     sed -i 's/2.54/2.53/' aclocal.m4
     cat config/m4.m4 >> aclocal.m4
     autoconf-2.53
-
-    # Otherwise automake-1.7 fails to find autoconf
-    ln -s "${PREFIX}"/bin/autoconf-2.53 "${PREFIX}"/bin/autoconf
     automake-1.7
 
     # Install autoconf data files into versioned directory
-    for file in */*/Makefile.in */Makefile.in Makefile.in; do
+    for file in Makefile.in bin/Makefile.in config/Makefile.in doc/Makefile.in lib/Autom4te/Makefile.in lib/Makefile.in lib/autoconf/Makefile.in lib/autoscan/Makefile.in lib/autotest/Makefile.in lib/emacs/Makefile.in lib/m4sugar/Makefile.in man/Makefile.in tests/Makefile.in; do
         sed -i '/^pkgdatadir/s:$:-@VERSION@:' "$file"
     done
 }

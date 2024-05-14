@@ -20,5 +20,4 @@ src_compile() {
 
 src_install() {
     make install MAKEINFO=true DESTDIR="${DESTDIR}"
-    rm "${DESTDIR}${PREFIX}/bin/automake" "${DESTDIR}${PREFIX}/bin/aclocal"
 }
