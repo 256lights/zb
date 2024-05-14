@@ -164,7 +164,10 @@ download_source_line() {
     # Default to basename of url if not given
     fname="${fname:-$(basename "${url}")}"
     if ! [ -e "${fname}" ]; then
-        curl --fail --retry 5 --location "${url}" --output "${fname}" || true
+        echo "** Missing source: ${fname}" >&2
+        echo "Directory contents:" >&2
+        ls -l >&2
+        return 1
     fi
 }
 
