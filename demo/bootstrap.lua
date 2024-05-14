@@ -489,12 +489,13 @@ do
       SRCDIR=${TEMPDIR}/src\n\z
       mkdir ${SRCDIR} ${SRCDIR}/${name}\n\z
       cd ${SRCDIR}/${name}\n\z
-      mkdir files mk\n\z
+      mkdir files mk patches\n\z
       "..mkStepDir(step, {
       "pass1.kaem",
       "files/getdate_stub.c",
       "files/stat_override.c",
       "mk/main.mk",
+      "patches/no-special-modes.patch",
     }).."\z
         exec kaem -f pass1.kaem\n";
   }

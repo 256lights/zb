@@ -25,6 +25,9 @@ cp ../../files/getdate_stub.c lib/getdate_stub.c
 catm src/create.c.new ../../files/stat_override.c src/create.c
 cp src/create.c.new src/create.c
 
+# Patches
+patch -Np0 -i ../../patches/no-special-modes.patch
+
 # Build
 make -f Makefile
 
