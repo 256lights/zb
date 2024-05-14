@@ -6,6 +6,13 @@
 src_prepare() {
     default
 
+    # Rewrite configuration for build prefixes.
+    sed -i "/^startperl=/s:/usr/:${out:?}/:" config.sh
+    sed -i "/^perlpath=/s:/usr/:${out:?}/:" config.sh
+    sed -i "/^#define PRIVLIB/s:/usr/:${out:?}/:" config.h
+    sed -i "/^#define LOC_SED/s:/usr/:${sed:?}/:" config.h
+    sed -i "/^#define ARCHLIB/s:/usr/:${out:?}/:" config.h
+
     # Regenerate bison files
     sed -i '/yydestruct/d' perly.y
     rm -f perly.c perly.h
