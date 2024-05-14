@@ -1644,4 +1644,39 @@ boot.autoconf["2.55"] = bashStep {
   };
 }
 
+boot.automake["1.7.8"] = bashStep {
+  pname = "automake";
+  version = "1.7.8";
+
+  PATH = mkBinPath {
+    boot.automake["1.7"],
+    boot.autoconf["2.55"],
+    boot.perl["5.6.2"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["6.10"],
+    boot.coreutils["5.0-pass2"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  tarballs = {
+    fetchGNU {
+      path = "automake/automake-1.7.8.tar.bz2";
+      hash = "sha256:2dddc3b51506e702647ccc6757e15c05323fa67245d2d53e81ed36a832f9be42";
+    },
+  };
+}
+
 return boot
