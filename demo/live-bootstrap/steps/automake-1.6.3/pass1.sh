@@ -10,10 +10,10 @@ src_prepare() {
 }
 
 src_compile() {
-    sed -i -e 's/@VERSION@/1.6.2/' -e 's/@APIVERSION@/1.6/' m4/amversion.m4
+    sed -i -e 's/@VERSION@/1.6.3/' -e 's/@APIVERSION@/1.6/' m4/amversion.m4
 
     sed -i -e "s#@PERL@#${perl:?}/bin/perl#" -e 's/@PACKAGE@/automake/' \
-	-e 's/@APIVERSION@/1.6/' -e 's/@VERSION@/1.6.2/' \
+	-e 's/@APIVERSION@/1.6/' -e 's/@VERSION@/1.6.3/' \
 	-e "s#@prefix@#${PREFIX}#" -e "s#@datadir@#${PREFIX}/share#" aclocal
 }
 

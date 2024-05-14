@@ -17,7 +17,7 @@ src_configure() {
 
 src_compile() {
     cp m4/amversion.in m4/amversion.m4
-    sed -i 's/@VERSION@/1.6.2/' m4/amversion.m4
+    sed -i 's/@VERSION@/1.6.3/' m4/amversion.m4
     sed -i 's/@APIVERSION@/1.6/' m4/amversion.m4
 }
 

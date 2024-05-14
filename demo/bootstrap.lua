@@ -1432,14 +1432,10 @@ boot.autoconf["2.52"] = bashStep {
 boot.automake = {}
 do
   local pname <const> = "automake"
-  -- Original live-bootstrap uses 1.6.3.
-  -- However, this tarball randomly contains setgid bits,
-  -- which the Nix sandbox doesn't like.
-  -- tar is too old for --no-same-permissions, so we fall back to 1.6.2.
-  local version <const> = "1.6.2"
+  local version <const> = "1.6.3"
   local tarball <const> = fetchGNU {
     path = "automake/automake-"..version..".tar.bz2";
-    hash = "sha256:1addbc45b4e2ca55a1a27c7c91fa4b1af35305df91c0d7734084f2b0cc9828bd";
+    hash = "sha256:0dbafacaf21e135cab35d357a14bdcd981d2f2d00e1387801be8091a31b7bb81";
   }
   local perl <const> = boot.perl["5.6.2"]
 
@@ -1510,7 +1506,7 @@ boot.autoconf["2.53"] = bashStep {
   version = "2.53";
 
   PATH = mkBinPath {
-    boot.automake["1.6.2"],
+    boot.automake["1.6.3"],
     boot.autoconf["2.52"],
     boot.perl["5.6.2"],
     boot.gawk["3.0.4"],
@@ -1545,7 +1541,7 @@ boot.automake["1.7"] = bashStep {
   version = "1.7";
 
   PATH = mkBinPath {
-    boot.automake["1.6.2"],
+    boot.automake["1.6.3"],
     boot.autoconf["2.53"],
     boot.perl["5.6.2"],
     boot.gawk["3.0.4"],
