@@ -6,7 +6,7 @@
 src_prepare() {
     sed -i '/Makefile/d' configure.in
 
-    rm -- configure Makefile.in */Makefile.in */*/Makefile.in aclocal.m4 automake.info*
+    rm -- configure Makefile.in lib/Makefile.in lib/Automake/Makefile.in lib/am/Makefile.in m4/Makefile.in tests/Makefile.in aclocal.m4 automake.info*
     aclocal-1.6
     autoconf-2.52
 }
@@ -17,7 +17,7 @@ src_configure() {
 
 src_compile() {
     cp m4/amversion.in m4/amversion.m4
-    sed -i 's/@VERSION@/1.6.3/' m4/amversion.m4
+    sed -i 's/@VERSION@/1.6.2/' m4/amversion.m4
     sed -i 's/@APIVERSION@/1.6/' m4/amversion.m4
 }
 

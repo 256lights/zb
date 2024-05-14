@@ -4,16 +4,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 src_prepare() {
-    rm -- configure Makefile.in */Makefile.in */*/Makefile.in aclocal.m4 automake.info*
+    rm -- configure Makefile.in lib/Makefile.in lib/Automake/Makefile.in lib/am/Makefile.in m4/Makefile.in tests/Makefile.in aclocal.m4 automake.info*
     cp aclocal.in aclocal
     cp m4/amversion.in m4/amversion.m4
 }
 
 src_compile() {
-    sed -i -e 's/@VERSION@/1.6.3/' -e 's/@APIVERSION@/1.6/' m4/amversion.m4
+    sed -i -e 's/@VERSION@/1.6.2/' -e 's/@APIVERSION@/1.6/' m4/amversion.m4
 
-    sed -i -e "s#@PERL@#${PREFIX}/bin/perl#" -e 's/@PACKAGE@/automake/' \
-	-e 's/@APIVERSION@/1.6/' -e 's/@VERSION@/1.6.3/' \
+    sed -i -e "s#@PERL@#${perl:?}/bin/perl#" -e 's/@PACKAGE@/automake/' \
+	-e 's/@APIVERSION@/1.6/' -e 's/@VERSION@/1.6.2/' \
 	-e "s#@prefix@#${PREFIX}#" -e "s#@datadir@#${PREFIX}/share#" aclocal
 }
 
