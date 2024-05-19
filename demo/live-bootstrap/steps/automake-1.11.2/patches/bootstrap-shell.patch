@@ -1,6 +1,6 @@
 SPDX-FileCopyrightText: 2024 Ross Light <ross@zombiezen.com>
 
-SPDX-License-Identifier: Unlicense
+SPDX-License-Identifier: MIT
 
 Use $SHELL, which will be the bootstrapped bash.
 

@@ -1,6 +1,6 @@
 SPDX-FileCopyrightText: 2024 Ross Light <ross@zombiezen.com>
 
-SPDX-License-Identifier: Unlicense
+SPDX-License-Identifier: MIT
 
 Ignore sticky/setuid/setgid bits during extraction
 so such archives can be used in sandboxed builds.
