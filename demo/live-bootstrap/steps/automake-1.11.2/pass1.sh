@@ -6,6 +6,8 @@
 src_prepare() {
     default
 
+    patchShebangs bootstrap configure
+
     rm -f doc/amhello-1.0.tar.gz doc/automake.info* doc/aclocal-1.11.1 doc/automake-1.11.1
 
     # Building doc often causes race conditions, skip it
@@ -25,5 +27,4 @@ src_compile() {
 
 src_install() {
     make install MAKEINFO=true DESTDIR="${DESTDIR}"
-    rm "${DESTDIR}/usr/bin/automake"
 }

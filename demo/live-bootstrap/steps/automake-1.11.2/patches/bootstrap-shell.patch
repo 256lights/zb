@@ -1,0 +1,24 @@
+SPDX-FileCopyrightText: 2024 Ross Light <ross@zombiezen.com>
+
+SPDX-License-Identifier: Unlicense
+
+Use $SHELL, which will be the bootstrapped bash.
+
+--- bootstrap	2011-12-20 12:56:29.000000000 -0800
++++ bootstrap	2024-05-14 16:28:09.683106694 -0700
+@@ -38,14 +38,7 @@
+ datadir=.
+ PERL_THREADS=0
+ 
+-# Override SHELL.  This is required on DJGPP so that Perl's system()
+-# uses bash, not COMMAND.COM which doesn't quote arguments properly.
+-# It's not used otherwise.
+-if test -n "$DJDIR"; then
+-  BOOTSTRAP_SHELL=/dev/env/DJDIR/bin/bash.exe
+-else
+-  BOOTSTRAP_SHELL=/bin/sh
+-fi
++BOOTSTRAP_SHELL="${SHELL:?}"
+ 
+ # Read the rule for calculating APIVERSION and execute it.
+ apiver_cmd=`sed -ne 's/\[\[/[/g;s/\]\]/]/g;/^APIVERSION=/p' configure.ac`
