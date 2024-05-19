@@ -811,6 +811,9 @@ local function bashStep(args)
     ". ",
     path "live-bootstrap/steps/helpers.sh",
     "\n",
+    ". ",
+    path "live-bootstrap/steps/helpers-nix.sh",
+    "\n",
     args.setup or "",
     "\n\z
       DISTFILES=${TEMPDIR}/distfiles\n\z
@@ -1958,6 +1961,42 @@ boot.autoconf["2.64"] = bashStep {
     fetchGNU {
       path = "autoconf/autoconf-2.64.tar.xz";
       hash = "sha256:32d977213320b8ae76c71175305301197f2b0e04e72d70694bc3d3e2ae6c7248";
+    },
+  };
+}
+
+boot.automake["1.11.2"] = bashStep {
+  pname = "automake";
+  version = "1.11.2";
+
+  PATH = mkBinPath {
+    boot.help2man,
+    boot.automake["1.10.3"],
+    boot.autoconf["2.64"],
+    boot.perl["5.6.2"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["6.10"],
+    boot.coreutils["5.0-pass2"],
+    boot.sed["4.0.9-pass1"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  tarballs = {
+    fetchGNU {
+      path = "automake/automake-1.11.2.tar.bz2";
+      hash = "sha256:4f46d1f9380c8a3506280750f630e9fc915cb1a435b724be56b499d016368718";
     },
   };
 }
