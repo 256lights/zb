@@ -6,7 +6,7 @@
 src_prepare() {
     default
 
-    patchShebangs bootstrap configure
+    patchShebangs bootstrap
 
     rm -f doc/amhello-1.0.tar.gz doc/automake.info* doc/aclocal-1.11.1 doc/automake-1.11.1
 
@@ -18,10 +18,7 @@ src_prepare() {
 }
 
 src_configure() {
-    # sed -i '35a set -x -o pipefail' configure
-    # sed -i '35a command -v perl' configure
-    AUTORECONF=autoreconf-2.64 AUTOM4TE=autom4te-2.64 AUTOHEADER=autoheader-2.64 AUTOCONF=autoconf-2.64 sh -e ./configure --prefix="${PREFIX}"
-    # return 1
+    AUTORECONF=autoreconf-2.64 AUTOM4TE=autom4te-2.64 AUTOHEADER=autoheader-2.64 AUTOCONF=autoconf-2.64 ./configure --prefix="${PREFIX}"
 }
 
 src_compile() {
