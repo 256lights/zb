@@ -1,3 +1,6 @@
+-- Copyright 2024 Ross Light
+-- SPDX-License-Identifier: MIT
+
 return derivation {
   name = "hello";
   ["in"] = path "hello.txt";

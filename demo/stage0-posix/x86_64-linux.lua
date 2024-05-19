@@ -1,3 +1,6 @@
+-- Copyright 2024 Ross Light
+-- SPDX-License-Identifier: MIT
+
 local system = "x86_64-linux"
 local shell = "/bin/sh"
 local src = path "AMD64"

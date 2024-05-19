@@ -1,3 +1,6 @@
+// Copyright 2024 Ross Light
+// SPDX-License-Identifier: MIT
+
 // Package sortedset provides a set type implemented as a sorted list.
 package sortedset
 

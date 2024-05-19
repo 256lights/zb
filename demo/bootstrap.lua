@@ -1,3 +1,6 @@
+-- Copyright 2024 Ross Light
+-- SPDX-License-Identifier: MIT
+
 local stage0 <const> = dofile("stage0-posix/x86_64-linux.lua")
 
 local boot <const> = {}

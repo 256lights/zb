@@ -1,3 +1,6 @@
+-- Copyright 2024 Ross Light
+-- SPDX-License-Identifier: MIT
+
 ---@param args {url: string, hash: string, name: string?, executable: boolean?}
 ---@return derivation
 function fetchurl(args)

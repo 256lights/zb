@@ -1,3 +1,6 @@
+-- Copyright 2024 Ross Light
+-- SPDX-License-Identifier: MIT
+
 ---@meta
 
 ---@class derivation: userdata
@@ -10,14 +13,17 @@
 ---@field [string] string|number|boolean|derivation|(string|number|boolean|derivation)[]
 ---@operator concat:string
 
+---Create a derivation (a buildable target).
 ---@param args { name: string, system: string, builder: string, args: string[], [string]: string|number|boolean|(string|number|boolean)[] }
 ---@return derivation
 function derivation(args) end
 
----@param p (string|{path: string, name: string?})
----@return string
+---Make a file or directory available to a derivation.
+---@param p (string|{path: string, name: string?}) path to import, relative to the source file that called `path`
+---@return string # store path of the copied file or directory
 function path(p) end
 
+---Store a plain file in the store.
 ---@param name string
 ---@param s string File contents
 ---@return string # store path
@@ -31,6 +37,7 @@ function toFile(name, s) end
 ---@return string
 function baseNameOf(path) end
 
+---Create a derivation that downloads a URL.
 ---@param args {url: string, hash: string, name: string?, executable: boolean?}
 ---@return derivation
 function fetchurl(args) end

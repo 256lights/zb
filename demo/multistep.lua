@@ -1,3 +1,6 @@
+-- Copyright 2024 Ross Light
+-- SPDX-License-Identifier: MIT
+
 local drv1 = dofile("hello.lua")
 
 local drv2 = derivation {
