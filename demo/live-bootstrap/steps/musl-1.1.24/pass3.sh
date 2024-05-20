@@ -7,6 +7,8 @@ src_prepare() {
 
     # tcc does not support complex types
     rm -rf src/complex
+
+    patchShebangs configure
 }
 
 src_configure() {
