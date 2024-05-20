@@ -2004,4 +2004,40 @@ boot.automake["1.11.2"] = bashStep {
   };
 }
 
+boot.autoconf["2.69"] = bashStep {
+  pname = "autoconf";
+  version = "2.69";
+
+  PATH = mkBinPath {
+    boot.help2man,
+    boot.automake["1.11.2"],
+    boot.autoconf["2.64"],
+    boot.perl["5.6.2"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.tcc["0.9.27-pass4"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["6.10"],
+    boot.coreutils["5.0-pass2"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  tarballs = {
+    fetchGNU {
+      path = "autoconf/autoconf-2.69.tar.xz";
+      hash = "sha256:64ebcec9f8ac5b2487125a86a7760d2591ac9e1d3dbd59489633f9de62a57684";
+    },
+  };
+}
+
 return boot
