@@ -23,7 +23,7 @@ src_prepare() {
     ACLOCAL=aclocal-1.11 autoreconf-2.64 -fi
 
     # Rebuild bison files
-    touch -- */*.y
+    touch -- binutils/arparse.y binutils/defparse.y binutils/mcparse.y binutils/nlmheader.y binutils/rcparse.y binutils/sysinfo.y gas/itbl-parse.y gold/yyscript.y intl/plural.y ld/deffilep.y ld/ldgram.y
     rm binutils/arparse.c binutils/arparse.h
     rm binutils/defparse.c binutils/defparse.h
     rm binutils/mcparse.c binutils/mcparse.h
@@ -39,7 +39,7 @@ src_prepare() {
     rm ld/ldgram.c ld/ldgram.h
 
     # Rebuild flex generated files
-    touch -- */*.l */*/*.l
+    touch -- binutils/arlex.l binutils/deflex.l binutils/syslex.l gas/config/bfin-lex.l gas/itbl-lex.l ld/ldlex.l
     rm binutils/arlex.c binutils/deflex.c binutils/syslex.c
     rm gas/bfin-lex.c gas/itbl-lex.c
     rm ld/ldlex.c
@@ -56,10 +56,13 @@ src_prepare() {
     rm $(grep -l 'MACHINE GENERATED' opcodes/*.c opcodes/*.h)
 
     # Regenerate MeP sections
+    patchShebangs ./bfd/mep-relocs.pl
     ./bfd/mep-relocs.pl
 
     # Manpages
-    rm */*.1 */*/*.1 */*/*.man
+    rm binutils/doc/addr2line.1 binutils/doc/ar.1 binutils/doc/cxxfilt.man binutils/doc/dlltool.1 binutils/doc/elfedit.1 binutils/doc/nlmconv.1 binutils/doc/nm.1 binutils/doc/objcopy.1 binutils/doc/objdump.1 binutils/doc/ranlib.1 binutils/doc/readelf.1 binutils/doc/size.1 binutils/doc/strings.1 binutils/doc/strip.1 binutils/doc/windmc.1 binutils/doc/windres.1 gas/doc/as.1 gprof/gprof.1 ld/ld.1 zlib/contrib/minizip/miniunzip.1 zlib/contrib/minizip/minizip.1
+
+    patchShebangs configure
 }
 
 src_configure() {
