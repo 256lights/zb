@@ -6,6 +6,8 @@
 src_prepare() {
     default
 
+    patchShebangs bootstrap configure
+
     rm -f libltdl/config/ltmain.sh libtool
 
     rm -f doc/*.info
@@ -39,5 +41,8 @@ src_install() {
         -e "s/{FGREP=.*/{FREGP='fgrep'}/" \
         -e "s/{GREP=.*/{GREP='grep'}/" \
         -e "s/{SED=.*/{SED='sed'}/" \
-        "${DESTDIR}/usr/bin/libtool"
+        "${DESTDIR}${PREFIX}/bin/libtool"
+
+    patchShebangs "${DESTDIR}${PREFIX}/bin/libtool"
+    chmod +x "${DESTDIR}${PREFIX}/bin/libtool"
 }
