@@ -2162,17 +2162,7 @@ do
     PATH = mkBinPath {
       boot.binutils["2.30"],
       boot.libtool["2.2.4"],
-      boot.help2man,
-      boot.automake["1.11.2"],
-      boot.autoconf["2.69"],
-      boot.perl["5.6.2"],
-      boot.gawk["3.0.4"],
-      boot.diffutils["2.7"],
-      boot.grep["2.4"],
-      boot.bison["3.4.1"],
-      boot.flex["2.6.4"],
-      boot.m4["1.4.7"],
-      boot.tcc["0.9.27-pass4"],
+      tcc,
       boot.bash["2.05b-pass1"],
       boot.coreutils["6.10"],
       boot.coreutils["5.0-pass2"],
@@ -2192,5 +2182,53 @@ do
     tarballs = { tcc_0_9_27_tarball };
   }
 end
+
+local gcc_4_0_4_tarball = fetchGNU {
+  path = "gcc/gcc-4.0.4/gcc-core-4.0.4.tar.bz2";
+  hash = "sha256:e9bf58c761a4f988311aef6b41f12fd5c7e51d09477468fb73826aecc1be32e7";
+}
+local automake_1_16_3_tarball = fetchGNU {
+  path = "automake/automake-1.16.3.tar.xz";
+  hash = "sha256:ff2bf7656c4d1c6fdda3b8bebb21f09153a736bcba169aaf65eab25fa113bf3a";
+}
+boot.gcc = {}
+boot.gcc["4.0.4-pass1"] = bashStep {
+  pname = "gcc";
+  version = "4.0.4";
+
+  PATH = mkBinPath {
+    boot.binutils["2.30"],
+    boot.libtool["2.2.4"],
+    boot.help2man,
+    boot.automake["1.9.6"],  -- Deliberately using multiple older versions.
+    boot.automake["1.10.3"], -- Deliberately using multiple older versions.
+    boot.autoconf["2.61"],   -- Deliberately using an older version.
+    boot.perl["5.6.2"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.tcc["0.9.27-pass5"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["6.10"],
+    boot.coreutils["5.0-pass2"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  INCDIR = boot.musl["1.1.24-pass3"].."/include";
+
+  tarballs = {
+    gcc_4_0_4_tarball,
+    automake_1_16_3_tarball,
+  };
+}
 
 return boot
