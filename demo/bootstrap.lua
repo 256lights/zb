@@ -3302,7 +3302,7 @@ boot.bison["2.3"] = bashStep {
     boot.diffutils["2.7"],
     boot.grep["2.4"],
     boot.bison["3.4.1"],
-    boot.flex["2.5.33"],
+    boot.flex["2.5.33"], -- Intentionally using an old version.
     boot.m4["1.4.7"],
     boot.bash["5.2.15"],
     boot.coreutils["9.4"],
@@ -3335,6 +3335,62 @@ boot.bison["2.3"] = bashStep {
     fetchurl {
       url = "http://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-b28236b.tar.gz";
       hash = "sha256:0190f28cb155fedd22bf8558c3e8705eed9eacfb7ae29e7508d025a68eb90899";
+    },
+  };
+}
+
+boot.bison["3.4.2"] = bashStep {
+  pname = "bison";
+  version = "3.4.2";
+
+  builder = boot.bash["5.2.15"].."/bin/bash";
+  PATH = mkBinPath {
+    boot.pkg_config,
+    boot.findutils,
+    boot.gcc["4.0.4-pass1"],
+    boot.binutils["2.30"],
+    boot.libtool["2.4.7"],
+    boot.help2man,
+    boot.automake["1.15.1"],
+    boot.autoconf["2.69"],
+    boot.perl["5.6.2"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.bash["5.2.15"],
+    boot.coreutils["9.4"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.34"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.xz,
+    boot.patch["2.5.9"],
+    boot.make["4.2.1"],
+  };
+
+  C_INCLUDE_PATH = mkIncludePath {
+    boot.musl["1.2.4-pass2"],
+  };
+  LIBRARY_PATH = mkLibraryPath {
+    boot.musl["1.2.4-pass2"],
+  };
+  ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
+    boot.libtool["2.4.7"],
+    boot.pkg_config,
+    boot.autoconf_archive,
+  });
+
+  tarballs = {
+    fetchGNU {
+      path = "bison/bison-3.4.2.tar.xz";
+      hash = "sha256:27d05534699735dc69e86add5b808d6cb35900ad3fd63fa82e3eb644336abfa0";
+    },
+    fetchurl {
+      url = "http://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-672663a.tar.gz";
+      hash = "sha256:8cced51f89a950472473856f86e88f5daf97a2347756125ccdc8ee907deec570";
     },
   };
 }

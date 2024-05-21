@@ -6,6 +6,8 @@
 src_prepare() {
     default
 
+    sed -i -e "/^BISON =/s:.*:BISON = $(command -v bison):" Makefile.am
+
     # Remove pre-generated flex/bison files
     rm src/parse-gram.c src/parse-gram.h
     rm src/scan-code.c
