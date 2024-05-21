@@ -2735,4 +2735,55 @@ boot.libtool["2.4.7"] = bashStep {
   };
 }
 
+boot.tar["1.34"] = bashStep {
+  pname = "tar";
+  version = "1.34";
+
+  builder = boot.bash["5.2.15"].."/bin/bash";
+  PATH = mkBinPath {
+    boot.findutils,
+    boot.gcc["4.0.4-pass1"],
+    boot.binutils["2.30"],
+    boot.libtool["2.4.7"],
+    boot.help2man,
+    boot.automake["1.15.1"],
+    boot.autoconf["2.69"],
+    boot.perl["5.6.2"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.bash["5.2.15"],
+    boot.coreutils["6.10"],
+    boot.coreutils["5.0-pass2"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.xz,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+  };
+
+  C_INCLUDE_PATH = mkIncludePath {
+    boot.musl["1.2.4-pass2"],
+  };
+  LIBRARY_PATH = mkLibraryPath {
+    boot.musl["1.2.4-pass2"],
+  };
+
+  tarballs = {
+    fetchGNU {
+      path = "tar/tar-1.34.tar.xz";
+      hash = "sha256:63bebd26879c5e1eea4352f0d03c991f966aeb3ddeb3c7445c902568d5411d28";
+    },
+    fetchurl {
+      url = "http://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-30820c.tar.gz";
+      hash = "sha256:df807e694deea2dcba0c43af318394f3e3fcd52658c3b71b61dad0ce0c0cfb77";
+    },
+  };
+}
+
 return boot
