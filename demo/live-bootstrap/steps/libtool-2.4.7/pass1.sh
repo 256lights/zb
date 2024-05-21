@@ -12,6 +12,8 @@ src_prepare() {
     rm -f doc/*.info
     rm -f bootstrap
 
+    patchShebangs ../../import-gnulib.sh ../../bootstrap-helper.sh
+
     ../../import-gnulib.sh
 
     LIBTOOLIZE=true AUTOPOINT=true ../../bootstrap-helper.sh
@@ -45,5 +47,7 @@ src_install() {
         -e "s/{FGREP=.*/{FREGP='fgrep'}/" \
         -e "s/{GREP=.*/{GREP='grep'}/" \
         -e "s/{SED=.*/{SED='sed'}/" \
-        "${DESTDIR}/usr/bin/libtool"
+        "${DESTDIR}${PREFIX}/bin/libtool"
+    
+    patchShebangs --update "${PREFIX}/bin"/*
 }

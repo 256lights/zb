@@ -14,7 +14,7 @@ EXIT_FALURE=1
 #######################################
 
 MAKE='make'
-SED='/usr/bin/sed'
+SED='sed'
 
 build_aux='build-aux'
 ltdl_dir='libltdl'
