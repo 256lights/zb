@@ -4,6 +4,9 @@
 
 src_prepare() {
     AUTOMAKE=automake-1.15 ACLOCAL=aclocal-1.15 autoreconf-2.69 -fi
+    patchShebangs configure
+
+    sed -n -e '2700,2750p' configure
 }
 
 src_configure() {

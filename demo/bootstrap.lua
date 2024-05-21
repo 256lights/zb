@@ -2825,8 +2825,6 @@ boot.coreutils["9.4"] = bashStep {
     boot.musl["1.2.4-pass2"],
   };
 
-  setup = "set -x";
-
   tarballs = {
     fetchurl {
       url = "http://git.savannah.gnu.org/cgit/coreutils.git/snapshot/coreutils-9.4.tar.xz";
@@ -2910,6 +2908,55 @@ boot.coreutils["9.4"] = bashStep {
       url = "http://ftp.unicode.org/Public/15.0.0/ucd/CaseFolding.txt";
       hash = "sha256:cdd49e55eae3bbf1f0a3f6580c974a0263cb86a6a08daa10fbf705b4808a56f7";
       name = "CaseFolding-15.0.0.txt";
+    },
+  };
+}
+
+boot.pkg_config = bashStep {
+  pname = "pkg-config";
+  version = "0.29.2";
+
+  builder = boot.bash["5.2.15"].."/bin/bash";
+  PATH = mkBinPath {
+    boot.findutils,
+    boot.gcc["4.0.4-pass1"],
+    boot.binutils["2.30"],
+    boot.libtool["2.4.7"],
+    boot.help2man,
+    boot.automake["1.15.1"],
+    boot.autoconf["2.69"],
+    boot.perl["5.6.2"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.bash["5.2.15"],
+    boot.coreutils["9.4"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.34"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.xz,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+  };
+
+  C_INCLUDE_PATH = mkIncludePath {
+    boot.musl["1.2.4-pass2"],
+  };
+  LIBRARY_PATH = mkLibraryPath {
+    boot.musl["1.2.4-pass2"],
+  };
+  ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
+    boot.libtool["2.4.7"],
+  });
+
+  tarballs = {
+    fetchurl {
+      url = "http://distfiles.macports.org/pkgconfig/pkg-config-0.29.2.tar.gz";
+      hash = "sha256:6fc69c01688c9458a57eb9a1664c9aba372ccda420a02bf4429fe610e7e7d591";
     },
   };
 }
