@@ -2499,7 +2499,7 @@ boot.musl["1.2.4-pass2"] = bashStep {
   tarballs = { musl_1_2_4_tarball };
 }
 
-local curl_tarball = fetchurl {
+local curl_tarball <const> = fetchurl {
   url = "https://curl.se/download/curl-8.5.0.tar.xz";
   hash = "sha256:42ab8db9e20d8290a3b633e7fbb3cec15db34df65fd1015ef8ac1e4723750eeb";
 }
@@ -2586,7 +2586,53 @@ boot.bash["5.2.15"] = bashStep {
     fetchGNU {
       path = "bash/bash-5.2.15.tar.gz";
       hash = "sha256:13720965b5f4fc3a0d4b61dd37e7565c741da9a5be24edc2ae00182fc1b3588c";
-    }
+    },
+  };
+}
+
+boot.xz = bashStep {
+  pname = "xz";
+  version = "5.4.1";
+
+  builder = boot.bash["5.2.15"].."/bin/bash";
+  PATH = mkBinPath {
+    boot.findutils,
+    boot.gcc["4.0.4-pass1"],
+    boot.binutils["2.30"],
+    boot.libtool["2.2.4"],
+    boot.help2man,
+    boot.automake["1.15.1"],
+    boot.autoconf["2.69"],
+    boot.perl["5.6.2"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.bash["5.2.15"],
+    boot.coreutils["6.10"],
+    boot.coreutils["5.0-pass2"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+  };
+
+  C_INCLUDE_PATH = mkIncludePath {
+    boot.musl["1.2.4-pass2"],
+  };
+  LIBRARY_PATH = mkLibraryPath {
+    boot.musl["1.2.4-pass2"],
+  };
+
+  tarballs = {
+    fetchurl {
+      url = "http://ixpeering.dl.sourceforge.net/project/lzmautils/xz-5.4.1.tar.bz2";
+      hash = "sha256:dd172acb53867a68012f94c17389401b2f274a1aa5ae8f84cbfb8b7e383ea8d3";
+    },
   };
 }
 
