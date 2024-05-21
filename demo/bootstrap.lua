@@ -3283,4 +3283,60 @@ boot.flex["2.5.33"] = bashStep {
   };
 }
 
+boot.bison["2.3"] = bashStep {
+  pname = "bison";
+  version = "2.3";
+
+  builder = boot.bash["5.2.15"].."/bin/bash";
+  PATH = mkBinPath {
+    boot.pkg_config,
+    boot.findutils,
+    boot.gcc["4.0.4-pass1"],
+    boot.binutils["2.30"],
+    boot.libtool["2.4.7"],
+    boot.help2man,
+    boot.automake["1.15.1"],
+    boot.autoconf["2.69"],
+    boot.perl["5.6.2"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.5.33"],
+    boot.m4["1.4.7"],
+    boot.bash["5.2.15"],
+    boot.coreutils["9.4"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.34"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.xz,
+    boot.patch["2.5.9"],
+    boot.make["4.2.1"],
+  };
+
+  C_INCLUDE_PATH = mkIncludePath {
+    boot.musl["1.2.4-pass2"],
+  };
+  LIBRARY_PATH = mkLibraryPath {
+    boot.musl["1.2.4-pass2"],
+  };
+  ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
+    boot.libtool["2.4.7"],
+    boot.pkg_config,
+    boot.autoconf_archive,
+  });
+
+  tarballs = {
+    fetchGNU {
+      path = "bison/bison-2.3.tar.bz2";
+      hash = "sha256:b10d7e9e354be72aee4e4911cf19dd27b5c527d4e7200857365b5fcdeea0dffb";
+    },
+    fetchurl {
+      url = "http://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-b28236b.tar.gz";
+      hash = "sha256:0190f28cb155fedd22bf8558c3e8705eed9eacfb7ae29e7508d025a68eb90899";
+    },
+  };
+}
+
 return boot
