@@ -30,20 +30,46 @@ local function fetchGNU(args)
   end
 end
 
----Construct a binary search path (such as `$PATH`)
----containing the binaries for a set of packages.
----@param pkgs (string|derivation)[]
----@return string # colon-separated paths
-local function mkBinPath(pkgs)
+---Construct a Unix-style search path by appending `subDir`
+---to the specified `output` of each of the packages.
+---@param output string
+---@param subDir string
+---@param paths derivation[]
+---@return string
+local function makeSearchPathOutput(output, subDir, paths)
   local parts = {}
-  for i, x in ipairs(pkgs) do
-    if i > 1 then
-      parts[#parts + 1] = ":"
+  for i, x in ipairs(paths) do
+    local xout = x[output]
+    if xout then
+      if #parts > 0 then
+        parts[#parts + 1] = ":"
+      end
+      parts[#parts + 1] = tostring(xout)
+      parts[#parts + 1] = "/"
+      parts[#parts + 1] = subDir
     end
-    parts[#parts + 1] = tostring(x)
-    parts[#parts + 1] = "/bin"
   end
   return table.concat(parts)
+end
+
+---Construct a binary search path (such as `$PATH`)
+---containing the binaries for a set of packages.
+---@param pkgs derivation[]
+---@return string # colon-separated paths
+local function mkBinPath(pkgs)
+  return makeSearchPathOutput("out", "bin", pkgs)
+end
+
+---@param pkgs derivation[]
+---@return string
+local function mkIncludePath(pkgs)
+  return makeSearchPathOutput("out", "include", pkgs)
+end
+
+---@param pkgs derivation[]
+---@return string
+local function mkLibraryPath(pkgs)
+  return makeSearchPathOutput("out", "lib", pkgs)
 end
 
 ---@param args table
@@ -2336,8 +2362,12 @@ boot.linux_headers = bashStep {
     boot.make["3.82-pass1"],
     stage0.stage0,
   };
-  CPATH = boot.musl["1.2.4-pass1"].."/include";
-  LIBRARY_PATH = boot.musl["1.2.4-pass1"].."/lib";
+  CPATH = mkIncludePath {
+    boot.musl["1.2.4-pass1"],
+  };
+  LIBRARY_PATH = mkLibraryPath {
+    boot.musl["1.2.4-pass1"],
+  };
 
   tarballs = {
     fetchurl {
