@@ -2273,4 +2273,41 @@ boot.findutils = bashStep {
   };
 }
 
+local musl_1_2_4_tarball = fetchurl {
+  url = "https://musl.libc.org/releases/musl-1.2.4.tar.gz";
+  hash = "sha256:7a35eae33d5372a7c0da1188de798726f68825513b7ae3ebe97aaaa52114f039";
+}
+boot.musl["1.2.4-pass1"] = bashStep {
+  pname = "musl";
+  version = "1.2.4";
+
+  PATH = mkBinPath {
+    boot.gcc["4.0.4-pass1"],
+    boot.binutils["2.30"],
+    boot.libtool["2.2.4"],
+    boot.help2man,
+    -- boot.automake["1.9.6"], -- Deliberately using an older version.
+    -- boot.autoconf["2.61"],  -- Deliberately using an older version.
+    boot.perl["5.6.2"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["6.10"],
+    boot.coreutils["5.0-pass2"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+
+  tarballs = { musl_1_2_4_tarball };
+}
+
 return boot
