@@ -815,6 +815,8 @@ local function bashStep(args)
     OPERATING_SYSTEM = "Linux";
     ARCH = "amd64";
     MAKEJOBS = "-j1";
+    SOURCE_DATE_EPOCH = 0;
+    KBUILD_BUILD_TIMESTAMP = "@0";
     pkg = defaultName;
     revision = 0;
 
