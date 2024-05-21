@@ -853,7 +853,7 @@ local function bashStep(args)
       _select() {\n\z
         local i=\"$1\"\n\z
         shift\n\z
-        eval \"echo \\$$i\"\n\z
+        eval \"echo \\${$i}\"\n\z
       }\n",
   }
   for i, t in ipairs(args.tarballs) do
@@ -2782,6 +2782,134 @@ boot.tar["1.34"] = bashStep {
     fetchurl {
       url = "http://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-30820c.tar.gz";
       hash = "sha256:df807e694deea2dcba0c43af318394f3e3fcd52658c3b71b61dad0ce0c0cfb77";
+    },
+  };
+}
+
+boot.coreutils["9.4"] = bashStep {
+  pname = "coreutils";
+  version = "9.4";
+
+  builder = boot.bash["5.2.15"].."/bin/bash";
+  PATH = mkBinPath {
+    boot.findutils,
+    boot.gcc["4.0.4-pass1"],
+    boot.binutils["2.30"],
+    boot.libtool["2.4.7"],
+    boot.help2man,
+    boot.automake["1.15.1"],
+    boot.autoconf["2.69"],
+    boot.perl["5.6.2"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.bash["5.2.15"],
+    boot.coreutils["6.10"],
+    boot.coreutils["5.0-pass2"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.34"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.xz,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+  };
+
+  C_INCLUDE_PATH = mkIncludePath {
+    boot.musl["1.2.4-pass2"],
+  };
+  LIBRARY_PATH = mkLibraryPath {
+    boot.musl["1.2.4-pass2"],
+  };
+
+  setup = "set -x";
+
+  tarballs = {
+    fetchurl {
+      url = "http://git.savannah.gnu.org/cgit/coreutils.git/snapshot/coreutils-9.4.tar.xz";
+      hash = "sha256:8fb56810310253300b3d6f84e68dc97eb2d74e1f4f78e05776831d9d82e4f2d7";
+    },
+    fetchurl {
+      url = "http://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-bb5bb43.tar.gz";
+      hash = "sha256:b8aa1ac1b18c67f081486069e6a7a5564f20431c2313a94c20a46dcfb904be2a";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/UnicodeData.txt";
+      hash = "sha256:806e9aed65037197f1ec85e12be6e8cd870fc5608b4de0fffd990f689f376a73";
+      name = "UnicodeData-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/PropList.txt";
+      hash = "sha256:e05c0a2811d113dae4abd832884199a3ea8d187ee1b872d8240a788a96540bfd";
+      name = "PropList-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/DerivedCoreProperties.txt";
+      hash = "sha256:d367290bc0867e6b484c68370530bdd1a08b6b32404601b8c7accaf83e05628d";
+      name = "DerivedCoreProperties-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/emoji/emoji-data.txt";
+      hash = "sha256:29071dba22c72c27783a73016afb8ffaeb025866740791f9c2d0b55cc45a3470";
+      name = "emoji-data-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/ArabicShaping.txt";
+      hash = "sha256:eb840f36e0a7446293578c684a54c6d83d249abde7bdd4dfa89794af1d7fe9e9";
+      name = "ArabicShaping-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/Scripts.txt";
+      hash = "sha256:cca85d830f46aece2e7c1459ef1249993dca8f2e46d51e869255be140d7ea4b0";
+      name = "Scripts-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/Blocks.txt";
+      hash = "sha256:529dc5d0f6386d52f2f56e004bbfab48ce2d587eea9d38ba546c4052491bd820";
+      name = "Blocks-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/3.0-Update1/PropList-3.0.1.txt";
+      hash = "sha256:909eef4adbeddbdddcd9487c856fe8cdbb8912aa8eb315ed7885b6ef65f4dc4c";
+      name = "PropList-3.0.1.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/EastAsianWidth.txt";
+      hash = "sha256:743e7bc435c04ab1a8459710b1c3cad56eedced5b806b4659b6e69b85d0adf2a";
+      name = "EastAsianWidth-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/LineBreak.txt";
+      hash = "sha256:012bca868e2c4e59a5a10a7546baf0c6fb1b2ef458c277f054915c8a49d292bf";
+      name = "LineBreak-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/auxiliary/WordBreakProperty.txt";
+      hash = "sha256:5188a56e91593467c2e912601ebc78750e6adc9b04541b8c5becb5441e388ce2";
+      name = "WordBreakProperty-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/auxiliary/GraphemeBreakProperty.txt";
+      hash = "sha256:5a0f8748575432f8ff95e1dd5bfaa27bda1a844809e17d6939ee912bba6568a1";
+      name = "GraphemeBreakProperty-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/CompositionExclusions.txt";
+      hash = "sha256:3b019c0a33c3140cbc920c078f4f9af2680ba4f71869c8d4de5190667c70b6a3";
+      name = "CompositionExclusions-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/SpecialCasing.txt";
+      hash = "sha256:78b29c64b5840d25c11a9f31b665ee551b8a499eca6c70d770fcad7dd710f494";
+      name = "SpecialCasing-15.0.0.txt";
+    },
+    fetchurl {
+      url = "http://ftp.unicode.org/Public/15.0.0/ucd/CaseFolding.txt";
+      hash = "sha256:cdd49e55eae3bbf1f0a3f6580c974a0263cb86a6a08daa10fbf705b4808a56f7";
+      name = "CaseFolding-15.0.0.txt";
     },
   };
 }
