@@ -2223,6 +2223,7 @@ boot.gcc["4.0.4-pass1"] = bashStep {
     stage0.stage0,
   };
 
+  musl = boot.musl["1.1.24-pass3"];
   INCDIR = boot.musl["1.1.24-pass3"].."/include";
 
   tarballs = {
@@ -2285,9 +2286,6 @@ boot.musl["1.2.4-pass1"] = bashStep {
     boot.gcc["4.0.4-pass1"],
     boot.binutils["2.30"],
     boot.libtool["2.2.4"],
-    boot.help2man,
-    -- boot.automake["1.9.6"], -- Deliberately using an older version.
-    -- boot.autoconf["2.61"],  -- Deliberately using an older version.
     boot.perl["5.6.2"],
     boot.gawk["3.0.4"],
     boot.diffutils["2.7"],
@@ -2308,6 +2306,45 @@ boot.musl["1.2.4-pass1"] = bashStep {
   };
 
   tarballs = { musl_1_2_4_tarball };
+}
+
+boot.linux_headers = bashStep {
+  pname = "linux-headers";
+  version = "4.14.336";
+  pkg = "linux-headers-4.14.341-openela";
+
+  PATH = mkBinPath {
+    boot.findutils,
+    boot.gcc["4.0.4-pass1"],
+    boot.binutils["2.30"],
+    boot.libtool["2.2.4"],
+    boot.perl["5.6.2"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.1"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.bash["2.05b-pass1"],
+    boot.coreutils["6.10"],
+    boot.coreutils["5.0-pass2"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.12"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.patch["2.5.9"],
+    boot.make["3.82-pass1"],
+    stage0.stage0,
+  };
+  CPATH = boot.musl["1.2.4-pass1"].."/include";
+  LIBRARY_PATH = boot.musl["1.2.4-pass1"].."/lib";
+
+  tarballs = {
+    fetchurl {
+      url = "https://cdn.kernel.org/pub/linux/kernel/v4.x/linux-4.14.336.tar.xz";
+      hash = "sha256:0820fdb7971c6974338081c11fbf2dc869870501e7bdcac4d0ed58ba1f57b61c";
+    },
+  };
 }
 
 return boot

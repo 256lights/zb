@@ -78,6 +78,7 @@ src_configure() {
             --build=i386-unknown-linux-musl \
             --target=i386-unknown-linux-musl \
             --host=i386-unknown-linux-musl \
+            --with-local-prefix="${musl:?}" \
             --disable-shared \
             --program-transform-name=
         cd ..
