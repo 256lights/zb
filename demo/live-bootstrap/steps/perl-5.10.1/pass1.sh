@@ -6,6 +6,11 @@
 src_prepare() {
     default_src_prepare
 
+    # Rewrite configuration for build prefixes.
+    sed -i "/^#define PRIVLIB/s:/usr/:${out:?}/:" config.h
+    sed -i "/^#define LOC_SED/s:/usr/:$(command -v sed)/:" config.h
+    sed -i "/^#define ARCHLIB/s:/usr/:${out:?}/:" config.h
+
     # Regenerate bison files
     # perly.c looks suspiciously like it is from bison, but is not; from the
     # below script:
