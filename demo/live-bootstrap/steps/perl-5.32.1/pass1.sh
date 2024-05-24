@@ -8,6 +8,7 @@ src_prepare() {
 
     # The Perl Cwd::cwd function hard-codes a number of paths for the pwd utility.
     # Add the currently present pwd to the list.
+    # See https://github.com/Perl/perl5/issues/18703
     sed -i -e "/'\\/usr\\/bin\\/pwd',/a '$(type -P pwd)'," dist/PathTools/Cwd.pm
 
     # Regenerate bison files
