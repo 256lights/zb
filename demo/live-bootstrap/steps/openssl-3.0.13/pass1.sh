@@ -11,6 +11,8 @@ src_prepare() {
     # Remove a bunch of pregenerated files
     # thanks for making these easy to find :)
     find . -name build.info -exec grep 'GENERATE\[' {} \; | sed 's/.*\[//' | sed 's/\].*$//' | xargs -I{} find . -name {} -delete
+
+    patchShebangs config Configure
 }
 
 src_configure() {
