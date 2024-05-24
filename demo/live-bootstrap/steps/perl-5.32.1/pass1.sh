@@ -6,6 +6,10 @@
 src_prepare() {
     default
 
+    # The Perl Cwd::cwd function hard-codes a number of paths for the pwd utility.
+    # Add the currently present pwd to the list.
+    sed -i -e "/'\\/usr\\/bin\\/pwd',/a '$(type -P pwd)'," dist/PathTools/Cwd.pm
+
     # Regenerate bison files
     # perly.c looks suspiciously like it is from bison, but is not; from the
     # below script:
@@ -27,6 +31,8 @@ src_prepare() {
     ln -s ../metaconfig-5.32.1\~rc1/.package .
     ln -s ../metaconfig-5.32.1\~rc1/U .
     metaconfig -m
+
+    patchShebangs Configure
 }
 
 src_configure() {
@@ -44,13 +50,16 @@ src_configure() {
 src_install() {
     default
 
+    local scripts
+    read -ra scripts < <(find "${DESTDIR}${PREFIX}" -type f -perm -0100)
+    patchShebangs --update "${scripts[@]}"
+
     # Remove messed up manpages
-    rm "${DESTDIR}/"*.0
-    rm "${DESTDIR}${PREFIX}/lib/perl5/5.32.1/pod/perldebguts.pod"
+    rm "${DESTDIR}${PREFIX}/lib/5.32.1/pod/perldebguts.pod"
 
     # Improve reproducibility. hostcat might be empty or set to "cat /etc/hosts"
     # depending on whether /etc/hosts was available during the build.
-    sed -i "s_^hostcat='.*'\$_hostcat=''_g" "${DESTDIR}${PREFIX}/lib/perl5/5.32.1/i386-linux/Config_heavy.pl"
+    sed -i "s_^hostcat='.*'\$_hostcat=''_g" "${DESTDIR}${PREFIX}/lib/5.32.1/i386-linux/Config_heavy.pl"
 
     # There are strange permissions on installed files.
     find "${DESTDIR}${PREFIX}/lib" -type f  -exec chmod 644 {} \;

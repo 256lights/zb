@@ -3465,7 +3465,59 @@ boot.dist = bashStep {
     boot.gawk["3.0.4"],
     boot.diffutils["2.7"],
     boot.grep["2.4"],
-    boot.bison["2.3"], -- Intentionally using an old version.
+    boot.m4["1.4.7"],
+    boot.bash["5.2.15"],
+    boot.coreutils["9.4"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.34"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.xz,
+    boot.patch["2.5.9"],
+    boot.make["4.2.1"],
+  };
+
+  PRIVLIB = perl_5_10_1.."/lib/perl5/5.10.1";
+  C_INCLUDE_PATH = mkIncludePath {
+    boot.musl["1.2.4-pass2"],
+  };
+  LIBRARY_PATH = mkLibraryPath {
+    boot.musl["1.2.4-pass2"],
+  };
+  ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
+    boot.libtool["2.4.7"],
+    boot.pkg_config,
+    boot.autoconf_archive,
+  });
+
+  tarballs = {
+    fetchurl {
+      url = "http://deb.debian.org/debian/pool/main/d/dist/dist_3.5-236.orig.tar.gz";
+      hash = "sha256:05fa4f6ea9f05adf8f577699cb3f5b88b20dfce86b0d0cebbfb072fe5933d38f";
+    },
+  };
+}
+
+boot.perl["5.32.1"] = bashStep {
+  pname = "perl";
+  version = "5.32.1";
+
+  builder = boot.bash["5.2.15"].."/bin/bash";
+  PATH = mkBinPath {
+    boot.dist,
+    boot.pkg_config,
+    boot.findutils,
+    boot.gcc["4.0.4-pass1"],
+    boot.binutils["2.30"],
+    boot.libtool["2.4.7"],
+    boot.help2man,
+    boot.automake["1.15.1"],
+    boot.autoconf["2.69"],
+    perl_5_10_1,
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.2"],
     boot.flex["2.6.4"],
     boot.m4["1.4.7"],
     boot.bash["5.2.15"],
@@ -3493,8 +3545,12 @@ boot.dist = bashStep {
 
   tarballs = {
     fetchurl {
-      url = "http://deb.debian.org/debian/pool/main/d/dist/dist_3.5-236.orig.tar.gz";
-      hash = "sha256:05fa4f6ea9f05adf8f577699cb3f5b88b20dfce86b0d0cebbfb072fe5933d38f";
+      url = "http://www.cpan.org/src/5.0/perl-5.32.1.tar.xz";
+      hash = "sha256:57cc47c735c8300a8ce2fa0643507b44c4ae59012bfdad0121313db639e02309";
+    },
+    fetchurl {
+      url = "http://deb.debian.org/debian/pool/main/p/perl/perl_5.32.1.orig-regen-configure.tar.gz";
+      hash = "sha256:1d179b41283f12ad83f9758430f6ddc49bdf20db5c396aeae7e51ebb4e4afd29";
     },
   };
 }

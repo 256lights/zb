@@ -8,7 +8,10 @@
 src_prepare() {
     default
 
-    sed 's/@PERLVER@/5.10.1/' config.sh.in > config.sh
+    sed \
+        -e "s|@PREFIX@|${PREFIX}|" \
+        -e "s|@PERLVER@|5.10.1|" \
+        config.sh.in > config.sh
 }
 
 src_compile() {
