@@ -3660,4 +3660,105 @@ boot.openssl = bashStep {
   };
 }
 
+---@type derivation
+local mk_ca_bundle
+
+do
+  local pname <const> = "mk-ca-bundle"
+  local version <const> = boot.curl.version
+  local name <const> = pname.."-"..version
+  local shell <const> = boot.bash["5.2.15"].."/bin/bash"
+  local script <const> = "#!/usr/bin/env bash\n\z
+    set -e\n\z
+    . \"$helpers\"\n\z
+    tar Jxf \"$tarball\"\n\z
+    cd \"curl-${version}\"\n\z
+    mkdir -p \"$out/bin\"\n\z
+    patchShebangs scripts/mk-ca-bundle.pl\n\z
+    install -m 755 scripts/mk-ca-bundle.pl \"$out/bin/mk-ca-bundle\"\n"
+
+  mk_ca_bundle = derivation {
+    name = name;
+    pname = pname;
+    version = version;
+    system = "x86_64-linux";
+
+    builder = shell;
+    PATH = mkBinPath {
+      boot.pkg_config,
+      boot.perl["5.32.1"],
+      boot.gawk["3.0.4"],
+      boot.diffutils["2.7"],
+      boot.grep["2.4"],
+      boot.bash["5.2.15"],
+      boot.coreutils["9.4"],
+      boot.sed["4.0.9-pass2"],
+      boot.tar["1.34"],
+      boot.gzip["1.2.4"],
+      boot.bzip2.pass2,
+      boot.xz,
+      boot.patch["2.5.9"],
+    };
+    SHELL = shell;
+
+    helpers = path "live-bootstrap/steps/helpers-nix.sh";
+    args = { toFile(name.."-builder.sh", script) };
+
+    tarball = curl_tarball;
+  }
+end
+
+boot.ca_certificates = bashStep {
+  pname = "ca-certificates";
+  version = "3.99";
+
+  builder = boot.bash["5.2.15"].."/bin/bash";
+  PATH = mkBinPath {
+    mk_ca_bundle,
+    boot.pkg_config,
+    boot.findutils,
+    boot.gcc["4.0.4-pass1"],
+    boot.binutils["2.30"],
+    boot.libtool["2.4.7"],
+    boot.help2man,
+    boot.automake["1.15.1"],
+    boot.autoconf["2.69"],
+    boot.perl["5.32.1"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.2"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.bash["5.2.15"],
+    boot.coreutils["9.4"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.34"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.xz,
+    boot.patch["2.5.9"],
+    boot.make["4.2.1"],
+  };
+
+  C_INCLUDE_PATH = mkIncludePath {
+    boot.musl["1.2.4-pass2"],
+  };
+  LIBRARY_PATH = mkLibraryPath {
+    boot.musl["1.2.4-pass2"],
+  };
+  ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
+    boot.libtool["2.4.7"],
+    boot.pkg_config,
+    boot.autoconf_archive,
+  });
+
+  tarballs = {
+    fetchurl {
+      url = "http://ftp.mozilla.org/pub/security/nss/releases/NSS_3_99_RTM/src/nss-3.99.tar.gz";
+      hash = "sha256:5cd5c2c8406a376686e6fa4b9c2de38aa280bea07bf927c0d521ba07c88b09bd";
+    },
+  };
+}
+
 return boot

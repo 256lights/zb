@@ -16,8 +16,6 @@ src_prepare() {
     libtoolize
 
     AUTOMAKE=automake-1.15 ACLOCAL=aclocal-1.15 autoreconf-2.69 -fi
-
-    patchShebangs scripts/mk-ca-bundle.pl
 }
 
 src_configure() {
@@ -28,9 +26,4 @@ src_configure() {
         --enable-ipv6 \
         --without-ssl \
         --disable-hsts
-}
-
-src_install() {
-    default
-    install -m 755 scripts/mk-ca-bundle.pl "${DESTDIR}${PREFIX}/bin/mk-ca-bundle"
 }

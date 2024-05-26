@@ -8,6 +8,6 @@ src_compile() {
 }
 
 src_install() {
-    install -D -m 644 ca-bundle.crt "${DESTDIR}/etc/ssl/certs/ca-certificates.crt"
-    ln -s /etc/ssl/certs/ca-certificates.crt "${DESTDIR}/etc/ssl/certs.pem"
+    install -D -m 644 ca-bundle.crt "${DESTDIR}${PREFIX}/etc/ssl/certs/ca-certificates.crt"
+    ln -s "${DESTDIR}${PREFIX}/etc/ssl/certs/ca-certificates.crt" "${DESTDIR}${PREFIX}/etc/ssl/certs.pem"
 }
