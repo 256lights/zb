@@ -2501,51 +2501,6 @@ boot.musl["1.2.4-pass2"] = bashStep {
   tarballs = { musl_1_2_4_tarball };
 }
 
-local curl_tarball <const> = fetchurl {
-  url = "https://curl.se/download/curl-8.5.0.tar.xz";
-  hash = "sha256:42ab8db9e20d8290a3b633e7fbb3cec15db34df65fd1015ef8ac1e4723750eeb";
-}
-boot.curl = bashStep {
-  pname = "curl";
-  version = "8.5.0";
-
-  PATH = mkBinPath {
-    boot.findutils,
-    boot.gcc["4.0.4-pass1"],
-    boot.binutils["2.30"],
-    boot.libtool["2.2.4"],
-    boot.help2man,
-    boot.automake["1.15.1"],
-    boot.autoconf["2.69"],
-    boot.perl["5.6.2"],
-    boot.gawk["3.0.4"],
-    boot.diffutils["2.7"],
-    boot.grep["2.4"],
-    boot.bison["3.4.1"],
-    boot.flex["2.6.4"],
-    boot.m4["1.4.7"],
-    boot.bash["2.05b-pass1"],
-    boot.coreutils["6.10"],
-    boot.coreutils["5.0-pass2"],
-    boot.sed["4.0.9-pass2"],
-    boot.tar["1.12"],
-    boot.gzip["1.2.4"],
-    boot.bzip2.pass2,
-    boot.patch["2.5.9"],
-    boot.make["3.82-pass1"],
-    stage0.stage0,
-  };
-
-  C_INCLUDE_PATH = mkIncludePath {
-    boot.musl["1.2.4-pass2"],
-  };
-  LIBRARY_PATH = mkLibraryPath {
-    boot.musl["1.2.4-pass2"],
-  };
-
-  tarballs = { curl_tarball };
-}
-
 boot.bash["5.2.15"] = bashStep {
   pname = "bash";
   version = "5.2.15";
@@ -3660,14 +3615,19 @@ boot.openssl = bashStep {
   };
 }
 
+local curl_tarball <const> = fetchurl {
+  url = "https://curl.se/download/curl-8.5.0.tar.xz";
+  hash = "sha256:42ab8db9e20d8290a3b633e7fbb3cec15db34df65fd1015ef8ac1e4723750eeb";
+}
+local curl_version <const> = "8.5.0"
 ---@type derivation
 local mk_ca_bundle
 
 do
   local pname <const> = "mk-ca-bundle"
-  local version <const> = boot.curl.version
-  local name <const> = pname.."-"..version
-  local shell <const> = boot.bash["5.2.15"].."/bin/bash"
+  local name <const> = pname.."-"..curl_version
+  local shellDrv <const> = boot.bash["5.2.15"]
+  local shell <const> = shellDrv.."/bin/bash"
   local script <const> = "#!/usr/bin/env bash\n\z
     set -e\n\z
     . \"$helpers\"\n\z
@@ -3680,7 +3640,7 @@ do
   mk_ca_bundle = derivation {
     name = name;
     pname = pname;
-    version = version;
+    version = curl_version;
     system = "x86_64-linux";
 
     builder = shell;
@@ -3690,7 +3650,7 @@ do
       boot.gawk["3.0.4"],
       boot.diffutils["2.7"],
       boot.grep["2.4"],
-      boot.bash["5.2.15"],
+      shellDrv,
       boot.coreutils["9.4"],
       boot.sed["4.0.9-pass2"],
       boot.tar["1.34"],
@@ -3759,6 +3719,57 @@ boot.ca_certificates = bashStep {
       hash = "sha256:5cd5c2c8406a376686e6fa4b9c2de38aa280bea07bf927c0d521ba07c88b09bd";
     },
   };
+}
+
+boot.curl = bashStep {
+  pname = "curl";
+  version = curl_version;
+  revision = 1;
+
+  builder = boot.bash["5.2.15"].."/bin/bash";
+  PATH = mkBinPath {
+    boot.pkg_config,
+    boot.findutils,
+    boot.gcc["4.0.4-pass1"],
+    boot.binutils["2.30"],
+    boot.libtool["2.4.7"],
+    boot.help2man,
+    boot.automake["1.15.1"],
+    boot.autoconf["2.69"],
+    boot.perl["5.32.1"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.2"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.bash["5.2.15"],
+    boot.coreutils["9.4"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.34"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.xz,
+    boot.patch["2.5.9"],
+    boot.make["4.2.1"],
+  };
+
+  C_INCLUDE_PATH = mkIncludePath {
+    boot.musl["1.2.4-pass2"],
+  };
+  LIBRARY_PATH = mkLibraryPath {
+    boot.musl["1.2.4-pass2"],
+  };
+  ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
+    boot.libtool["2.4.7"],
+    boot.pkg_config,
+    boot.autoconf_archive,
+  });
+  PKG_CONFIG_PATH = makeSearchPathOutput("out", "lib/pkgconfig", {
+    boot.openssl,
+  });
+
+  tarballs = { curl_tarball };
 }
 
 return boot
