@@ -3931,4 +3931,60 @@ boot.autoconf["2.71"] = bashStep {
   };
 }
 
+boot.patch["2.7.6"] = bashStep {
+  pname = "patch";
+  version = "2.7.6";
+
+  builder = boot.bash["5.2.15"].."/bin/bash";
+  PATH = mkBinPath {
+    boot.pkg_config,
+    boot.findutils,
+    boot.gcc["4.0.4-pass1"],
+    boot.binutils["2.30"],
+    boot.libtool["2.4.7"],
+    boot.help2man,
+    boot.automake["1.16.3"],
+    boot.autoconf["2.71"],
+    boot.perl["5.32.1"],
+    boot.gawk["3.0.4"],
+    boot.diffutils["2.7"],
+    boot.grep["2.4"],
+    boot.bison["3.4.2"],
+    boot.flex["2.6.4"],
+    boot.m4["1.4.7"],
+    boot.bash["5.2.15"],
+    boot.coreutils["9.4"],
+    boot.sed["4.0.9-pass2"],
+    boot.tar["1.34"],
+    boot.gzip["1.2.4"],
+    boot.bzip2.pass2,
+    boot.xz,
+    boot.patch["2.5.9"],
+    boot.make["4.2.1"],
+  };
+
+  C_INCLUDE_PATH = mkIncludePath {
+    boot.musl["1.2.4-pass2"],
+  };
+  LIBRARY_PATH = mkLibraryPath {
+    boot.musl["1.2.4-pass2"],
+  };
+  ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
+    boot.libtool["2.4.7"],
+    boot.pkg_config,
+    boot.autoconf_archive,
+  });
+
+  tarballs = {
+    fetchGNU {
+      path = "patch/patch-2.7.6.tar.xz";
+      hash = "sha256:ac610bda97abe0d9f6b7c963255a11dcb196c25e337c61f94e4778d632f1d8fd";
+    },
+    fetchurl {
+      url = "https://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-e017871.tar.gz";
+      hash = "sha256:a285dc300c3d9c25cc06e38827ef40f6073ec3b9b0fcb5bba433f943be92d8d4";
+    },
+  };
+}
+
 return boot

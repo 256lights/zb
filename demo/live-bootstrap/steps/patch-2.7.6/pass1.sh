@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 src_prepare() {
+    patchShebangs ../../import-gnulib.sh
     ../../import-gnulib.sh
 
     # bison
