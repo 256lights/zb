@@ -15,7 +15,7 @@ src_prepare() {
     rm config.guess config.sub ltmain.sh
     libtoolize
 
-    AUTOMAKE=automake-1.15 ACLOCAL=aclocal-1.15 autoreconf-2.69 -fi
+    autoreconf -fi
 }
 
 src_configure() {

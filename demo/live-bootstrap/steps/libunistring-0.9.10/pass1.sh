@@ -10,7 +10,7 @@ src_prepare() {
     GNULIB_TOOL=../gnulib-52a06cb3/gnulib-tool ./autogen.sh
 
     # autogen.sh does not regenerate libtool files
-    autoreconf-2.69 -fi
+    autoreconf -fi
 }
 
 src_configure() {

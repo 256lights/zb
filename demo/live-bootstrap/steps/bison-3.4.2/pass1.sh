@@ -19,7 +19,7 @@ src_prepare() {
 
     ../../import-gnulib.sh
 
-    AUTOPOINT=true AUTOMAKE=automake-1.15 ACLOCAL=aclocal-1.15 autoreconf-2.69 -fi
+    AUTOPOINT=true autoreconf -fi
 }
 
 src_configure() {

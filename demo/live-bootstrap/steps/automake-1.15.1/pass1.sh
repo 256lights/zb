@@ -12,17 +12,17 @@ src_prepare() {
     sed -i '/doc\/Makefile.inc/d' Makefile.am
     sed -i '/t\/Makefile.inc/d' Makefile.am
 
-    AUTOCONF="autoconf-2.69 -f" AUTOM4TE=autom4te-2.69 ./bootstrap
+    AUTOCONF="autoconf -f" ./bootstrap
 
     rm doc/automake-history.info doc/automake.info*
 }
 
 src_configure() {
-    AUTORECONF=autoreconf-2.69 AUTOM4TE=autom4te-2.69 AUTOHEADER=autoheader-2.69 AUTOCONF="autoconf-2.69 -f" ./configure --prefix="${PREFIX}"
+    AUTOCONF="autoconf -f" ./configure --prefix="${PREFIX}"
 }
 
 src_compile() {
-    AUTORECONF=autoreconf-2.69 AUTOM4TE=autom4te-2.69 AUTOHEADER=autoheader-2.69 AUTOCONF="autoconf-2.69 -f" make -j1 MAKEINFO=true
+    AUTOCONF="autoconf -f" make -j1 MAKEINFO=true
 }
 
 src_install() {

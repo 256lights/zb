@@ -8,7 +8,7 @@ src_prepare() {
 
     ../../import-gnulib.sh
 
-    autoreconf-2.69 -fi
+    autoreconf -fi
 }
 
 src_configure() {

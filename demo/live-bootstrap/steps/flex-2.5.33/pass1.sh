@@ -5,7 +5,7 @@
 src_prepare() {
     default
 
-    AUTOPOINT=true AUTOMAKE=automake-1.15 ACLOCAL=aclocal-1.15 autoreconf-2.69 -fi
+    AUTOPOINT=true autoreconf -fi
 
     # Remove pregenerated files
     rm parse.c parse.h scan.c 

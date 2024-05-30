@@ -19,14 +19,14 @@ src_prepare() {
     # Regenerate autoconf
     for dir in bfd binutils gas gold gprof intl ld libctf libiberty libsframe opcodes; do
         cd $dir
-        AUTOPOINT=true ACLOCAL=aclocal-1.15 AUTOMAKE=automake-1.15 autoreconf-2.69 -fi
+        AUTOPOINT=true autoreconf -fi
         cd ..
     done
-    ACLOCAL=aclocal-1.15 autoreconf-2.69 -fi
+    autoreconf -fi
 
     # Regenerate directories with Makefile.am only
     pushd gold
-    automake-1.15 -fai testsuite/Makefile
+    automake -fai testsuite/Makefile
     popd
 
     # Rebuild bison files

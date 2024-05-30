@@ -4,14 +4,11 @@
 
 src_prepare() {
     rm doc/standards.info
-    autoreconf-2.69 -fi
-
-    # Install autoconf data files into versioned directory
-    sed -i '/^pkgdatadir/s:$:-@VERSION@:' Makefile.in
+    autoreconf -fi
 }
 
 src_configure() {
-    ./configure --prefix="${PREFIX}" --program-suffix=-2.71
+    ./configure --prefix="${PREFIX}"
 }
 
 src_compile() {
@@ -20,9 +17,5 @@ src_compile() {
 
 src_install() {
     make install MAKEINFO=true DESTDIR="${DESTDIR}"
-
-    ln -sf "${PREFIX}/bin/autoconf-2.71" "${DESTDIR}${PREFIX}/bin/autoconf"
-    ln -sf "${PREFIX}/bin/autoheader-2.71" "${DESTDIR}${PREFIX}/bin/autoheader"
-    ln -sf "${PREFIX}/bin/autom4te-2.71" "${DESTDIR}${PREFIX}/bin/autom4te"
-    ln -sf "${PREFIX}/bin/autoreconf-2.71" "${DESTDIR}${PREFIX}/bin/autoreconf"
+    patchShebangs --update "${DESTDIR}${PREFIX}/bin"/*
 }

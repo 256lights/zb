@@ -7,7 +7,7 @@ src_prepare() {
     find . -name "*.gmo" -delete
     rm -rf po4a/man
 
-    AUTOMAKE=automake-1.15 ACLOCAL=aclocal-1.15 AUTOCONF=autoconf-2.69 AUTOM4TE=autom4te-2.69 autoreconf-2.69 -f
+    autoreconf -f
 }
 
 src_configure() {

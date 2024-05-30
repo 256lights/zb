@@ -24,7 +24,7 @@ regenerate_files() {
     echo "$VERSION" > .tarball-version
 
     # We don't have autopoint from gettext yet.
-    AUTOPOINT=true AUTOMAKE=automake-1.15 ACLOCAL=aclocal-1.15 autoreconf-2.69 -fi
+    AUTOPOINT=true autoreconf -fi
 }
 
 src_prepare() {

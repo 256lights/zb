@@ -8,7 +8,7 @@ src_prepare() {
     rm configure Makefile.in aclocal.m4 which.1
     touch ChangeLog which.1
     sed -i '/@ACLOCAL_CWFLAGS@/d' Makefile.am
-    autoreconf-2.69 -fi
+    autoreconf -fi
 }
 
 src_configure() {

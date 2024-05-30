@@ -6,7 +6,7 @@ src_prepare() {
     default
 
     find . -name '*.info' -delete
-    AUTOMAKE=automake-1.15 ACLOCAL=aclocal-1.15 autoreconf-2.69 -fi
+    autoreconf -fi
 }
 
 src_configure() {

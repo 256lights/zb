@@ -11,7 +11,7 @@ src_prepare() {
     sed -i 's/ doc//' Makefile.am
     
     # Rebuild configure script
-    AUTOMAKE=automake-1.15 ACLOCAL=aclocal-1.15 autoreconf-2.69 -fi
+    autoreconf -fi
 }
 
 src_configure() {

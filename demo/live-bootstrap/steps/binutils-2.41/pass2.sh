@@ -14,23 +14,23 @@ src_prepare() {
 
     # Regenerate top-level (autogen + autotools)
     autogen Makefile.def
-    ACLOCAL=aclocal-1.15 autoreconf-2.69 -fi
+    autoreconf -fi
 
     # Regenerate autoconf
     for dir in bfd binutils gas gold gprof intl ld libctf libiberty libsframe opcodes; do
         cd $dir
-        ACLOCAL=aclocal-1.15 AUTOMAKE=automake-1.15 autoreconf-2.69 -fi
+        autoreconf -fi
         cd ..
     done
 
     # Regenerate directories with Makefile.am only
     pushd gold
-    automake-1.15 -fai testsuite/Makefile
+    automake -fai testsuite/Makefile
     popd
     pushd gprofng
-    automake-1.15 -fai doc/Makefile
-    automake-1.15 -fai gp-display-html/Makefile
-    automake-1.15 -fai src/Makefile
+    automake -fai doc/Makefile
+    automake -fai gp-display-html/Makefile
+    automake -fai src/Makefile
     popd
 
     # intl/ Makefile is a bit broken because of new gettext
