@@ -2507,7 +2507,7 @@ boot.bash["5.2.15"] = bashStep {
 
   PATH = mkBinPath {
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.2.4"],
     boot.help2man,
@@ -2554,7 +2554,7 @@ boot.xz = bashStep {
   builder = boot.bash["5.2.15"].."/bin/bash";
   PATH = mkBinPath {
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.2.4"],
     boot.help2man,
@@ -2600,7 +2600,7 @@ boot.file = bashStep {
   builder = boot.bash["5.2.15"].."/bin/bash";
   PATH = mkBinPath {
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.2.4"],
     boot.help2man,
@@ -2646,7 +2646,7 @@ boot.libtool["2.4.7"] = bashStep {
   builder = boot.bash["5.2.15"].."/bin/bash";
   PATH = mkBinPath {
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.2.4"],
     boot.help2man,
@@ -2697,7 +2697,7 @@ boot.tar["1.34"] = bashStep {
   builder = boot.bash["5.2.15"].."/bin/bash";
   PATH = mkBinPath {
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -2748,7 +2748,7 @@ boot.coreutils["9.4"] = bashStep {
   builder = boot.bash["5.2.15"].."/bin/bash";
   PATH = mkBinPath {
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -2874,7 +2874,7 @@ boot.pkg_config = bashStep {
   builder = boot.bash["5.2.15"].."/bin/bash";
   PATH = mkBinPath {
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -2924,7 +2924,7 @@ boot.make["4.2.1"] = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -2975,7 +2975,7 @@ boot.gmp = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3026,7 +3026,7 @@ boot.autoconf_archive = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3077,7 +3077,7 @@ boot.mpfr = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3134,7 +3134,7 @@ boot.mpc = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3194,7 +3194,7 @@ boot.flex["2.5.33"] = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3246,7 +3246,7 @@ boot.bison["2.3"] = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3302,7 +3302,7 @@ boot.bison["3.4.2"] = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3358,7 +3358,7 @@ local perl_5_10_1 = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3410,7 +3410,7 @@ boot.dist = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3462,7 +3462,7 @@ boot.perl["5.32.1"] = bashStep {
     boot.dist,
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3518,7 +3518,7 @@ boot.libarchive = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3570,7 +3570,7 @@ boot.openssl = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3677,7 +3677,7 @@ boot.ca_certificates = bashStep {
     mk_ca_bundle,
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3730,7 +3730,7 @@ boot.curl = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3783,7 +3783,7 @@ boot.zlib = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3835,7 +3835,7 @@ boot.automake["1.16.3"] = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3887,7 +3887,7 @@ boot.autoconf["2.71"] = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3939,7 +3939,7 @@ boot.patch["2.7.6"] = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -3995,7 +3995,7 @@ boot.gettext = bashStep {
   PATH = mkBinPath {
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
@@ -4052,7 +4052,7 @@ boot.texinfo = bashStep {
     boot.gettext,
     boot.pkg_config,
     boot.findutils,
-    boot.gcc["4.0.4-pass1"],
+    boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.4.7"],
     boot.help2man,
