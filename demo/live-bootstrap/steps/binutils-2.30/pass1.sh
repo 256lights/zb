@@ -16,11 +16,11 @@ src_prepare() {
     for dir in bfd binutils gas gprof intl ld libiberty opcodes zlib; do
     (
         cd $dir
-        AUTOPOINT=true ACLOCAL=aclocal-1.11 AUTOMAKE=automake-1.11 autoreconf-2.64 -fi
+        AUTOPOINT=true ACLOCAL=aclocal-1.11 AUTOMAKE=automake-1.11 autoreconf -fi
     )
     done
 
-    ACLOCAL=aclocal-1.11 autoreconf-2.64 -fi
+    ACLOCAL=aclocal-1.11 autoreconf -fi
 
     # Rebuild bison files
     touch -- binutils/arparse.y binutils/defparse.y binutils/mcparse.y binutils/nlmheader.y binutils/rcparse.y binutils/sysinfo.y gas/itbl-parse.y gold/yyscript.y intl/plural.y ld/deffilep.y ld/ldgram.y

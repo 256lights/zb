@@ -7,7 +7,7 @@ src_prepare() {
     patchShebangs configure
 
     rm doc/standards.info man/*.1
-    AUTOMAKE=automake-1.11 ACLOCAL=aclocal-1.11 autoreconf-2.64 -f
+    AUTOMAKE=automake-1.11 ACLOCAL=aclocal-1.11 autoreconf -f
 }
 
 src_configure() {

@@ -14,15 +14,15 @@ src_prepare() {
     awk '/SUBDIRS/{sub("doc ", "", $0)} {print}' Makefile.am > Makefile.am.tmp
     mv Makefile.am.tmp Makefile.am
 
-    AUTOCONF=autoconf-2.64 AUTOM4TE=autom4te-2.64 ./bootstrap
+    ./bootstrap
 }
 
 src_configure() {
-    AUTORECONF=autoreconf-2.64 AUTOM4TE=autom4te-2.64 AUTOHEADER=autoheader-2.64 AUTOCONF=autoconf-2.64 ./configure --prefix="${PREFIX}"
+    ./configure --prefix="${PREFIX}"
 }
 
 src_compile() {
-    AUTORECONF=autoreconf-2.64 AUTOM4TE=autom4te-2.64 AUTOHEADER=autoheader-2.64 AUTOCONF=autoconf-2.64 make "${MAKEJOBS}" MAKEINFO=true
+    make "${MAKEJOBS}" MAKEINFO=true
 }
 
 src_install() {
