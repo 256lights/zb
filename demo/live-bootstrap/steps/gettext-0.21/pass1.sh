@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 src_prepare() {
+    patchShebangs autogen.sh
+
     find . -name '*.info*' -delete
     find . -name '*.gmo' -delete
 
@@ -14,6 +16,8 @@ src_prepare() {
     # Precompiled Java class
     rm gettext-tools/gnulib-lib/javaversion.class
     touch gettext-tools/gnulib-lib/javaversion.class
+
+    patchShebangs configure
 }
 
 src_configure() {
