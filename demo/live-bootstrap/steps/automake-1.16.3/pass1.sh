@@ -7,7 +7,7 @@ src_prepare() {
 
     rm doc/automake-history.info doc/automake.info*
 
-    cp "${PREFIX}/bin/help2man" doc/
+    cp "$(command -v help2man)" doc/
 }
 
 src_configure() {
