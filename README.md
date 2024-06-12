@@ -98,6 +98,8 @@ The following is a list of shortcuts taken for the zb prototype.
   if kaem could support `$out` expansion.
 - The `derivation` built-in does not support the `outputs` parameter
   to declare multiple outputs.
+- In the `demo` directory, most all derivations are in a single file.
+  A more full standard library would [split up files](https://github.com/zombiezen/zb/issues/4).
 
 [pennarun_mtime_2018]: https://apenwarr.ca/log/20181113
 
