@@ -81,13 +81,6 @@ The following is a list of shortcuts taken for the zb prototype.
 - zb was written in Go for speed of development.
   This makes self-hosting more complex,
   but there's nothing preventing a more production-ready implementation in C/C++.
-- Files and derivations are imported into the Nix store immediately instead of as-needed.
-  This makes evaluation slow.
-  A better implementation would check whether the files' `stat` information
-  has changed since the last import attempt
-  (like in [Avery Pennarun's redo][pennarun_mtime_2018]).
-  Another improvement would be to implement paths as a lazy type
-  that only causes a store import when the `__tostring` metamethod is called.
 - The Lua `next` and `pairs` functions should sort keys to be deterministic.
 - Need to stabilize the Lua standard library that's available.
   `string.format` specifically would be good,
@@ -100,8 +93,6 @@ The following is a list of shortcuts taken for the zb prototype.
   to declare multiple outputs.
 - In the `demo` directory, most all derivations are in a single file.
   A more full standard library would [split up files](https://github.com/zombiezen/zb/issues/4).
-
-[pennarun_mtime_2018]: https://apenwarr.ca/log/20181113
 
 ## License
 

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 
+	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/sortedset"
 )
@@ -65,6 +66,7 @@ func (imp *nixImporter) Trailer(t *nixExportTrailer) error {
 	}
 	imp.header = false
 
+	log.Debugf(context.TODO(), "Imported store path %s", t.storePath)
 	trailer := []byte{
 		'N', 'I', 'X', 'E', 0, 0, 0, 0,
 	}

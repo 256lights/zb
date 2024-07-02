@@ -10,9 +10,11 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 
+	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nixbase32"
 	"zombiezen.com/go/zb/internal/sortedset"
@@ -193,6 +195,12 @@ func writeDerivation(ctx context.Context, drv *Derivation) (nix.StorePath, error
 			return "", fmt.Errorf("write derivation: %v", err)
 		}
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+
+	if _, err := os.Lstat(string(p)); err == nil {
+		// Already exists: no need to re-import.
+		log.Debugf(context.TODO(), "Using existing store path %s", p)
+		return p, nil
 	}
 
 	imp, err := startImport(ctx)

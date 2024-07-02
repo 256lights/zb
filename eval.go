@@ -4,11 +4,13 @@
 package zb
 
 import (
-	_ "embed"
+	"context"
+	"embed"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	slashpath "path"
 	"path/filepath"
@@ -16,6 +18,9 @@ import (
 	"strings"
 
 	"zombiezen.com/go/nix"
+	"zombiezen.com/go/sqlite"
+	"zombiezen.com/go/sqlite/sqlitemigration"
+	"zombiezen.com/go/sqlite/sqlitex"
 	"zombiezen.com/go/zb/internal/lua"
 )
 
@@ -25,36 +30,49 @@ var preludeSource string
 type Eval struct {
 	l        lua.State
 	storeDir nix.StoreDirectory
+	cache    *sqlite.Conn
 }
 
-func NewEval(storeDir nix.StoreDirectory) *Eval {
+func NewEval(storeDir nix.StoreDirectory, cacheDB string) (_ *Eval, err error) {
+	if err := os.MkdirAll(filepath.Dir(cacheDB), 0o777); err != nil {
+		return nil, fmt.Errorf("zb: new eval: %v", err)
+	}
 	eval := &Eval{storeDir: storeDir}
+	eval.cache, err = openCache(context.TODO(), cacheDB)
+	if err != nil {
+		return nil, fmt.Errorf("zb: new eval: %v", err)
+	}
+	defer func() {
+		if err != nil {
+			eval.l.Close()
+			eval.cache.Close()
+			err = fmt.Errorf("zb: new eval: %v", err)
+		}
+	}()
+
 	registerDerivationMetatable(&eval.l)
 
 	base := lua.NewOpenBase(io.Discard, loadfileFunction)
 	if err := lua.Require(&eval.l, lua.GName, true, base); err != nil {
-		eval.l.Close()
-		panic(err)
+		return nil, err
 	}
 
 	// Wrap load function.
 	if tp := eval.l.RawField(-1, "load"); tp != lua.TypeFunction {
-		eval.l.Close()
-		panic("load is not a function")
+		return nil, fmt.Errorf("load is not a function")
 	}
 	eval.l.PushClosure(1, loadFunction)
 	eval.l.RawSetField(-2, "load")
 
 	// Replace dofile.
 	if tp := eval.l.RawField(-1, "loadfile"); tp != lua.TypeFunction {
-		eval.l.Close()
-		panic("loadfile is not a function")
+		return nil, fmt.Errorf("loadfile is not a function")
 	}
 	eval.l.PushClosure(1, dofileFunction)
 	eval.l.RawSetField(-2, "dofile")
 
 	// Set other built-ins.
-	err := lua.SetFuncs(&eval.l, 0, map[string]lua.Function{
+	err = lua.SetFuncs(&eval.l, 0, map[string]lua.Function{
 		"derivation": eval.derivationFunction,
 		"path":       eval.pathFunction,
 		"toFile":     eval.toFileFunction,
@@ -72,13 +90,11 @@ func NewEval(storeDir nix.StoreDirectory) *Eval {
 		},
 	})
 	if err != nil {
-		eval.l.Close()
-		panic(err)
+		return nil, err
 	}
 	eval.l.PushString(string(storeDir))
 	if err := eval.l.SetField(-2, "storeDir", 0); err != nil {
-		eval.l.Close()
-		panic(err)
+		return nil, err
 	}
 
 	// Pop base library.
@@ -86,25 +102,98 @@ func NewEval(storeDir nix.StoreDirectory) *Eval {
 
 	// Load other standard libraries.
 	if err := lua.Require(&eval.l, lua.TableLibraryName, true, lua.OpenTable); err != nil {
-		eval.l.Close()
-		panic(err)
+		return nil, err
 	}
 
 	// Run prelude.
 	if err := eval.l.LoadString(preludeSource, "=(prelude)", "t"); err != nil {
-		eval.l.Close()
-		panic(err)
+		return nil, err
 	}
 	if err := eval.l.Call(0, 0, 0); err != nil {
-		eval.l.Close()
-		panic(err)
+		return nil, err
 	}
 
-	return eval
+	return eval, nil
+}
+
+func openCache(ctx context.Context, path string) (*sqlite.Conn, error) {
+	conn, err := sqlite.OpenConn(path, sqlite.OpenReadWrite, sqlite.OpenCreate)
+	if err != nil {
+		return nil, err
+	}
+	conn.SetInterrupt(ctx.Done())
+	if err := sqlitex.ExecuteTransient(conn, "PRAGMA journal_mode=wal;", nil); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open cache %s: enable write-ahead logging: %v", path, err)
+	}
+	if err := sqlitex.ExecuteTransient(conn, "PRAGMA foreign_keys=on;", nil); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open cache %s: enable write-ahead logging: %v", path, err)
+	}
+
+	if err := prepareCache(conn); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open cache %s: %v", path, err)
+	}
+
+	var schema sqlitemigration.Schema
+	for i := 1; ; i++ {
+		migration, err := fs.ReadFile(sqlFiles(), fmt.Sprintf("schema/%02d.sql", i))
+		if errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("open cache %s: read migrations: %v", path, err)
+		}
+		schema.Migrations = append(schema.Migrations, string(migration))
+	}
+	err = sqlitemigration.Migrate(ctx, conn, schema)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open cache %s: %v", path, err)
+	}
+
+	return conn, nil
+}
+
+func prepareCache(conn *sqlite.Conn) error {
+	err := conn.CreateFunction("store_path_name", &sqlite.FunctionImpl{
+		NArgs: 1,
+		Scalar: func(ctx sqlite.Context, args []sqlite.Value) (sqlite.Value, error) {
+			if args[0].Type() == sqlite.TypeNull {
+				return sqlite.Value{}, nil
+			}
+			p, err := nix.ParseStorePath(args[0].Text())
+			if err != nil {
+				// A non-store path has no name. Return null.
+				return sqlite.Value{}, nil
+			}
+			return sqlite.TextValue(p.Name()), nil
+		},
+		Deterministic: true,
+		AllowIndirect: true,
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := conn.SetCollation("PATH", collatePath); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (eval *Eval) Close() error {
-	return eval.l.Close()
+	var errors [2]error
+	errors[0] = eval.l.Close()
+	errors[1] = eval.cache.Close()
+	for _, err := range errors {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (eval *Eval) File(exprFile string, attrPaths []string) ([]any, error) {
@@ -421,4 +510,15 @@ func dofileFunction(l *lua.State) (int, error) {
 		return 0, fmt.Errorf("dofile %s: %v", resolved, err)
 	}
 	return l.Top(), nil
+}
+
+//go:embed cache_sql
+var rawSqlFiles embed.FS
+
+func sqlFiles() fs.FS {
+	fsys, err := fs.Sub(rawSqlFiles, "cache_sql")
+	if err != nil {
+		panic(err)
+	}
+	return fsys
 }

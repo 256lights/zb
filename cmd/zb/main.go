@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
+	"go4.org/xdgdir"
 	"zombiezen.com/go/bass/sigterm"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
@@ -20,7 +22,7 @@ import (
 )
 
 type globalConfig struct {
-	// global options go here
+	cacheDB string
 }
 
 func main() {
@@ -31,7 +33,10 @@ func main() {
 		SilenceUsage:  true,
 	}
 
-	g := new(globalConfig)
+	g := &globalConfig{
+		cacheDB: filepath.Join(xdgdir.Cache.Path(), "zb", "cache.db"),
+	}
+	rootCommand.PersistentFlags().StringVar(&g.cacheDB, "cache", g.cacheDB, "`path` to cache database")
 	showDebug := rootCommand.PersistentFlags().Bool("debug", false, "show debugging output")
 	rootCommand.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		initLogging(*showDebug)
@@ -79,10 +84,17 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 }
 
 func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
-	eval := zb.NewEval(nix.DefaultStoreDirectory)
+	eval, err := zb.NewEval(nix.DefaultStoreDirectory, g.cacheDB)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := eval.Close(); err != nil {
+			log.Errorf(ctx, "%v", err)
+		}
+	}()
 
 	var results []any
-	var err error
 	switch {
 	case opts.expr != "" && opts.file != "":
 		return fmt.Errorf("can specify at most one of --expr or --file")
@@ -130,10 +142,17 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 }
 
 func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
-	eval := zb.NewEval(nix.DefaultStoreDirectory)
+	eval, err := zb.NewEval(nix.DefaultStoreDirectory, g.cacheDB)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := eval.Close(); err != nil {
+			log.Errorf(ctx, "%v", err)
+		}
+	}()
 
 	var results []any
-	var err error
 	switch {
 	case opts.expr != "" && opts.file != "":
 		return fmt.Errorf("can specify at most one of --expr or --file")
