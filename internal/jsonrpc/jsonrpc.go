@@ -121,6 +121,14 @@ func (id requestID) String() string {
 	}
 }
 
+func (id requestID) toInt() (_ int64, ok bool) {
+	return id.n, id.typ == 1
+}
+
+func (id requestID) toString() (_ string, ok bool) {
+	return id.s, id.typ == 2
+}
+
 func (id requestID) MarshalJSON() ([]byte, error) {
 	switch id.typ {
 	case 0:
@@ -151,4 +159,33 @@ func (id *requestID) UnmarshalJSON(data []byte) error {
 		id.n, err = strconv.ParseInt(string(data), 10, 64)
 		return err
 	}
+}
+
+// inverseFilterMap returns a new map that contains all the keys
+// for which f(k) reports false.
+func inverseFilterMap[K comparable, V any, M ~map[K]V](m M, f func(K) bool) map[K]V {
+	n := 0
+	for k := range m {
+		if !f(k) {
+			n++
+		}
+	}
+	if n == 0 {
+		return nil
+	}
+	result := make(map[K]V, n)
+	for k, v := range m {
+		if !f(k) {
+			result[k] = v
+		}
+	}
+	return result
+}
+
+func isReservedRequestField(key string) bool {
+	return key == "jsonrpc" || key == "method" || key == "params" || key == "id"
+}
+
+func isReservedResponseField(key string) bool {
+	return key == "jsonrpc" || key == "result" || key == "error" || key == "id"
 }

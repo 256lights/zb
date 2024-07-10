@@ -147,21 +147,7 @@ func (req rawRequest) toRequest() (requestID, *Request, error) {
 		return requestID{}, nil, err
 	}
 	req2.Notification = !idPresent
-
-	n := 0
-	for k := range req {
-		if !isReservedRequestField(k) {
-			n++
-		}
-	}
-	if n > 0 {
-		req2.Extra = make(map[string]json.RawMessage, n)
-		for k, v := range req {
-			if !isReservedRequestField(k) {
-				req2.Extra[k] = v
-			}
-		}
-	}
+	req2.Extra = inverseFilterMap(req, isReservedRequestField)
 
 	return id, req2, nil
 }
@@ -204,14 +190,6 @@ func (req rawRequest) id() (id requestID, present bool, err error) {
 
 func (req rawRequest) params() json.RawMessage {
 	return req["params"]
-}
-
-func isReservedRequestField(key string) bool {
-	return key == "jsonrpc" || key == "method" || key == "params" || key == "id"
-}
-
-func isReservedResponseField(key string) bool {
-	return key == "jsonrpc" || key == "result" || key == "error" || key == "id"
 }
 
 func marshalError(buf *bytes.Buffer, id requestID, err error) {

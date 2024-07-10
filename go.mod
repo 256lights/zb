@@ -10,6 +10,7 @@ require (
 	zombiezen.com/go/log v1.1.0
 	zombiezen.com/go/nix v0.0.0-20240505035425-db1ac175083f
 	zombiezen.com/go/sqlite v1.3.0
+	zombiezen.com/go/xcontext v1.1.0
 )
 
 require (
