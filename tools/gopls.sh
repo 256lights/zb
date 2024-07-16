@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright 2024 Ross Light
+# Copyright 2024 Roxy Light
 # SPDX-License-Identifier: MIT
 
 # Use the following VSCode setting:

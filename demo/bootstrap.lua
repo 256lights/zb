@@ -1,4 +1,4 @@
--- Copyright 2024 Ross Light
+-- Copyright 2024 Roxy Light
 -- SPDX-License-Identifier: MIT
 
 local stage0 <const> = dofile("stage0-posix/x86_64-linux.lua")

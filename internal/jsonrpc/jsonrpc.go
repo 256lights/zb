@@ -1,4 +1,4 @@
-// Copyright 2024 Ross Light
+// Copyright 2024 Roxy Light
 // SPDX-License-Identifier: MIT
 
 // Package jsonrpc provides a stream-based implementation of the JSON-RPC 2.0 specification,
