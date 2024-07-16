@@ -59,6 +59,7 @@ type Client struct {
 // The first call to [Client.JSONRPC] will block on the connection.
 func NewClient(open OpenFunc) *Client {
 	c := &Client{
+		comms:     make(chan clientRequest),
 		commsDone: make(chan struct{}),
 	}
 	var commsCtx context.Context
@@ -223,6 +224,7 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 						continue
 					}
 					c <- resp
+					delete(responseChans, idNum)
 				}
 			}
 		case req := <-c.comms:
@@ -250,11 +252,12 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 			}
 			buf.WriteString("}")
 
-			if err := conn.WriteRequest(json.RawMessage(buf.Bytes())); err != nil {
+			err := conn.WriteRequest(json.RawMessage(buf.Bytes()))
+			if req.write != nil {
+				req.write <- err
+			}
+			if err != nil {
 				log.Debugf(ctx, "Failed to send message: %v", err)
-				if req.write != nil {
-					req.write <- err
-				}
 				return
 			}
 		case <-ctx.Done():

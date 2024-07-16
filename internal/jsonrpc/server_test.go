@@ -207,10 +207,8 @@ func (c *testServerCodec) ReadRequest() (json.RawMessage, error) {
 }
 
 func (c *testServerCodec) WriteResponse(response json.RawMessage) error {
-	dec := json.NewDecoder(bytes.NewReader(response))
-	dec.UseNumber()
-	var parsed any
-	if err := dec.Decode(&parsed); err != nil {
+	parsed, err := unmarshalJSONWithNumbers(response)
+	if err != nil {
 		return err
 	}
 
