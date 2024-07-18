@@ -129,6 +129,19 @@ func (srv *server) writeError(err error) {
 	srv.codec.WriteResponse(json.RawMessage(buf.Bytes()))
 }
 
+// ServeMux is a mapping of method names to JSON-RPC handlers.
+type ServeMux map[string]Handler
+
+// JSONRPC calls the handler that corresponds to the request's method
+// or returns a [MethodNotFound] error if no such handler is present.
+func (mux ServeMux) JSONRPC(ctx context.Context, req *Request) (*Response, error) {
+	h := mux[req.Method]
+	if h == nil {
+		return nil, Error(MethodNotFound, fmt.Errorf("method %s not found", req.Method))
+	}
+	return h.JSONRPC(ctx, req)
+}
+
 type rawRequest map[string]json.RawMessage
 
 func (req rawRequest) toRequest() (requestID, *Request, error) {
