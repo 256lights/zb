@@ -374,19 +374,14 @@ func marshalClientID(dst []byte, id int64) []byte {
 // ensuring that it is of the format from [marshalClientID].
 func unmarshalClientID(s string) (int64, bool) {
 	s2, neg := strings.CutPrefix(s, "-")
-	if s2 == "0" {
-		if neg {
-			return 0, false
-		}
-		return 0, true
-	}
-	if strings.HasPrefix(s2, "0") {
-		// We don't zero-pad.
-		return 0, false
+	s2, zero := strings.CutPrefix(s2, "0")
+	if zero {
+		// Zero is only an acceptable prefix if it is the entire string.
+		return 0, !neg && s2 == ""
 	}
 	for _, c := range []byte(s2) {
 		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f') {
-			// Not a hex digit.
+			// Not a lowercase hex digit.
 			return 0, false
 		}
 	}
