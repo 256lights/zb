@@ -234,6 +234,49 @@ func TestClient(t *testing.T) {
 	}
 }
 
+func TestClientCodec(t *testing.T) {
+	ctx := context.Background()
+	openCount := 0
+
+	codec := newTestClientCodec(t, []clientTestWireInteraction{
+		{
+			wantRequests: []any{
+				map[string]any{
+					"jsonrpc": "2.0",
+					"method":  "foobar",
+				},
+			},
+		},
+	})
+	client := NewClient(func(ctx context.Context) (ClientCodec, error) {
+		openCount++
+		if openCount > 1 {
+			t.Errorf("OpenFunc called %d times", openCount)
+			return nil, fmt.Errorf("open called %d times", openCount)
+		}
+		return codec, nil
+	})
+	defer func() {
+		if err := client.Close(); err != nil {
+			t.Error("Close:", err)
+		}
+	}()
+
+	got, releaseCodec, err := client.Codec(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseCodec()
+
+	if got != codec {
+		t.Errorf("client.Codec(ctx) = %#v; want %#v", got, codec)
+	}
+	if err := got.WriteRequest(json.RawMessage(`{"jsonrpc": "2.0", "method": "foobar"}`)); err != nil {
+		t.Error("WriteRequest:", err)
+	}
+	codec.waitUntil(1)
+}
+
 type testClientCodec struct {
 	tb testing.TB
 

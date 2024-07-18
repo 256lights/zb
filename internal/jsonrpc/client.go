@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"zombiezen.com/go/log"
@@ -29,9 +30,14 @@ import (
 // Close may be called concurrently with WriteRequest or ReadResponse:
 // doing so should interrupt either call and cause the call to return an error.
 type ClientCodec interface {
-	WriteRequest(request json.RawMessage) error
+	RequestWriter
 	ReadResponse() (json.RawMessage, error)
 	Close() error
+}
+
+// RequestWriter holds the WriteRequest method of [ClientCodec].
+type RequestWriter interface {
+	WriteRequest(request json.RawMessage) error
 }
 
 // OpenFunc opens a connection for a [Client].
@@ -48,6 +54,8 @@ type Client struct {
 	cancelComms context.CancelFunc
 	// commsDone is closed once the communicate method returns.
 	commsDone chan struct{}
+	// codecRequests is a channel for requests of the codec.
+	codecRequests chan clientCodecRequest
 }
 
 // NewClient returns a new [Client] that opens connections using the given function.
@@ -59,8 +67,9 @@ type Client struct {
 // The first call to [Client.JSONRPC] will block on the connection.
 func NewClient(open OpenFunc) *Client {
 	c := &Client{
-		comms:     make(chan clientRequest),
-		commsDone: make(chan struct{}),
+		comms:         make(chan clientRequest),
+		commsDone:     make(chan struct{}),
+		codecRequests: make(chan clientCodecRequest),
 	}
 	var commsCtx context.Context
 	commsCtx, c.cancelComms = context.WithCancel(context.Background())
@@ -197,36 +206,7 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 				// Connection fault.
 				return
 			}
-
-			batch, err := unmarshalResponseBatch(msg)
-			if err != nil {
-				log.Warnf(ctx, "JSON-RPC server returned invalid JSON: %v", err)
-			} else {
-				for _, resp := range batch {
-					// We specifically don't check anything beyond ID here
-					// because we want most errors to be returned to the application.
-					id, err := resp.id()
-					if err != nil {
-						continue
-					}
-					idText, ok := id.toString()
-					if !ok {
-						// We only make string IDs.
-						continue
-					}
-					idNum, ok := unmarshalClientID(idText)
-					if !ok {
-						// We only make *numeric* string IDs.
-						continue
-					}
-					c := responseChans[idNum]
-					if c == nil {
-						continue
-					}
-					c <- resp
-					delete(responseChans, idNum)
-				}
-			}
+			dispatchResponse(ctx, msg, responseChans)
 		case req := <-c.comms:
 			// Handle incoming application requests.
 
@@ -260,12 +240,96 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 				log.Debugf(ctx, "Failed to send message: %v", err)
 				return
 			}
+		case r := <-c.codecRequests:
+			r.codec <- conn
+		appUse:
+			for {
+				// We intentionally do not listen for ctx.Done() in this loop
+				// because we want holding the codec to delay client shutdown.
+				// Responses can continue to be handled.
+				select {
+				case <-r.release:
+					break appUse
+				case msg := <-messages:
+					if msg == nil {
+						// Connection fault.
+						return
+					}
+					dispatchResponse(ctx, msg, responseChans)
+				}
+			}
 		case <-ctx.Done():
 			// If the application is closing the client,
 			// end the loop and close the connection (via the defer).
 			return
 		}
 	}
+}
+
+// dispatchResponse sends a server response (possibly a batch)
+// to the corresponding listener(s).
+func dispatchResponse(ctx context.Context, msg json.RawMessage, responseChans map[int64]chan<- rawResponse) {
+	batch, err := unmarshalResponseBatch(msg)
+	if err != nil {
+		log.Warnf(ctx, "JSON-RPC server returned invalid JSON: %v", err)
+		return
+	}
+	for _, resp := range batch {
+		// We specifically don't check anything beyond ID here
+		// because we want most errors to be returned to the application.
+		id, err := resp.id()
+		if err != nil {
+			continue
+		}
+		idText, ok := id.toString()
+		if !ok {
+			// We only make string IDs.
+			continue
+		}
+		idNum, ok := unmarshalClientID(idText)
+		if !ok {
+			// We only make *numeric* string IDs.
+			continue
+		}
+		c := responseChans[idNum]
+		if c == nil {
+			continue
+		}
+		c <- resp
+		delete(responseChans, idNum)
+	}
+}
+
+// Codec obtains the client's currently active codec,
+// waiting for a connection to be established if necessary.
+// The caller is responsible for calling the release function
+// when it is no longer using the codec:
+// all new calls to [Client.JSONRPC] will block
+// to avoid concurrent message writes.
+// After the first call to the release function,
+// subsequent calls are no-ops.
+// Client will continue to read responses from the codec
+// while the caller is holding onto the codec.
+//
+// Codec guarantees that if it succeeds,
+// it returns a value that was returned by the [OpenFunc] provided to [NewClient].
+// However, applications should not call either ReadResponse or Close on the returned codec.
+func (c *Client) Codec(ctx context.Context) (codec RequestWriter, release func(), err error) {
+	// Buffer not strictly necessary,
+	// but allows communication goroutine to go back to reading messages quickly.
+	codecChan := make(chan RequestWriter, 1)
+	releaseChan := make(chan struct{})
+
+	select {
+	case c.codecRequests <- clientCodecRequest{codecChan, releaseChan}:
+	case <-ctx.Done():
+		return nil, nil, fmt.Errorf("obtain jsonrpc client connection: %w", err)
+	}
+	codec = <-codecChan
+	var once sync.Once
+	return codec, func() {
+		once.Do(func() { close(releaseChan) })
+	}, nil
 }
 
 // A clientRequest is sent from client methods to the connection handler
@@ -282,6 +346,11 @@ type clientRequest struct {
 	// If the connection is interrupted before a response is recieved,
 	// it will receive a nil message.
 	response chan<- rawResponse
+}
+
+type clientCodecRequest struct {
+	codec   chan<- RequestWriter
+	release <-chan struct{}
 }
 
 type rawResponse map[string]json.RawMessage
