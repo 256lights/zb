@@ -25,6 +25,9 @@ type ServerCodec interface {
 
 // A type that implements Handler responds to JSON-RPC requests.
 // Implementations of JSONRPC must be safe to call from multiple goroutines concurrently.
+//
+// The jsonrpc package provides [Client], [ServeMux], and [HandlerFunc]
+// as implementations of Handler.
 type Handler interface {
 	JSONRPC(ctx context.Context, req *Request) (*Response, error)
 }

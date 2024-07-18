@@ -42,6 +42,47 @@ type Response struct {
 	Extra map[string]json.RawMessage
 }
 
+// Do makes a single JSON-RPC to the given [Handler].
+// request should be any Go value that can be passed to [json.Marshal].
+// response should be any Go value (usually a pointer) that can be passed to [json.Unmarshal].
+// If response is the nil interface, then any result data is ignored
+// (but Do will still wait for the call to complete).
+func Do(ctx context.Context, h Handler, method string, response, request any) error {
+	params, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("call json rpc %s: %v", method, err)
+	}
+	fullResponse, err := h.JSONRPC(ctx, &Request{
+		Method: method,
+		Params: params,
+	})
+	if err != nil {
+		return err
+	}
+	if len(fullResponse.Result) == 0 || response == nil {
+		return nil
+	}
+	if err := json.Unmarshal(fullResponse.Result, response); err != nil {
+		return fmt.Errorf("call json rpc %s: %v", method, err)
+	}
+	return nil
+}
+
+// Notify makes a single JSON-RPC to the given [Handler].
+// params should be any Go value that can be passed to [json.Marshal].
+func Notify(ctx context.Context, h Handler, method string, params any) error {
+	rawParams, err := json.Marshal(params)
+	if err != nil {
+		return fmt.Errorf("call json rpc %s: %v", method, err)
+	}
+	_, err = h.JSONRPC(ctx, &Request{
+		Method:       method,
+		Params:       rawParams,
+		Notification: true,
+	})
+	return err
+}
+
 // ErrorCode is a number that indicates the type of error
 // that occurred during a JSON-RPC.
 type ErrorCode int
