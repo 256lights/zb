@@ -48,11 +48,16 @@ type ErrorCode int
 
 // Error codes defined in JSON-RPC 2.0.
 const (
-	ParseError     ErrorCode = -32700
+	// ParseError indicates that invalid JSON was received by the server.
+	ParseError ErrorCode = -32700
+	// InvalidRequest indicates that the JSON sent is not a valid request object.
 	InvalidRequest ErrorCode = -32600
+	// MethodNotFound indicates that the requested method does not exist or is not available.
 	MethodNotFound ErrorCode = -32601
-	InvalidParams  ErrorCode = -32602
-	InternalError  ErrorCode = -32603
+	// InvalidParams indicates that the request's method parameters are invalid.
+	InvalidParams ErrorCode = -32602
+	// InternalError indicates an internal JSON-RPC error.
+	InternalError ErrorCode = -32603
 )
 
 // Language Server Protocol error codes.
