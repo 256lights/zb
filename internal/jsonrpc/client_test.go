@@ -130,6 +130,20 @@ func TestClient(t *testing.T) {
 			},
 		},
 		{
+			name: "WrongParamsType",
+			calls: []clientCall{
+				{
+					request: &Request{
+						Method: "foobar",
+						Params: json.RawMessage(`42`),
+					},
+					wantResponse:  nil,
+					wantError:     true,
+					wantErrorCode: -32600,
+				},
+			},
+		},
+		{
 			name: "MultipleCalls",
 			calls: []clientCall{
 				{

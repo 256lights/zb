@@ -89,6 +89,10 @@ func (c *Client) Close() error {
 
 // JSONRPC sends a request to the server.
 func (c *Client) JSONRPC(ctx context.Context, req *Request) (*Response, error) {
+	if !isValidParamStruct(req.Params) {
+		return nil, Error(InvalidRequest, fmt.Errorf("call json rpc %s: params must be an object or an array", req.Method))
+	}
+
 	if req.Notification {
 		write := make(chan error, 1)
 		creq := clientRequest{
@@ -488,4 +492,13 @@ func unmarshalResponseBatch(msg json.RawMessage) ([]rawResponse, error) {
 		}
 	}
 	return responses, nil
+}
+
+func isValidParamStruct(msg json.RawMessage) bool {
+	if len(msg) == 0 {
+		// Omitted is fine.
+		return true
+	}
+	return msg[0] == '{' && msg[len(msg)-1] == '}' ||
+		msg[0] == '[' && msg[len(msg)-1] == ']'
 }

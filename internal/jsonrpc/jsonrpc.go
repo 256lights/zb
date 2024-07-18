@@ -23,7 +23,7 @@ type Request struct {
 	Method string
 	// Params is the raw JSON of the parameters.
 	// If len(Params) == 0, then the parameters are omitted on the wire.
-	// Otherwise, Params must hold a valid JSON array or valid JSON object.
+	// Otherwise, Params must hold a valid JSON array or a valid JSON object.
 	Params json.RawMessage
 	// Notification is true if the client does not care about a response.
 	Notification bool
