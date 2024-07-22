@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 // Header represents a message's header.
@@ -97,6 +96,9 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 	if n > 0 {
 		r.readStarted = true
 	}
+	if r.err == io.EOF && r.bodyRemaining > 0 {
+		r.err = io.ErrUnexpectedEOF
+	}
 
 	err = r.err
 	if r.bodyRemaining == 0 {
@@ -147,9 +149,7 @@ func (r *Reader) UnreadByte() error {
 
 // A Writer writes framed messages to an underlying [io.Writer].
 type Writer struct {
-	w io.Writer
-
-	mu        sync.Mutex
+	w         io.Writer
 	headerBuf bytes.Buffer
 	err       error
 }
@@ -160,7 +160,6 @@ func NewWriter(w io.Writer) *Writer {
 }
 
 // WriteMessage writes a message to the connection.
-// WriteMessage is safe to call concurrently from multiple goroutines.
 func (c *Writer) WriteMessage(header Header, body io.Reader) error {
 	n, err := contentLength(header)
 	if err == errNoContentLength {
@@ -168,9 +167,6 @@ func (c *Writer) WriteMessage(header Header, body io.Reader) error {
 	} else if err != nil {
 		return fmt.Errorf("write rpc message: %v", err)
 	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	if c.err != nil {
 		return c.err
