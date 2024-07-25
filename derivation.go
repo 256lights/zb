@@ -24,7 +24,7 @@ import (
 // a single, specific, constant build action.
 type Derivation struct {
 	// Dir is the store directory this derivation is a part of.
-	Dir nix.StoreDirectory
+	Dir StoreDirectory
 
 	// Name is the human-readable name of the derivation,
 	// i.e. the part after the digest in the store object name.
@@ -40,15 +40,15 @@ type Derivation struct {
 	Env map[string]string
 
 	// InputSources is the set of source filesystem objects that this derivation depends on.
-	InputSources sortedset.Set[nix.StorePath]
+	InputSources sortedset.Set[StorePath]
 	// InputDerivations is the set of derivations that this derivation depends on.
 	// The mapped values are the set of output names that are used.
-	InputDerivations map[nix.StorePath]*sortedset.Set[string]
+	InputDerivations map[StorePath]*sortedset.Set[string]
 	// Outputs is the set of outputs that the derivation produces.
 	Outputs map[string]*DerivationOutput
 }
 
-func (drv *Derivation) StorePath() (nix.StorePath, error) {
+func (drv *Derivation) StorePath() (StorePath, error) {
 	if drv.Name == "" {
 		return "", fmt.Errorf("compute derivation path: missing name")
 	}
@@ -59,7 +59,7 @@ func (drv *Derivation) StorePath() (nix.StorePath, error) {
 	return p, nil
 }
 
-func (drv *Derivation) export() (nix.StorePath, []byte, error) {
+func (drv *Derivation) export() (StorePath, []byte, error) {
 	if drv.Name == "" {
 		return "", nil, fmt.Errorf("missing name")
 	}
@@ -188,7 +188,7 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 	return buf, nil
 }
 
-func writeDerivation(ctx context.Context, drv *Derivation) (nix.StorePath, error) {
+func writeDerivation(ctx context.Context, drv *Derivation) (StorePath, error) {
 	p, data, err := drv.export()
 	if err != nil {
 		if drv.Name == "" {
@@ -241,13 +241,13 @@ const defaultDerivationOutputName = "out"
 // A nil DerivationOutput represents a deferred output.
 type DerivationOutput struct {
 	typ      derivationOutputType
-	path     nix.StorePath
+	path     StorePath
 	ca       nix.ContentAddress
 	method   contentAddressMethod
 	hashAlgo nix.HashType
 }
 
-func InputAddressed(path nix.StorePath) *DerivationOutput {
+func InputAddressed(path StorePath) *DerivationOutput {
 	return &DerivationOutput{
 		typ:  inputAddressedOutputType,
 		path: path,
@@ -285,7 +285,7 @@ func RecursiveFileFloatingCAOutput(hashAlgo nix.HashType) *DerivationOutput {
 	}
 }
 
-func (out *DerivationOutput) Path(store nix.StoreDirectory, drvName, outputName string) (path nix.StorePath, ok bool) {
+func (out *DerivationOutput) Path(store StoreDirectory, drvName, outputName string) (path StorePath, ok bool) {
 	if out == nil {
 		return "", false
 	}
@@ -303,7 +303,7 @@ func (out *DerivationOutput) Path(store nix.StoreDirectory, drvName, outputName 
 	}
 }
 
-func (out *DerivationOutput) marshalText(dst []byte, storeDir nix.StoreDirectory, drvName, outName string, maskOutputs bool) ([]byte, error) {
+func (out *DerivationOutput) marshalText(dst []byte, storeDir StoreDirectory, drvName, outName string, maskOutputs bool) ([]byte, error) {
 	dst = append(dst, '(')
 	dst = appendATermString(dst, outName)
 	if out == nil {
@@ -352,7 +352,7 @@ func (out *DerivationOutput) marshalText(dst []byte, storeDir nix.StoreDirectory
 
 // makeStorePath computes a store path
 // according to https://nixos.org/manual/nix/stable/protocols/store-path.
-func makeStorePath(dir nix.StoreDirectory, typ string, hash nix.Hash, name string, refs storeReferences) (nix.StorePath, error) {
+func makeStorePath(dir StoreDirectory, typ string, hash nix.Hash, name string, refs storeReferences) (StorePath, error) {
 	h := sha256.New()
 	io.WriteString(h, typ)
 	for i := 0; i < refs.others.Len(); i++ {
@@ -375,7 +375,7 @@ func makeStorePath(dir nix.StoreDirectory, typ string, hash nix.Hash, name strin
 	return dir.Object(digest + "-" + name)
 }
 
-func fixedCAOutputPath(dir nix.StoreDirectory, name string, ca nix.ContentAddress, refs storeReferences) (nix.StorePath, error) {
+func fixedCAOutputPath(dir StoreDirectory, name string, ca nix.ContentAddress, refs storeReferences) (StorePath, error) {
 	h := ca.Hash()
 	htype := h.Type()
 	switch {
@@ -402,7 +402,7 @@ func fixedCAOutputPath(dir nix.StoreDirectory, name string, ca nix.ContentAddres
 
 type storeReferences struct {
 	self   bool
-	others sortedset.Set[nix.StorePath]
+	others sortedset.Set[StorePath]
 }
 
 func (refs storeReferences) isEmpty() bool {
@@ -450,7 +450,7 @@ func hashPlaceholder(outputName string) string {
 
 // unknownCAOutputPlaceholder returns the placeholder
 // for an unknown output of a content-addressed derivation.
-func unknownCAOutputPlaceholder(drvPath nix.StorePath, outputName string) string {
+func unknownCAOutputPlaceholder(drvPath StorePath, outputName string) string {
 	drvName := strings.TrimSuffix(drvPath.Name(), ".drv")
 	h := nix.NewHasher(nix.SHA256)
 	h.WriteString("nix-upstream-output:")

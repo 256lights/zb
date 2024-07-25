@@ -29,11 +29,11 @@ var preludeSource string
 
 type Eval struct {
 	l        lua.State
-	storeDir nix.StoreDirectory
+	storeDir StoreDirectory
 	cache    *sqlite.Conn
 }
 
-func NewEval(storeDir nix.StoreDirectory, cacheDB string) (_ *Eval, err error) {
+func NewEval(storeDir StoreDirectory, cacheDB string) (_ *Eval, err error) {
 	if err := os.MkdirAll(filepath.Dir(cacheDB), 0o777); err != nil {
 		return nil, fmt.Errorf("zb: new eval: %v", err)
 	}

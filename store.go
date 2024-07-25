@@ -13,7 +13,6 @@ import (
 	"os/exec"
 
 	"zombiezen.com/go/log"
-	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/sortedset"
 )
 
@@ -55,9 +54,9 @@ func (imp *nixImporter) Write(p []byte) (int, error) {
 }
 
 type nixExportTrailer struct {
-	storePath  nix.StorePath
-	references sortedset.Set[nix.StorePath]
-	deriver    nix.StorePath
+	storePath  StorePath
+	references sortedset.Set[StorePath]
+	deriver    StorePath
 }
 
 func (imp *nixImporter) Trailer(t *nixExportTrailer) error {

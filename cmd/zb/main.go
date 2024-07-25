@@ -17,7 +17,6 @@ import (
 	"go4.org/xdgdir"
 	"zombiezen.com/go/bass/sigterm"
 	"zombiezen.com/go/log"
-	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb"
 )
 
@@ -84,7 +83,8 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 }
 
 func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
-	eval, err := zb.NewEval(nix.DefaultStoreDirectory, g.cacheDB)
+	// TODO(soon): Use zb store directory.
+	eval, err := zb.NewEval("/nix/store", g.cacheDB)
 	if err != nil {
 		return err
 	}
@@ -142,7 +142,8 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 }
 
 func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
-	eval, err := zb.NewEval(nix.DefaultStoreDirectory, g.cacheDB)
+	// TODO(soon): Use zb store directory.
+	eval, err := zb.NewEval("/nix/store", g.cacheDB)
 	if err != nil {
 		return err
 	}

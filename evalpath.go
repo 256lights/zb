@@ -201,7 +201,7 @@ func (eval *Eval) toFileFunction(l *lua.State) (int, error) {
 		if strings.HasPrefix(dep, "!") {
 			return 0, fmt.Errorf("toFile %q: cannot depend on derivation outputs", name)
 		}
-		refs.others.Add(nix.StorePath(dep))
+		refs.others.Add(StorePath(dep))
 	}
 
 	storePath, err := fixedCAOutputPath(eval.storeDir, name, nix.TextContentAddress(h.SumHash()), refs)
@@ -287,14 +287,14 @@ func absSourcePath(l *lua.State, path string) (string, error) {
 // path must be a cleaned, absolute path.
 // name is the intended name of the store object.
 // [Eval.walkPath] must be called before calling checkStamp.
-func (eval *Eval) checkStamp(path, name string) (_ nix.StorePath, err error) {
-	var found nix.StorePath
+func (eval *Eval) checkStamp(path, name string) (_ StorePath, err error) {
+	var found StorePath
 	err = sqlitex.ExecuteTransientFS(eval.cache, sqlFiles(), "find.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":name": name,
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			p, err := nix.ParseStorePath(stmt.GetText("path"))
+			p, err := ParseStorePath(stmt.GetText("path"))
 			if err != nil || p.Dir() != eval.storeDir {
 				// Skip.
 				return nil
@@ -395,7 +395,7 @@ func walkPath(conn *sqlite.Conn, path string) (err error) {
 	return nil
 }
 
-func updateCache(conn *sqlite.Conn, storePath nix.StorePath) (err error) {
+func updateCache(conn *sqlite.Conn, storePath StorePath) (err error) {
 	defer sqlitex.Save(conn)(&err)
 
 	err = sqlitex.ExecuteScriptFS(conn, sqlFiles(), "invalidate.sql", nil)

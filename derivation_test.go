@@ -19,12 +19,12 @@ func TestDerivationMarshalText(t *testing.T) {
 		name     string
 		drv      *Derivation
 		want     []byte
-		wantPath nix.StorePath
+		wantPath StorePath
 	}{
 		{
 			name: "FloatingCA",
 			drv: &Derivation{
-				Dir:     nix.DefaultStoreDirectory,
+				Dir:     "/nix/store",
 				Name:    "hello",
 				System:  "x86_64-linux",
 				Builder: "/bin/sh",
@@ -48,7 +48,7 @@ func TestDerivationMarshalText(t *testing.T) {
 		{
 			name: "FixedOutput",
 			drv: &Derivation{
-				Dir:     nix.DefaultStoreDirectory,
+				Dir:     "/nix/store",
 				Name:    "automake-1.16.5.tar.xz",
 				System:  "x86_64-linux",
 				Builder: "/nix/store/1b9p07z77phvv2hf6gm9f28syp39f1ag-bash-5.1-p16/bin/bash",
@@ -99,13 +99,13 @@ func TestDerivationMarshalText(t *testing.T) {
 					"system":                      "x86_64-linux",
 					"urls":                        "mirror://gnu/automake/automake-1.16.5.tar.xz",
 				},
-				InputDerivations: map[nix.StorePath]*sortedset.Set[string]{
+				InputDerivations: map[StorePath]*sortedset.Set[string]{
 					"/nix/store/6pj63b323pn53gpw3l5kdh1rly55aj15-bash-5.1-p16.drv": sortedset.New("out"),
 					"/nix/store/8kd1la3xqfzdcb3gsgpp3k98m7g3hw9d-curl-7.84.0.drv":  sortedset.New("dev"),
 					"/nix/store/g3m3mdgfsix265c945ncaxyyvx4cnx14-mirrors-list.drv": sortedset.New("out"),
 					"/nix/store/zq638s1j77mxzc52ql21l9ncl3qsjb2h-stdenv-linux.drv": sortedset.New("out"),
 				},
-				InputSources: *sortedset.New[nix.StorePath](
+				InputSources: *sortedset.New[StorePath](
 					"/nix/store/lphxcbw5wqsjskipaw1fb8lcf6pm6ri6-builder.sh",
 				),
 				Outputs: map[string]*DerivationOutput{
@@ -153,7 +153,7 @@ func TestDerivationOutputPath(t *testing.T) {
 		out        *DerivationOutput
 		drvName    string
 		outputName string
-		want       nix.StorePath
+		want       StorePath
 	}{
 		{
 			name:       "Text",
@@ -179,7 +179,7 @@ func TestDerivationOutputPath(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, ok := test.out.Path(nix.DefaultStoreDirectory, test.drvName, test.outputName)
+			got, ok := test.out.Path("/nix/store", test.drvName, test.outputName)
 			wantOK := test.want != ""
 			if got != test.want || ok != wantOK {
 				t.Errorf("out.Path(%q, %q, %q) = %q, %t; want %q, %t",

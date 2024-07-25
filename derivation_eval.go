@@ -276,14 +276,14 @@ func stringToEnvVar(l *lua.State, drv *Derivation, idx int) (string, error) {
 				return "", fmt.Errorf("internal error: malformed context %q", dep)
 			}
 			if drv.InputDerivations == nil {
-				drv.InputDerivations = make(map[nix.StorePath]*sortedset.Set[string])
+				drv.InputDerivations = make(map[StorePath]*sortedset.Set[string])
 			}
-			if drv.InputDerivations[nix.StorePath(drvPath)] == nil {
-				drv.InputDerivations[nix.StorePath(drvPath)] = new(sortedset.Set[string])
+			if drv.InputDerivations[StorePath(drvPath)] == nil {
+				drv.InputDerivations[StorePath(drvPath)] = new(sortedset.Set[string])
 			}
-			drv.InputDerivations[nix.StorePath(drvPath)].Add(outputName)
+			drv.InputDerivations[StorePath(drvPath)].Add(outputName)
 		} else {
-			drv.InputSources.Add(nix.StorePath(dep))
+			drv.InputSources.Add(StorePath(dep))
 		}
 	}
 	return s, nil
