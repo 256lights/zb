@@ -6,11 +6,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strings"
+	"runtime"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -18,10 +18,24 @@ import (
 	"zombiezen.com/go/bass/sigterm"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/zb"
+	"zombiezen.com/go/zb/internal/jsonrpc"
+	"zombiezen.com/go/zb/zbstore"
 )
 
 type globalConfig struct {
-	cacheDB string
+	storeDir    zbstore.Directory
+	storeSocket string
+	cacheDB     string
+}
+
+func (g *globalConfig) storeClient() *jsonrpc.Client {
+	return jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
+		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", g.storeSocket)
+		if err != nil {
+			return nil, err
+		}
+		return zbstore.NewClientCodec(conn), nil
+	})
 }
 
 func main() {
@@ -35,8 +49,24 @@ func main() {
 	g := &globalConfig{
 		cacheDB: filepath.Join(xdgdir.Cache.Path(), "zb", "cache.db"),
 	}
+	var err error
+	g.storeDir, err = zbstore.DirectoryFromEnvironment()
+	if err != nil {
+		initLogging(false)
+		log.Errorf(context.Background(), "%v", err)
+		os.Exit(1)
+	}
+	if runtime.GOOS == "windows" {
+		g.storeSocket = `C:\zb\var\zb\server.sock`
+	} else {
+		g.storeSocket = "/zb/var/zb/server.sock"
+	}
+
 	rootCommand.PersistentFlags().StringVar(&g.cacheDB, "cache", g.cacheDB, "`path` to cache database")
+	rootCommand.PersistentFlags().Var((*storeDirectoryFlag)(&g.storeDir), "store", "path to store `dir`ectory")
+	rootCommand.PersistentFlags().StringVar(&g.storeSocket, "store-socket", g.storeSocket, "`path` to store server socket")
 	showDebug := rootCommand.PersistentFlags().Bool("debug", false, "show debugging output")
+
 	rootCommand.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		initLogging(*showDebug)
 		return nil
@@ -45,10 +75,11 @@ func main() {
 	rootCommand.AddCommand(
 		newBuildCommand(g),
 		newEvalCommand(g),
+		newServeCommand(g),
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), sigterm.Signals()...)
-	err := rootCommand.ExecuteContext(ctx)
+	err = rootCommand.ExecuteContext(ctx)
 	cancel()
 	if err != nil {
 		initLogging(*showDebug)
@@ -83,8 +114,9 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 }
 
 func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
-	// TODO(soon): Use zb store directory.
-	eval, err := zb.NewEval("/nix/store", g.cacheDB)
+	storeClient := g.storeClient()
+	defer storeClient.Close()
+	eval, err := zb.NewEval(g.storeDir, storeClient, g.cacheDB)
 	if err != nil {
 		return err
 	}
@@ -142,8 +174,9 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 }
 
 func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
-	// TODO(soon): Use zb store directory.
-	eval, err := zb.NewEval("/nix/store", g.cacheDB)
+	storeClient := g.storeClient()
+	defer storeClient.Close()
+	eval, err := zb.NewEval(g.storeDir, storeClient, g.cacheDB)
 	if err != nil {
 		return err
 	}
@@ -171,11 +204,7 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 		return fmt.Errorf("no evaluation results")
 	}
 
-	args := []string{"--realise"}
-	if opts.outLink != "" {
-		args = append(args, "--add-root", opts.outLink)
-	}
-	args = append(args, "--")
+	// TODO(soon): Batch.
 	for _, result := range results {
 		drv, _ := result.(*zb.Derivation)
 		if drv == nil {
@@ -185,33 +214,33 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 		if err != nil {
 			return err
 		}
-		args = append(args, string(p))
-	}
-
-	stdout := new(strings.Builder)
-	c := exec.CommandContext(ctx, "nix-store", args...)
-	if opts.outLink == "" {
-		c.Stdout = os.Stdout
-	} else {
-		c.Stdout = stdout
-	}
-	c.Stderr = os.Stderr
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("nix-store --realise: %v", err)
-	}
-	if opts.outLink != "" {
-		outLinks := strings.FieldsFunc(stdout.String(), func(c rune) bool {
-			return c == '\n'
+		resp := new(zbstore.RealizeResponse)
+		err = jsonrpc.Do(ctx, storeClient, zbstore.RealizeMethod, resp, &zbstore.RealizeRequest{
+			DrvPath: p,
 		})
-		for _, out := range outLinks {
-			target, err := os.Readlink(out)
-			if err != nil {
-				fmt.Println(out)
-			} else {
-				fmt.Println(target)
-			}
+		if err != nil {
+			return err
+		}
+		for _, out := range resp.Outputs {
+			fmt.Println(out.Path)
 		}
 	}
+
+	return nil
+}
+
+type storeDirectoryFlag zbstore.Directory
+
+func (f *storeDirectoryFlag) Type() string  { return "string" }
+func (f storeDirectoryFlag) String() string { return string(f) }
+func (f storeDirectoryFlag) Get() any       { return zbstore.Directory(f) }
+
+func (f *storeDirectoryFlag) Set(s string) error {
+	dir, err := zbstore.CleanDirectory(s)
+	if err != nil {
+		return err
+	}
+	*f = storeDirectoryFlag(dir)
 	return nil
 }
 

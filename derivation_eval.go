@@ -12,6 +12,7 @@ import (
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/lua"
 	"zombiezen.com/go/zb/internal/sortedset"
+	"zombiezen.com/go/zb/zbstore"
 )
 
 const derivationTypeName = "derivation"
@@ -171,7 +172,7 @@ func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 			panic(outputName + " has an unhandled output type")
 		}
 	}
-	drvPath, err := writeDerivation(context.TODO(), drv)
+	drvPath, err := writeDerivation(context.TODO(), eval.store, drv)
 	if err != nil {
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
@@ -276,14 +277,14 @@ func stringToEnvVar(l *lua.State, drv *Derivation, idx int) (string, error) {
 				return "", fmt.Errorf("internal error: malformed context %q", dep)
 			}
 			if drv.InputDerivations == nil {
-				drv.InputDerivations = make(map[StorePath]*sortedset.Set[string])
+				drv.InputDerivations = make(map[zbstore.Path]*sortedset.Set[string])
 			}
-			if drv.InputDerivations[StorePath(drvPath)] == nil {
-				drv.InputDerivations[StorePath(drvPath)] = new(sortedset.Set[string])
+			if drv.InputDerivations[zbstore.Path(drvPath)] == nil {
+				drv.InputDerivations[zbstore.Path(drvPath)] = new(sortedset.Set[string])
 			}
-			drv.InputDerivations[StorePath(drvPath)].Add(outputName)
+			drv.InputDerivations[zbstore.Path(drvPath)].Add(outputName)
 		} else {
-			drv.InputSources.Add(StorePath(dep))
+			drv.InputSources.Add(zbstore.Path(dep))
 		}
 	}
 	return s, nil

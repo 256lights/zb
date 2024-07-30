@@ -10,21 +10,22 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strings"
 
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nixbase32"
+	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/sortedset"
+	"zombiezen.com/go/zb/zbstore"
 )
 
 // A Derivation represents a store derivation:
 // a single, specific, constant build action.
 type Derivation struct {
 	// Dir is the store directory this derivation is a part of.
-	Dir StoreDirectory
+	Dir zbstore.Directory
 
 	// Name is the human-readable name of the derivation,
 	// i.e. the part after the digest in the store object name.
@@ -40,15 +41,15 @@ type Derivation struct {
 	Env map[string]string
 
 	// InputSources is the set of source filesystem objects that this derivation depends on.
-	InputSources sortedset.Set[StorePath]
+	InputSources sortedset.Set[zbstore.Path]
 	// InputDerivations is the set of derivations that this derivation depends on.
 	// The mapped values are the set of output names that are used.
-	InputDerivations map[StorePath]*sortedset.Set[string]
+	InputDerivations map[zbstore.Path]*sortedset.Set[string]
 	// Outputs is the set of outputs that the derivation produces.
 	Outputs map[string]*DerivationOutput
 }
 
-func (drv *Derivation) StorePath() (StorePath, error) {
+func (drv *Derivation) StorePath() (zbstore.Path, error) {
 	if drv.Name == "" {
 		return "", fmt.Errorf("compute derivation path: missing name")
 	}
@@ -59,7 +60,7 @@ func (drv *Derivation) StorePath() (StorePath, error) {
 	return p, nil
 }
 
-func (drv *Derivation) export() (StorePath, []byte, error) {
+func (drv *Derivation) export() (zbstore.Path, []byte, error) {
 	if drv.Name == "" {
 		return "", nil, fmt.Errorf("missing name")
 	}
@@ -188,7 +189,7 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 	return buf, nil
 }
 
-func writeDerivation(ctx context.Context, drv *Derivation) (StorePath, error) {
+func writeDerivation(ctx context.Context, store *jsonrpc.Client, drv *Derivation) (zbstore.Path, error) {
 	p, data, err := drv.export()
 	if err != nil {
 		if drv.Name == "" {
@@ -197,32 +198,40 @@ func writeDerivation(ctx context.Context, drv *Derivation) (StorePath, error) {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
 
-	if _, err := os.Lstat(string(p)); err == nil {
+	var exists bool
+	err = jsonrpc.Do(ctx, store, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
+		Path: string(p),
+	})
+	if err != nil {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+	if exists {
 		// Already exists: no need to re-import.
 		log.Debugf(context.TODO(), "Using existing store path %s", p)
 		return p, nil
 	}
 
-	imp, err := startImport(ctx)
+	exporter, closeExport, err := startExport(ctx, store)
 	if err != nil {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
-	defer imp.Close()
-	err = writeSingleFileNAR(imp, bytes.NewReader(data), int64(len(data)))
+	defer closeExport(false)
+
+	err = writeSingleFileNAR(exporter, bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
-	err = imp.Trailer(&nixExportTrailer{
-		storePath:  p,
-		references: drv.references().others,
+	err = exporter.Trailer(&zbstore.ExportTrailer{
+		StorePath:  p,
+		References: drv.references().others,
 	})
 	if err != nil {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
-
-	if err := imp.Close(); err != nil {
+	if err := closeExport(true); err != nil {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
+
 	return p, nil
 }
 
@@ -241,13 +250,13 @@ const defaultDerivationOutputName = "out"
 // A nil DerivationOutput represents a deferred output.
 type DerivationOutput struct {
 	typ      derivationOutputType
-	path     StorePath
+	path     zbstore.Path
 	ca       nix.ContentAddress
 	method   contentAddressMethod
 	hashAlgo nix.HashType
 }
 
-func InputAddressed(path StorePath) *DerivationOutput {
+func InputAddressed(path zbstore.Path) *DerivationOutput {
 	return &DerivationOutput{
 		typ:  inputAddressedOutputType,
 		path: path,
@@ -285,7 +294,7 @@ func RecursiveFileFloatingCAOutput(hashAlgo nix.HashType) *DerivationOutput {
 	}
 }
 
-func (out *DerivationOutput) Path(store StoreDirectory, drvName, outputName string) (path StorePath, ok bool) {
+func (out *DerivationOutput) Path(store zbstore.Directory, drvName, outputName string) (path zbstore.Path, ok bool) {
 	if out == nil {
 		return "", false
 	}
@@ -303,7 +312,7 @@ func (out *DerivationOutput) Path(store StoreDirectory, drvName, outputName stri
 	}
 }
 
-func (out *DerivationOutput) marshalText(dst []byte, storeDir StoreDirectory, drvName, outName string, maskOutputs bool) ([]byte, error) {
+func (out *DerivationOutput) marshalText(dst []byte, storeDir zbstore.Directory, drvName, outName string, maskOutputs bool) ([]byte, error) {
 	dst = append(dst, '(')
 	dst = appendATermString(dst, outName)
 	if out == nil {
@@ -352,7 +361,7 @@ func (out *DerivationOutput) marshalText(dst []byte, storeDir StoreDirectory, dr
 
 // makeStorePath computes a store path
 // according to https://nixos.org/manual/nix/stable/protocols/store-path.
-func makeStorePath(dir StoreDirectory, typ string, hash nix.Hash, name string, refs storeReferences) (StorePath, error) {
+func makeStorePath(dir zbstore.Directory, typ string, hash nix.Hash, name string, refs storeReferences) (zbstore.Path, error) {
 	h := sha256.New()
 	io.WriteString(h, typ)
 	for i := 0; i < refs.others.Len(); i++ {
@@ -375,7 +384,7 @@ func makeStorePath(dir StoreDirectory, typ string, hash nix.Hash, name string, r
 	return dir.Object(digest + "-" + name)
 }
 
-func fixedCAOutputPath(dir StoreDirectory, name string, ca nix.ContentAddress, refs storeReferences) (StorePath, error) {
+func fixedCAOutputPath(dir zbstore.Directory, name string, ca nix.ContentAddress, refs storeReferences) (zbstore.Path, error) {
 	h := ca.Hash()
 	htype := h.Type()
 	switch {
@@ -402,7 +411,7 @@ func fixedCAOutputPath(dir StoreDirectory, name string, ca nix.ContentAddress, r
 
 type storeReferences struct {
 	self   bool
-	others sortedset.Set[StorePath]
+	others sortedset.Set[zbstore.Path]
 }
 
 func (refs storeReferences) isEmpty() bool {
@@ -450,7 +459,7 @@ func hashPlaceholder(outputName string) string {
 
 // unknownCAOutputPlaceholder returns the placeholder
 // for an unknown output of a content-addressed derivation.
-func unknownCAOutputPlaceholder(drvPath StorePath, outputName string) string {
+func unknownCAOutputPlaceholder(drvPath zbstore.Path, outputName string) string {
 	drvName := strings.TrimSuffix(drvPath.Name(), ".drv")
 	h := nix.NewHasher(nix.SHA256)
 	h.WriteString("nix-upstream-output:")

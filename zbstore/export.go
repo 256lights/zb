@@ -10,7 +10,6 @@ import (
 	"slices"
 
 	"zombiezen.com/go/nix/nar"
-	"zombiezen.com/go/zb"
 	"zombiezen.com/go/zb/internal/sortedset"
 )
 
@@ -24,9 +23,9 @@ const (
 // ExportTrailer holds metadata about a Nix store object
 // used in the `nix-store --export` format.
 type ExportTrailer struct {
-	StorePath  zb.StorePath
-	References sortedset.Set[zb.StorePath]
-	Deriver    zb.StorePath
+	StorePath  Path
+	References sortedset.Set[Path]
+	Deriver    Path
 }
 
 // An Exporter serializes zero or more NARs to a stream
@@ -159,7 +158,7 @@ func receiveExport(receiver NARReceiver, r io.Reader) error {
 		if err != nil {
 			return fmt.Errorf("read store path: %w", err)
 		}
-		t.StorePath = zb.StorePath(buf)
+		t.StorePath = Path(buf)
 
 		buf = buf[:0]
 		nrefs, err := readUint64(r, &buf)
@@ -176,14 +175,14 @@ func receiveExport(receiver NARReceiver, r io.Reader) error {
 			if err != nil {
 				return fmt.Errorf("read references: %w", err)
 			}
-			t.References.Add(zb.StorePath(buf))
+			t.References.Add(Path(buf))
 		}
 
 		buf, err = readNARString(r, buf[:0])
 		if err != nil {
 			return fmt.Errorf("read deriver: %w", err)
 		}
-		t.Deriver = zb.StorePath(buf)
+		t.Deriver = Path(buf)
 
 		if _, err := readFull(r, buf[:len(exportEndOfObjectMarker)]); err != nil {
 			return err

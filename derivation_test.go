@@ -12,6 +12,7 @@ import (
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/zb/internal/sortedset"
+	"zombiezen.com/go/zb/zbstore"
 )
 
 func TestDerivationMarshalText(t *testing.T) {
@@ -19,7 +20,7 @@ func TestDerivationMarshalText(t *testing.T) {
 		name     string
 		drv      *Derivation
 		want     []byte
-		wantPath StorePath
+		wantPath zbstore.Path
 	}{
 		{
 			name: "FloatingCA",
@@ -99,13 +100,13 @@ func TestDerivationMarshalText(t *testing.T) {
 					"system":                      "x86_64-linux",
 					"urls":                        "mirror://gnu/automake/automake-1.16.5.tar.xz",
 				},
-				InputDerivations: map[StorePath]*sortedset.Set[string]{
+				InputDerivations: map[zbstore.Path]*sortedset.Set[string]{
 					"/nix/store/6pj63b323pn53gpw3l5kdh1rly55aj15-bash-5.1-p16.drv": sortedset.New("out"),
 					"/nix/store/8kd1la3xqfzdcb3gsgpp3k98m7g3hw9d-curl-7.84.0.drv":  sortedset.New("dev"),
 					"/nix/store/g3m3mdgfsix265c945ncaxyyvx4cnx14-mirrors-list.drv": sortedset.New("out"),
 					"/nix/store/zq638s1j77mxzc52ql21l9ncl3qsjb2h-stdenv-linux.drv": sortedset.New("out"),
 				},
-				InputSources: *sortedset.New[StorePath](
+				InputSources: *sortedset.New[zbstore.Path](
 					"/nix/store/lphxcbw5wqsjskipaw1fb8lcf6pm6ri6-builder.sh",
 				),
 				Outputs: map[string]*DerivationOutput{
@@ -153,7 +154,7 @@ func TestDerivationOutputPath(t *testing.T) {
 		out        *DerivationOutput
 		drvName    string
 		outputName string
-		want       StorePath
+		want       zbstore.Path
 	}{
 		{
 			name:       "Text",

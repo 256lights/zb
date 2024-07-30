@@ -21,7 +21,9 @@ import (
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 	"zombiezen.com/go/sqlite/sqlitex"
+	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/lua"
+	"zombiezen.com/go/zb/zbstore"
 )
 
 //go:embed prelude.lua
@@ -29,15 +31,19 @@ var preludeSource string
 
 type Eval struct {
 	l        lua.State
-	storeDir StoreDirectory
+	store    *jsonrpc.Client
+	storeDir zbstore.Directory
 	cache    *sqlite.Conn
 }
 
-func NewEval(storeDir StoreDirectory, cacheDB string) (_ *Eval, err error) {
+func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) (_ *Eval, err error) {
 	if err := os.MkdirAll(filepath.Dir(cacheDB), 0o777); err != nil {
 		return nil, fmt.Errorf("zb: new eval: %v", err)
 	}
-	eval := &Eval{storeDir: storeDir}
+	eval := &Eval{
+		store:    store,
+		storeDir: storeDir,
+	}
 	eval.cache, err = openCache(context.TODO(), cacheDB)
 	if err != nil {
 		return nil, fmt.Errorf("zb: new eval: %v", err)
