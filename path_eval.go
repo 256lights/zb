@@ -158,7 +158,7 @@ func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
 	}
 
 	sum := h.SumHash()
-	storePath, err := fixedCAOutputPath(eval.storeDir, name, nix.RecursiveFileContentAddress(sum), storeReferences{})
+	storePath, err := zbstore.FixedCAOutputPath(eval.storeDir, name, nix.RecursiveFileContentAddress(sum), zbstore.References{})
 	if err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
@@ -200,15 +200,15 @@ func (eval *Eval) toFileFunction(l *lua.State) (int, error) {
 
 	h := nix.NewHasher(nix.SHA256)
 	h.WriteString(s)
-	var refs storeReferences
+	var refs zbstore.References
 	for _, dep := range l.StringContext(2) {
 		if strings.HasPrefix(dep, "!") {
 			return 0, fmt.Errorf("toFile %q: cannot depend on derivation outputs", name)
 		}
-		refs.others.Add(zbstore.Path(dep))
+		refs.Others.Add(zbstore.Path(dep))
 	}
 
-	storePath, err := fixedCAOutputPath(eval.storeDir, name, nix.TextContentAddress(h.SumHash()), refs)
+	storePath, err := zbstore.FixedCAOutputPath(eval.storeDir, name, nix.TextContentAddress(h.SumHash()), refs)
 	if err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
@@ -231,7 +231,7 @@ func (eval *Eval) toFileFunction(l *lua.State) (int, error) {
 	}
 	err = exporter.Trailer(&zbstore.ExportTrailer{
 		StorePath:  storePath,
-		References: refs.others,
+		References: refs.Others,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)

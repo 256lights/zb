@@ -1,7 +1,7 @@
 // Copyright 2024 Roxy Light
 // SPDX-License-Identifier: MIT
 
-package zb
+package zbstore
 
 import (
 	"os"
@@ -12,15 +12,14 @@ import (
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/zb/internal/sortedset"
-	"zombiezen.com/go/zb/zbstore"
 )
 
-func TestDerivationMarshalText(t *testing.T) {
+func TestDerivationExport(t *testing.T) {
 	tests := []struct {
 		name     string
 		drv      *Derivation
 		want     []byte
-		wantPath zbstore.Path
+		wantPath Path
 	}{
 		{
 			name: "FloatingCA",
@@ -100,13 +99,13 @@ func TestDerivationMarshalText(t *testing.T) {
 					"system":                      "x86_64-linux",
 					"urls":                        "mirror://gnu/automake/automake-1.16.5.tar.xz",
 				},
-				InputDerivations: map[zbstore.Path]*sortedset.Set[string]{
+				InputDerivations: map[Path]*sortedset.Set[string]{
 					"/nix/store/6pj63b323pn53gpw3l5kdh1rly55aj15-bash-5.1-p16.drv": sortedset.New("out"),
 					"/nix/store/8kd1la3xqfzdcb3gsgpp3k98m7g3hw9d-curl-7.84.0.drv":  sortedset.New("dev"),
 					"/nix/store/g3m3mdgfsix265c945ncaxyyvx4cnx14-mirrors-list.drv": sortedset.New("out"),
 					"/nix/store/zq638s1j77mxzc52ql21l9ncl3qsjb2h-stdenv-linux.drv": sortedset.New("out"),
 				},
-				InputSources: *sortedset.New[zbstore.Path](
+				InputSources: *sortedset.New[Path](
 					"/nix/store/lphxcbw5wqsjskipaw1fb8lcf6pm6ri6-builder.sh",
 				),
 				Outputs: map[string]*DerivationOutput{
@@ -133,15 +132,18 @@ func TestDerivationMarshalText(t *testing.T) {
 		}
 	})
 
-	t.Run("StorePath", func(t *testing.T) {
+	t.Run("Export", func(t *testing.T) {
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
-				got, err := test.drv.StorePath()
+				gotPath, got, err := test.drv.Export(nix.SHA256)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if got != test.wantPath {
-					t.Errorf("drv.StorePath() = %q; want %q", got, test.wantPath)
+				if gotPath != test.wantPath {
+					t.Errorf("path = %q; want %q", gotPath, test.wantPath)
+				}
+				if diff := cmp.Diff(test.want, got); diff != "" {
+					t.Errorf("data (-want +got):\n%s", diff)
 				}
 			})
 		}
@@ -154,7 +156,7 @@ func TestDerivationOutputPath(t *testing.T) {
 		out        *DerivationOutput
 		drvName    string
 		outputName string
-		want       zbstore.Path
+		want       Path
 	}{
 		{
 			name:       "Text",

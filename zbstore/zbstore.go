@@ -1,7 +1,7 @@
 // Copyright 2024 Roxy Light
 // SPDX-License-Identifier: MIT
 
-// Package zbstore provides the JSON-RPC types for the zb store API.
+// Package zbstore provides the data types for the zb store API.
 package zbstore
 
 // ExistsMethod is the name of the method that checks whether a store path exists.

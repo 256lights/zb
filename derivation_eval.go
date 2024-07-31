@@ -4,12 +4,15 @@
 package zb
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"runtime/cgo"
 	"strings"
 
+	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
+	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/lua"
 	"zombiezen.com/go/zb/internal/sortedset"
 	"zombiezen.com/go/zb/zbstore"
@@ -37,7 +40,7 @@ func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 	if !l.IsTable(1) {
 		return 0, lua.NewTypeError(l, 1, lua.TypeTable.String())
 	}
-	drv := &Derivation{
+	drv := &zbstore.Derivation{
 		Dir: eval.storeDir,
 		Env: make(map[string]string),
 	}
@@ -61,19 +64,19 @@ func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 	switch typ := l.RawField(1, "outputHashMode"); typ {
 	case lua.TypeNil:
 		if !h.IsZero() {
-			drv.Outputs = map[string]*DerivationOutput{
-				defaultDerivationOutputName: FixedCAOutput(nix.FlatFileContentAddress(h)),
+			drv.Outputs = map[string]*zbstore.DerivationOutput{
+				zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(nix.FlatFileContentAddress(h)),
 			}
 		}
 	case lua.TypeString:
 		switch mode, _ := l.ToString(-1); mode {
 		case "flat":
-			drv.Outputs = map[string]*DerivationOutput{
-				defaultDerivationOutputName: FixedCAOutput(nix.FlatFileContentAddress(h)),
+			drv.Outputs = map[string]*zbstore.DerivationOutput{
+				zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(nix.FlatFileContentAddress(h)),
 			}
 		case "recursive":
-			drv.Outputs = map[string]*DerivationOutput{
-				defaultDerivationOutputName: FixedCAOutput(nix.RecursiveFileContentAddress(h)),
+			drv.Outputs = map[string]*zbstore.DerivationOutput{
+				zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(nix.RecursiveFileContentAddress(h)),
 			}
 		default:
 			return 0, fmt.Errorf("outputHashMode argument: invalid mode %q", mode)
@@ -85,8 +88,8 @@ func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 
 	if h.IsZero() {
 		// TODO(someday): Multiple outputs.
-		drv.Outputs = map[string]*DerivationOutput{
-			defaultDerivationOutputName: RecursiveFileFloatingCAOutput(nix.SHA256),
+		drv.Outputs = map[string]*zbstore.DerivationOutput{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
 		}
 	}
 
@@ -159,10 +162,10 @@ func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 	}
 
 	for outputName, outType := range drv.Outputs {
-		switch outType.typ {
-		case floatingCAOutputType:
-			drv.Env[outputName] = hashPlaceholder(outputName)
-		case fixedCAOutputType:
+		switch {
+		case outType.IsFloating():
+			drv.Env[outputName] = zbstore.HashPlaceholder(outputName)
+		case outType.IsFixed():
 			p, ok := outType.Path(eval.storeDir, drv.Name, outputName)
 			if !ok {
 				panic("should have a path")
@@ -183,10 +186,10 @@ func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 	}
 	for outputName, outType := range drv.Outputs {
 		var placeholder string
-		switch outType.typ {
-		case floatingCAOutputType:
-			placeholder = unknownCAOutputPlaceholder(drvPath, defaultDerivationOutputName)
-		case fixedCAOutputType:
+		switch {
+		case outType.IsFloating():
+			placeholder = zbstore.UnknownCAOutputPlaceholder(drvPath, zbstore.DefaultDerivationOutputName)
+		case outType.IsFixed():
 			// TODO(someday): We already computed this earlier.
 			p, ok := outType.Path(eval.storeDir, drv.Name, outputName)
 			if !ok {
@@ -213,7 +216,7 @@ func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 	return 1, nil
 }
 
-func toEnvVar(l *lua.State, drv *Derivation, idx int, allowLists bool) (string, error) {
+func toEnvVar(l *lua.State, drv *zbstore.Derivation, idx int, allowLists bool) (string, error) {
 	idx = l.AbsIndex(idx)
 	switch typ := l.Type(idx); typ {
 	case lua.TypeNil:
@@ -263,7 +266,7 @@ func toEnvVar(l *lua.State, drv *Derivation, idx int, allowLists bool) (string, 
 	}
 }
 
-func stringToEnvVar(l *lua.State, drv *Derivation, idx int) (string, error) {
+func stringToEnvVar(l *lua.State, drv *zbstore.Derivation, idx int) (string, error) {
 	if !l.IsString(idx) {
 		return "", fmt.Errorf("%v is not a string", l.Type(idx))
 	}
@@ -290,7 +293,80 @@ func stringToEnvVar(l *lua.State, drv *Derivation, idx int) (string, error) {
 	return s, nil
 }
 
-func toDerivation(l *lua.State) (*Derivation, error) {
+func marshalDerivation(drv *zbstore.Derivation) (zbstore.Path, []byte, error) {
+	if drv.Name == "" {
+		return "", nil, fmt.Errorf("missing name")
+	}
+	if drv.Dir == "" {
+		return "", nil, fmt.Errorf("missing store directory")
+	}
+
+	data, err := drv.MarshalText()
+	if err != nil {
+		return "", nil, err
+	}
+	h := nix.NewHasher(nix.SHA256)
+	h.Write(data)
+
+	p, err := zbstore.FixedCAOutputPath(
+		drv.Dir,
+		drv.Name+zbstore.DerivationExt,
+		nix.TextContentAddress(h.SumHash()),
+		drv.References(),
+	)
+	if err != nil {
+		return "", data, err
+	}
+	return p, data, nil
+}
+
+func writeDerivation(ctx context.Context, store *jsonrpc.Client, drv *zbstore.Derivation) (zbstore.Path, error) {
+	p, data, err := marshalDerivation(drv)
+	if err != nil {
+		if drv.Name == "" {
+			return "", fmt.Errorf("write derivation: %v", err)
+		}
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+
+	var exists bool
+	err = jsonrpc.Do(ctx, store, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
+		Path: string(p),
+	})
+	if err != nil {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+	if exists {
+		// Already exists: no need to re-import.
+		log.Debugf(context.TODO(), "Using existing store path %s", p)
+		return p, nil
+	}
+
+	exporter, closeExport, err := startExport(ctx, store)
+	if err != nil {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+	defer closeExport(false)
+
+	err = writeSingleFileNAR(exporter, bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+	err = exporter.Trailer(&zbstore.ExportTrailer{
+		StorePath:  p,
+		References: drv.References().Others,
+	})
+	if err != nil {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+	if err := closeExport(true); err != nil {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
+	}
+
+	return p, nil
+}
+
+func toDerivation(l *lua.State) (*zbstore.Derivation, error) {
 	const idx = 1
 	if _, err := lua.CheckUserdata(l, idx, derivationTypeName); err != nil {
 		return nil, err
@@ -302,12 +378,12 @@ func toDerivation(l *lua.State) (*Derivation, error) {
 	return drv, nil
 }
 
-func testDerivation(l *lua.State, idx int) *Derivation {
+func testDerivation(l *lua.State, idx int) *zbstore.Derivation {
 	handle, _ := testUserdataHandle(l, idx, derivationTypeName)
 	if handle == 0 {
 		return nil
 	}
-	drv, _ := handle.Value().(*Derivation)
+	drv, _ := handle.Value().(*zbstore.Derivation)
 	return drv
 }
 

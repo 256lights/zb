@@ -11,7 +11,9 @@ import (
 	"runtime"
 	"strings"
 
+	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nixbase32"
+	"zombiezen.com/go/zb/internal/sortedset"
 	"zombiezen.com/go/zb/internal/windowspath"
 )
 
@@ -212,9 +214,9 @@ func (path Path) Base() string {
 	}
 }
 
-// IsDerivation reports whether the name ends in ".drv".
+// IsDerivation reports whether the name ends in [DerivationExt].
 func (path Path) IsDerivation() bool {
-	return strings.HasSuffix(path.Base(), ".drv")
+	return strings.HasSuffix(path.Base(), DerivationExt)
 }
 
 // Digest returns the digest part of the name.
@@ -266,6 +268,48 @@ func (path *Path) UnmarshalText(data []byte) error {
 		return err
 	}
 	return nil
+}
+
+// FixedCAOutputPath computes the path of a store object
+// with the given directory, name, content address, and reference set.
+func FixedCAOutputPath(dir Directory, name string, ca nix.ContentAddress, refs References) (Path, error) {
+	h := ca.Hash()
+	htype := h.Type()
+	switch {
+	case ca.IsText():
+		if want := nix.SHA256; htype != want {
+			return "", fmt.Errorf("compute fixed output path for %s: text must be content-addressed by %v (got %v)",
+				name, want, htype)
+		}
+		return makeStorePath(dir, "text", h, name, refs)
+	case htype == nix.SHA256 && ca.IsRecursiveFile():
+		return makeStorePath(dir, "source", h, name, refs)
+	default:
+		if !refs.IsEmpty() {
+			return "", fmt.Errorf("compute fixed output path for %s: references not allowed", name)
+		}
+		h2 := nix.NewHasher(nix.SHA256)
+		h2.WriteString("fixed:out:")
+		h2.WriteString(methodOfContentAddress(ca).prefix())
+		h2.WriteString(h.Base16())
+		h2.WriteString(":")
+		return makeStorePath(dir, "output:out", h2.SumHash(), name, References{})
+	}
+}
+
+// References represents a set of references to other store paths
+// that a store object contains.
+// The zero value is an empty set.
+type References struct {
+	// Self is true if the store object contains one or more references to itself.
+	Self bool
+	// Others holds paths of other store objects that the store object references.
+	Others sortedset.Set[Path]
+}
+
+// IsEmpty reports whether refs represents the empty set.
+func (refs References) IsEmpty() bool {
+	return !refs.Self && refs.Others.Len() == 0
 }
 
 type pathStyle int8

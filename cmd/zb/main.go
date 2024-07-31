@@ -17,6 +17,7 @@ import (
 	"go4.org/xdgdir"
 	"zombiezen.com/go/bass/sigterm"
 	"zombiezen.com/go/log"
+	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb"
 	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/zbstore"
@@ -206,11 +207,12 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 
 	// TODO(soon): Batch.
 	for _, result := range results {
-		drv, _ := result.(*zb.Derivation)
+		drv, _ := result.(*zbstore.Derivation)
 		if drv == nil {
 			return fmt.Errorf("%v is not a derivation", result)
 		}
-		p, err := drv.StorePath()
+		// TODO(someday): Evaluation should store the path of the exported result.
+		p, _, err := drv.Export(nix.SHA256)
 		if err != nil {
 			return err
 		}
