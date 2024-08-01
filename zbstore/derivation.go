@@ -4,8 +4,10 @@
 package zbstore
 
 import (
+	"bytes"
 	"cmp"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"slices"
@@ -13,6 +15,7 @@ import (
 
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nixbase32"
+	"zombiezen.com/go/zb/internal/aterm"
 	"zombiezen.com/go/zb/internal/sortedset"
 )
 
@@ -45,6 +48,18 @@ type Derivation struct {
 	InputDerivations map[Path]*sortedset.Set[string]
 	// Outputs is the set of outputs that the derivation produces.
 	Outputs map[string]*DerivationOutput
+}
+
+// ParseDerivation parses a derivation from ATerm format.
+func ParseDerivation(dir Directory, name string, data []byte) (*Derivation, error) {
+	drv := &Derivation{
+		Dir:  dir,
+		Name: name,
+	}
+	if err := drv.unmarshalText(data); err != nil {
+		return nil, err
+	}
+	return drv, nil
 }
 
 // Export marshals the derivation in ATerm format
@@ -125,7 +140,7 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 			return nil, fmt.Errorf("marshal %s derivation: inputs: unexpected store directory %s (using %s)",
 				drv.Name, got, drv.Dir)
 		}
-		buf = appendATermString(buf, string(drvPath))
+		buf = aterm.AppendString(buf, string(drvPath))
 		buf = append(buf, ",["...)
 		// TODO(someday): This can be some kind of tree? See DerivedPathMap.
 		outputs := drv.InputDerivations[drvPath]
@@ -133,7 +148,7 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 			if j > 0 {
 				buf = append(buf, ',')
 			}
-			buf = appendATermString(buf, outputs.At(j))
+			buf = aterm.AppendString(buf, outputs.At(j))
 		}
 		buf = append(buf, "])"...)
 	}
@@ -148,20 +163,20 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 			return nil, fmt.Errorf("marshal %s derivation: inputs: unexpected store directory %s (using %s)",
 				drv.Name, got, drv.Dir)
 		}
-		buf = appendATermString(buf, string(src))
+		buf = aterm.AppendString(buf, string(src))
 	}
 
 	buf = append(buf, "],"...)
-	buf = appendATermString(buf, drv.System)
+	buf = aterm.AppendString(buf, drv.System)
 	buf = append(buf, ","...)
-	buf = appendATermString(buf, drv.Builder)
+	buf = aterm.AppendString(buf, drv.Builder)
 
 	buf = append(buf, ",["...)
 	for i, arg := range drv.Args {
 		if i > 0 {
 			buf = append(buf, ',')
 		}
-		buf = appendATermString(buf, arg)
+		buf = aterm.AppendString(buf, arg)
 	}
 
 	buf = append(buf, "],["...)
@@ -170,15 +185,63 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 			buf = append(buf, ',')
 		}
 		buf = append(buf, '(')
-		buf = appendATermString(buf, k)
+		buf = aterm.AppendString(buf, k)
 		buf = append(buf, ',')
-		buf = appendATermString(buf, drv.Env[k])
+		buf = aterm.AppendString(buf, drv.Env[k])
 		buf = append(buf, ')')
 	}
 
 	buf = append(buf, "])"...)
 
 	return buf, nil
+}
+
+func (drv *Derivation) unmarshalText(data []byte) error {
+	var ok bool
+	data, ok = bytes.CutPrefix(data, []byte("Derive(["))
+	if !ok {
+		return fmt.Errorf("parse %s derivation: file header not found", drv.Name)
+	}
+
+	clearMap(drv.Outputs)
+	for {
+		data, ok = bytes.CutPrefix(data, []byte("]"))
+		if ok {
+			break
+		}
+		var outName string
+		var outType *DerivationOutput
+		var err error
+		outName, outType, data, err = parseDerivationOutput(data)
+		if err != nil {
+			return fmt.Errorf("parse %s derivation: %v", drv.Name, err)
+		}
+		if _, ok := drv.Outputs[outName]; ok {
+			return fmt.Errorf("parse %s derivation: multiple outputs named %q", drv.Name, outName)
+		}
+		drv.Outputs[outName] = outType
+	}
+
+	// TODO(now): InputDerivations
+	data, ok = bytes.CutPrefix(data, []byte(",["))
+	if !ok {
+		return fmt.Errorf("parse %s derivation: expected input derivations list after outputs list", drv.Name)
+	}
+	clearMap(drv.InputDerivations)
+	for {
+
+	}
+
+	// TODO(now): InputSources
+	// TODO(now): System
+	// TODO(now): Builder
+	// TODO(now): Args
+	// TODO(now): Env
+
+	if len(data) > 0 {
+		return fmt.Errorf("parse %s derivation: trailing data", drv.Name)
+	}
+	return nil
 }
 
 type derivationOutputType int8
@@ -273,7 +336,7 @@ func (out *DerivationOutput) Path(store Directory, drvName, outputName string) (
 
 func (out *DerivationOutput) marshalText(dst []byte, storeDir Directory, drvName, outName string, maskOutputs bool) ([]byte, error) {
 	dst = append(dst, '(')
-	dst = appendATermString(dst, outName)
+	dst = aterm.AppendString(dst, outName)
 	if out == nil {
 		dst = append(dst, `,"","","")`...)
 		return dst, nil
@@ -288,22 +351,103 @@ func (out *DerivationOutput) marshalText(dst []byte, storeDir Directory, drvName
 			if !ok {
 				return dst, fmt.Errorf("marshal %s output: invalid path", outName)
 			}
-			dst = appendATermString(dst, string(p))
+			dst = aterm.AppendString(dst, string(p))
 		}
 		dst = append(dst, ',')
 		h := out.ca.Hash()
-		dst = appendATermString(dst, methodOfContentAddress(out.ca).prefix()+h.Type().String())
+		dst = aterm.AppendString(dst, methodOfContentAddress(out.ca).prefix()+h.Type().String())
 		dst = append(dst, ',')
-		dst = appendATermString(dst, h.RawBase16())
+		dst = aterm.AppendString(dst, h.RawBase16())
 	case floatingCAOutputType:
 		dst = append(dst, `,"",`...)
-		dst = appendATermString(dst, out.method.prefix()+out.hashAlgo.String())
+		dst = aterm.AppendString(dst, out.method.prefix()+out.hashAlgo.String())
 		dst = append(dst, `,""`...)
 	default:
 		return dst, fmt.Errorf("marshal %s output: invalid type %v", outName, out.typ)
 	}
 	dst = append(dst, ')')
 	return dst, nil
+}
+
+func parseDerivationOutput(data []byte) (outName string, out *DerivationOutput, tail []byte, err error) {
+	var ok bool
+	data, ok = bytes.CutPrefix(data, []byte("("))
+	if !ok {
+		return "", nil, data, fmt.Errorf("parse output: expected '('")
+	}
+	outName, data, err = parseATermString(data)
+	if err != nil {
+		return "", nil, data, fmt.Errorf("parse output: name: %v", err)
+	}
+
+	data, ok = bytes.CutPrefix(data, []byte(","))
+	if !ok {
+		return outName, nil, data, fmt.Errorf("parse %s output: expected ',' after name", outName)
+	}
+	path, data, err := parseATermString(data)
+	if err != nil {
+		return outName, nil, data, fmt.Errorf("parse %s output: path: %v", outName, err)
+	}
+
+	data, ok = bytes.CutPrefix(data, []byte(","))
+	if !ok {
+		return outName, nil, data, fmt.Errorf("parse %s output: expected ',' after path", outName)
+	}
+	caInfo, data, err := parseATermString(data)
+	if err != nil {
+		return outName, nil, data, fmt.Errorf("parse %s output: hash algorithm: %v", outName, err)
+	}
+
+	data, ok = bytes.CutPrefix(data, []byte(","))
+	if !ok {
+		return outName, nil, data, fmt.Errorf("parse %s output: expected ',' after hash algorithm", outName)
+	}
+	hashHex, data, err := parseATermString(data)
+	if err != nil {
+		return outName, nil, data, fmt.Errorf("parse %s output: hash: %v", outName, err)
+	}
+
+	data, ok = bytes.CutPrefix(data, []byte(")"))
+	if !ok {
+		return outName, nil, data, fmt.Errorf("parse %s output: expected ')' after hash", outName)
+	}
+
+	method, hashAlgo, err := parseHashAlgorithm(caInfo)
+	if err != nil {
+		return outName, nil, data, fmt.Errorf("parse %s output: hash algorithm: %v", outName, err)
+	}
+	hashBits, err := hex.DecodeString(hashHex)
+	if err != nil {
+		return outName, nil, data, fmt.Errorf("parse %s output: hash: %v", outName, err)
+	}
+	switch {
+	case path == "" && hashHex == "":
+		out = &DerivationOutput{
+			typ:      floatingCAOutputType,
+			method:   method,
+			hashAlgo: hashAlgo,
+		}
+	case hashHex != "":
+		if got, want := len(hashBits), hashAlgo.Size(); got != want {
+			err = fmt.Errorf("parse %s output: hash: incorrect size (got %d bytes but %v uses %d)",
+				outName, got, hashAlgo, want)
+			return outName, nil, data, err
+		}
+		h := nix.NewHash(hashAlgo, hashBits)
+		switch method {
+		case flatFileIngestionMethod:
+			out = FixedCAOutput(nix.FlatFileContentAddress(h))
+		case recursiveFileIngestionMethod:
+			out = FixedCAOutput(nix.RecursiveFileContentAddress(h))
+		case textIngestionMethod:
+			out = FixedCAOutput(nix.TextContentAddress(h))
+		default:
+			return outName, nil, data, fmt.Errorf("parse %s output: unhandled hash algorithm %q", outName, caInfo)
+		}
+	default:
+		return outName, nil, data, fmt.Errorf("parse %s output: unknown type", outName, err)
+	}
+	return outName, out, data, nil
 }
 
 // makeStorePath computes a store path
@@ -363,6 +507,25 @@ func (m contentAddressMethod) prefix() string {
 	}
 }
 
+func parseHashAlgorithm(s string) (contentAddressMethod, nix.HashType, error) {
+	method := flatFileIngestionMethod
+	s, ok := strings.CutPrefix(s, "r:")
+	if ok {
+		method = recursiveFileIngestionMethod
+	} else {
+		s, ok = strings.CutPrefix(s, "text:")
+		if ok {
+			method = textIngestionMethod
+		}
+	}
+
+	typ, err := nix.ParseHashType(s)
+	if err != nil {
+		return method, 0, err
+	}
+	return method, typ, nil
+}
+
 // HashPlaceholder returns the placeholder string used in leiu of a derivation's output path.
 // During a derivation's realization, the backend replaces any occurrences of the placeholder
 // in the derivation's environment variables
@@ -390,34 +553,6 @@ func UnknownCAOutputPlaceholder(drvPath Path, outputName string) string {
 	return "/" + h.SumHash().RawBase32()
 }
 
-func appendATermString(dst []byte, s string) []byte {
-	size := len(s) + len(`""`)
-	for _, c := range []byte(s) {
-		if c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t' {
-			size++
-		}
-	}
-
-	dst = slices.Grow(dst, size)
-	dst = append(dst, '"')
-	for _, c := range []byte(s) {
-		switch c {
-		case '"', '\\':
-			dst = append(dst, '\\', c)
-		case '\n':
-			dst = append(dst, `\n`...)
-		case '\r':
-			dst = append(dst, `\r`...)
-		case '\t':
-			dst = append(dst, `\t`...)
-		default:
-			dst = append(dst, c)
-		}
-	}
-	dst = append(dst, '"')
-	return dst
-}
-
 func sortedKeys[M ~map[K]V, K cmp.Ordered, V any](m M) []K {
 	keys := make([]K, 0, len(m))
 	for k := range m {
@@ -425,4 +560,10 @@ func sortedKeys[M ~map[K]V, K cmp.Ordered, V any](m M) []K {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+func clearMap[M ~map[K]V, K comparable, V any](m M) {
+	for k := range m {
+		delete(m, k)
+	}
 }
