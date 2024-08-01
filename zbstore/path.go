@@ -216,10 +216,11 @@ func (path Path) Base() string {
 
 // IsDerivation reports whether the name ends in [DerivationExt].
 func (path Path) IsDerivation() bool {
-	return strings.HasSuffix(path.Base(), DerivationExt)
+	_, isDrv := path.DerivationName()
+	return isDrv
 }
 
-// Digest returns the digest part of the name.
+// Digest returns the digest part of the last element of the path.
 func (path Path) Digest() string {
 	base := path.Base()
 	if len(base) < objectNameDigestLength {
@@ -228,13 +229,25 @@ func (path Path) Digest() string {
 	return string(base[:objectNameDigestLength])
 }
 
-// Name returns the part of the name after the digest.
+// Name returns the part of the last element of the path after the digest,
+// excluding the separating dash.
 func (path Path) Name() string {
 	base := path.Base()
 	if len(base) <= objectNameDigestLength+len("-") {
 		return ""
 	}
 	return string(base[objectNameDigestLength+len("-"):])
+}
+
+// DerivationName returns [Path.Name] with a suffix of [DerivationExt] stripped.
+// If the path does not end in [DerivationExt],
+// DerivationName returns ("", false).
+func (path Path) DerivationName() (drvName string, isDrv bool) {
+	drvName, isDrv = strings.CutSuffix(path.Name(), DerivationExt)
+	if !isDrv {
+		return "", false
+	}
+	return drvName, true
 }
 
 // Join joins any number of path elements to the store path

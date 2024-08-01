@@ -4,23 +4,27 @@
 package zbstore
 
 import (
+	stdcmp "cmp"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/zb/internal/sortedset"
 )
 
-func TestDerivationExport(t *testing.T) {
-	tests := []struct {
-		name     string
-		drv      *Derivation
-		want     []byte
-		wantPath Path
-	}{
+type derivationMarshalTest struct {
+	name     string
+	drv      *Derivation
+	want     []byte
+	wantPath Path
+}
+
+func derivationMarshalTests(tb testing.TB) []derivationMarshalTest {
+	return []derivationMarshalTest{
 		{
 			name: "FloatingCA",
 			drv: &Derivation{
@@ -43,7 +47,7 @@ func TestDerivationExport(t *testing.T) {
 			},
 
 			wantPath: "/nix/store/cs4n5mbm46xwzb9yxm983gzqh0k5b2hp-hello.drv",
-			want:     readTestdata(t, "cs4n5mbm46xwzb9yxm983gzqh0k5b2hp-hello.drv"),
+			want:     readTestdata(tb, "cs4n5mbm46xwzb9yxm983gzqh0k5b2hp-hello.drv"),
 		},
 		{
 			name: "FixedOutput",
@@ -109,17 +113,19 @@ func TestDerivationExport(t *testing.T) {
 					"/nix/store/lphxcbw5wqsjskipaw1fb8lcf6pm6ri6-builder.sh",
 				),
 				Outputs: map[string]*DerivationOutput{
-					"out": FixedCAOutput(nix.FlatFileContentAddress(mustParseHash(t, "sha256:f01d58cd6d9d77fbdca9eb4bbd5ead1988228fdb73d6f7a201f5f8d6b118b469"))),
+					"out": FixedCAOutput(nix.FlatFileContentAddress(mustParseHash(tb, "sha256:f01d58cd6d9d77fbdca9eb4bbd5ead1988228fdb73d6f7a201f5f8d6b118b469"))),
 				},
 			},
 
-			want:     readTestdata(t, "0006yk8jxi0nmbz09fq86zl037c1wx9b-automake-1.16.5.tar.xz.drv"),
+			want:     readTestdata(tb, "0006yk8jxi0nmbz09fq86zl037c1wx9b-automake-1.16.5.tar.xz.drv"),
 			wantPath: "/nix/store/0006yk8jxi0nmbz09fq86zl037c1wx9b-automake-1.16.5.tar.xz.drv",
 		},
 	}
+}
 
+func TestDerivationExport(t *testing.T) {
 	t.Run("MarshalText", func(t *testing.T) {
-		for _, test := range tests {
+		for _, test := range derivationMarshalTests(t) {
 			t.Run(test.name, func(t *testing.T) {
 				got, err := test.drv.MarshalText()
 				if err != nil {
@@ -133,7 +139,7 @@ func TestDerivationExport(t *testing.T) {
 	})
 
 	t.Run("Export", func(t *testing.T) {
-		for _, test := range tests {
+		for _, test := range derivationMarshalTests(t) {
 			t.Run(test.name, func(t *testing.T) {
 				gotPath, got, err := test.drv.Export(nix.SHA256)
 				if err != nil {
@@ -148,6 +154,27 @@ func TestDerivationExport(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestParseDerivation(t *testing.T) {
+	derivationCompareOptions := cmp.Options{
+		cmpopts.EquateEmpty(),
+		cmp.AllowUnexported(DerivationOutput{}),
+		transformSortedSet[Path](),
+		transformSortedSet[string](),
+	}
+
+	for _, test := range derivationMarshalTests(t) {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := ParseDerivation(test.drv.Dir, test.drv.Name, test.want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(test.drv, got, derivationCompareOptions); diff != "" {
+				t.Errorf("derivation (-want +got):\n%s", diff)
+			}
+		})
+	}
 }
 
 func TestDerivationOutputPath(t *testing.T) {
@@ -231,4 +258,14 @@ func hashString(typ nix.HashType, s string) nix.Hash {
 	h := nix.NewHasher(typ)
 	h.WriteString(s)
 	return h.SumHash()
+}
+
+func transformSortedSet[E stdcmp.Ordered]() cmp.Option {
+	return cmp.Transformer("transformSortedSet", func(s sortedset.Set[E]) []E {
+		list := make([]E, s.Len())
+		for i := range list {
+			list[i] = s.At(i)
+		}
+		return list
+	})
 }

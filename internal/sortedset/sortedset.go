@@ -59,3 +59,7 @@ func (s *Set[T]) Len() int {
 func (s *Set[T]) At(i int) T {
 	return s.elems[i]
 }
+
+func (s *Set[T]) Clear() {
+	s.elems = slices.Delete(s.elems, 0, len(s.elems))
+}

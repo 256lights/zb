@@ -51,13 +51,23 @@ type Derivation struct {
 }
 
 // ParseDerivation parses a derivation from ATerm format.
+// name should be the derivation's name as returned by [Path.DerivationName].
 func ParseDerivation(dir Directory, name string, data []byte) (*Derivation, error) {
 	drv := &Derivation{
 		Dir:  dir,
 		Name: name,
 	}
-	if err := drv.unmarshalText(data); err != nil {
+	var ok bool
+	data, ok = bytes.CutPrefix(data, []byte("Derive"))
+	if !ok {
+		return nil, fmt.Errorf("parse %s derivation: 'Derive' constructor not found", drv.Name)
+	}
+	r := bytes.NewReader(data)
+	if err := drv.parseTuple(aterm.NewScanner(r)); err != nil {
 		return nil, err
+	}
+	if r.Len() > 0 {
+		return nil, fmt.Errorf("parse %s derivation: trailing data", drv.Name)
 	}
 	return drv, nil
 }
@@ -196,23 +206,35 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 	return buf, nil
 }
 
-func (drv *Derivation) unmarshalText(data []byte) error {
-	var ok bool
-	data, ok = bytes.CutPrefix(data, []byte("Derive(["))
-	if !ok {
-		return fmt.Errorf("parse %s derivation: file header not found", drv.Name)
+func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
+	tok, err := s.ReadToken()
+	if err != nil {
+		return err
+	}
+	if tok.Kind != aterm.LParen {
+		return fmt.Errorf("parse %s derivation: expected '(', found %v", drv.Name, tok)
 	}
 
-	clearMap(drv.Outputs)
+	// Parse outputs.
+	tok, err = s.ReadToken()
+	if err != nil {
+		return err
+	}
+	if tok.Kind != aterm.LBracket {
+		return fmt.Errorf("parse %s derivation: expected '[', found %v", drv.Name, tok)
+	}
+	drv.Outputs = initMap(drv.Outputs)
 	for {
-		data, ok = bytes.CutPrefix(data, []byte("]"))
-		if ok {
+		tok, err = s.ReadToken()
+		if err != nil {
+			return err
+		}
+		if tok.Kind == aterm.RBracket {
 			break
 		}
-		var outName string
-		var outType *DerivationOutput
-		var err error
-		outName, outType, data, err = parseDerivationOutput(data)
+		s.UnreadToken()
+
+		outName, outType, err := parseDerivationOutput(s)
 		if err != nil {
 			return fmt.Errorf("parse %s derivation: %v", drv.Name, err)
 		}
@@ -222,26 +244,194 @@ func (drv *Derivation) unmarshalText(data []byte) error {
 		drv.Outputs[outName] = outType
 	}
 
-	// TODO(now): InputDerivations
-	data, ok = bytes.CutPrefix(data, []byte(",["))
-	if !ok {
-		return fmt.Errorf("parse %s derivation: expected input derivations list after outputs list", drv.Name)
+	// Parse input derivations.
+	tok, err = s.ReadToken()
+	if err != nil {
+		return err
 	}
-	clearMap(drv.InputDerivations)
+	if tok.Kind != aterm.LBracket {
+		return fmt.Errorf("parse %s derivation: expected '[' after outputs list, found %v", drv.Name, tok)
+	}
+	drv.InputDerivations = initMap(drv.InputDerivations)
 	for {
+		tok, err = s.ReadToken()
+		if err != nil {
+			return err
+		}
+		if tok.Kind == aterm.RBracket {
+			break
+		}
+		s.UnreadToken()
 
+		drvPath, outputNames, err := parseInputDerivation(s)
+		if err != nil {
+			return fmt.Errorf("parse %s derivation: %v", drv.Name, err)
+		}
+		if drvPath.Dir() != drv.Dir {
+			return fmt.Errorf("parse %s derivation: input derivation %s not in directory %s", drv.Name, drvPath, drv.Dir)
+		}
+		if _, ok := drv.InputDerivations[drvPath]; ok {
+			return fmt.Errorf("parse %s derivation: multiple input derivations for %s", drv.Name, drvPath)
+		}
+		drv.InputDerivations[drvPath] = outputNames
 	}
 
-	// TODO(now): InputSources
-	// TODO(now): System
-	// TODO(now): Builder
-	// TODO(now): Args
-	// TODO(now): Env
+	// Parse input sources.
+	drv.InputSources.Clear()
+	err = parseStringList(s, func(val string) error {
+		p, err := ParsePath(val)
+		if err != nil {
+			return err
+		}
+		drv.InputSources.Add(p)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("parse %s derivation: input sources: %v", drv.Name, err)
+	}
 
-	if len(data) > 0 {
-		return fmt.Errorf("parse %s derivation: trailing data", drv.Name)
+	// Parse system.
+	tok, err = s.ReadToken()
+	if err != nil {
+		return err
+	}
+	if tok.Kind != aterm.String {
+		return fmt.Errorf("parse %s derivation: system: expected string after input source list, found %v", drv.Name, tok)
+	}
+	drv.System = tok.Value
+
+	// Parse builder.
+	tok, err = s.ReadToken()
+	if err != nil {
+		return err
+	}
+	if tok.Kind != aterm.String {
+		return fmt.Errorf("parse %s derivation: builder: expected string after system, found %v", drv.Name, tok)
+	}
+	drv.Builder = tok.Value
+
+	// Parse builder arguments.
+	drv.Args = slices.Delete(drv.Args, 0, len(drv.Args))
+	err = parseStringList(s, func(arg string) error {
+		drv.Args = append(drv.Args, arg)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("parse %s derivation: builder args: %v", drv.Name, err)
+	}
+
+	// Parse environment.
+	if err := drv.parseEnv(s); err != nil {
+		return err
+	}
+
+	// Parse closing parenthesis.
+	tok, err = s.ReadToken()
+	if err != nil {
+		return err
+	}
+	if tok.Kind != aterm.RParen {
+		return fmt.Errorf("parse %s derivation: expected ')', found %v", drv.Name, tok)
 	}
 	return nil
+}
+
+func parseInputDerivation(s *aterm.Scanner) (drvPath Path, outputNames *sortedset.Set[string], err error) {
+	tok, err := s.ReadToken()
+	if err != nil {
+		return "", nil, fmt.Errorf("parse input derivation: %v", err)
+	}
+	if tok.Kind != aterm.LParen {
+		return "", nil, fmt.Errorf("parse input derivation: expected '(', found %v", tok)
+	}
+
+	tok, err = s.ReadToken()
+	if err != nil {
+		return "", nil, fmt.Errorf("parse input derivation: %v", err)
+	}
+	if tok.Kind != aterm.String {
+		return "", nil, fmt.Errorf("parse input derivation: name: expected string, found %v", tok)
+	}
+	drvPathString := tok.Value
+
+	outputNames = new(sortedset.Set[string])
+	err = parseStringList(s, func(val string) error {
+		outputNames.Add(val)
+		return nil
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("parse input derivation %s: output names: %v", drvPathString, err)
+	}
+
+	tok, err = s.ReadToken()
+	if err != nil {
+		return "", nil, fmt.Errorf("parse input derivation %s: %v", drvPathString, err)
+	}
+	if tok.Kind != aterm.RParen {
+		return "", nil, fmt.Errorf("parse input derivation %s: expected ')', found %v", drvPathString, tok)
+	}
+
+	drvPath, err = ParsePath(drvPathString)
+	if err != nil {
+		return "", nil, fmt.Errorf("parse input derivation %s: %v", drvPathString, err)
+	}
+	return drvPath, outputNames, nil
+}
+
+func (drv *Derivation) parseEnv(s *aterm.Scanner) error {
+	tok, err := s.ReadToken()
+	if err != nil {
+		return err
+	}
+	if tok.Kind != aterm.LBracket {
+		return fmt.Errorf("parse %s derivation: env: expected '[', found %v", drv.Name, tok)
+	}
+	drv.Env = initMap(drv.Env)
+	for {
+		tok, err = s.ReadToken()
+		if err != nil {
+			return err
+		}
+		switch tok.Kind {
+		case aterm.RBracket:
+			return nil
+		case aterm.LParen:
+			// Carry on.
+		default:
+			return fmt.Errorf("parse %s derivation: env: expected ']' or '(', found %v", drv.Name, tok)
+		}
+
+		tok, err = s.ReadToken()
+		if err != nil {
+			return err
+		}
+		if tok.Kind != aterm.String {
+			return fmt.Errorf("parse %s derivation: env: expected string, found %v", drv.Name, tok)
+		}
+		k := tok.Value
+		if _, exists := drv.Env[k]; exists {
+			return fmt.Errorf("parse %s derivation: env: multiple entries for %s", drv.Name, k)
+		}
+
+		tok, err = s.ReadToken()
+		if err != nil {
+			return err
+		}
+		if tok.Kind != aterm.String {
+			return fmt.Errorf("parse %s derivation: env: %s: expected string, found %v", drv.Name, k, tok)
+		}
+		v := tok.Value
+
+		tok, err = s.ReadToken()
+		if err != nil {
+			return err
+		}
+		if tok.Kind != aterm.RParen {
+			return fmt.Errorf("parse %s derivation: env: %s: expected ')', found %v", drv.Name, k, tok)
+		}
+
+		drv.Env[k] = v
+	}
 }
 
 type derivationOutputType int8
@@ -369,56 +559,66 @@ func (out *DerivationOutput) marshalText(dst []byte, storeDir Directory, drvName
 	return dst, nil
 }
 
-func parseDerivationOutput(data []byte) (outName string, out *DerivationOutput, tail []byte, err error) {
-	var ok bool
-	data, ok = bytes.CutPrefix(data, []byte("("))
-	if !ok {
-		return "", nil, data, fmt.Errorf("parse output: expected '('")
-	}
-	outName, data, err = parseATermString(data)
+func parseDerivationOutput(s *aterm.Scanner) (outName string, out *DerivationOutput, err error) {
+	tok, err := s.ReadToken()
 	if err != nil {
-		return "", nil, data, fmt.Errorf("parse output: name: %v", err)
+		return "", nil, fmt.Errorf("parse output: %v", err)
+	}
+	if tok.Kind != aterm.LParen {
+		return "", nil, fmt.Errorf("parse output: expected '(', found %v", tok)
 	}
 
-	data, ok = bytes.CutPrefix(data, []byte(","))
-	if !ok {
-		return outName, nil, data, fmt.Errorf("parse %s output: expected ',' after name", outName)
-	}
-	path, data, err := parseATermString(data)
+	tok, err = s.ReadToken()
 	if err != nil {
-		return outName, nil, data, fmt.Errorf("parse %s output: path: %v", outName, err)
+		return "", nil, fmt.Errorf("parse output: %v", err)
 	}
+	if tok.Kind != aterm.String {
+		return "", nil, fmt.Errorf("parse output: name: expected string, found %v", tok)
+	}
+	outName = tok.Value
 
-	data, ok = bytes.CutPrefix(data, []byte(","))
-	if !ok {
-		return outName, nil, data, fmt.Errorf("parse %s output: expected ',' after path", outName)
-	}
-	caInfo, data, err := parseATermString(data)
+	tok, err = s.ReadToken()
 	if err != nil {
-		return outName, nil, data, fmt.Errorf("parse %s output: hash algorithm: %v", outName, err)
+		return "", nil, fmt.Errorf("parse %s output: %v", outName, err)
 	}
+	if tok.Kind != aterm.String {
+		return "", nil, fmt.Errorf("parse %s output: path: expected string, found %v", outName, tok)
+	}
+	path := tok.Value
 
-	data, ok = bytes.CutPrefix(data, []byte(","))
-	if !ok {
-		return outName, nil, data, fmt.Errorf("parse %s output: expected ',' after hash algorithm", outName)
-	}
-	hashHex, data, err := parseATermString(data)
+	tok, err = s.ReadToken()
 	if err != nil {
-		return outName, nil, data, fmt.Errorf("parse %s output: hash: %v", outName, err)
+		return "", nil, fmt.Errorf("parse %s output: %v", outName, err)
 	}
+	if tok.Kind != aterm.String {
+		return "", nil, fmt.Errorf("parse %s output: hash algorithm: expected string, found %v", outName, tok)
+	}
+	caInfo := tok.Value
 
-	data, ok = bytes.CutPrefix(data, []byte(")"))
-	if !ok {
-		return outName, nil, data, fmt.Errorf("parse %s output: expected ')' after hash", outName)
+	tok, err = s.ReadToken()
+	if err != nil {
+		return "", nil, fmt.Errorf("parse %s output: %v", outName, err)
+	}
+	if tok.Kind != aterm.String {
+		return "", nil, fmt.Errorf("parse %s output: hash: expected string, found %v", outName, tok)
+	}
+	hashHex := tok.Value
+
+	tok, err = s.ReadToken()
+	if err != nil {
+		return "", nil, fmt.Errorf("parse %s output: %v", outName, err)
+	}
+	if tok.Kind != aterm.RParen {
+		return "", nil, fmt.Errorf("parse %s output: expected ')', found %v", outName, tok)
 	}
 
 	method, hashAlgo, err := parseHashAlgorithm(caInfo)
 	if err != nil {
-		return outName, nil, data, fmt.Errorf("parse %s output: hash algorithm: %v", outName, err)
+		return outName, nil, fmt.Errorf("parse %s output: hash algorithm: %v", outName, err)
 	}
 	hashBits, err := hex.DecodeString(hashHex)
 	if err != nil {
-		return outName, nil, data, fmt.Errorf("parse %s output: hash: %v", outName, err)
+		return outName, nil, fmt.Errorf("parse %s output: hash: %v", outName, err)
 	}
 	switch {
 	case path == "" && hashHex == "":
@@ -431,7 +631,7 @@ func parseDerivationOutput(data []byte) (outName string, out *DerivationOutput, 
 		if got, want := len(hashBits), hashAlgo.Size(); got != want {
 			err = fmt.Errorf("parse %s output: hash: incorrect size (got %d bytes but %v uses %d)",
 				outName, got, hashAlgo, want)
-			return outName, nil, data, err
+			return outName, nil, err
 		}
 		h := nix.NewHash(hashAlgo, hashBits)
 		switch method {
@@ -442,12 +642,12 @@ func parseDerivationOutput(data []byte) (outName string, out *DerivationOutput, 
 		case textIngestionMethod:
 			out = FixedCAOutput(nix.TextContentAddress(h))
 		default:
-			return outName, nil, data, fmt.Errorf("parse %s output: unhandled hash algorithm %q", outName, caInfo)
+			return outName, nil, fmt.Errorf("parse %s output: unhandled hash algorithm %q", outName, caInfo)
 		}
 	default:
-		return outName, nil, data, fmt.Errorf("parse %s output: unknown type", outName, err)
+		return outName, nil, fmt.Errorf("parse %s output: unknown type", outName)
 	}
-	return outName, out, data, nil
+	return outName, out, nil
 }
 
 // makeStorePath computes a store path
@@ -553,6 +753,51 @@ func UnknownCAOutputPlaceholder(drvPath Path, outputName string) string {
 	return "/" + h.SumHash().RawBase32()
 }
 
+func parseStringList(s *aterm.Scanner, f func(string) error) error {
+	tok, err := s.ReadToken()
+	if err != nil {
+		return err
+	}
+	if tok.Kind != aterm.LBracket {
+		return fmt.Errorf("expected '[', found %v", tok)
+	}
+	for {
+		tok, err = s.ReadToken()
+		if err != nil {
+			return err
+		}
+		switch tok.Kind {
+		case aterm.String:
+			if err := f(tok.Value); err != nil {
+				return err
+			}
+		case aterm.RBracket:
+			return nil
+		default:
+			return fmt.Errorf("expected string or ']', found %v", tok)
+		}
+	}
+}
+
+// byteReaderReadFull is the equivalent of [io.ReadFull] for an [io.ByteReader].
+// If r implements [io.Reader], then [io.ReadFull] will be used for efficiency.
+func byteReaderReadFull(r io.ByteReader, p []byte) (int, error) {
+	if rr, ok := r.(io.Reader); ok {
+		return io.ReadFull(rr, p)
+	}
+	for i := range p {
+		var err error
+		p[i], err = r.ReadByte()
+		if err != nil {
+			if i > 0 && err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			return i, err
+		}
+	}
+	return len(p), nil
+}
+
 func sortedKeys[M ~map[K]V, K cmp.Ordered, V any](m M) []K {
 	keys := make([]K, 0, len(m))
 	for k := range m {
@@ -562,8 +807,10 @@ func sortedKeys[M ~map[K]V, K cmp.Ordered, V any](m M) []K {
 	return keys
 }
 
-func clearMap[M ~map[K]V, K comparable, V any](m M) {
-	for k := range m {
-		delete(m, k)
+func initMap[M ~map[K]V, K comparable, V any](m M) M {
+	if m == nil {
+		return make(M)
 	}
+	clear(m)
+	return m
 }
