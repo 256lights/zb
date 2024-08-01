@@ -207,25 +207,17 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 }
 
 func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
-	tok, err := s.ReadToken()
-	if err != nil {
-		return err
-	}
-	if tok.Kind != aterm.LParen {
-		return fmt.Errorf("parse %s derivation: expected '(', found %v", drv.Name, tok)
+	if _, err := expectToken(s, aterm.LParen); err != nil {
+		return fmt.Errorf("parse %s derivation: %v", drv.Name, err)
 	}
 
 	// Parse outputs.
-	tok, err = s.ReadToken()
-	if err != nil {
-		return err
-	}
-	if tok.Kind != aterm.LBracket {
-		return fmt.Errorf("parse %s derivation: expected '[', found %v", drv.Name, tok)
+	if _, err := expectToken(s, aterm.LBracket); err != nil {
+		return fmt.Errorf("parse %s derivation: outputs: %v", drv.Name, err)
 	}
 	drv.Outputs = initMap(drv.Outputs)
 	for {
-		tok, err = s.ReadToken()
+		tok, err := s.ReadToken()
 		if err != nil {
 			return err
 		}
@@ -245,16 +237,12 @@ func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
 	}
 
 	// Parse input derivations.
-	tok, err = s.ReadToken()
-	if err != nil {
-		return err
-	}
-	if tok.Kind != aterm.LBracket {
-		return fmt.Errorf("parse %s derivation: expected '[' after outputs list, found %v", drv.Name, tok)
+	if _, err := expectToken(s, aterm.LBracket); err != nil {
+		return fmt.Errorf("parse %s derivation: input derivations: %v", drv.Name, err)
 	}
 	drv.InputDerivations = initMap(drv.InputDerivations)
 	for {
-		tok, err = s.ReadToken()
+		tok, err := s.ReadToken()
 		if err != nil {
 			return err
 		}
@@ -278,7 +266,7 @@ func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
 
 	// Parse input sources.
 	drv.InputSources.Clear()
-	err = parseStringList(s, func(val string) error {
+	err := parseStringList(s, func(val string) error {
 		p, err := ParsePath(val)
 		if err != nil {
 			return err
@@ -291,22 +279,16 @@ func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
 	}
 
 	// Parse system.
-	tok, err = s.ReadToken()
+	tok, err := expectToken(s, aterm.String)
 	if err != nil {
-		return err
-	}
-	if tok.Kind != aterm.String {
-		return fmt.Errorf("parse %s derivation: system: expected string after input source list, found %v", drv.Name, tok)
+		return fmt.Errorf("parse %s derivation: system: %v", drv.Name, err)
 	}
 	drv.System = tok.Value
 
 	// Parse builder.
-	tok, err = s.ReadToken()
+	tok, err = expectToken(s, aterm.String)
 	if err != nil {
-		return err
-	}
-	if tok.Kind != aterm.String {
-		return fmt.Errorf("parse %s derivation: builder: expected string after system, found %v", drv.Name, tok)
+		return fmt.Errorf("parse %s derivation: builder: %v", drv.Name, err)
 	}
 	drv.Builder = tok.Value
 
@@ -325,32 +307,20 @@ func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
 		return err
 	}
 
-	// Parse closing parenthesis.
-	tok, err = s.ReadToken()
-	if err != nil {
-		return err
-	}
-	if tok.Kind != aterm.RParen {
-		return fmt.Errorf("parse %s derivation: expected ')', found %v", drv.Name, tok)
+	if _, err := expectToken(s, aterm.RParen); err != nil {
+		return fmt.Errorf("parse %s derivation: %v", drv.Name, err)
 	}
 	return nil
 }
 
 func parseInputDerivation(s *aterm.Scanner) (drvPath Path, outputNames *sortedset.Set[string], err error) {
-	tok, err := s.ReadToken()
-	if err != nil {
+	if _, err := expectToken(s, aterm.LParen); err != nil {
 		return "", nil, fmt.Errorf("parse input derivation: %v", err)
-	}
-	if tok.Kind != aterm.LParen {
-		return "", nil, fmt.Errorf("parse input derivation: expected '(', found %v", tok)
 	}
 
-	tok, err = s.ReadToken()
+	tok, err := expectToken(s, aterm.String)
 	if err != nil {
-		return "", nil, fmt.Errorf("parse input derivation: %v", err)
-	}
-	if tok.Kind != aterm.String {
-		return "", nil, fmt.Errorf("parse input derivation: name: expected string, found %v", tok)
+		return "", nil, fmt.Errorf("parse input derivation: name: %v", err)
 	}
 	drvPathString := tok.Value
 
@@ -363,12 +333,8 @@ func parseInputDerivation(s *aterm.Scanner) (drvPath Path, outputNames *sortedse
 		return "", nil, fmt.Errorf("parse input derivation %s: output names: %v", drvPathString, err)
 	}
 
-	tok, err = s.ReadToken()
-	if err != nil {
+	if _, err := expectToken(s, aterm.RParen); err != nil {
 		return "", nil, fmt.Errorf("parse input derivation %s: %v", drvPathString, err)
-	}
-	if tok.Kind != aterm.RParen {
-		return "", nil, fmt.Errorf("parse input derivation %s: expected ')', found %v", drvPathString, tok)
 	}
 
 	drvPath, err = ParsePath(drvPathString)
@@ -379,18 +345,14 @@ func parseInputDerivation(s *aterm.Scanner) (drvPath Path, outputNames *sortedse
 }
 
 func (drv *Derivation) parseEnv(s *aterm.Scanner) error {
-	tok, err := s.ReadToken()
-	if err != nil {
-		return err
-	}
-	if tok.Kind != aterm.LBracket {
-		return fmt.Errorf("parse %s derivation: env: expected '[', found %v", drv.Name, tok)
+	if _, err := expectToken(s, aterm.LBracket); err != nil {
+		return fmt.Errorf("parse %s derivation: env: expected '[', found %v", drv.Name, err)
 	}
 	drv.Env = initMap(drv.Env)
 	for {
-		tok, err = s.ReadToken()
+		tok, err := s.ReadToken()
 		if err != nil {
-			return err
+			return fmt.Errorf("parse %s derivation: env: %v", drv.Name, err)
 		}
 		switch tok.Kind {
 		case aterm.RBracket:
@@ -401,33 +363,23 @@ func (drv *Derivation) parseEnv(s *aterm.Scanner) error {
 			return fmt.Errorf("parse %s derivation: env: expected ']' or '(', found %v", drv.Name, tok)
 		}
 
-		tok, err = s.ReadToken()
+		tok, err = expectToken(s, aterm.String)
 		if err != nil {
-			return err
-		}
-		if tok.Kind != aterm.String {
-			return fmt.Errorf("parse %s derivation: env: expected string, found %v", drv.Name, tok)
+			return fmt.Errorf("parse %s derivation: env: %v", drv.Name, err)
 		}
 		k := tok.Value
 		if _, exists := drv.Env[k]; exists {
 			return fmt.Errorf("parse %s derivation: env: multiple entries for %s", drv.Name, k)
 		}
 
-		tok, err = s.ReadToken()
+		tok, err = expectToken(s, aterm.String)
 		if err != nil {
-			return err
-		}
-		if tok.Kind != aterm.String {
-			return fmt.Errorf("parse %s derivation: env: %s: expected string, found %v", drv.Name, k, tok)
+			return fmt.Errorf("parse %s derivation: env: %s: %v", drv.Name, k, err)
 		}
 		v := tok.Value
 
-		tok, err = s.ReadToken()
-		if err != nil {
-			return err
-		}
-		if tok.Kind != aterm.RParen {
-			return fmt.Errorf("parse %s derivation: env: %s: expected ')', found %v", drv.Name, k, tok)
+		if _, err := expectToken(s, aterm.RParen); err != nil {
+			return fmt.Errorf("parse %s derivation: env: %s: %v", drv.Name, k, err)
 		}
 
 		drv.Env[k] = v
@@ -560,56 +512,37 @@ func (out *DerivationOutput) marshalText(dst []byte, storeDir Directory, drvName
 }
 
 func parseDerivationOutput(s *aterm.Scanner) (outName string, out *DerivationOutput, err error) {
-	tok, err := s.ReadToken()
+	tok, err := expectToken(s, aterm.LParen)
 	if err != nil {
 		return "", nil, fmt.Errorf("parse output: %v", err)
-	}
-	if tok.Kind != aterm.LParen {
-		return "", nil, fmt.Errorf("parse output: expected '(', found %v", tok)
 	}
 
-	tok, err = s.ReadToken()
+	tok, err = expectToken(s, aterm.String)
 	if err != nil {
-		return "", nil, fmt.Errorf("parse output: %v", err)
-	}
-	if tok.Kind != aterm.String {
-		return "", nil, fmt.Errorf("parse output: name: expected string, found %v", tok)
+		return "", nil, fmt.Errorf("parse output: name: %v", err)
 	}
 	outName = tok.Value
 
-	tok, err = s.ReadToken()
+	tok, err = expectToken(s, aterm.String)
 	if err != nil {
-		return "", nil, fmt.Errorf("parse %s output: %v", outName, err)
-	}
-	if tok.Kind != aterm.String {
-		return "", nil, fmt.Errorf("parse %s output: path: expected string, found %v", outName, tok)
+		return "", nil, fmt.Errorf("parse %s output: path: %v", outName, err)
 	}
 	path := tok.Value
 
-	tok, err = s.ReadToken()
+	tok, err = expectToken(s, aterm.String)
 	if err != nil {
-		return "", nil, fmt.Errorf("parse %s output: %v", outName, err)
-	}
-	if tok.Kind != aterm.String {
-		return "", nil, fmt.Errorf("parse %s output: hash algorithm: expected string, found %v", outName, tok)
+		return "", nil, fmt.Errorf("parse %s output: hash algorithm: %v", outName, err)
 	}
 	caInfo := tok.Value
 
-	tok, err = s.ReadToken()
+	tok, err = expectToken(s, aterm.String)
 	if err != nil {
-		return "", nil, fmt.Errorf("parse %s output: %v", outName, err)
-	}
-	if tok.Kind != aterm.String {
-		return "", nil, fmt.Errorf("parse %s output: hash: expected string, found %v", outName, tok)
+		return "", nil, fmt.Errorf("parse %s output: hash: %v", outName, err)
 	}
 	hashHex := tok.Value
 
-	tok, err = s.ReadToken()
-	if err != nil {
+	if _, err := expectToken(s, aterm.RParen); err != nil {
 		return "", nil, fmt.Errorf("parse %s output: %v", outName, err)
-	}
-	if tok.Kind != aterm.RParen {
-		return "", nil, fmt.Errorf("parse %s output: expected ')', found %v", outName, tok)
 	}
 
 	method, hashAlgo, err := parseHashAlgorithm(caInfo)
@@ -754,12 +687,9 @@ func UnknownCAOutputPlaceholder(drvPath Path, outputName string) string {
 }
 
 func parseStringList(s *aterm.Scanner, f func(string) error) error {
-	tok, err := s.ReadToken()
+	tok, err := expectToken(s, aterm.LBracket)
 	if err != nil {
 		return err
-	}
-	if tok.Kind != aterm.LBracket {
-		return fmt.Errorf("expected '[', found %v", tok)
 	}
 	for {
 		tok, err = s.ReadToken()
@@ -779,23 +709,21 @@ func parseStringList(s *aterm.Scanner, f func(string) error) error {
 	}
 }
 
-// byteReaderReadFull is the equivalent of [io.ReadFull] for an [io.ByteReader].
-// If r implements [io.Reader], then [io.ReadFull] will be used for efficiency.
-func byteReaderReadFull(r io.ByteReader, p []byte) (int, error) {
-	if rr, ok := r.(io.Reader); ok {
-		return io.ReadFull(rr, p)
+func expectToken(s *aterm.Scanner, kind aterm.TokenKind) (aterm.Token, error) {
+	tok, err := s.ReadToken()
+	if err != nil {
+		return aterm.Token{}, err
 	}
-	for i := range p {
-		var err error
-		p[i], err = r.ReadByte()
-		if err != nil {
-			if i > 0 && err == io.EOF {
-				err = io.ErrUnexpectedEOF
-			}
-			return i, err
+	if tok.Kind != kind {
+		var want string
+		if kind == aterm.String {
+			want = "string"
+		} else {
+			want = `'` + string(kind) + `'`
 		}
+		return tok, fmt.Errorf("expected %s, found %v", want, tok)
 	}
-	return len(p), nil
+	return tok, nil
 }
 
 func sortedKeys[M ~map[K]V, K cmp.Ordered, V any](m M) []K {
