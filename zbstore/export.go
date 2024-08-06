@@ -288,6 +288,6 @@ func (ew *errWriter) Write(p []byte) (int, error) {
 		return 0, ew.err
 	}
 	var n int
-	n, ew.err = ew.Write(p)
+	n, ew.err = ew.w.Write(p)
 	return n, ew.err
 }
