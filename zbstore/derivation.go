@@ -6,15 +6,12 @@ package zbstore
 import (
 	"bytes"
 	"cmp"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/nix/nixbase32"
 	"zombiezen.com/go/zb/internal/aterm"
 	"zombiezen.com/go/zb/internal/sortedset"
 )
@@ -581,31 +578,6 @@ func parseDerivationOutput(s *aterm.Scanner) (outName string, out *DerivationOut
 		return outName, nil, fmt.Errorf("parse %s output: unknown type", outName)
 	}
 	return outName, out, nil
-}
-
-// makeStorePath computes a store path
-// according to https://nixos.org/manual/nix/stable/protocols/store-path.
-func makeStorePath(dir Directory, typ string, hash nix.Hash, name string, refs References) (Path, error) {
-	h := sha256.New()
-	io.WriteString(h, typ)
-	for i := 0; i < refs.Others.Len(); i++ {
-		io.WriteString(h, ":")
-		io.WriteString(h, string(refs.Others.At(i)))
-	}
-	if refs.Self {
-		io.WriteString(h, ":self")
-	}
-	io.WriteString(h, ":")
-	io.WriteString(h, hash.Base16())
-	io.WriteString(h, ":")
-	io.WriteString(h, string(dir))
-	io.WriteString(h, ":")
-	io.WriteString(h, string(name))
-	fingerprintHash := h.Sum(nil)
-	compressed := make([]byte, 20)
-	nix.CompressHash(compressed, fingerprintHash)
-	digest := nixbase32.EncodeToString(compressed)
-	return dir.Object(digest + "-" + name)
 }
 
 type contentAddressMethod int8

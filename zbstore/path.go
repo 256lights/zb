@@ -4,7 +4,9 @@
 package zbstore
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	posixpath "path"
 	"path/filepath"
@@ -308,6 +310,31 @@ func FixedCAOutputPath(dir Directory, name string, ca nix.ContentAddress, refs R
 		h2.WriteString(":")
 		return makeStorePath(dir, "output:out", h2.SumHash(), name, References{})
 	}
+}
+
+// makeStorePath computes a store path
+// according to https://nixos.org/manual/nix/stable/protocols/store-path.
+func makeStorePath(dir Directory, typ string, hash nix.Hash, name string, refs References) (Path, error) {
+	h := sha256.New()
+	io.WriteString(h, typ)
+	for i := 0; i < refs.Others.Len(); i++ {
+		io.WriteString(h, ":")
+		io.WriteString(h, string(refs.Others.At(i)))
+	}
+	if refs.Self {
+		io.WriteString(h, ":self")
+	}
+	io.WriteString(h, ":")
+	io.WriteString(h, hash.Base16())
+	io.WriteString(h, ":")
+	io.WriteString(h, string(dir))
+	io.WriteString(h, ":")
+	io.WriteString(h, string(name))
+	fingerprintHash := h.Sum(nil)
+	compressed := make([]byte, 20)
+	nix.CompressHash(compressed, fingerprintHash)
+	digest := nixbase32.EncodeToString(compressed)
+	return dir.Object(digest + "-" + name)
 }
 
 // References represents a set of references to other store paths
