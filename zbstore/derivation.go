@@ -453,7 +453,7 @@ func (out *DerivationOutput) IsFloating() bool {
 	if out == nil {
 		return false
 	}
-	return out.typ == fixedCAOutputType
+	return out.typ == floatingCAOutputType
 }
 
 // Path returns a fixed output's store object path
