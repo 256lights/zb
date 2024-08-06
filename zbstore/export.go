@@ -9,23 +9,24 @@ import (
 	"io"
 	"slices"
 
+	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/zb/internal/sortedset"
 )
 
 const (
-	exportObjectMarker      = "\x01\x00\x00\x00\x00\x00\x00\x00"
-	exportTrailerMarker     = "NIXE\x00\x00\x00\x00"
-	exportEndOfObjectMarker = "\x00\x00\x00\x00\x00\x00\x00\x00"
-	exportEOFMarker         = "\x00\x00\x00\x00\x00\x00\x00\x00"
+	exportObjectMarker  = "\x01\x00\x00\x00\x00\x00\x00\x00"
+	exportTrailerMarker = "NIXE\x00\x00\x00\x00"
+	exportEOFMarker     = "\x00\x00\x00\x00\x00\x00\x00\x00"
 )
 
 // ExportTrailer holds metadata about a Nix store object
 // used in the `nix-store --export` format.
 type ExportTrailer struct {
-	StorePath  Path
-	References sortedset.Set[Path]
-	Deriver    Path
+	StorePath      Path
+	References     sortedset.Set[Path]
+	Deriver        Path
+	ContentAddress nix.ContentAddress
 }
 
 // An Exporter serializes zero or more NARs to a stream
@@ -77,7 +78,14 @@ func (imp *Exporter) Trailer(t *ExportTrailer) error {
 		imp.trailerBuf = appendNARString(imp.trailerBuf, string(t.References.At(i)))
 	}
 	imp.trailerBuf = appendNARString(imp.trailerBuf, string(t.Deriver))
-	imp.trailerBuf = append(imp.trailerBuf, exportEndOfObjectMarker...)
+	if t.ContentAddress.IsZero() {
+		imp.trailerBuf = binary.LittleEndian.AppendUint64(imp.trailerBuf, 0)
+	} else {
+		// Nix 1.X used this field to store RSA-based signatures.
+		// Nix 2.0 onwards ignore this field, so we use it to inject a content addressability assertion.
+		imp.trailerBuf = binary.LittleEndian.AppendUint64(imp.trailerBuf, 1)
+		imp.trailerBuf = appendNARString(imp.trailerBuf, t.ContentAddress.String())
+	}
 
 	if _, err := imp.w.Write(imp.trailerBuf); err != nil {
 		return err
@@ -184,11 +192,24 @@ func receiveExport(receiver NARReceiver, r io.Reader) error {
 		}
 		t.Deriver = Path(buf)
 
-		if _, err := readFull(r, buf[:len(exportEndOfObjectMarker)]); err != nil {
+		buf = buf[:0]
+		x, err := readUint64(r, &buf)
+		if err != nil {
 			return err
 		}
-		if string(buf[:len(exportEndOfObjectMarker)]) != exportEndOfObjectMarker {
-			return fmt.Errorf("invalid end of object marker %x", buf[:])
+		switch x {
+		case 0:
+			// No content address assertion or signatures.
+		case 1:
+			buf, err = readNARString(r, buf[:0])
+			if err != nil {
+				return fmt.Errorf("read content address assertion: %v", err)
+			}
+			if err := t.ContentAddress.UnmarshalText(buf); err != nil {
+				return fmt.Errorf("read content address assertion: %v", err)
+			}
+		default:
+			return fmt.Errorf("invalid end of object marker %x", x)
 		}
 
 		receiver.ReceiveNAR(t)
