@@ -87,8 +87,15 @@ func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
 	}
 	defer closeExport(false)
 
-	h := nix.NewHasher(nix.SHA256)
-	w := nar.NewWriter(io.MultiWriter(h, exporter))
+	pr, pw := io.Pipe()
+	caChan := make(chan nix.ContentAddress)
+	go func() {
+		defer close(caChan)
+		ca, _ := zbstore.SourceSHA256ContentAddress("", pr)
+		caChan <- ca
+	}()
+
+	w := nar.NewWriter(io.MultiWriter(pw, exporter))
 	err = sqlitex.ExecuteTransientFS(eval.cache, sqlFiles(), "walk/iterate.sql", &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			fpath := stmt.GetText("path")
@@ -151,19 +158,26 @@ func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
 		},
 	})
 	if err != nil {
+		pw.CloseWithError(err)
+		<-caChan
 		return 0, fmt.Errorf("path: %v", err)
 	}
 	if err := w.Close(); err != nil {
+		pw.CloseWithError(err)
+		<-caChan
 		return 0, fmt.Errorf("path: %v", err)
 	}
 
-	sum := h.SumHash()
-	storePath, err := zbstore.FixedCAOutputPath(eval.storeDir, name, nix.RecursiveFileContentAddress(sum), zbstore.References{})
+	pw.Close()
+	ca := <-caChan
+
+	storePath, err := zbstore.FixedCAOutputPath(eval.storeDir, name, ca, zbstore.References{})
 	if err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
 	err = exporter.Trailer(&zbstore.ExportTrailer{
-		StorePath: storePath,
+		StorePath:      storePath,
+		ContentAddress: ca,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("path: %v", err)
@@ -208,7 +222,8 @@ func (eval *Eval) toFileFunction(l *lua.State) (int, error) {
 		refs.Others.Add(zbstore.Path(dep))
 	}
 
-	storePath, err := zbstore.FixedCAOutputPath(eval.storeDir, name, nix.TextContentAddress(h.SumHash()), refs)
+	ca := nix.TextContentAddress(h.SumHash())
+	storePath, err := zbstore.FixedCAOutputPath(eval.storeDir, name, ca, refs)
 	if err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
@@ -230,8 +245,9 @@ func (eval *Eval) toFileFunction(l *lua.State) (int, error) {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 	err = exporter.Trailer(&zbstore.ExportTrailer{
-		StorePath:  storePath,
-		References: refs.Others,
+		StorePath:      storePath,
+		References:     refs.Others,
+		ContentAddress: ca,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
