@@ -580,38 +580,6 @@ func parseDerivationOutput(s *aterm.Scanner) (outName string, out *DerivationOut
 	return outName, out, nil
 }
 
-type contentAddressMethod int8
-
-const (
-	textIngestionMethod contentAddressMethod = 1 + iota
-	flatFileIngestionMethod
-	recursiveFileIngestionMethod
-)
-
-func methodOfContentAddress(ca nix.ContentAddress) contentAddressMethod {
-	switch {
-	case ca.IsText():
-		return textIngestionMethod
-	case ca.IsRecursiveFile():
-		return recursiveFileIngestionMethod
-	default:
-		return flatFileIngestionMethod
-	}
-}
-
-func (m contentAddressMethod) prefix() string {
-	switch m {
-	case textIngestionMethod:
-		return "text:"
-	case flatFileIngestionMethod:
-		return ""
-	case recursiveFileIngestionMethod:
-		return "r:"
-	default:
-		panic("unknown content address method")
-	}
-}
-
 func parseHashAlgorithm(s string) (contentAddressMethod, nix.HashType, error) {
 	method := flatFileIngestionMethod
 	s, ok := strings.CutPrefix(s, "r:")

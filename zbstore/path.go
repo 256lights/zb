@@ -285,33 +285,6 @@ func (path *Path) UnmarshalText(data []byte) error {
 	return nil
 }
 
-// FixedCAOutputPath computes the path of a store object
-// with the given directory, name, content address, and reference set.
-func FixedCAOutputPath(dir Directory, name string, ca nix.ContentAddress, refs References) (Path, error) {
-	h := ca.Hash()
-	htype := h.Type()
-	switch {
-	case ca.IsText():
-		if want := nix.SHA256; htype != want {
-			return "", fmt.Errorf("compute fixed output path for %s: text must be content-addressed by %v (got %v)",
-				name, want, htype)
-		}
-		return makeStorePath(dir, "text", h, name, refs)
-	case htype == nix.SHA256 && ca.IsRecursiveFile():
-		return makeStorePath(dir, "source", h, name, refs)
-	default:
-		if !refs.IsEmpty() {
-			return "", fmt.Errorf("compute fixed output path for %s: references not allowed", name)
-		}
-		h2 := nix.NewHasher(nix.SHA256)
-		h2.WriteString("fixed:out:")
-		h2.WriteString(methodOfContentAddress(ca).prefix())
-		h2.WriteString(h.Base16())
-		h2.WriteString(":")
-		return makeStorePath(dir, "output:out", h2.SumHash(), name, References{})
-	}
-}
-
 // makeStorePath computes a store path
 // according to https://nixos.org/manual/nix/stable/protocols/store-path.
 func makeStorePath(dir Directory, typ string, hash nix.Hash, name string, refs References) (Path, error) {
