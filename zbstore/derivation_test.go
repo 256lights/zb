@@ -246,14 +246,6 @@ func readTestdata(tb testing.TB, name string) []byte {
 	return data
 }
 
-func mustParseHash(tb testing.TB, s string) nix.Hash {
-	h, err := nix.ParseHash(s)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	return h
-}
-
 func hashString(typ nix.HashType, s string) nix.Hash {
 	h := nix.NewHasher(typ)
 	h.WriteString(s)

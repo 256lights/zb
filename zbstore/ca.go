@@ -11,6 +11,9 @@ import (
 	"zombiezen.com/go/nix"
 )
 
+// A ContentAddress is a content-addressibility assertion.
+type ContentAddress = nix.ContentAddress
+
 // FixedCAOutputPath computes the path of a store object
 // with the given directory, name, content address, and reference set.
 func FixedCAOutputPath(dir Directory, name string, ca nix.ContentAddress, refs References) (Path, error) {
