@@ -15,8 +15,8 @@ import (
 
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nixbase32"
-	"zombiezen.com/go/zb/internal/sortedset"
 	"zombiezen.com/go/zb/internal/windowspath"
+	"zombiezen.com/go/zb/sortedset"
 )
 
 // Directory is the absolute path of a zb store.

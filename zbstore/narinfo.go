@@ -7,10 +7,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"sort"
 	"strconv"
 
 	"zombiezen.com/go/nix"
+	"zombiezen.com/go/zb/sortedset"
 )
 
 // NARInfoExtension is the file extension for a file containing NAR information.
@@ -47,7 +47,7 @@ type NARInfo struct {
 	// Nix requires this field to be set.
 	NARSize int64
 	// References is the set of other store objects that this store object references.
-	References []Path
+	References sortedset.Set[Path]
 	// Deriver is the name of the store object that is the store derivation
 	// of this store object.
 	Deriver Path
@@ -65,9 +65,9 @@ type NARInfo struct {
 func (info *NARInfo) Clone() *NARInfo {
 	info2 := new(NARInfo)
 	*info2 = *info
-	info.References = append([]Path(nil), info.References...)
-	info.Sig = append([]*nix.Signature(nil), info.Sig...)
-	return info
+	info2.References = *info.References.Clone()
+	info2.Sig = append([]*nix.Signature(nil), info.Sig...)
+	return info2
 }
 
 // Directory returns the store directory of the store object.
@@ -110,7 +110,8 @@ func (info *NARInfo) validateForFingerprint() error {
 	if info.NARSize < 0 {
 		return fmt.Errorf("negative nar size")
 	}
-	for _, ref := range info.References {
+	for i := 0; i < info.References.Len(); i++ {
+		ref := info.References.At(i)
 		if ref != "" && ref.Dir() != info.StorePath.Dir() {
 			return fmt.Errorf("reference directory = %q (expect %q)", ref.Dir(), info.StorePath.Dir())
 		}
@@ -179,16 +180,9 @@ func (info *NARInfo) WriteFingerprint(w io.Writer) error {
 		return fmt.Errorf("compute nix store object fingerprint for %s: %w", info.StorePath, err)
 	}
 
-	sortedRefs := append([]Path(nil), info.References...)
-	sort.Slice(sortedRefs, func(i, j int) bool {
-		return sortedRefs[i] < sortedRefs[j]
-	})
-	for i, ref := range sortedRefs {
+	for i := 0; i < info.References.Len(); i++ {
+		ref := info.References.At(i)
 		if i > 0 {
-			if ref == sortedRefs[i-1] {
-				// Deduplicate on-the-fly.
-				continue
-			}
 			if _, err := io.WriteString(w, ","); err != nil {
 				return fmt.Errorf("compute nix store object fingerprint for %s: %w", info.StorePath, err)
 			}
@@ -357,13 +351,14 @@ func (info *NARInfo) UnmarshalText(src []byte) (err error) {
 		}
 	}
 	if len(references) > 0 {
-		info.References = make([]Path, 0, len(references))
+		info.References.Clear()
+		info.References.Grow(len(references))
 		for _, w := range references {
 			ref, err := info.StoreDirectory().Object(string(w))
 			if err != nil {
 				return fmt.Errorf("line %d: References: %v", referencesLineno, err)
 			}
-			info.References = append(info.References, ref)
+			info.References.Add(ref)
 		}
 	}
 
@@ -399,9 +394,10 @@ func (info *NARInfo) MarshalText() ([]byte, error) {
 	buf = append(buf, info.NARHash.Base32()...)
 	buf = append(buf, "\nNarSize: "...)
 	buf = strconv.AppendInt(buf, info.NARSize, 10)
-	if len(info.References) > 0 {
+	if info.References.Len() > 0 {
 		buf = append(buf, "\nReferences:"...)
-		for _, ref := range info.References {
+		for i := 0; i < info.References.Len(); i++ {
+			ref := info.References.At(i)
 			buf = append(buf, ' ')
 			buf = append(buf, ref.Base()...)
 		}

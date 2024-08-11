@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"zombiezen.com/go/nix"
+	"zombiezen.com/go/zb/sortedset"
 )
 
 func TestNARInfoMarshalText(t *testing.T) {
@@ -32,10 +34,10 @@ func TestNARInfoMarshalText(t *testing.T) {
 				FileSize:    50088,
 				NARHash:     mustParseHash(t, "sha256:0yzhigwjl6bws649vcs2asa4lbs8hg93hyix187gc7s7a74w5h80"),
 				NARSize:     226488,
-				References: []Path{
+				References: *sortedset.New[Path](
 					"/nix/store/3n58xw4373jp0ljirf06d8077j15pc4j-glibc-2.37-8",
 					"/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
-				},
+				),
 				Deriver: "/nix/store/ib3sh3pcz10wsmavxvkdbayhqivbghlq-hello-2.12.1.drv",
 				Sig:     []*nix.Signature{mustParseSignature(t, "cache.nixos.org-1:8ijECciSFzWHwwGVOIVYdp2fOIOJAfmzGHPQVwpktfTQJF6kMPPDre7UtFw3o+VqenC5P8RikKOAAfN7CvPEAg==")},
 			},
@@ -122,10 +124,10 @@ func makeNARInfoUnmarshalTests(tb testing.TB) []narInfoUnmarshalTest {
 				FileSize:    50088,
 				NARHash:     mustParseHash(tb, "sha256:0yzhigwjl6bws649vcs2asa4lbs8hg93hyix187gc7s7a74w5h80"),
 				NARSize:     226488,
-				References: []Path{
+				References: *sortedset.New[Path](
 					"/nix/store/3n58xw4373jp0ljirf06d8077j15pc4j-glibc-2.37-8",
 					"/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
-				},
+				),
 				Deriver: "/nix/store/ib3sh3pcz10wsmavxvkdbayhqivbghlq-hello-2.12.1.drv",
 				Sig:     []*nix.Signature{mustParseSignature(tb, "cache.nixos.org-1:8ijECciSFzWHwwGVOIVYdp2fOIOJAfmzGHPQVwpktfTQJF6kMPPDre7UtFw3o+VqenC5P8RikKOAAfN7CvPEAg==")},
 			},
@@ -248,6 +250,66 @@ func FuzzNARInfo(f *testing.F) {
 			t.Errorf("after re-marshaling (-want +got):\n%s", diff)
 		}
 	})
+}
+
+func TestNARInfoClone(t *testing.T) {
+	want := &NARInfo{
+		StorePath:   "/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
+		URL:         "nar/1nhgq6wcggx0plpy4991h3ginj6hipsdslv4fd4zml1n707j26yq.nar.xz",
+		Compression: XZ,
+		FileHash:    mustParseHash(t, "sha256:1nhgq6wcggx0plpy4991h3ginj6hipsdslv4fd4zml1n707j26yq"),
+		FileSize:    50088,
+		NARHash:     mustParseHash(t, "sha256:0yzhigwjl6bws649vcs2asa4lbs8hg93hyix187gc7s7a74w5h80"),
+		NARSize:     226488,
+		References: *sortedset.New[Path](
+			"/nix/store/3n58xw4373jp0ljirf06d8077j15pc4j-glibc-2.37-8",
+			"/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
+		),
+		Deriver: "/nix/store/ib3sh3pcz10wsmavxvkdbayhqivbghlq-hello-2.12.1.drv",
+		Sig:     []*nix.Signature{mustParseSignature(t, "cache.nixos.org-1:8ijECciSFzWHwwGVOIVYdp2fOIOJAfmzGHPQVwpktfTQJF6kMPPDre7UtFw3o+VqenC5P8RikKOAAfN7CvPEAg==")},
+	}
+
+	// Copy+pasting the fields in code to protect against Clone() modifying the fields
+	// or having a buggy oracle.
+	original := &NARInfo{
+		StorePath:   "/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
+		URL:         "nar/1nhgq6wcggx0plpy4991h3ginj6hipsdslv4fd4zml1n707j26yq.nar.xz",
+		Compression: XZ,
+		FileHash:    mustParseHash(t, "sha256:1nhgq6wcggx0plpy4991h3ginj6hipsdslv4fd4zml1n707j26yq"),
+		FileSize:    50088,
+		NARHash:     mustParseHash(t, "sha256:0yzhigwjl6bws649vcs2asa4lbs8hg93hyix187gc7s7a74w5h80"),
+		NARSize:     226488,
+		References: *sortedset.New[Path](
+			"/nix/store/3n58xw4373jp0ljirf06d8077j15pc4j-glibc-2.37-8",
+			"/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
+		),
+		Deriver: "/nix/store/ib3sh3pcz10wsmavxvkdbayhqivbghlq-hello-2.12.1.drv",
+		Sig:     []*nix.Signature{mustParseSignature(t, "cache.nixos.org-1:8ijECciSFzWHwwGVOIVYdp2fOIOJAfmzGHPQVwpktfTQJF6kMPPDre7UtFw3o+VqenC5P8RikKOAAfN7CvPEAg==")},
+	}
+	sig0 := &original.Sig[0]
+	got := original.Clone()
+
+	if original == got {
+		t.Fatal("original.Clone() == original")
+	}
+	opts := cmp.Options{
+		cmp.Comparer(compareSignatures),
+		cmpopts.EquateEmpty(),
+	}
+	if diff := cmp.Diff(want, original, opts); diff != "" {
+		t.Errorf("original -want +got:\n%s", diff)
+	} else {
+		if sig0 != &original.Sig[0] {
+			t.Error("original.Sig modified")
+		}
+	}
+	if diff := cmp.Diff(want, got, opts); diff != "" {
+		t.Errorf("original.Clone() -want +got:\n%s", diff)
+	} else {
+		if &original.Sig[0] == &got.Sig[0] {
+			t.Error("Same backing array used for Sig")
+		}
+	}
 }
 
 func compareSignatures(a, b *nix.Signature) bool {

@@ -14,7 +14,7 @@ import (
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/lua"
-	"zombiezen.com/go/zb/internal/sortedset"
+	"zombiezen.com/go/zb/sortedset"
 	"zombiezen.com/go/zb/zbstore"
 )
 

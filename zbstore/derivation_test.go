@@ -13,7 +13,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
-	"zombiezen.com/go/zb/internal/sortedset"
+	"zombiezen.com/go/zb/sortedset"
 )
 
 type derivationMarshalTest struct {

@@ -13,7 +13,7 @@ import (
 
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/aterm"
-	"zombiezen.com/go/zb/internal/sortedset"
+	"zombiezen.com/go/zb/sortedset"
 )
 
 // DerivationExt is the file extension for a marshalled [Derivation].
