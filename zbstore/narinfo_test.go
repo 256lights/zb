@@ -217,7 +217,7 @@ func TestNARInfoUnmarshalText(t *testing.T) {
 			if err != nil {
 				t.Fatal("UnmarshalText(...):", err)
 			}
-			if diff := cmp.Diff(test.want, got, cmp.Comparer(compareSignatures)); diff != "" {
+			if diff := cmp.Diff(test.want, got, transformSortedSet[Path](), cmp.Comparer(compareSignatures)); diff != "" {
 				t.Errorf("after re-marshaling (-want +got):\n%s", diff)
 			}
 		})
@@ -246,7 +246,14 @@ func FuzzNARInfo(f *testing.F) {
 			t.Logf("Remarshaled text:\n%s", intermediate)
 			t.Fatal("Could not unmarshal re-marshaled input:", err)
 		}
-		if diff := cmp.Diff(info, got, cmp.Comparer(compareSignatures), cmp.Transformer("String", func(h nix.Hash) string { return h.String() })); diff != "" {
+		opts := cmp.Options{
+			cmp.Comparer(compareSignatures),
+			cmp.Transformer("String", func(h nix.Hash) string {
+				return h.String()
+			}),
+			transformSortedSet[Path](),
+		}
+		if diff := cmp.Diff(info, got, opts); diff != "" {
 			t.Errorf("after re-marshaling (-want +got):\n%s", diff)
 		}
 	})
@@ -294,6 +301,7 @@ func TestNARInfoClone(t *testing.T) {
 	}
 	opts := cmp.Options{
 		cmp.Comparer(compareSignatures),
+		transformSortedSet[Path](),
 		cmpopts.EquateEmpty(),
 	}
 	if diff := cmp.Diff(want, original, opts); diff != "" {
