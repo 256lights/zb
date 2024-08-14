@@ -311,13 +311,25 @@ func makeStorePath(dir Directory, typ string, hash nix.Hash, name string, refs R
 }
 
 // References represents a set of references to other store paths
-// that a store object contains.
+// that a store object contains for the purpose of generating a [Path].
 // The zero value is an empty set.
 type References struct {
 	// Self is true if the store object contains one or more references to itself.
 	Self bool
 	// Others holds paths of other store objects that the store object references.
 	Others sortedset.Set[Path]
+}
+
+// MakeReferences converts a set of complete store paths into a [References] value.
+func MakeReferences(self Path, refSet *sortedset.Set[Path]) References {
+	refs := References{
+		Self:   refSet.Has(self),
+		Others: *refSet.Clone(),
+	}
+	if refs.Self {
+		refs.Others.Delete(self)
+	}
+	return refs
 }
 
 // IsEmpty reports whether refs represents the empty set.

@@ -5,23 +5,23 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 
 	"github.com/spf13/cobra"
 	"zombiezen.com/go/log"
-	"zombiezen.com/go/nix/nar"
+	"zombiezen.com/go/zb/internal/backend"
 	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/zbstore"
 )
 
 type serveOptions struct {
+	dbPath string
 }
 
 func newServeCommand(g *globalConfig) *cobra.Command {
@@ -34,6 +34,12 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:          true,
 	}
 	opts := new(serveOptions)
+	if runtime.GOOS == "windows" {
+		opts.dbPath = `C:\zb\var\zb\db.sqlite`
+	} else {
+		opts.dbPath = "/zb/var/zb/db.sqlite"
+	}
+	c.Flags().StringVar(&opts.dbPath, "db", opts.dbPath, "`path` to store database file")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		return runServe(cmd.Context(), g, opts)
 	}
@@ -53,176 +59,88 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 	if err := os.MkdirAll(filepath.Dir(g.storeSocket), 0o755); err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Dir(opts.dbPath), 0o755); err != nil {
+		return err
+	}
+	// TODO(someday): Properly set permissions on the created database.
 
-	l, err := net.Listen("unix", g.storeSocket)
+	laddr := &net.UnixAddr{
+		Net:  "unix",
+		Name: g.storeSocket,
+	}
+	l, err := net.ListenUnix(laddr.Net, laddr)
 	if err != nil {
 		return err
 	}
-	defer l.Close()
-
-	log.Infof(ctx, "Listening on %s", g.storeSocket)
-	srv := &storeServer{
-		dir: g.storeDir,
-	}
+	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
-	defer wg.Wait()
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			return err
+	openConns := make(map[*net.UnixConn]struct{})
+	var openConnsMu sync.Mutex
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		// Once the context is Done, refuse new connections and RPCs.
+		<-ctx.Done()
+		log.Infof(ctx, "Shutting down (signal received)...")
+
+		if err := l.Close(); err != nil {
+			log.Errorf(ctx, "Closing Unix socket: %v", err)
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			recv := &storeNARReceiver{
-				dir: g.storeDir,
+		openConnsMu.Lock()
+		for conn := range openConns {
+			if err := conn.CloseRead(); err != nil {
+				log.Errorf(ctx, "Closing Unix socket: %v", err)
 			}
-			jsonrpc.Serve(ctx, zbstore.NewServerCodec(conn, recv), srv)
-			recv.cleanup(ctx)
-		}()
-	}
-}
-
-type storeServer struct {
-	dir zbstore.Directory
-}
-
-func (s *storeServer) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	return jsonrpc.ServeMux{
-		zbstore.ExistsMethod:  jsonrpc.HandlerFunc(s.exists),
-		zbstore.RealizeMethod: jsonrpc.HandlerFunc(s.realize),
-	}.JSONRPC(ctx, req)
-}
-
-func (s *storeServer) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	var args zbstore.ExistsRequest
-	if err := json.Unmarshal(req.Params, &args); err != nil {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
-	}
-	p, sub, err := s.dir.ParsePath(args.Path)
-	if err != nil {
-		return &jsonrpc.Response{
-			Result: json.RawMessage("false"),
-		}, nil
-	}
-	if _, err := os.Lstat(p.Join(sub)); err != nil {
-		return &jsonrpc.Response{
-			Result: json.RawMessage("false"),
-		}, nil
-	}
-	return &jsonrpc.Response{
-		Result: json.RawMessage("true"),
-	}, nil
-}
-
-func (s *storeServer) realize(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	return nil, fmt.Errorf("TODO(soon)")
-}
-
-type storeNARReceiver struct {
-	dir     zbstore.Directory
-	tmpFile *os.File
-}
-
-func (s *storeNARReceiver) Write(p []byte) (n int, err error) {
-	if s.tmpFile == nil {
-		s.tmpFile, err = os.CreateTemp("", "zb-serve-receive-*.nar")
-		if err != nil {
-			return 0, err
 		}
-	}
-	return s.tmpFile.Write(p)
-}
-
-func (s *storeNARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
-	ctx := context.TODO()
-	if s.tmpFile == nil {
-		// No bytes written? Not a valid NAR.
-		return
-	}
-	if _, err := s.tmpFile.Seek(0, io.SeekStart); err != nil {
-		log.Warnf(ctx, "Unable to seek in store temp file: %v", err)
-		s.cleanup(ctx)
-		return
-	}
+		openConnsMu.Unlock()
+	}()
 	defer func() {
-		if err := s.tmpFile.Truncate(0); err != nil {
-			log.Warnf(ctx, "Unable to truncate store temp file: %v", err)
-			s.cleanup(ctx)
-			return
+		cancel()
+		wg.Wait()
+
+		if err := os.Remove(g.storeSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Warnf(ctx, "Failed to clean up socket: %v", err)
 		}
 	}()
 
-	if trailer.StorePath.Dir() != s.dir {
-		log.Warnf(ctx, "Rejecting %s (not in %s)", trailer.StorePath, s.dir)
-		return
-	}
-	// TODO(soon): Prevent this from racing.
-	if _, err := os.Lstat(string(trailer.StorePath)); err == nil {
-		log.Debugf(ctx, "Received NAR for %s. Exists on disk, skipping...", trailer.StorePath)
-		return
-	}
-
-	if err := importNAR(s.tmpFile, trailer); err != nil {
-		log.Warnf(ctx, "Import of %s failed: %v", trailer.StorePath, err)
-		if err := os.RemoveAll(string(trailer.StorePath)); err != nil {
-			log.Errorf(ctx, "Failed to clean up partial import of %s: %v", trailer.StorePath, err)
+	log.Infof(ctx, "Listening on %s", g.storeSocket)
+	srv := backend.NewServer(&backend.Options{
+		Dir:    g.storeDir,
+		DBPath: opts.dbPath,
+	})
+	defer func() {
+		if err := srv.Close(); err != nil {
+			log.Errorf(ctx, "%v", err)
 		}
-		return
-	}
-}
+	}()
 
-func importNAR(r io.Reader, trailer *zbstore.ExportTrailer) error {
-	nr := nar.NewReader(r)
 	for {
-		hdr, err := nr.Next()
-		if err == io.EOF {
+		conn, err := l.AcceptUnix()
+		if errors.Is(err, net.ErrClosed) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		p := trailer.StorePath.Join(hdr.Path)
-		switch typ := hdr.Mode.Type(); typ {
-		case 0:
-			perm := os.FileMode(0o644)
-			if hdr.Mode&0o111 != 0 {
-				perm = 0o755
-			}
-			f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
-			if err != nil {
-				return err
-			}
-			_, err = io.Copy(f, nr)
-			err2 := f.Close()
-			if err != nil {
-				return err
-			}
-			if err2 != nil {
-				return err2
-			}
-		case fs.ModeDir:
-			if err := os.Mkdir(p, 0o755); err != nil {
-				return err
-			}
-		case fs.ModeSymlink:
-			if err := os.Symlink(hdr.LinkTarget, p); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("unhandled type %v", typ)
-		}
-	}
-}
+		openConnsMu.Lock()
+		openConns[conn] = struct{}{}
+		openConnsMu.Unlock()
 
-func (s *storeNARReceiver) cleanup(ctx context.Context) {
-	if s.tmpFile == nil {
-		return
-	}
-	name := s.tmpFile.Name()
-	s.tmpFile.Close()
-	s.tmpFile = nil
-	if err := os.Remove(name); err != nil {
-		log.Warnf(ctx, "Unable to remove store temp file: %v", err)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			recv := srv.NewNARReceiver()
+			defer recv.Cleanup(ctx)
+			jsonrpc.Serve(ctx, zbstore.NewServerCodec(conn, recv), srv)
+
+			openConnsMu.Lock()
+			delete(openConns, conn)
+			openConnsMu.Unlock()
+
+			if err := conn.Close(); err != nil {
+				log.Errorf(ctx, "%v", err)
+			}
+		}()
 	}
 }

@@ -17,24 +17,16 @@ type ContentAddress = nix.ContentAddress
 // FixedCAOutputPath computes the path of a store object
 // with the given directory, name, content address, and reference set.
 func FixedCAOutputPath(dir Directory, name string, ca nix.ContentAddress, refs References) (Path, error) {
+	if err := ValidateContentAddress(ca, refs); err != nil {
+		return "", fmt.Errorf("compute fixed output path for %s: %v", name, err)
+	}
 	h := ca.Hash()
-	htype := h.Type()
 	switch {
 	case ca.IsText():
-		if want := nix.SHA256; htype != want {
-			return "", fmt.Errorf("compute fixed output path for %s: text must be content-addressed by %v (got %v)",
-				name, want, htype)
-		}
-		if refs.Self {
-			return "", fmt.Errorf("compute fixed output path for %s: self-references not allowed in text", name)
-		}
 		return makeStorePath(dir, "text", h, name, refs)
-	case htype == nix.SHA256 && ca.IsRecursiveFile():
+	case IsSourceContentAddress(ca):
 		return makeStorePath(dir, "source", h, name, refs)
 	default:
-		if !refs.IsEmpty() {
-			return "", fmt.Errorf("compute fixed output path for %s: references not allowed", name)
-		}
 		h2 := nix.NewHasher(nix.SHA256)
 		h2.WriteString("fixed:out:")
 		h2.WriteString(methodOfContentAddress(ca).prefix())
@@ -44,12 +36,34 @@ func FixedCAOutputPath(dir Directory, name string, ca nix.ContentAddress, refs R
 	}
 }
 
-// SourceSHA256ContentAddress computes the SHA-256 content address of a store object,
+// ValidateContentAddress checks whether the combination of the content address
+// and set of references is one that will be accepted by a zb store.
+// If not, it returns an error describing the issue.
+func ValidateContentAddress(ca nix.ContentAddress, refs References) error {
+	htype := ca.Hash().Type()
+	isFixedOutput := ca.IsFixed() && !IsSourceContentAddress(ca)
+	switch {
+	case ca.IsZero():
+		return fmt.Errorf("null content address")
+	case ca.IsText() && htype != nix.SHA256:
+		return fmt.Errorf("text must be content-addressed by %v (got %v)", nix.SHA256, htype)
+	case refs.Self && ca.IsText():
+		return fmt.Errorf("self-references not allowed in text")
+	case !refs.IsEmpty() && isFixedOutput:
+		return fmt.Errorf("references not allowed in fixed output")
+	default:
+		return nil
+	}
+}
+
+// SourceSHA256ContentAddress computes the content address of a "source" store object,
 // given its temporary path digest (as given by [Path.Digest])
 // and its NAR serialization.
 // The digest is used to detect self-references:
 // if the store object is known to not contain self-references,
 // digest may be the empty string.
+//
+// See [IsSourceContentAddress] for an explanation of "source" store objects.
 func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (nix.ContentAddress, error) {
 	h := nix.NewHasher(nix.SHA256)
 	var offsets *[]int64
@@ -74,6 +88,15 @@ func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (nix.Content
 		}
 	}
 	return nix.RecursiveFileContentAddress(h.SumHash()), nil
+}
+
+// IsSourceContentAddress reports whether the given content address describes a "source" store object.
+// "Source" store objects are those that are hashed by their NAR serialization
+// and do not have a fixed (non-SHA-256) hash.
+// This typically means source files imported using the "path" function,
+// but can also mean content-addressed build artifacts.
+func IsSourceContentAddress(ca nix.ContentAddress) bool {
+	return ca.IsRecursiveFile() && ca.Hash().Type() == nix.SHA256
 }
 
 // hashModuloReader wraps an underlying reader
