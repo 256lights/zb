@@ -25,6 +25,8 @@ import (
 )
 
 func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
+	ctx := context.TODO()
+
 	var p string
 	var name string
 	switch l.Type(1) {
@@ -73,9 +75,17 @@ func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
 	}()
 
 	// If we already imported and it exists in the store, don't do an import.
-	if prevStorePath, err := eval.checkStamp(p, name); err == nil {
-		if _, err := os.Lstat(string(prevStorePath)); err == nil {
-			log.Debugf(context.TODO(), "Using existing store path %s", prevStorePath)
+	if prevStorePath, err := eval.checkStamp(p, name); err != nil {
+		log.Debugf(ctx, "%v", err)
+	} else {
+		var exists bool
+		err := jsonrpc.Do(ctx, eval.store, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
+			Path: string(prevStorePath),
+		})
+		if err != nil {
+			log.Debugf(ctx, "Unable to query store path %s: %v", prevStorePath, err)
+		} else if exists {
+			log.Debugf(ctx, "Using existing store path %s", prevStorePath)
 			l.PushStringContext(string(prevStorePath), []string{string(prevStorePath)})
 			return 1, nil
 		}
@@ -203,6 +213,8 @@ func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
 }
 
 func (eval *Eval) toFileFunction(l *lua.State) (int, error) {
+	ctx := context.TODO()
+
 	name, err := lua.CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -228,7 +240,13 @@ func (eval *Eval) toFileFunction(l *lua.State) (int, error) {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 
-	if _, err := os.Lstat(string(storePath)); err == nil {
+	var exists bool
+	err = jsonrpc.Do(ctx, eval.store, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
+		Path: string(storePath),
+	})
+	if err != nil {
+		log.Debugf(ctx, "Unable to query store path %s: %v", storePath, err)
+	} else if exists {
 		// Already exists: no need to re-import.
 		log.Debugf(context.TODO(), "Using existing store path %s", storePath)
 		l.PushStringContext(string(storePath), []string{string(storePath)})
@@ -320,7 +338,7 @@ func (eval *Eval) checkStamp(path, name string) (_ zbstore.Path, err error) {
 				return nil
 			}
 			if found != "" {
-				return fmt.Errorf("multiple store paths found for %s (hash collision)", path)
+				return fmt.Errorf("multiple store paths found for %s (hash collision): %s and %s", path, found, p)
 			}
 			found = p
 			return nil
@@ -339,6 +357,7 @@ func (eval *Eval) checkStamp(path, name string) (_ zbstore.Path, err error) {
 // and inserts the paths and their stamps into the table.
 // walkPath only operates on the TEMP schema.
 func walkPath(conn *sqlite.Conn, path string) (err error) {
+	ctx := context.TODO()
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("walk %s: %v", path, err)
@@ -373,6 +392,7 @@ func walkPath(conn *sqlite.Conn, path string) (err error) {
 		insertStmt.SetInt64(":mode", int64(rootInfo.Mode()))
 		insertStmt.SetInt64(":size", -1)
 		insertStmt.SetText(":stamp", rootStamp)
+		log.Debugf(ctx, "walk %s stamp=%s", path, rootStamp)
 		if _, err := insertStmt.Step(); err != nil {
 			return err
 		}
@@ -398,6 +418,7 @@ func walkPath(conn *sqlite.Conn, path string) (err error) {
 				insertStmt.SetInt64(":size", -1)
 			}
 			insertStmt.SetText(":stamp", entryStamp)
+			log.Debugf(ctx, "walk %s stamp=%s", path, entryStamp)
 			_, err = insertStmt.Step()
 			insertStmt.ClearBindings()
 			insertStmt.Reset()

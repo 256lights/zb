@@ -1,4 +1,4 @@
-select "path" as "path"
+select distinct "path" as "path"
 from
   "store_objects"
   join "source_to_store" on "source_to_store"."store_object_id" = "store_objects"."id"
