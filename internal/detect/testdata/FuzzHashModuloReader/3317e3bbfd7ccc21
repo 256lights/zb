@@ -1,3 +1,4 @@
 go test fuzz v1
 string("")
+string("")
 string("!\n\x98\xd7H")
