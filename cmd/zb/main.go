@@ -224,7 +224,9 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 			return err
 		}
 		for _, out := range resp.Outputs {
-			fmt.Println(out.Path)
+			if out.Path.Valid {
+				fmt.Println(out.Path.X)
+			}
 		}
 	}
 

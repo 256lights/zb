@@ -4,6 +4,8 @@
 // Package zbstore provides the data types for the zb store API.
 package zbstore
 
+import "encoding/json"
+
 // ExistsMethod is the name of the method that checks whether a store path exists.
 // [ExistsRequest] is used for the request and the response is a boolean.
 const ExistsMethod = "zb.exists"
@@ -34,5 +36,38 @@ type RealizeOutput struct {
 	Name string `json:"name"`
 	// Path is the store path of the output if successfully built,
 	// or null if the build failed.
-	Path *Path `json:"path"`
+	Path Nullable[Path] `json:"path"`
+}
+
+// Nullable wraps a type to permit a null JSON serialization.
+// The zero value is null.
+type Nullable[T any] struct {
+	X     T
+	Valid bool
+}
+
+// NonNull returns a [Nullable] that wraps the given value.
+func NonNull[T any](x T) Nullable[T] {
+	return Nullable[T]{x, true}
+}
+
+// MarshalJSON marshals n.X if n.Valid is true.
+// Otherwise, MarshalJSON returns null.
+func (n Nullable[T]) MarshalJSON() ([]byte, error) {
+	if !n.Valid {
+		return []byte("null"), nil
+	}
+	return json.Marshal(n.X)
+}
+
+// UnmarshalJSON unmarshals the given JSON data into n.X
+// unless it receives a JSON null, in which case n is zeroed out.
+func (n *Nullable[T]) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" { // Compiler optimizes out allocation.
+		*n = Nullable[T]{}
+		return nil
+	}
+	err := json.Unmarshal(data, &n.X)
+	n.Valid = err == nil
+	return err
 }

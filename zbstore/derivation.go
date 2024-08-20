@@ -453,6 +453,36 @@ func (out *DerivationOutput) IsFloating() bool {
 	return out.typ == floatingCAOutputType
 }
 
+// HashType returns the hash type of the derivation output, if present.
+func (out *DerivationOutput) HashType() (_ nix.HashType, ok bool) {
+	switch {
+	case out.IsFixed():
+		return out.ca.Hash().Type(), true
+	case out.IsFloating():
+		return out.hashAlgo, true
+	default:
+		return 0, false
+	}
+}
+
+// FixedCA returns a fixed hash output's content address.
+// ok is true only if the output was created by [FixedCAOutput].
+func (out *DerivationOutput) FixedCA() (_ ContentAddress, ok bool) {
+	if !out.IsFixed() {
+		return ContentAddress{}, false
+	}
+	return out.ca, true
+}
+
+// IsRecursiveFile reports whether the derivation output
+// uses recursive (NAR) hashing.
+func (out *DerivationOutput) IsRecursiveFile() bool {
+	if out == nil {
+		return false
+	}
+	return out.method == recursiveFileIngestionMethod
+}
+
 // Path returns a fixed output's store object path
 // for the given store (e.g. "/zb/store"),
 // derivation name (e.g. "hello"),
@@ -613,7 +643,10 @@ func HashPlaceholder(outputName string) string {
 // UnknownCAOutputPlaceholder returns the placeholder
 // for an unknown output of a content-addressed derivation.
 func UnknownCAOutputPlaceholder(drvPath Path, outputName string) string {
+	// We accept non-".drv" paths here for simplicity,
+	// so we don't use [Path.DerivationName].
 	drvName := strings.TrimSuffix(drvPath.Name(), DerivationExt)
+
 	h := nix.NewHasher(nix.SHA256)
 	h.WriteString("nix-upstream-output:")
 	h.WriteString(drvPath.Digest())

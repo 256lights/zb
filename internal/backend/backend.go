@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"zombiezen.com/go/log"
@@ -26,18 +27,21 @@ import (
 )
 
 type Options struct {
-	Dir    zbstore.Directory
-	DBPath string
+	Dir      zbstore.Directory
+	BuildDir string
+	DBPath   string
 }
 
 type Server struct {
-	dir zbstore.Directory
-	db  *sqlitemigration.Pool
+	dir      zbstore.Directory
+	buildDir string
+	db       *sqlitemigration.Pool
 }
 
 func NewServer(opts *Options) *Server {
 	return &Server{
-		dir: opts.Dir,
+		dir:      opts.Dir,
+		buildDir: opts.BuildDir,
 		db: sqlitemigration.NewPool(opts.DBPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
 			PrepareConn: prepareConn,
@@ -90,42 +94,6 @@ func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 	return &jsonrpc.Response{
 		Result: json.RawMessage("true"),
 	}, nil
-}
-
-func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	var args zbstore.RealizeRequest
-	if err := json.Unmarshal(req.Params, &args); err != nil {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
-	}
-	drvPath, subPath, err := s.dir.ParsePath(string(args.DrvPath))
-	if err != nil {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
-	}
-	if subPath != "" {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a store object", args.DrvPath))
-	}
-	drvName, isDrv := drvPath.DerivationName()
-	if !isDrv {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a derivation", drvPath))
-	}
-
-	if info, err := os.Lstat(string(drvPath)); err != nil {
-		return nil, err
-	} else if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", drvPath)
-	}
-	drvData, err := os.ReadFile(string(drvPath))
-	if err != nil {
-		return nil, err
-	}
-	drv, err := zbstore.ParseDerivation(s.dir, drvName, drvData)
-	if err != nil {
-		return nil, err
-	}
-
-	log.Infof(ctx, "Requested to build %s: %s %s", drvPath, drv.Builder, drv.Args)
-
-	return nil, fmt.Errorf("TODO(soon)")
 }
 
 type NARReceiver struct {
@@ -212,7 +180,7 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		}
 		defer endFn(&err)
 
-		return insertObject(conn, &zbstore.NARInfo{
+		return insertObject(ctx, conn, &zbstore.NARInfo{
 			StorePath:   trailer.StorePath,
 			NARSize:     r.size,
 			NARHash:     r.hasher.SumHash(),
@@ -231,7 +199,7 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	}
 	log.Debugf(ctx, "Inserted %s into database", trailer.StorePath)
 
-	if err := importNAR(r.tmpFile, trailer); err != nil {
+	if err := extractNAR(string(trailer.StorePath), r.tmpFile); err != nil {
 		log.Warnf(ctx, "Import of %s failed: %v", trailer.StorePath, err)
 		if err := os.RemoveAll(string(trailer.StorePath)); err != nil {
 			log.Errorf(ctx, "Failed to clean up partial import of %s: %v", trailer.StorePath, err)
@@ -282,6 +250,9 @@ func verifyContentAddress(path zbstore.Path, narContent io.Reader, refs *sorteds
 		if !hdr.Mode.IsRegular() {
 			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: not a flat file", path)
 		}
+		if hdr.Mode&0o111 != 0 {
+			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: must not be executable", path)
+		}
 		h := nix.NewHasher(ca.Hash().Type())
 		if _, err := io.Copy(h, nr); err != nil {
 			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)
@@ -314,7 +285,9 @@ func verifyContentAddress(path zbstore.Path, narContent io.Reader, refs *sorteds
 
 var errObjectExists = errors.New("store object exists")
 
-func insertObject(conn *sqlite.Conn, info *zbstore.NARInfo) (err error) {
+func insertObject(ctx context.Context, conn *sqlite.Conn, info *zbstore.NARInfo) (err error) {
+	log.Debugf(ctx, "Registering metadata for %s", info.StorePath)
+
 	defer sqlitex.Save(conn)(&err)
 
 	if err := upsertPath(conn, zbstore.Path(info.StorePath)); err != nil {
@@ -363,7 +336,8 @@ func insertObject(conn *sqlite.Conn, info *zbstore.NARInfo) (err error) {
 	return nil
 }
 
-func importNAR(r io.Reader, trailer *zbstore.ExportTrailer) error {
+// extractNAR extracts a NAR file to the local filesystem at the given path.
+func extractNAR(dst string, r io.Reader) error {
 	nr := nar.NewReader(r)
 	for {
 		hdr, err := nr.Next()
@@ -373,7 +347,7 @@ func importNAR(r io.Reader, trailer *zbstore.ExportTrailer) error {
 		if err != nil {
 			return err
 		}
-		p := trailer.StorePath.Join(hdr.Path)
+		p := filepath.Join(dst, filepath.FromSlash(hdr.Path))
 		switch typ := hdr.Mode.Type(); typ {
 		case 0:
 			perm := os.FileMode(0o644)
@@ -416,6 +390,14 @@ func (r *NARReceiver) Cleanup(ctx context.Context) {
 	if err := os.Remove(name); err != nil {
 		log.Warnf(ctx, "Unable to remove store temp file: %v", err)
 	}
+}
+
+func marshalResponse(data any) (*jsonrpc.Response, error) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InternalError, err)
+	}
+	return &jsonrpc.Response{Result: jsonData}, nil
 }
 
 func upsertPath(conn *sqlite.Conn, path zbstore.Path) error {

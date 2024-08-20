@@ -15,6 +15,7 @@ import (
 
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nixbase32"
+	"zombiezen.com/go/zb/internal/storepath"
 	"zombiezen.com/go/zb/internal/windowspath"
 	"zombiezen.com/go/zb/sortedset"
 )
@@ -297,16 +298,7 @@ func makeStorePath(dir Directory, typ string, hash nix.Hash, name string, refs R
 	if refs.Self {
 		io.WriteString(h, ":self")
 	}
-	io.WriteString(h, ":")
-	io.WriteString(h, hash.Base16())
-	io.WriteString(h, ":")
-	io.WriteString(h, string(dir))
-	io.WriteString(h, ":")
-	io.WriteString(h, string(name))
-	fingerprintHash := h.Sum(nil)
-	compressed := make([]byte, 20)
-	nix.CompressHash(compressed, fingerprintHash)
-	digest := nixbase32.EncodeToString(compressed)
+	digest := storepath.MakeDigest(h, string(dir), hash, name)
 	return dir.Object(digest + "-" + name)
 }
 
@@ -335,6 +327,16 @@ func MakeReferences(self Path, refSet *sortedset.Set[Path]) References {
 // IsEmpty reports whether refs represents the empty set.
 func (refs References) IsEmpty() bool {
 	return !refs.Self && refs.Others.Len() == 0
+}
+
+// ToSet converts the references to a set of paths
+// given the store object's own path.
+func (refs References) ToSet(self Path) *sortedset.Set[Path] {
+	result := refs.Others.Clone()
+	if refs.Self {
+		result.Add(self)
+	}
+	return result
 }
 
 type pathStyle int8

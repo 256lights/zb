@@ -21,7 +21,8 @@ import (
 )
 
 type serveOptions struct {
-	dbPath string
+	dbPath   string
+	buildDir string
 }
 
 func newServeCommand(g *globalConfig) *cobra.Command {
@@ -40,6 +41,7 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 		opts.dbPath = "/zb/var/zb/db.sqlite"
 	}
 	c.Flags().StringVar(&opts.dbPath, "db", opts.dbPath, "`path` to store database file")
+	c.Flags().StringVar(&opts.buildDir, "build-root", os.TempDir(), "`dir`ectory to store temporary build artifacts")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		return runServe(cmd.Context(), g, opts)
 	}
@@ -106,8 +108,9 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 
 	log.Infof(ctx, "Listening on %s", g.storeSocket)
 	srv := backend.NewServer(&backend.Options{
-		Dir:    g.storeDir,
-		DBPath: opts.dbPath,
+		Dir:      g.storeDir,
+		BuildDir: opts.buildDir,
+		DBPath:   opts.dbPath,
 	})
 	defer func() {
 		if err := srv.Close(); err != nil {

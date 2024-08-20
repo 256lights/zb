@@ -31,3 +31,19 @@ create table "references" (
 ) without rowid;
 
 create index "back_references" on "references"("reference");
+
+create table "realizations" (
+  "drv_path" integer
+    not null
+    references "paths",
+  "output_name" text
+    not null
+    default 'out',
+  "output_path" integer
+    not null
+    references "paths",
+
+  primary key ("drv_path", "output_name", "output_path")
+) without rowid;
+
+create index "realizations_by_output_path" on "realizations"("output_path");
