@@ -39,12 +39,34 @@ Other examples:
 
 ## Getting Started
 
+Prerequisites:
+
+- Knowledge of using the command-line for your OS (e.g. Terminal.app, Command Prompt, etc.)
+- [Go](https://go.dev/dl/) 1.22 or later.
+
+### Linux or macOS
+
 1. `sudo mkdir /zb`
 2. `go build ./cmd/zb`
 3. Start the build server (only on startup): `./zb serve &`
 4. Run a build: `./zb build --file demo/hello.lua`
 
 You can use `./zb --help` to get more information on commands.
+
+### Windows
+
+Must be running Windows 10 or later,
+since zb depends on Windows support for Unix sockets.
+
+1. Install [MinGW-w64](https://www.mingw-w64.org/).
+   If you're using the [Chocolatey package manager](https://community.chocolatey.org/),
+   you can run `choco install mingw`.
+2. Create a `C:\zb` directory.
+3. `go build .\cmd\zb`
+4. Start the build server in one terminal: `.\zb.exe serve`
+5. Run a build: `.\zb.exe build --file demo/hello_windows.lua`
+
+### Next Steps
 
 zb uses a slightly modified version of Lua 5.4.
 The primary difference is that strings

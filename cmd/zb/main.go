@@ -14,7 +14,6 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
-	"go4.org/xdgdir"
 	"zombiezen.com/go/bass/sigterm"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
@@ -48,7 +47,7 @@ func main() {
 	}
 
 	g := &globalConfig{
-		cacheDB: filepath.Join(xdgdir.Cache.Path(), "zb", "cache.db"),
+		cacheDB:     filepath.Join(cacheDir(), "zb", "cache.db"),
 	}
 	var err error
 	g.storeDir, err = zbstore.DirectoryFromEnvironment()
