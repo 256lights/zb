@@ -48,6 +48,7 @@ func main() {
 
 	g := &globalConfig{
 		cacheDB:     filepath.Join(cacheDir(), "zb", "cache.db"),
+		storeSocket: os.Getenv("ZB_STORE_SOCKET"),
 	}
 	var err error
 	g.storeDir, err = zbstore.DirectoryFromEnvironment()
@@ -56,10 +57,12 @@ func main() {
 		log.Errorf(context.Background(), "%v", err)
 		os.Exit(1)
 	}
-	if runtime.GOOS == "windows" {
-		g.storeSocket = `C:\zb\var\zb\server.sock`
-	} else {
-		g.storeSocket = "/zb/var/zb/server.sock"
+	if g.storeSocket == "" {
+		if runtime.GOOS == "windows" {
+			g.storeSocket = `C:\zb\var\zb\server.sock`
+		} else {
+			g.storeSocket = "/zb/var/zb/server.sock"
+		}
 	}
 
 	rootCommand.PersistentFlags().StringVar(&g.cacheDB, "cache", g.cacheDB, "`path` to cache database")
