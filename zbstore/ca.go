@@ -65,7 +65,7 @@ func ValidateContentAddress(ca nix.ContentAddress, refs References) error {
 // digest may be the empty string.
 //
 // See [IsSourceContentAddress] for an explanation of "source" store objects.
-func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (nix.ContentAddress, error) {
+func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (ca nix.ContentAddress, digestOffsets []int64, err error) {
 	h := nix.NewHasher(nix.SHA256)
 	var hmr *detect.HashModuloReader
 	if digest != "" {
@@ -73,8 +73,12 @@ func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (nix.Content
 		sourceNAR = hmr
 	}
 
-	if _, err := io.Copy(h, sourceNAR); err != nil {
-		return nix.ContentAddress{}, fmt.Errorf("compute source content address: %v", err)
+	_, err = io.Copy(h, sourceNAR)
+	if hmr != nil {
+		digestOffsets = hmr.Offsets()
+	}
+	if err != nil {
+		return nix.ContentAddress{}, digestOffsets, fmt.Errorf("compute source content address: %v", err)
 	}
 
 	// This single pipe separator differentiates this content addressing algorithm
@@ -82,12 +86,10 @@ func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (nix.Content
 	// I believe it to be more correct in avoiding potential hash collisions.
 	h.WriteString("|")
 
-	if hmr != nil {
-		for _, off := range hmr.Offsets() {
-			fmt.Fprintf(h, "|%d", off)
-		}
+	for _, off := range digestOffsets {
+		fmt.Fprintf(h, "|%d", off)
 	}
-	return nix.RecursiveFileContentAddress(h.SumHash()), nil
+	return nix.RecursiveFileContentAddress(h.SumHash()), digestOffsets, nil
 }
 
 // IsSourceContentAddress reports whether the given content address describes a "source" store object.

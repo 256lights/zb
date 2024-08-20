@@ -101,7 +101,7 @@ func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
 	caChan := make(chan nix.ContentAddress)
 	go func() {
 		defer close(caChan)
-		ca, _ := zbstore.SourceSHA256ContentAddress("", pr)
+		ca, _, _ := zbstore.SourceSHA256ContentAddress("", pr)
 		caChan <- ca
 	}()
 

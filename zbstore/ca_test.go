@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"zombiezen.com/go/nix"
 )
 
@@ -16,7 +18,8 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 		digest    string
 		sourceNAR string
 
-		wantCleartext string
+		wantCleartext     string
+		wantDigestOffsets []int64
 	}{
 		{
 			name:   "NoSelfReference",
@@ -81,6 +84,7 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 				"/zb/store/\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00-path.txt\n\x00\x00\x00\x00" +
 				"\x01\x00\x00\x00\x00\x00\x00\x00" +
 				")\x00\x00\x00\x00\x00\x00\x00||106",
+			wantDigestOffsets: []int64{106},
 		},
 		{
 			name:   "SelfReference2",
@@ -113,6 +117,7 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 				"/zb/store/\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00-path.txt\n\x00\x00\x00\x00" +
 				"\x01\x00\x00\x00\x00\x00\x00\x00" +
 				")\x00\x00\x00\x00\x00\x00\x00||106",
+			wantDigestOffsets: []int64{106},
 		},
 		{
 			name: "SameContentAsSelfReference",
@@ -149,7 +154,7 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := SourceSHA256ContentAddress(test.digest, strings.NewReader(test.sourceNAR))
+			got, gotDigestOffsets, err := SourceSHA256ContentAddress(test.digest, strings.NewReader(test.sourceNAR))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,6 +166,10 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 			h.WriteString(test.wantCleartext)
 			if got, want := got.Hash(), h.SumHash(); !got.Equal(want) {
 				t.Errorf("content address hash = %v; want %v", got, want)
+			}
+
+			if diff := cmp.Diff(test.wantDigestOffsets, gotDigestOffsets, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("digest offsets (-want +got):\n%s", diff)
 			}
 		})
 	}
