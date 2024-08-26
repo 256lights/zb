@@ -305,9 +305,9 @@ func (path *Path) UnmarshalText(data []byte) error {
 func makeStorePath(dir Directory, typ string, hash nix.Hash, name string, refs References) (Path, error) {
 	h := sha256.New()
 	io.WriteString(h, typ)
-	for i := 0; i < refs.Others.Len(); i++ {
+	for _, ref := range refs.Others.All() {
 		io.WriteString(h, ":")
-		io.WriteString(h, string(refs.Others.At(i)))
+		io.WriteString(h, string(ref))
 	}
 	if refs.Self {
 		io.WriteString(h, ":self")

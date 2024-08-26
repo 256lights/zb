@@ -110,8 +110,7 @@ func (info *NARInfo) validateForFingerprint() error {
 	if info.NARSize < 0 {
 		return fmt.Errorf("negative nar size")
 	}
-	for i := 0; i < info.References.Len(); i++ {
-		ref := info.References.At(i)
+	for _, ref := range info.References.All() {
 		if ref != "" && ref.Dir() != info.StorePath.Dir() {
 			return fmt.Errorf("reference directory = %q (expect %q)", ref.Dir(), info.StorePath.Dir())
 		}
@@ -180,8 +179,7 @@ func (info *NARInfo) WriteFingerprint(w io.Writer) error {
 		return fmt.Errorf("compute nix store object fingerprint for %s: %w", info.StorePath, err)
 	}
 
-	for i := 0; i < info.References.Len(); i++ {
-		ref := info.References.At(i)
+	for i, ref := range info.References.All() {
 		if i > 0 {
 			if _, err := io.WriteString(w, ","); err != nil {
 				return fmt.Errorf("compute nix store object fingerprint for %s: %w", info.StorePath, err)
@@ -396,8 +394,7 @@ func (info *NARInfo) MarshalText() ([]byte, error) {
 	buf = strconv.AppendInt(buf, info.NARSize, 10)
 	if info.References.Len() > 0 {
 		buf = append(buf, "\nReferences:"...)
-		for i := 0; i < info.References.Len(); i++ {
-			ref := info.References.At(i)
+		for _, ref := range info.References.All() {
 			buf = append(buf, ' ')
 			buf = append(buf, ref.Base()...)
 		}

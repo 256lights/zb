@@ -347,8 +347,7 @@ func insertObject(ctx context.Context, conn *sqlite.Conn, info *zbstore.NARInfo)
 	defer addRefStmt.Finalize()
 
 	addRefStmt.SetText(":referrer", string(info.StorePath))
-	for i := 0; i < info.References.Len(); i++ {
-		ref := info.References.At(i)
+	for _, ref := range info.References.All() {
 		if err := upsertPath(conn, ref); err != nil {
 			return fmt.Errorf("insert %s into database: %v", info.StorePath, err)
 		}

@@ -151,18 +151,17 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 		buf = append(buf, ",["...)
 		// TODO(someday): This can be some kind of tree? See DerivedPathMap.
 		outputs := drv.InputDerivations[drvPath]
-		for j := 0; j < outputs.Len(); j++ {
+		for j, out := range outputs.All() {
 			if j > 0 {
 				buf = append(buf, ',')
 			}
-			buf = aterm.AppendString(buf, outputs.At(j))
+			buf = aterm.AppendString(buf, out)
 		}
 		buf = append(buf, "])"...)
 	}
 
 	buf = append(buf, "],["...)
-	for i := 0; i < drv.InputSources.Len(); i++ {
-		src := drv.InputSources.At(i)
+	for i, src := range drv.InputSources.All() {
 		if i > 0 {
 			buf = append(buf, ',')
 		}

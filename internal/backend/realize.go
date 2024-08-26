@@ -91,8 +91,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 	if len(drv.InputDerivations) > 0 {
 		return nil, fmt.Errorf("TODO(soon): resolve derivation")
 	}
-	for i := 0; i < drv.InputSources.Len(); i++ {
-		input := drv.InputSources.At(i)
+	for _, input := range drv.InputSources.All() {
 		realInputPath := filepath.Join(s.realDir, input.Base())
 		if _, err := os.Lstat(realInputPath); err != nil {
 			// TODO(someday): Import from substituter if not found.
@@ -395,8 +394,8 @@ type outputScanResults struct {
 // which form the superset of all non-self-references that the scan can detect.
 func scanFloatingOutput(path string, digest string, inputs *sortedset.Set[zbstore.Path]) (*outputScanResults, error) {
 	inputDigests := make([]string, 0, inputs.Len())
-	for i := 0; i < inputs.Len(); i++ {
-		inputDigests = append(inputDigests, inputs.At(i).Digest())
+	for _, input := range inputs.All() {
+		inputDigests = append(inputDigests, input.Digest())
 	}
 
 	wc := new(writeCounter)
@@ -426,17 +425,16 @@ func scanFloatingOutput(path string, digest string, inputs *sortedset.Set[zbstor
 		Self: len(digestOffsets) > 0,
 	}
 	digestsFound := refFinder.Found()
-	for i := 0; i < digestsFound.Len(); i++ {
-		digest := digestsFound.At(i)
+	for _, digest := range digestsFound.All() {
 		// Since all store paths have the same prefix followed by digest,
 		// we can use binary search on a sorted set of store paths to find the corresponding digest.
-		j, ok := sort.Find(inputs.Len(), func(j int) int {
-			return strings.Compare(digest, inputs.At(j).Digest())
+		i, ok := sort.Find(inputs.Len(), func(i int) int {
+			return strings.Compare(digest, inputs.At(i).Digest())
 		})
 		if !ok {
 			return nil, fmt.Errorf("scan internal error: could not find digest %q in inputs", digest)
 		}
-		refs.Others.Add(inputs.At(j))
+		refs.Others.Add(inputs.At(i))
 	}
 
 	result := &outputScanResults{

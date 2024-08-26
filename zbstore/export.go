@@ -74,8 +74,8 @@ func (imp *Exporter) Trailer(t *ExportTrailer) error {
 	imp.trailerBuf = append(imp.trailerBuf, exportTrailerMarker...)
 	imp.trailerBuf = appendNARString(imp.trailerBuf, string(t.StorePath))
 	imp.trailerBuf = binary.LittleEndian.AppendUint64(imp.trailerBuf, uint64(t.References.Len()))
-	for i := 0; i < t.References.Len(); i++ {
-		imp.trailerBuf = appendNARString(imp.trailerBuf, string(t.References.At(i)))
+	for _, ref := range t.References.All() {
+		imp.trailerBuf = appendNARString(imp.trailerBuf, string(ref))
 	}
 	imp.trailerBuf = appendNARString(imp.trailerBuf, string(t.Deriver))
 	if t.ContentAddress.IsZero() {

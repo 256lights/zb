@@ -6,6 +6,7 @@ package sortedset
 
 import (
 	"cmp"
+	"iter"
 	"slices"
 )
 
@@ -75,6 +76,17 @@ func (s *Set[T]) Len() int {
 // At returns the i'th element in ascending order of the set.
 func (s *Set[T]) At(i int) T {
 	return s.elems[i]
+}
+
+// All returns an iterator of the elements of s.
+func (s *Set[T]) All() iter.Seq2[int, T] {
+	return func(yield func(int, T) bool) {
+		for i := 0; i < s.Len(); i++ {
+			if !yield(i, s.At(i)) {
+				return
+			}
+		}
+	}
 }
 
 // Delete removes x from the set if present.
