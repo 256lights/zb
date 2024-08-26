@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -35,11 +34,8 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 		SilenceErrors:         true,
 		SilenceUsage:          true,
 	}
-	opts := new(serveOptions)
-	if runtime.GOOS == "windows" {
-		opts.dbPath = `C:\zb\var\zb\db.sqlite`
-	} else {
-		opts.dbPath = "/zb/var/zb/db.sqlite"
+	opts := &serveOptions{
+		dbPath: filepath.Join(defaultVarDir(), "db.sqlite"),
 	}
 	c.Flags().StringVar(&opts.dbPath, "db", opts.dbPath, "`path` to store database file")
 	c.Flags().StringVar(&opts.buildDir, "build-root", os.TempDir(), "`dir`ectory to store temporary build artifacts")

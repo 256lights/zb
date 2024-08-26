@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -66,11 +65,7 @@ func main() {
 		os.Exit(1)
 	}
 	if g.storeSocket == "" {
-		if runtime.GOOS == "windows" {
-			g.storeSocket = `C:\zb\var\zb\server.sock`
-		} else {
-			g.storeSocket = "/zb/var/zb/server.sock"
-		}
+		g.storeSocket = filepath.Join(defaultVarDir(), "server.sock")
 	}
 
 	rootCommand.PersistentFlags().StringVar(&g.cacheDB, "cache", g.cacheDB, "`path` to cache database")
@@ -253,6 +248,11 @@ type stubJSONRPCHandler struct{}
 
 func (stubJSONRPCHandler) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	return nil, jsonrpc.Error(jsonrpc.MethodNotFound, fmt.Errorf("method %q not found", req.Method))
+}
+
+// defaultVarDir returns "/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
+func defaultVarDir() string {
+	return filepath.Join(filepath.Dir(string(nix.DefaultStoreDirectory)), "var", "zb")
 }
 
 type storeDirectoryFlag zbstore.Directory

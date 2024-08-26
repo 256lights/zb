@@ -33,6 +33,19 @@ const (
 	DefaultWindowsDirectory Directory = `C:\zb\store`
 )
 
+// DefaultDirectory returns the default zb store directory for the running operating system.
+// This will be one of [DefaultUnixDirectory] or [DefaultWindowsDirectory].
+func DefaultDirectory() Directory {
+	switch localPathStyle() {
+	case posixPathStyle:
+		return DefaultUnixDirectory
+	case windowsPathStyle:
+		return DefaultWindowsDirectory
+	default:
+		panic("unreachable")
+	}
+}
+
 // CleanDirectory cleans an absolute POSIX-style or Windows-style path
 // as a [Directory].
 // It returns an error if the path is not absolute.
@@ -55,14 +68,11 @@ func CleanDirectory(path string) (Directory, error) {
 
 // DirectoryFromEnvironment returns the zb store [Directory] in use
 // based on the ZB_STORE_DIR environment variable,
-// falling back to [DefaultUnixDirectory] or [DefaultWindowsDirectory] if not set.
+// falling back to [DefaultDirectory] if not set.
 func DirectoryFromEnvironment() (Directory, error) {
 	dir := os.Getenv("ZB_STORE_DIR")
 	if dir == "" {
-		if runtime.GOOS == "windows" {
-			return DefaultWindowsDirectory, nil
-		}
-		return DefaultUnixDirectory, nil
+		return DefaultDirectory(), nil
 	}
 	if !filepath.IsAbs(dir) {
 		// The directory must be in the format of the local OS.
