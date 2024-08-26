@@ -145,9 +145,9 @@ func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 	case opts.expr != "" && opts.file != "":
 		return fmt.Errorf("can specify at most one of --expr or --file")
 	case opts.expr != "":
-		results, err = eval.Expression(opts.expr, opts.installables)
+		results, err = eval.Expression(ctx, opts.expr, opts.installables)
 	case opts.file != "":
-		results, err = eval.File(opts.file, opts.installables)
+		results, err = eval.File(ctx, opts.file, opts.installables)
 	default:
 		return fmt.Errorf("installables not supported yet")
 	}
@@ -208,9 +208,9 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 	case opts.expr != "" && opts.file != "":
 		return fmt.Errorf("can specify at most one of --expr or --file")
 	case opts.expr != "":
-		results, err = eval.Expression(opts.expr, opts.installables)
+		results, err = eval.Expression(ctx, opts.expr, opts.installables)
 	case opts.file != "":
-		results, err = eval.File(opts.file, opts.installables)
+		results, err = eval.File(ctx, opts.file, opts.installables)
 	default:
 		return fmt.Errorf("installables not supported yet")
 	}

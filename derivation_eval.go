@@ -36,7 +36,7 @@ func registerDerivationMetatable(l *lua.State) {
 	l.Pop(1)
 }
 
-func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
+func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, error) {
 	if !l.IsTable(1) {
 		return 0, lua.NewTypeError(l, 1, lua.TypeTable.String())
 	}
@@ -175,7 +175,7 @@ func (eval *Eval) derivationFunction(l *lua.State) (int, error) {
 			panic(outputName + " has an unhandled output type")
 		}
 	}
-	drvPath, err := writeDerivation(context.TODO(), eval.store, drv)
+	drvPath, err := writeDerivation(ctx, eval.store, drv)
 	if err != nil {
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
@@ -334,7 +334,7 @@ func writeDerivation(ctx context.Context, store *jsonrpc.Client, drv *zbstore.De
 	}
 	if exists {
 		// Already exists: no need to re-import.
-		log.Debugf(context.TODO(), "Using existing store path %s", p)
+		log.Debugf(ctx, "Using existing store path %s", p)
 		return p, nil
 	}
 

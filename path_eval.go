@@ -24,9 +24,7 @@ import (
 	"zombiezen.com/go/zb/zbstore"
 )
 
-func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
-	ctx := context.TODO()
-
+func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.State) (nResults int, err error) {
 	var p string
 	var name string
 	switch l.Type(1) {
@@ -66,16 +64,16 @@ func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
 		name = filepath.Base(p)
 	}
 
-	if err := walkPath(eval.cache, p); err != nil {
+	if err := walkPath(ctx, cache, p); err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
 	defer func() {
-		sqlitex.ExecuteScriptFS(eval.cache, sqlFiles(), "walk/drop.sql", nil)
+		sqlitex.ExecuteScriptFS(cache, sqlFiles(), "walk/drop.sql", nil)
 		// TODO(soon): Log error.
 	}()
 
 	// If we already imported and it exists in the store, don't do an import.
-	if prevStorePath, err := eval.checkStamp(p, name); err != nil {
+	if prevStorePath, err := eval.checkStamp(cache, p, name); err != nil {
 		log.Debugf(ctx, "%v", err)
 	} else {
 		var exists bool
@@ -91,7 +89,7 @@ func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
 		}
 	}
 
-	exporter, closeExport, err := startExport(context.TODO(), eval.store)
+	exporter, closeExport, err := startExport(ctx, eval.store)
 	if err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
@@ -106,7 +104,7 @@ func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
 	}()
 
 	w := nar.NewWriter(io.MultiWriter(pw, exporter))
-	err = sqlitex.ExecuteTransientFS(eval.cache, sqlFiles(), "walk/iterate.sql", &sqlitex.ExecOptions{
+	err = sqlitex.ExecuteTransientFS(cache, sqlFiles(), "walk/iterate.sql", &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			fpath := stmt.GetText("path")
 			var subpath string
@@ -197,12 +195,12 @@ func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
 	}
 
 	err = func() (err error) {
-		endFn, err := sqlitex.ImmediateTransaction(eval.cache)
+		endFn, err := sqlitex.ImmediateTransaction(cache)
 		if err != nil {
 			return err
 		}
 		defer endFn(&err)
-		return updateCache(eval.cache, storePath)
+		return updateCache(cache, storePath)
 	}()
 	if err != nil {
 		return 0, fmt.Errorf("path: updating cache: %v", err)
@@ -212,9 +210,7 @@ func (eval *Eval) pathFunction(l *lua.State) (nResults int, err error) {
 	return 1, nil
 }
 
-func (eval *Eval) toFileFunction(l *lua.State) (int, error) {
-	ctx := context.TODO()
-
+func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error) {
 	name, err := lua.CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -248,12 +244,12 @@ func (eval *Eval) toFileFunction(l *lua.State) (int, error) {
 		log.Debugf(ctx, "Unable to query store path %s: %v", storePath, err)
 	} else if exists {
 		// Already exists: no need to re-import.
-		log.Debugf(context.TODO(), "Using existing store path %s", storePath)
+		log.Debugf(ctx, "Using existing store path %s", storePath)
 		l.PushStringContext(string(storePath), []string{string(storePath)})
 		return 1, nil
 	}
 
-	exporter, closeExport, err := startExport(context.TODO(), eval.store)
+	exporter, closeExport, err := startExport(ctx, eval.store)
 	if err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
@@ -325,9 +321,9 @@ func absSourcePath(l *lua.State, path string) (string, error) {
 // path must be a cleaned, absolute path.
 // name is the intended name of the store object.
 // [Eval.walkPath] must be called before calling checkStamp.
-func (eval *Eval) checkStamp(path, name string) (_ zbstore.Path, err error) {
+func (eval *Eval) checkStamp(cache *sqlite.Conn, path, name string) (_ zbstore.Path, err error) {
 	var found zbstore.Path
-	err = sqlitex.ExecuteTransientFS(eval.cache, sqlFiles(), "find.sql", &sqlitex.ExecOptions{
+	err = sqlitex.ExecuteTransientFS(cache, sqlFiles(), "find.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":name": name,
 		},
@@ -356,8 +352,7 @@ func (eval *Eval) checkStamp(path, name string) (_ zbstore.Path, err error) {
 // walkPath creates a temporary table on the connection called "curr"
 // and inserts the paths and their stamps into the table.
 // walkPath only operates on the TEMP schema.
-func walkPath(conn *sqlite.Conn, path string) (err error) {
-	ctx := context.TODO()
+func walkPath(ctx context.Context, conn *sqlite.Conn, path string) (err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("walk %s: %v", path, err)
