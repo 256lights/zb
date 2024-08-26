@@ -7,4 +7,4 @@
 #   "gopls": "${workspaceFolder}/tools/gopls.sh"
 # },
 
-exec direnv exec "$(dirname "$0")/.." gopls "$@"
+DIRENV_LOG_FORMAT='' exec direnv exec "$(dirname "$0")/.." gopls "$@"

@@ -7,4 +7,4 @@
 #   "dlv": "${workspaceFolder}/tools/dlv.sh"
 # },
 
-exec direnv exec "$(dirname "$0")/.." dlv "$@"
+DIRENV_LOG_FORMAT='' exec direnv exec "$(dirname "$0")/.." dlv "$@"
