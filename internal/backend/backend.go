@@ -392,6 +392,24 @@ func (r *NARReceiver) Cleanup(ctx context.Context) {
 	}
 }
 
+type peerContextKey struct{}
+
+// WithPeer returns a copy of parent
+// in which the given handler is used as the client's connection.
+func WithPeer(parent context.Context, peer jsonrpc.Handler) context.Context {
+	return context.WithValue(parent, peerContextKey{}, peer)
+}
+
+func peer(ctx context.Context) jsonrpc.Handler {
+	p, _ := ctx.Value(peerContextKey{}).(jsonrpc.Handler)
+	if p == nil {
+		p = jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+			return nil, jsonrpc.Error(jsonrpc.InternalError, errors.New("no peer in context"))
+		})
+	}
+	return p
+}
+
 func marshalResponse(data any) (*jsonrpc.Response, error) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {

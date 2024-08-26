@@ -28,14 +28,22 @@ type globalConfig struct {
 	cacheDB     string
 }
 
-func (g *globalConfig) storeClient() *jsonrpc.Client {
-	return jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
+func (g *globalConfig) storeClient(localHandler jsonrpc.Handler, receiver zbstore.NARReceiver) (_ *jsonrpc.Client, wait func()) {
+	var wg sync.WaitGroup
+	c := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
 		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", g.storeSocket)
 		if err != nil {
 			return nil, err
 		}
-		return zbstore.NewClientCodec(conn), nil
+		codec := zbstore.NewCodec(conn, receiver)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			jsonrpc.Serve(context.Background(), codec, localHandler)
+		}()
+		return codec, nil
 	})
+	return c, wg.Wait
 }
 
 func main() {
@@ -117,8 +125,11 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 }
 
 func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
-	storeClient := g.storeClient()
-	defer storeClient.Close()
+	storeClient, waitStoreClient := g.storeClient(stubJSONRPCHandler{}, nil)
+	defer func() {
+		storeClient.Close()
+		waitStoreClient()
+	}()
 	eval, err := zb.NewEval(g.storeDir, storeClient, g.cacheDB)
 	if err != nil {
 		return err
@@ -177,8 +188,11 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 }
 
 func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
-	storeClient := g.storeClient()
-	defer storeClient.Close()
+	storeClient, waitStoreClient := g.storeClient(stubJSONRPCHandler{}, nil)
+	defer func() {
+		storeClient.Close()
+		waitStoreClient()
+	}()
 	eval, err := zb.NewEval(g.storeDir, storeClient, g.cacheDB)
 	if err != nil {
 		return err
@@ -233,6 +247,12 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 	}
 
 	return nil
+}
+
+type stubJSONRPCHandler struct{}
+
+func (stubJSONRPCHandler) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	return nil, jsonrpc.Error(jsonrpc.MethodNotFound, fmt.Errorf("method %q not found", req.Method))
 }
 
 type storeDirectoryFlag zbstore.Directory

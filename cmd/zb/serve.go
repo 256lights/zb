@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -135,7 +136,13 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 			defer wg.Done()
 			recv := srv.NewNARReceiver()
 			defer recv.Cleanup(ctx)
-			jsonrpc.Serve(ctx, zbstore.NewServerCodec(conn, recv), srv)
+
+			codec := zbstore.NewCodec(nopCloser{conn}, recv)
+			peer := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
+				return codec, nil
+			})
+			jsonrpc.Serve(backend.WithPeer(ctx, peer), codec, srv)
+			peer.Close()
 
 			openConnsMu.Lock()
 			delete(openConns, conn)
@@ -146,4 +153,12 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 			}
 		}()
 	}
+}
+
+type nopCloser struct {
+	io.ReadWriter
+}
+
+func (nopCloser) Close() error {
+	return nil
 }

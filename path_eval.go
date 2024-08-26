@@ -557,15 +557,15 @@ func startExport(ctx context.Context, store *jsonrpc.Client) (exporter *zbstore.
 	return exporter, closeFunc, nil
 }
 
-func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstore.ClientCodec, release func(), err error) {
+func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstore.Codec, release func(), err error) {
 	generic, release, err := client.Codec(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	codec, ok := generic.(*zbstore.ClientCodec)
+	codec, ok := generic.(*zbstore.Codec)
 	if !ok {
 		release()
-		return nil, nil, fmt.Errorf("store connection is %T (want %T)", generic, (*zbstore.ClientCodec)(nil))
+		return nil, nil, fmt.Errorf("store connection is %T (want %T)", generic, (*zbstore.Codec)(nil))
 	}
 	return codec, release, nil
 }
