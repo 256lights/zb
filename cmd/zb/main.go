@@ -120,7 +120,7 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 }
 
 func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
-	storeClient, waitStoreClient := g.storeClient(stubJSONRPCHandler{}, nil)
+	storeClient, waitStoreClient := g.storeClient(jsonrpc.MethodNotFoundHandler{}, nil)
 	defer func() {
 		storeClient.Close()
 		waitStoreClient()
@@ -183,7 +183,7 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 }
 
 func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
-	storeClient, waitStoreClient := g.storeClient(stubJSONRPCHandler{}, nil)
+	storeClient, waitStoreClient := g.storeClient(jsonrpc.MethodNotFoundHandler{}, nil)
 	defer func() {
 		storeClient.Close()
 		waitStoreClient()
@@ -242,12 +242,6 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 	}
 
 	return nil
-}
-
-type stubJSONRPCHandler struct{}
-
-func (stubJSONRPCHandler) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	return nil, jsonrpc.Error(jsonrpc.MethodNotFound, fmt.Errorf("method %q not found", req.Method))
 }
 
 // defaultVarDir returns "/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.

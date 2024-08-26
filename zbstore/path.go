@@ -109,11 +109,12 @@ func (dir Directory) Join(elem ...string) string {
 // begins with the store directory
 // and names either a store object or a file inside a store object.
 // On success, it returns the store object's name
-// and the relative path inside the store object, if any.
+// and the slash-separated relative path inside the store object, if any.
 func (dir Directory) ParsePath(path string) (storePath Path, sub string, err error) {
 	var cleaned, dirPrefix, tail string
 	var sep rune
-	switch detectPathStyle(string(dir)) {
+	style := detectPathStyle(string(dir))
+	switch style {
 	case posixPathStyle:
 		if !posixpath.IsAbs(path) {
 			return "", "", fmt.Errorf("parse zb store path %s: not absolute", path)
@@ -145,6 +146,9 @@ func (dir Directory) ParsePath(path string) (storePath Path, sub string, err err
 	storePath, err = ParsePath(cleaned[:len(dirPrefix)+len(childName)])
 	if err != nil {
 		return "", "", err
+	}
+	if style == windowsPathStyle {
+		sub = windowspath.ToSlash(sub)
 	}
 	return storePath, sub, nil
 }

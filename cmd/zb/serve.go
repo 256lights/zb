@@ -104,10 +104,8 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 	}()
 
 	log.Infof(ctx, "Listening on %s", g.storeSocket)
-	srv := backend.NewServer(&backend.Options{
-		Dir:      g.storeDir,
+	srv := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
 		BuildDir: opts.buildDir,
-		DBPath:   opts.dbPath,
 	})
 	defer func() {
 		if err := srv.Close(); err != nil {

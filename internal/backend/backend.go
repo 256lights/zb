@@ -1,6 +1,7 @@
 // Copyright 2024 Roxy Light
 // SPDX-License-Identifier: MIT
 
+// Package backend provides a [zbstore] implementation backed by local compute resources.
 package backend
 
 import (
@@ -26,23 +27,34 @@ import (
 	"zombiezen.com/go/zb/zbstore"
 )
 
+// Options is the set of optional parameters to [NewServer].
 type Options struct {
-	Dir      zbstore.Directory
+	// RealDir is where the store objects are located physically on disk.
+	// If empty, defaults to the store directory.
+	RealDir string
+	// BuildDir is where realizations' working directories will be placed.
+	// If empty, defaults to [os.TempDir].
 	BuildDir string
-	DBPath   string
 }
 
+// Server is a local store.
+// Server implements [jsonrpc.Handler] and is intended to be used with [jsonrpc.Serve].
 type Server struct {
 	dir      zbstore.Directory
+	realDir  string
 	buildDir string
 	db       *sqlitemigration.Pool
 }
 
-func NewServer(opts *Options) *Server {
-	return &Server{
-		dir:      opts.Dir,
+// NewServer returns a new [Server] for the given store directory and database path.
+// Callers are responsible for calling [Server.Close] on the returned server.
+// NewServer will panic if given a store directory that is not native
+func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
+	srv := &Server{
+		dir:      dir,
+		realDir:  opts.RealDir,
 		buildDir: opts.BuildDir,
-		db: sqlitemigration.NewPool(opts.DBPath, loadSchema(), sqlitemigration.Options{
+		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
 			PrepareConn: prepareConn,
 			OnStartMigrate: func() {
@@ -59,12 +71,22 @@ func NewServer(opts *Options) *Server {
 			},
 		}),
 	}
+	if srv.realDir == "" {
+		srv.realDir = string(srv.dir)
+	}
+	if srv.buildDir == "" {
+		srv.buildDir = os.TempDir()
+	}
+	return srv
 }
 
+// Close releases any resources associated with the server.
 func (s *Server) Close() error {
 	return s.db.Close()
 }
 
+// JSONRPC implements the [jsonrpc.Handler] interface
+// and serves the [zbstore] API.
 func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	return jsonrpc.ServeMux{
 		zbstore.ExistsMethod:  jsonrpc.HandlerFunc(s.exists),
@@ -84,7 +106,7 @@ func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 			Result: json.RawMessage("false"),
 		}, nil
 	}
-	if _, err := os.Lstat(p.Join(sub)); err != nil {
+	if _, err := os.Lstat(filepath.Join(s.realDir, p.Base(), filepath.FromSlash(sub))); err != nil {
 		log.Debugf(ctx, "%s does not exist (%v)", args.Path, err)
 		return &jsonrpc.Response{
 			Result: json.RawMessage("false"),
@@ -96,8 +118,10 @@ func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 	}, nil
 }
 
+// NARReceiver is a per-connection [zbstore.NARReceiver].
 type NARReceiver struct {
 	dir     zbstore.Directory
+	realDir string
 	dbPool  *sqlitemigration.Pool
 	tmpFile *os.File
 
@@ -105,11 +129,14 @@ type NARReceiver struct {
 	size   int64
 }
 
+// NewNARReceiver returns a new [NARReceiver] that is attached to the server.
+// Callers are responsible for calling [NARReceiver.Cleanup] after the receiver is no longer in use.
 func (s *Server) NewNARReceiver() *NARReceiver {
 	return &NARReceiver{
-		dir:    s.dir,
-		dbPool: s.db,
-		hasher: *nix.NewHasher(nix.SHA256),
+		dir:     s.dir,
+		realDir: s.realDir,
+		dbPool:  s.db,
+		hasher:  *nix.NewHasher(nix.SHA256),
 	}
 }
 
@@ -199,9 +226,10 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	}
 	log.Debugf(ctx, "Inserted %s into database", trailer.StorePath)
 
-	if err := extractNAR(string(trailer.StorePath), r.tmpFile); err != nil {
+	realPath := filepath.Join(r.realDir, trailer.StorePath.Base())
+	if err := extractNAR(realPath, r.tmpFile); err != nil {
 		log.Warnf(ctx, "Import of %s failed: %v", trailer.StorePath, err)
-		if err := os.RemoveAll(string(trailer.StorePath)); err != nil {
+		if err := os.RemoveAll(realPath); err != nil {
 			log.Errorf(ctx, "Failed to clean up partial import of %s: %v", trailer.StorePath, err)
 		}
 		return
@@ -380,6 +408,7 @@ func extractNAR(dst string, r io.Reader) error {
 	}
 }
 
+// Cleanup releases any resources associated with the receiver.
 func (r *NARReceiver) Cleanup(ctx context.Context) {
 	if r.tmpFile == nil {
 		return

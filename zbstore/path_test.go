@@ -224,7 +224,7 @@ func TestDirectoryParsePath(t *testing.T) {
 			path: `C:\zb\store\s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1\bin\hello`,
 
 			want: `C:\zb\store\s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1`,
-			sub:  `bin\hello`,
+			sub:  `bin/hello`,
 		},
 		{
 			dir:  "/zb/store",

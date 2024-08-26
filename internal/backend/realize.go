@@ -49,6 +49,9 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a derivation", drvPath))
 	}
 	log.Infof(ctx, "Requested to build %s", drvPath)
+	if string(s.dir) != s.realDir {
+		return nil, fmt.Errorf("store cannot build derivations (unsandboxed and storage directory does not match store)")
+	}
 
 	// Step 2: Parse derivation and determine whether to build it.
 	// TODO(soon): Check for concurrent evaluations of path.
@@ -64,13 +67,14 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		return marshalResponse(resp)
 	}
 
-	if info, err := os.Lstat(string(drvPath)); err != nil {
+	realDrvPath := filepath.Join(s.realDir, drvPath.Base())
+	if info, err := os.Lstat(realDrvPath); err != nil {
 		return nil, err
 	} else if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", drvPath)
 	}
 
-	drvData, err := os.ReadFile(string(drvPath))
+	drvData, err := os.ReadFile(realDrvPath)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +93,8 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 	}
 	for i := 0; i < drv.InputSources.Len(); i++ {
 		input := drv.InputSources.At(i)
-		if _, err := os.Lstat(string(input)); err != nil {
+		realInputPath := filepath.Join(s.realDir, input.Base())
+		if _, err := os.Lstat(realInputPath); err != nil {
 			// TODO(someday): Import from substituter if not found.
 			return nil, fmt.Errorf("build %s: input %s not present (%v)", drvPath, input, err)
 		}
@@ -159,7 +164,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 
 	for outputName, tempOutputPath := range outPaths {
 		outputType := drv.Outputs[outputName]
-		info, err := postProcessBuiltOutput(ctx, string(s.dir), drvPath, tempOutputPath, outputType, &drv.InputSources)
+		info, err := postProcessBuiltOutput(ctx, s.realDir, drvPath, tempOutputPath, outputType, &drv.InputSources)
 		switch {
 		case errors.Is(err, errFloatingOutputExists):
 			// No need to register an object in the database.
