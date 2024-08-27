@@ -50,13 +50,34 @@ func ExportText(exp *zbstore.Exporter, dir zbstore.Directory, name string, data 
 	return p, nil
 }
 
+// ExportDerivation writes a ".drv" file to the exporter.
+func ExportDerivation(exp *zbstore.Exporter, drv *zbstore.Derivation) (zbstore.Path, error) {
+	name := drv.Name + zbstore.DerivationExt
+	data, err := drv.MarshalText()
+	if err != nil {
+		return "", fmt.Errorf("export derivation %s: %v", name, err)
+	}
+	h := nix.NewHasher(nix.SHA256)
+	h.Write(data)
+	ca := nix.TextContentAddress(h.SumHash())
+	refs := drv.References().ToSet("")
+	p, err := exportFile(exp, drv.Dir, name, data, ca, refs)
+	if err != nil {
+		if p == "" {
+			return "", fmt.Errorf("export derivation %s: %v", name, err)
+		}
+		return p, fmt.Errorf("export derivation %s: %v", p, err)
+	}
+	return p, nil
+}
+
 func exportFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, ca zbstore.ContentAddress, refs *sortedset.Set[zbstore.Path]) (zbstore.Path, error) {
 	refsClone := *refs.Clone()
 	p, err := zbstore.FixedCAOutputPath(dir, name, ca, zbstore.References{Others: refsClone})
 	if err != nil {
 		return "", err
 	}
-	if err := writeSingleFileNAR(exp, data); err != nil {
+	if err := SingleFileNAR(exp, data); err != nil {
 		return p, err
 	}
 	err = exp.Trailer(&zbstore.ExportTrailer{
@@ -73,7 +94,7 @@ func exportFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data 
 // ExportSourceFile writes a file with the given content to the exporter.
 func ExportSourceFile(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name string, data []byte, refs zbstore.References) (zbstore.Path, error) {
 	narBuffer := new(bytes.Buffer)
-	if err := writeSingleFileNAR(narBuffer, data); err != nil {
+	if err := SingleFileNAR(narBuffer, data); err != nil {
 		return "", err
 	}
 	return exportSource(exp, dir, tempDigest, name, narBuffer.Bytes(), refs)
@@ -126,7 +147,9 @@ func exportSource(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name
 	return p, nil
 }
 
-func writeSingleFileNAR(w io.Writer, data []byte) error {
+// SingleFileNAR writes a single non-executable file NAR to the given writer
+// with the given file contents.
+func SingleFileNAR(w io.Writer, data []byte) error {
 	nw := nar.NewWriter(w)
 	if err := nw.WriteHeader(&nar.Header{Size: int64(len(data))}); err != nil {
 		return err

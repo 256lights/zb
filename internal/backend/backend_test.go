@@ -10,12 +10,17 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"sync"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/storetest"
+	"zombiezen.com/go/zb/internal/system"
+	"zombiezen.com/go/zb/sortedset"
 	"zombiezen.com/go/zb/zbstore"
 )
 
@@ -87,6 +92,115 @@ func TestImport(t *testing.T) {
 	})
 }
 
+func TestRealize(t *testing.T) {
+	ctx := context.Background()
+	dir, err := zbstore.CleanDirectory(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const inputContent = "Hello, World!\n"
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExporter(exportBuffer)
+	inputFilePath, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantOutputName = "hello2.txt"
+	drvContent := &zbstore.Derivation{
+		Name:   wantOutputName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"in":  string(inputFilePath),
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		InputSources: *sortedset.New(
+			inputFilePath,
+		),
+		Outputs: map[string]*zbstore.DerivationOutput{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	if runtime.GOOS == "windows" {
+		drvContent.Builder = `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+		drvContent.Args = []string{
+			"-Command",
+			`$x = Get-Content ${env:in} | Out-String ; ($x + $x) | Out-File -FilePath ${env:out}`,
+		}
+	} else {
+		drvContent.Builder = "/bin/sh"
+		drvContent.Args = []string{
+			"-c",
+			`while read line; do echo "$line"; echo "$line"; done < $in > $out`,
+		}
+	}
+	drvPath, err := storetest.ExportDerivation(exporter, drvContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	const wantOutputContent = "Hello, World!\nHello, World!\n"
+	wantOutputNAR := new(bytes.Buffer)
+	storetest.SingleFileNAR(wantOutputNAR, []byte(wantOutputContent))
+	wantOutputCA, _, err := zbstore.SourceSHA256ContentAddress("", bytes.NewReader(wantOutputNAR.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOutputPath, err := zbstore.FixedCAOutputPath(dir, wantOutputName, wantOutputCA, zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := newTestServer(t, dir, string(dir), jsonrpc.MethodNotFoundHandler{}, nil)
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(exportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
+		DrvPath: drvPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &zbstore.RealizeResponse{
+		Outputs: []*zbstore.RealizeOutput{
+			{
+				Name: zbstore.DefaultDerivationOutputName,
+				Path: zbstore.NonNull(wantOutputPath),
+			},
+		},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("realize response (-want +got):\n%s", diff)
+	}
+
+	gotOutputs := slices.Collect(got.OutputsByName(zbstore.DefaultDerivationOutputName))
+	if len(gotOutputs) == 1 && gotOutputs[0].Path.Valid {
+		gotOutputPath := gotOutputs[0].Path.X
+		if got, err := os.ReadFile(string(gotOutputPath)); err != nil {
+			t.Error(err)
+		} else if string(got) != wantOutputContent {
+			t.Errorf("%s content = %q; want %q", wantOutputPath, got, wantOutputContent)
+		}
+		if info, err := os.Lstat(string(gotOutputPath)); err != nil {
+			t.Error(err)
+		} else if got := info.Mode(); got&0o111 != 0 {
+			t.Errorf("%s mode = %v; want non-executable", gotOutputPath, got)
+		}
+	}
+}
+
 // newTestServer creates a new [Server] suitable for testing
 // and returns a client connected to it.
 // newTestServer must be called from the goroutine running the test or benchmark.
@@ -94,11 +208,15 @@ func TestImport(t *testing.T) {
 func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir string, clientHandler jsonrpc.Handler, clientReceiver zbstore.NARReceiver) *jsonrpc.Client {
 	tb.Helper()
 	helperDir := tb.TempDir()
+	buildDir := filepath.Join(helperDir, "build")
+	if err := os.Mkdir(buildDir, 0o777); err != nil {
+		tb.Fatal(err)
+	}
 
 	var wg sync.WaitGroup
 	srv := NewServer(storeDir, filepath.Join(helperDir, "db.sqlite"), &Options{
 		RealDir:  realStoreDir,
-		BuildDir: filepath.Join(helperDir, "build"),
+		BuildDir: buildDir,
 	})
 	serverConn, clientConn := net.Pipe()
 

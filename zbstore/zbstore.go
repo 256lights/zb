@@ -4,7 +4,10 @@
 // Package zbstore provides the data types for the zb store API.
 package zbstore
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"iter"
+)
 
 // ExistsMethod is the name of the method that checks whether a store path exists.
 // [ExistsRequest] is used for the request and the response is a boolean.
@@ -28,6 +31,22 @@ type RealizeRequest struct {
 // RealizeResponse is the result for [RealizeMethod].
 type RealizeResponse struct {
 	Outputs []*RealizeOutput `json:"outputs"`
+}
+
+// OutputsByName returns an iterator over the outputs with the given name.
+func (resp *RealizeResponse) OutputsByName(name string) iter.Seq[*RealizeOutput] {
+	if resp == nil {
+		return func(yield func(*RealizeOutput) bool) {}
+	}
+	return func(yield func(*RealizeOutput) bool) {
+		for _, out := range resp.Outputs {
+			if out.Name == name {
+				if !yield(out) {
+					return
+				}
+			}
+		}
+	}
 }
 
 // RealizeOutput is an output in [RealizeResponse].
