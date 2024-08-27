@@ -51,7 +51,8 @@ func ExportText(exp *zbstore.Exporter, dir zbstore.Directory, name string, data 
 }
 
 func exportFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, ca zbstore.ContentAddress, refs *sortedset.Set[zbstore.Path]) (zbstore.Path, error) {
-	p, err := zbstore.FixedCAOutputPath(dir, name, ca, zbstore.References{})
+	refsClone := *refs.Clone()
+	p, err := zbstore.FixedCAOutputPath(dir, name, ca, zbstore.References{Others: refsClone})
 	if err != nil {
 		return "", err
 	}
@@ -61,7 +62,7 @@ func exportFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data 
 	err = exp.Trailer(&zbstore.ExportTrailer{
 		StorePath:      p,
 		ContentAddress: ca,
-		References:     *refs.Clone(),
+		References:     refsClone,
 	})
 	if err != nil {
 		return p, err
@@ -111,6 +112,9 @@ func exportSource(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name
 		copy(narBytes[off:int(off)+len(newDigest)], newDigest)
 	}
 
+	if _, err := exp.Write(narBytes); err != nil {
+		return p, fmt.Errorf("export source %s: %v", p, err)
+	}
 	err = exp.Trailer(&zbstore.ExportTrailer{
 		StorePath:      p,
 		ContentAddress: ca,
