@@ -126,7 +126,7 @@ func TestRealize(t *testing.T) {
 		drvContent.Builder = `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
 		drvContent.Args = []string{
 			"-Command",
-			`$x = Get-Content ${env:in} | Out-String ; ($x + $x) | Out-File -FilePath ${env:out}`,
+			`$x = Get-Content -Raw ${env:in} ; ($x + $x) | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}`,
 		}
 	} else {
 		drvContent.Builder = "/bin/sh"
