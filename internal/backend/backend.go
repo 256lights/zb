@@ -44,6 +44,8 @@ type Server struct {
 	realDir  string
 	buildDir string
 	db       *sqlitemigration.Pool
+
+	inProgress mutexMap[zbstore.Path]
 }
 
 // NewServer returns a new [Server] for the given store directory and database path.
@@ -54,6 +56,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		dir:      dir,
 		realDir:  opts.RealDir,
 		buildDir: opts.BuildDir,
+
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
 			PrepareConn: prepareConn,
