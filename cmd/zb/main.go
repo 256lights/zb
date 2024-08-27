@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -183,7 +184,7 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 }
 
 func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
-	storeClient, waitStoreClient := g.storeClient(jsonrpc.MethodNotFoundHandler{}, nil)
+	storeClient, waitStoreClient := g.storeClient(new(clientRPCHandler), nil)
 	defer func() {
 		storeClient.Close()
 		waitStoreClient()
@@ -242,6 +243,28 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 	}
 
 	return nil
+}
+
+type clientRPCHandler struct {
+}
+
+func (h *clientRPCHandler) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	return jsonrpc.ServeMux{
+		zbstore.LogMethod: jsonrpc.HandlerFunc(h.log),
+	}.JSONRPC(ctx, req)
+}
+
+func (h *clientRPCHandler) log(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	args := new(zbstore.LogNotification)
+	if err := json.Unmarshal(req.Params, args); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	payload := args.Payload()
+	if len(payload) == 0 {
+		return nil, nil
+	}
+	os.Stderr.Write(payload)
+	return nil, nil
 }
 
 // defaultVarDir returns "/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.

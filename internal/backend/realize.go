@@ -17,7 +17,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
+	"zombiezen.com/go/batchio"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
@@ -100,49 +102,9 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 	}
 
 	// Step 3: Arrange for builder to run.
-	outPaths, r, err := tempOutputPaths(drvPath, drv.Outputs)
+	outPaths, err := runBuilderUnsandboxed(ctx, drvPath, drv, s.buildDir)
 	if err != nil {
-		return nil, fmt.Errorf("build %s: %v", drvPath, err)
-	}
-	if log.IsEnabled(log.Debug) {
-		log.Debugf(ctx, "Output map for %s: %s", drvPath, formatOutputPaths(outPaths))
-	}
-	// TODO(soon): Short-circuit if fixed output already exists in store.
-
-	topTempDir, err := os.MkdirTemp(s.buildDir, "zb-build-"+drvName+"*")
-	if err != nil {
-		return nil, fmt.Errorf("build %s: %v", drvPath, err)
-	}
-	defer func() {
-		if err := os.RemoveAll(topTempDir); err != nil {
-			log.Warnf(ctx, "Failed to clean up %s: %v", topTempDir, err)
-		}
-	}()
-
-	env := make(map[string]string)
-	addBaseEnv(env, s.dir, topTempDir)
-	for k, v := range drv.Env {
-		env[r.Replace(k)] = r.Replace(v)
-	}
-	builderArgs := make([]string, 0, len(drv.Args))
-	for _, arg := range drv.Args {
-		builderArgs = append(builderArgs, r.Replace(arg))
-	}
-
-	c := exec.CommandContext(ctx, drv.Builder, builderArgs...)
-	setCancelFunc(c)
-	for _, k := range sortedKeys(env) {
-		c.Env = append(c.Env, k+"="+env[k])
-	}
-	c.Dir = topTempDir
-	// TODO(soon): Log stdout/stderr to caller.
-	c.Stdout = os.Stderr
-	c.Stderr = os.Stderr
-	log.Debugf(ctx, "Starting builder for %s...", drvPath)
-	if err := c.Run(); err != nil {
 		log.Debugf(ctx, "Builder for %s has failed: %v", drvPath, err)
-
-		// TODO(now): Clean up outputs.
 
 		resp := new(zbstore.RealizeResponse)
 		for _, outputName := range sortedKeys(drv.Outputs) {
@@ -154,7 +116,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 	}
 	log.Debugf(ctx, "Builder for %s has finished successfully", drvPath)
 
-	// Step 3: Register outputs in database.
+	// Step 4: Register outputs in database.
 	endFn, err := sqlitex.ImmediateTransaction(conn)
 	if err != nil {
 		return nil, fmt.Errorf("build %s: %v", drvPath, err)
@@ -235,6 +197,63 @@ func validateOutputs(drv *zbstore.Derivation) error {
 		}
 	}
 	return nil
+}
+
+func runBuilderUnsandboxed(ctx context.Context, drvPath zbstore.Path, drv *zbstore.Derivation, buildDir string) (outPaths map[string]zbstore.Path, err error) {
+	drvName, isDrv := drvPath.DerivationName()
+	if !isDrv {
+		return nil, fmt.Errorf("build %s: not a derivation", drvPath)
+	}
+
+	outPaths, r, err := tempOutputPaths(drvPath, drv.Outputs)
+	if err != nil {
+		return nil, fmt.Errorf("build %s: %v", drvPath, err)
+	}
+	if log.IsEnabled(log.Debug) {
+		log.Debugf(ctx, "Output map for %s: %s", drvPath, formatOutputPaths(outPaths))
+	}
+	// TODO(soon): Short-circuit if fixed output already exists in store.
+
+	topTempDir, err := os.MkdirTemp(buildDir, "zb-build-"+drvName+"*")
+	if err != nil {
+		return nil, fmt.Errorf("build %s: %v", drvPath, err)
+	}
+	defer func() {
+		if err := os.RemoveAll(topTempDir); err != nil {
+			log.Warnf(ctx, "Failed to clean up %s: %v", topTempDir, err)
+		}
+	}()
+
+	env := make(map[string]string)
+	addBaseEnv(env, drv.Dir, topTempDir)
+	for k, v := range drv.Env {
+		env[r.Replace(k)] = r.Replace(v)
+	}
+	builderArgs := make([]string, 0, len(drv.Args))
+	for _, arg := range drv.Args {
+		builderArgs = append(builderArgs, r.Replace(arg))
+	}
+
+	c := exec.CommandContext(ctx, drv.Builder, builderArgs...)
+	setCancelFunc(c)
+	for _, k := range sortedKeys(env) {
+		c.Env = append(c.Env, k+"="+env[k])
+	}
+	c.Dir = topTempDir
+
+	peerLogger := newRPCLogger(ctx, drvPath, peer(ctx))
+	bufferedPeerLogger := batchio.NewWriter(peerLogger, 8192, 1*time.Second)
+	defer bufferedPeerLogger.Flush()
+	c.Stdout = bufferedPeerLogger
+	c.Stderr = bufferedPeerLogger
+
+	log.Debugf(ctx, "Starting builder for %s...", drvPath)
+	if err := c.Run(); err != nil {
+		// TODO(now): Clean up outputs.
+		return nil, fmt.Errorf("build %s: %w", drvPath, err)
+	}
+
+	return outPaths, nil
 }
 
 func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.DerivationOutput) (map[string]zbstore.Path, *strings.Replacer, error) {
@@ -586,6 +605,34 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.
 	}
 
 	return nil
+}
+
+// rpcLogger is an [io.Writer] that sends its data as [zbstore.LogMethod] RPCs.
+// It has no buffering: callers should introduce buffering.
+type rpcLogger struct {
+	ctx     context.Context
+	notif   zbstore.LogNotification
+	handler jsonrpc.Handler
+}
+
+func newRPCLogger(ctx context.Context, drvPath zbstore.Path, handler jsonrpc.Handler) *rpcLogger {
+	return &rpcLogger{
+		ctx:     ctx,
+		notif:   zbstore.LogNotification{DrvPath: drvPath},
+		handler: handler,
+	}
+}
+
+func (logger *rpcLogger) Write(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	logger.notif.SetPayload(p)
+	err = jsonrpc.Notify(logger.ctx, logger.handler, zbstore.LogMethod, &logger.notif)
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 func formatOutputPaths(m map[string]zbstore.Path) string {

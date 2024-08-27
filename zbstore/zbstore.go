@@ -5,8 +5,10 @@
 package zbstore
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"iter"
+	"unicode/utf8"
 )
 
 // ExistsMethod is the name of the method that checks whether a store path exists.
@@ -56,6 +58,44 @@ type RealizeOutput struct {
 	// Path is the store path of the output if successfully built,
 	// or null if the build failed.
 	Path Nullable[Path] `json:"path"`
+}
+
+// LogMethod is the name of the method invoked on the client
+// to record a log message from a running invocation.
+// [LogNotification] is used for the request
+// and the response is ignored.
+const LogMethod = "zb.log"
+
+// LogNotification is the set of parameters for [LogMethod].
+// One of Text or Base64 should be set to a non-empty string.
+type LogNotification struct {
+	DrvPath Path   `json:"drvPath"`
+	Text    string `json:"text,omitempty"`
+	Base64  string `json:"base64,omitempty"`
+}
+
+// Payload returns the log's byte content.
+func (notif *LogNotification) Payload() []byte {
+	switch {
+	case notif.Base64 != "":
+		b, _ := base64.StdEncoding.DecodeString(notif.Base64)
+		return b
+	case notif.Text != "":
+		return []byte(notif.Text)
+	default:
+		return nil
+	}
+}
+
+// SetPayload sets notif.Text and notif.Base64 to reflect the given payload.
+func (notif *LogNotification) SetPayload(src []byte) {
+	if utf8.Valid(src) {
+		notif.Text = string(src)
+		notif.Base64 = ""
+	} else {
+		notif.Text = ""
+		notif.Base64 = base64.StdEncoding.EncodeToString(src)
+	}
 }
 
 // Nullable wraps a type to permit a null JSON serialization.
