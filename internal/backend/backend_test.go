@@ -7,17 +7,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/zb/internal/jsonrpc"
+	"zombiezen.com/go/zb/internal/storetest"
 	"zombiezen.com/go/zb/zbstore"
 )
 
@@ -28,20 +26,7 @@ func TestImport(t *testing.T) {
 		const fileContent = "Hello, World!\n"
 		exportBuffer := new(bytes.Buffer)
 		exporter := zbstore.NewExporter(exportBuffer)
-		if err := writeSingleFileNAR(exporter, strings.NewReader(fileContent), int64(len(fileContent))); err != nil {
-			t.Fatal(err)
-		}
-		h := nix.NewHasher(nix.SHA256)
-		h.WriteString(fileContent)
-		ca := nix.FlatFileContentAddress(h.SumHash())
-		storePath, err := zbstore.FixedCAOutputPath(dir, "hello.txt", ca, zbstore.References{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = exporter.Trailer(&zbstore.ExportTrailer{
-			StorePath:      storePath,
-			ContentAddress: ca,
-		})
+		storePath, err := storetest.ExportFlatFile(exporter, dir, "hello.txt", []byte(fileContent), nix.SHA256)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -155,20 +140,6 @@ func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir strin
 	})
 
 	return client
-}
-
-func writeSingleFileNAR(w io.Writer, r io.Reader, sz int64) error {
-	nw := nar.NewWriter(w)
-	if err := nw.WriteHeader(&nar.Header{Size: sz}); err != nil {
-		return err
-	}
-	if _, err := io.Copy(nw, r); err != nil {
-		return err
-	}
-	if err := nw.Close(); err != nil {
-		return err
-	}
-	return nil
 }
 
 func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstore.Codec, release func(), err error) {
