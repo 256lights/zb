@@ -246,7 +246,7 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 
 // defaultVarDir returns "/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
 func defaultVarDir() string {
-	return filepath.Join(filepath.Dir(string(nix.DefaultStoreDirectory)), "var", "zb")
+	return filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "zb")
 }
 
 type storeDirectoryFlag zbstore.Directory
