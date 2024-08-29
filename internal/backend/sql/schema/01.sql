@@ -16,8 +16,6 @@ create table "objects" (
     not null
     check ("nar_size" > 0),
   "nar_hash" text,
-  "deriver" integer
-    references "paths",
   "ca" text
 );
 

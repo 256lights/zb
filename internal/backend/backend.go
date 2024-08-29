@@ -256,7 +256,6 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 			NARSize:     r.size,
 			NARHash:     r.hasher.SumHash(),
 			Compression: zbstore.NoCompression,
-			Deriver:     trailer.Deriver,
 			CA:          ca,
 		})
 	}()
@@ -363,7 +362,6 @@ func insertObject(ctx context.Context, conn *sqlite.Conn, info *zbstore.NARInfo)
 			":path":     string(info.StorePath),
 			":nar_size": info.NARSize,
 			":nar_hash": info.NARHash.SRI(),
-			":deriver":  string(info.Deriver),
 			":ca":       info.CA.String(),
 		},
 	})
