@@ -4,6 +4,7 @@
 package backend
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -11,6 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"iter"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,154 +39,320 @@ import (
 )
 
 func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.Response, err error) {
-	// Step 1: Validate request.
+	type stackFrame struct {
+		drvPath     zbstore.Path
+		origDrvPath zbstore.Path
+		drv         *zbstore.Derivation
+		unlock      func()
+	}
+
+	// Validate request.
 	var args zbstore.RealizeRequest
 	if err := json.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
-	drvPath, subPath, err := s.dir.ParsePath(string(args.DrvPath))
+	ultimateDrvPath, subPath, err := s.dir.ParsePath(string(args.DrvPath))
 	if err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 	if subPath != "" {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a store object", args.DrvPath))
 	}
-	drvName, isDrv := drvPath.DerivationName()
-	if !isDrv {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a derivation", drvPath))
+	if _, isDrv := ultimateDrvPath.DerivationName(); !isDrv {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a derivation", ultimateDrvPath))
 	}
-	log.Infof(ctx, "Requested to build %s", drvPath)
+	log.Infof(ctx, "Requested to build %s", ultimateDrvPath)
 	if string(s.dir) != s.realDir {
 		return nil, fmt.Errorf("store cannot build derivations (unsandboxed and storage directory does not match store)")
 	}
 
-	// Step 2: Parse derivation and determine whether to build it.
-	unlock, err := s.inProgress.lock(ctx, drvPath)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
 	conn, err := s.db.Get(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer s.db.Put(conn)
-	if resp, err := findExistingRealizations(conn, drvPath); err != nil {
-		return nil, err
-	} else if len(resp.Outputs) > 0 {
-		log.Debugf(ctx, "Found %d existing outputs for %s", len(resp.Outputs), drvPath)
-		return marshalResponse(resp)
-	}
 
-	realDrvPath := filepath.Join(s.realDir, drvPath.Base())
-	if info, err := os.Lstat(realDrvPath); err != nil {
-		return nil, err
-	} else if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", drvPath)
-	}
-
-	drvData, err := os.ReadFile(realDrvPath)
-	if err != nil {
-		return nil, err
-	}
-	drv, err := zbstore.ParseDerivation(s.dir, drvName, drvData)
-	if err != nil {
-		return nil, err
-	}
-	if !canBuildLocally(drv) {
-		return nil, fmt.Errorf("build %s: a %s system is required, but host is a %v system", drvPath, drv.System, system.Current())
-	}
-	if err := validateOutputs(drv); err != nil {
-		return nil, fmt.Errorf("build %s: %v", drvPath, err)
-	}
-	if len(drv.InputDerivations) > 0 {
-		return nil, fmt.Errorf("TODO(soon): resolve derivation")
-	}
-	for _, input := range drv.InputSources.All() {
-		realInputPath := filepath.Join(s.realDir, input.Base())
-		if _, err := os.Lstat(realInputPath); err != nil {
-			// TODO(someday): Import from substituter if not found.
-			return nil, fmt.Errorf("build %s: input %s not present (%v)", drvPath, input, err)
-		}
-	}
-
-	// Step 3: Arrange for builder to run.
-	outPaths, err := runBuilderUnsandboxed(ctx, drvPath, drv, s.buildDir)
-	if err != nil {
-		log.Debugf(ctx, "Builder for %s has failed: %v", drvPath, err)
-
-		resp := new(zbstore.RealizeResponse)
-		for _, outputName := range sortedKeys(drv.Outputs) {
-			resp.Outputs = append(resp.Outputs, &zbstore.RealizeOutput{
-				Name: outputName,
-			})
-		}
-		return marshalResponse(resp)
-	}
-	log.Debugf(ctx, "Builder for %s has finished successfully", drvPath)
-
-	// Step 4: Register outputs in database.
-	endFn, err := sqlitex.ImmediateTransaction(conn)
-	if err != nil {
-		return nil, fmt.Errorf("build %s: %v", drvPath, err)
-	}
-	defer endFn(&err)
-
-	for outputName, tempOutputPath := range outPaths {
-		outputType := drv.Outputs[outputName]
-		info, err := postProcessBuiltOutput(ctx, s.realDir, drvPath, tempOutputPath, outputType, &drv.InputSources)
-		switch {
-		case errors.Is(err, errFloatingOutputExists):
-			// No need to register an object in the database.
-			log.Debugf(ctx, "%s is the same output as %s (reusing)", tempOutputPath, info.StorePath)
-		case err != nil:
-			return nil, fmt.Errorf("build %s: output %s: %v", drvPath, outputName, err)
-		default:
-			if err := insertObject(ctx, conn, info); err != nil {
-				return nil, fmt.Errorf("build %s: output %s: %v", drvPath, outputName, err)
+	usedRealizations := make(map[zbstore.Path]map[string]zbstore.Path)
+	stack := []stackFrame{{
+		drvPath: ultimateDrvPath,
+	}}
+	defer func() {
+		for i := range stack {
+			frame := &stack[i]
+			if frame.unlock != nil {
+				frame.unlock()
+				frame.unlock = nil
 			}
 		}
-		outPaths[outputName] = info.StorePath
-	}
-	if err := recordRealizations(ctx, conn, drvPath, outPaths); err != nil {
-		return nil, fmt.Errorf("build %s: %v", drvPath, err)
+	}()
+
+	for len(stack) > 0 {
+		curr := stack[len(stack)-1]
+		stack[len(stack)-1] = stackFrame{}
+		stack = stack[:len(stack)-1]
+
+		if len(usedRealizations[curr.drvPath]) > 0 {
+			continue
+		}
+
+		if curr.unlock != nil {
+			log.Debugf(ctx, "Resuming %s", curr.drvPath)
+		} else {
+			// First visit to path.
+			log.Debugf(ctx, "Reached %s", curr.drvPath)
+			var err error
+			curr.unlock, err = s.inProgress.lock(ctx, curr.drvPath)
+			if err != nil {
+				return nil, err
+			}
+			log.Debugf(ctx, "Acquired lock on %s", curr.drvPath)
+			var existingOutputs map[string]zbstore.Path
+			curr.drv, existingOutputs, err = s.preProcessDerivation(ctx, conn, curr.drvPath)
+			if err != nil {
+				curr.unlock()
+				return nil, err
+			}
+			if len(existingOutputs) > 0 {
+				if log.IsEnabled(log.Debug) {
+					log.Debugf(ctx, "Found existing outputs for %s: %s", curr.drvPath, formatOutputPaths(existingOutputs))
+				}
+				curr.unlock()
+				usedRealizations[curr.drvPath] = existingOutputs
+				continue
+			}
+			unmetDependencies := false
+			for inputDrv, inputOutputNames := range curr.drv.InputDerivations {
+				if inputOutputNames.Len() == 0 {
+					continue
+				}
+				existingOutputs := usedRealizations[inputDrv]
+				if len(existingOutputs) == 0 {
+					if !unmetDependencies {
+						stack = append(stack, curr)
+						unmetDependencies = true
+					}
+					log.Debugf(ctx, "Enqueuing %s to be built (dependency of %s)", inputDrv, curr.drvPath)
+					stack = append(stack, stackFrame{
+						drvPath: inputDrv,
+					})
+				} else {
+					for _, outName := range inputOutputNames.All() {
+						if existingOutputs[outName] == "" {
+							// As usual, if we bail, we need to unlock curr.
+							// However, if we have unmet dependencies,
+							// we've already added curr to the stack
+							// and it will be unlocked by the catch-all defer.
+							if !unmetDependencies {
+								curr.unlock()
+							}
+
+							return nil, fmt.Errorf("build %s: no output named %q known for input %s", curr.drvPath, outName, inputDrv)
+						}
+					}
+				}
+			}
+			if unmetDependencies {
+				log.Debugf(ctx, "Pausing %s to build dependencies", curr.drvPath)
+				continue
+			}
+		}
+
+		// Resolve the derivation into one that uses the realized outputs.
+		if len(curr.drv.InputDerivations) > 0 {
+			resolvedPath, resolvedDrv, unlockResolved, err := s.resolveDerivation(ctx, conn, curr.drv, usedRealizations)
+			if err != nil {
+				curr.unlock()
+				return nil, fmt.Errorf("resolve %s: %v", curr.drvPath, err)
+			}
+			log.Infof(ctx, "Resolved %s -> %s", curr.drvPath, resolvedPath)
+			unlockOrig := curr.unlock
+			stack = append(stack, stackFrame{
+				drvPath:     resolvedPath,
+				drv:         resolvedDrv,
+				origDrvPath: curr.drvPath,
+				unlock: func() {
+					unlockResolved()
+					unlockOrig()
+				},
+			})
+			continue
+		}
+
+		// Arrange for builder to run.
+		outPaths, err := runBuilderUnsandboxed(ctx, curr.drvPath, curr.drv, s.buildDir)
+		if err != nil {
+			curr.unlock()
+			resp := new(zbstore.RealizeResponse)
+			for _, outputName := range sortedKeys(curr.drv.Outputs) {
+				resp.Outputs = append(resp.Outputs, &zbstore.RealizeOutput{
+					Name: outputName,
+				})
+			}
+			return marshalResponse(resp)
+		}
+
+		// Register outputs.
+		err = func() (err error) {
+			endFn, err := sqlitex.ImmediateTransaction(conn)
+			if err != nil {
+				return err
+			}
+			defer endFn(&err)
+
+			for outputName, tempOutputPath := range outPaths {
+				outputType := curr.drv.Outputs[outputName]
+				info, err := postProcessBuiltOutput(ctx, s.realDir, curr.drvPath, tempOutputPath, outputType, &curr.drv.InputSources)
+				switch {
+				case errors.Is(err, errFloatingOutputExists):
+					// No need to register an object in the database.
+					log.Debugf(ctx, "%s is the same output as %s (reusing)", tempOutputPath, info.StorePath)
+				case err != nil:
+					return fmt.Errorf("output %s: %v", outputName, err)
+				default:
+					if err := insertObject(ctx, conn, info); err != nil {
+						return fmt.Errorf("output %s: %v", outputName, err)
+					}
+				}
+				outPaths[outputName] = info.StorePath
+			}
+			if err := recordRealizations(ctx, conn, curr.drvPath, outPaths); err != nil {
+				return err
+			}
+			usedRealizations[curr.drvPath] = outPaths
+			if curr.origDrvPath != "" {
+				if err := recordRealizations(ctx, conn, curr.origDrvPath, outPaths); err != nil {
+					return err
+				}
+				usedRealizations[curr.origDrvPath] = outPaths
+			}
+			return nil
+		}()
+		curr.unlock()
+		if err != nil {
+			return nil, fmt.Errorf("build %s: %v", curr.drvPath, err)
+		}
 	}
 
 	resp := new(zbstore.RealizeResponse)
-	for _, outputName := range sortedKeys(outPaths) {
+	outPaths := usedRealizations[ultimateDrvPath]
+	for outputName, outputPath := range sortedMap(outPaths) {
 		resp.Outputs = append(resp.Outputs, &zbstore.RealizeOutput{
 			Name: outputName,
-			Path: zbstore.NonNull(outPaths[outputName]),
+			Path: zbstore.NonNull(outputPath),
 		})
 	}
 	return marshalResponse(resp)
 }
 
-func findExistingRealizations(conn *sqlite.Conn, drvPath zbstore.Path) (*zbstore.RealizeResponse, error) {
-	resp := new(zbstore.RealizeResponse)
+// preProcessDerivation checks whether the derivation has existing realizations
+// or otherwise reads the derivation and ensures it is suitable for realizing.
+func (s *Server) preProcessDerivation(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.Path) (*zbstore.Derivation, map[string]zbstore.Path, error) {
+	existing, err := findExistingRealizations(ctx, conn, drvPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(existing) > 0 {
+		// TODO(maybe): This may not match the set of outputs present in the derivation.
+		// Should we always read the derivation?
+		flattened := make(map[string]zbstore.Path, len(existing))
+		for outputName, outputPaths := range existing {
+			// TODO(someday): We should use a heuristic and consult the client's trust settings.
+			// Or maybe even error.
+			// But until then, we just pick the first path in sorted order.
+			flattened[outputName] = outputPaths.At(0)
+		}
+		return nil, flattened, nil
+	}
+
+	drv, err := s.readDerivation(drvPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !canBuildLocally(drv) {
+		return drv, nil, fmt.Errorf("build %s: a %s system is required, but host is a %v system", drvPath, drv.System, system.Current())
+	}
+	for _, input := range drv.InputSources.All() {
+		log.Debugf(ctx, "Waiting for lock on %s (input to %s)...", input, drvPath)
+		unlockInput, err := s.inProgress.lock(ctx, input)
+		if err != nil {
+			return drv, nil, fmt.Errorf("build %s: wait for %s: %w", drvPath, input, err)
+		}
+		realInputPath := filepath.Join(s.realDir, input.Base())
+		_, err = os.Lstat(realInputPath)
+		unlockInput()
+		log.Debugf(ctx, "%s exists=%t (input to %s)", input, err == nil, drvPath)
+		if err != nil {
+			// TODO(someday): Import from substituter if not found.
+			return drv, nil, fmt.Errorf("build %s: input %s not present (%v)", drvPath, input, err)
+		}
+	}
+	return drv, nil, nil
+}
+
+func findExistingRealizations(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.Path) (map[string]*sortedset.Set[zbstore.Path], error) {
+	result := make(map[string]*sortedset.Set[zbstore.Path])
 	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "find_realizations.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":drv_path": drvPath,
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			p, err := zbstore.ParsePath(stmt.GetText("output_path"))
+			outName := stmt.GetText("output_name")
+			rawPath := stmt.GetText("output_path")
+			outPath, err := zbstore.ParsePath(rawPath)
 			if err != nil {
-				return err
+				log.Warnf(ctx, "Database contains realization with invalid path %q for %s!%s (%v)",
+					rawPath, drvPath, outName, err)
+				return nil
 			}
-			resp.Outputs = append(resp.Outputs, &zbstore.RealizeOutput{
-				Name: stmt.GetText("output_name"),
-				Path: zbstore.NonNull(p),
-			})
+			if outPath.Dir() != drvPath.Dir() {
+				log.Warnf(ctx, "Database contains realization %s for %s!%s (wrong directory!)",
+					outPath, drvPath, outName)
+				return nil
+			}
+			outSet := result[outName]
+			if outSet == nil {
+				outSet = new(sortedset.Set[zbstore.Path])
+				result[outName] = outSet
+			}
+			outSet.Add(outPath)
 			return nil
 		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("find existing realizations for %s: %v", drvPath, err)
 	}
-	return resp, nil
+	return result, nil
+}
+
+func (s *Server) readDerivation(drvPath zbstore.Path) (*zbstore.Derivation, error) {
+	drvName, isDrv := drvPath.DerivationName()
+	if !isDrv {
+		return nil, fmt.Errorf("read derivation %s: not a %s file", drvPath, zbstore.DerivationExt)
+	}
+	realDrvPath := filepath.Join(s.realDir, drvPath.Base())
+	if info, err := os.Lstat(realDrvPath); err != nil {
+		return nil, err
+	} else if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("read derivation %s: not a regular file", drvPath)
+	}
+	drvData, err := os.ReadFile(realDrvPath)
+	if err != nil {
+		return nil, fmt.Errorf("read derivation %s: %v", drvPath, err)
+	}
+	drv, err := zbstore.ParseDerivation(s.dir, drvName, drvData)
+	if err != nil {
+		return nil, fmt.Errorf("read derivation %s: %v", drvPath, err)
+	}
+	if err := validateOutputs(drv); err != nil {
+		return nil, fmt.Errorf("read derivation %s: %v", drvPath, err)
+	}
+	return drv, nil
 }
 
 func validateOutputs(drv *zbstore.Derivation) error {
+	if len(drv.Outputs) == 0 {
+		return fmt.Errorf("derivation must have at least one output")
+	}
 	for outputName, outputType := range drv.Outputs {
 		switch {
 		case outputType.IsFixed():
@@ -202,6 +372,140 @@ func validateOutputs(drv *zbstore.Derivation) error {
 		}
 	}
 	return nil
+}
+
+// resolveDerivation rewrites a derivation with input derivations
+// into one that uses the provided realizations as input sources,
+// then writes the derivation to the store.
+func (s *Server) resolveDerivation(ctx context.Context, conn *sqlite.Conn, drv *zbstore.Derivation, realizations map[zbstore.Path]map[string]zbstore.Path) (resolvedDrvPath zbstore.Path, resolvedDrv *zbstore.Derivation, unlock func(), err error) {
+	var rewrites []string
+	newInputs := new(sortedset.Set[zbstore.Path])
+	for inputDrvPath, inputOutputNames := range drv.InputDerivations {
+		for _, outputName := range inputOutputNames.All() {
+			placeholder := zbstore.UnknownCAOutputPlaceholder(inputDrvPath, outputName)
+			actualPath := realizations[inputDrvPath][outputName]
+			if actualPath == "" {
+				return "", nil, nil, fmt.Errorf("resolve derivation: missing realization for %s!%s", inputDrvPath, outputName)
+			}
+			newInputs.Add(actualPath)
+			rewrites = append(rewrites, placeholder, string(actualPath))
+		}
+	}
+	resolvedDrv = expandDerivationPlaceholders(strings.NewReplacer(rewrites...), drv)
+	resolvedDrv.InputSources.AddSet(newInputs)
+
+	resolvedDrvInfo, _, resolvedDrvData, err := resolvedDrv.Export(nix.SHA256)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("resolve derivation: %v", err)
+	}
+	resolvedDrvPath = resolvedDrvInfo.StorePath
+	log.Debugf(ctx, "Intending to write derivation %s", resolvedDrvPath)
+	unlock, err = s.inProgress.lock(ctx, resolvedDrvPath)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("resolve derivation: wait for %s: %v", resolvedDrvPath, err)
+	}
+	log.Debugf(ctx, "Acquired lock on derivation %s", resolvedDrvPath)
+	capturedUnlock := unlock
+	defer func() {
+		if err != nil {
+			capturedUnlock()
+		}
+	}()
+	realDrvPath := filepath.Join(s.buildDir, resolvedDrvPath.Base())
+	f, err := os.OpenFile(realDrvPath, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("resolve derivation: write %s: %v", resolvedDrvPath, err)
+	}
+	created, err := ensureFileContent(f, resolvedDrvData)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("resolve derivation: write %s: %v", resolvedDrvPath, err)
+	}
+	if created {
+		endFn, err := sqlitex.ImmediateTransaction(conn)
+		if err != nil {
+			if err := os.Remove(realDrvPath); err != nil {
+				log.Errorf(ctx, "Failed to clean up after failed database insert: %v", err)
+			}
+			return "", nil, nil, fmt.Errorf("resolve derivation: %v", err)
+		}
+		defer endFn(&err)
+		if err := insertObject(ctx, conn, resolvedDrvInfo); err != nil {
+			if err := os.Remove(realDrvPath); err != nil {
+				log.Errorf(ctx, "Failed to clean up after failed database insert: %v", err)
+			}
+			return "", nil, nil, fmt.Errorf("resolve derivation: %v", err)
+		}
+	}
+	return resolvedDrvInfo.StorePath, resolvedDrv, unlock, nil
+}
+
+type replacer interface {
+	Replace(s string) string
+}
+
+// expandDerivationPlaceholders returns a copy of drv
+// with r.Replace applied to its builder, builder arguments, and environment variables.
+// The returned derivation always has InputDerivations set to nil.
+func expandDerivationPlaceholders(r replacer, drv *zbstore.Derivation) *zbstore.Derivation {
+	drvCopy := &zbstore.Derivation{
+		Dir:          drv.Dir,
+		Name:         drv.Name,
+		InputSources: *drv.InputSources.Clone(),
+		Outputs:      maps.Clone(drv.Outputs),
+		System:       drv.System,
+		Builder:      r.Replace(drv.Builder),
+	}
+	if len(drv.Args) > 0 {
+		drvCopy.Args = make([]string, len(drv.Args))
+		for i, arg := range drv.Args {
+			drvCopy.Args[i] = r.Replace(arg)
+		}
+	}
+	if len(drv.Env) > 0 {
+		drvCopy.Env = make(map[string]string, len(drv.Env))
+		for k, v := range drv.Env {
+			drvCopy.Env[r.Replace(k)] = r.Replace(v)
+		}
+	}
+	return drvCopy
+}
+
+type fileWriter interface {
+	fs.File
+	io.Writer
+}
+
+// ensureFileContent writes data to f it is empty,
+// or verifies that the existing content is equal to data otherwise.
+// ensureFileContent always closes f.
+func ensureFileContent(f fileWriter, data []byte) (created bool, err error) {
+	defer func() {
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+	}()
+
+	info, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+
+	if gotSize := info.Size(); gotSize != 0 {
+		if gotSize != int64(len(data)) {
+			return false, fmt.Errorf("existing file content differs")
+		}
+		got, err := io.ReadAll(f)
+		if err != nil {
+			return false, fmt.Errorf("read existing content: %v", err)
+		}
+		if !bytes.Equal(got, data) {
+			return false, fmt.Errorf("existing file content differs")
+		}
+		return false, nil
+	}
+
+	_, err = f.Write(data)
+	return true, err
 }
 
 func runBuilderUnsandboxed(ctx context.Context, drvPath zbstore.Path, drv *zbstore.Derivation, buildDir string) (outPaths map[string]zbstore.Path, err error) {
@@ -229,20 +533,19 @@ func runBuilderUnsandboxed(ctx context.Context, drvPath zbstore.Path, drv *zbsto
 		}
 	}()
 
-	env := make(map[string]string)
-	addBaseEnv(env, drv.Dir, topTempDir)
-	for k, v := range drv.Env {
-		env[r.Replace(k)] = r.Replace(v)
-	}
-	builderArgs := make([]string, 0, len(drv.Args))
-	for _, arg := range drv.Args {
-		builderArgs = append(builderArgs, r.Replace(arg))
+	expandedDrv := expandDerivationPlaceholders(r, drv)
+	baseEnv := make(map[string]string)
+	addBaseEnv(baseEnv, drv.Dir, topTempDir)
+	for k, v := range baseEnv {
+		if _, overridden := expandedDrv.Env[k]; !overridden {
+			expandedDrv.Env[k] = v
+		}
 	}
 
-	c := exec.CommandContext(ctx, drv.Builder, builderArgs...)
+	c := exec.CommandContext(ctx, expandedDrv.Builder, expandedDrv.Args...)
 	setCancelFunc(c)
-	for _, k := range sortedKeys(env) {
-		c.Env = append(c.Env, k+"="+env[k])
+	for k, v := range sortedMap(expandedDrv.Env) {
+		c.Env = append(c.Env, k+"="+v)
 	}
 	c.Dir = topTempDir
 
@@ -254,10 +557,12 @@ func runBuilderUnsandboxed(ctx context.Context, drvPath zbstore.Path, drv *zbsto
 
 	log.Debugf(ctx, "Starting builder for %s...", drvPath)
 	if err := c.Run(); err != nil {
-		// TODO(now): Clean up outputs.
+		log.Debugf(ctx, "Builder for %s has failed: %v", drvPath, err)
+		// TODO(soon): Clean up outputs.
 		return nil, fmt.Errorf("build %s: %w", drvPath, err)
 	}
 
+	log.Debugf(ctx, "Builder for %s has finished successfully", drvPath)
 	return outPaths, nil
 }
 
@@ -701,6 +1006,16 @@ func sortedKeys[M ~map[K]V, K cmp.Ordered, V any](m M) []K {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+func sortedMap[M ~map[K]V, K cmp.Ordered, V any](m M) iter.Seq2[K, V] {
+	return func(yield func(K, V) bool) {
+		for _, k := range sortedKeys(m) {
+			if !yield(k, m[k]) {
+				return
+			}
+		}
+	}
 }
 
 type writeCounter int64
