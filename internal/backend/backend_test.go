@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"zombiezen.com/go/log/testlog"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/storetest"
@@ -21,7 +22,7 @@ import (
 
 func TestImport(t *testing.T) {
 	runTest := func(t *testing.T, dir zbstore.Directory, realStoreDir string) {
-		ctx := context.Background()
+		ctx := testlog.WithTB(context.Background(), t)
 
 		const fileContent = "Hello, World!\n"
 		exportBuffer := new(bytes.Buffer)
@@ -106,7 +107,7 @@ func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir strin
 	})
 	serverConn, clientConn := net.Pipe()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testlog.WithTB(context.Background(), tb))
 	serverReceiver := srv.NewNARReceiver()
 	serverCodec := zbstore.NewCodec(serverConn, serverReceiver)
 	wg.Add(1)
@@ -137,7 +138,7 @@ func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir strin
 		cancel()
 		wg.Wait()
 
-		serverReceiver.Cleanup(context.Background())
+		serverReceiver.Cleanup(testlog.WithTB(context.Background(), tb))
 		if err := srv.Close(); err != nil {
 			tb.Error("srv.Close:", err)
 		}
@@ -157,4 +158,9 @@ func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstore.Cod
 		return nil, nil, fmt.Errorf("store connection is %T (want %T)", generic, (*zbstore.Codec)(nil))
 	}
 	return codec, release, nil
+}
+
+func TestMain(m *testing.M) {
+	testlog.Main(nil)
+	os.Exit(m.Run())
 }

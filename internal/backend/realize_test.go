@@ -6,6 +6,7 @@ package backend
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"runtime"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"zombiezen.com/go/log/testlog"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/storetest"
@@ -22,8 +24,13 @@ import (
 	"zombiezen.com/go/zb/zbstore"
 )
 
+const (
+	shPath         = "/bin/sh"
+	powershellPath = `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+)
+
 func TestRealizeSingleDerivation(t *testing.T) {
-	ctx := context.Background()
+	ctx := testlog.WithTB(context.Background(), t)
 	dir, err := zbstore.CleanDirectory(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +68,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, string(dir), jsonrpc.MethodNotFoundHandler{}, nil)
+	client := newTestServer(t, dir, string(dir), &testBuildLogger{t}, nil)
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +96,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 }
 
 func TestRealizeMultiStep(t *testing.T) {
-	ctx := context.Background()
+	ctx := testlog.WithTB(context.Background(), t)
 	dir, err := zbstore.CleanDirectory(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +154,7 @@ func TestRealizeMultiStep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, string(dir), jsonrpc.MethodNotFoundHandler{}, nil)
+	client := newTestServer(t, dir, string(dir), &testBuildLogger{t}, nil)
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -172,16 +179,109 @@ func TestRealizeMultiStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
+}
 
-	if entries, err := os.ReadDir(string(dir)); err == nil {
-		for _, ent := range entries {
-			mode := ent.Type()
-			if info, err := ent.Info(); err == nil {
-				mode = info.Mode()
-			}
-			t.Logf("%v\t%s", mode, ent.Name())
+func TestRealizeFixed(t *testing.T) {
+	ctx := testlog.WithTB(context.Background(), t)
+	dir, err := zbstore.CleanDirectory(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExporter(exportBuffer)
+	const wantOutputName = "hello.txt"
+	const wantOutputContent = "Hello, World!\n"
+	wantOutputCA := nix.FlatFileContentAddress(mustParseHash(t, "sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31"))
+	drv1Content := &zbstore.Derivation{
+		Name:   wantOutputName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		Outputs: map[string]*zbstore.DerivationOutput{
+			zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(wantOutputCA),
+		},
+	}
+	if runtime.GOOS == "windows" {
+		drv1Content.Builder = powershellPath
+		drv1Content.Args = []string{
+			"-Command",
+			"\"Hello, World!`n\" | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}",
+		}
+	} else {
+		drv1Content.Builder = shPath
+		drv1Content.Args = []string{
+			"-c",
+			`echo 'Hello, World!' > $out`,
 		}
 	}
+	drv1Path, err := storetest.ExportDerivation(exporter, drv1Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Create a second derivation with the same output hash
+	// but a totally failing builder.
+	drv2Content := &zbstore.Derivation{
+		Name:   wantOutputName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		Outputs: map[string]*zbstore.DerivationOutput{
+			zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(wantOutputCA),
+		},
+	}
+	if runtime.GOOS == "windows" {
+		drv2Content.Builder = powershellPath
+		drv2Content.Args = []string{"-Command", "exit 1"}
+	} else {
+		drv2Content.Builder = shPath
+		drv2Content.Args = []string{"-c", "exit 1"}
+	}
+	drv2Path, err := storetest.ExportDerivation(exporter, drv2Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	wantOutputPath, err := zbstore.FixedCAOutputPath(dir, wantOutputName, wantOutputCA, zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := newTestServer(t, dir, string(dir), &testBuildLogger{t}, nil)
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(exportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
+		DrvPath: drv1Path,
+	})
+	if err != nil {
+		t.Fatal("build drv1:", err)
+	}
+	checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
+
+	// Now let's build the second derivation to see whether the output gets reused.
+	got = new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
+		DrvPath: drv2Path,
+	})
+	if err != nil {
+		t.Fatal("build drv2:", err)
+	}
+	checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
 }
 
 func checkSingleFileOutput(tb testing.TB, wantOutputPath zbstore.Path, wantOutputContent []byte, got *zbstore.RealizeResponse) {
@@ -273,12 +373,12 @@ func TestMutexMap(t *testing.T) {
 // with no dependencies other than the system shell.
 func catcatBuilder() (builder string, builderArgs []string) {
 	if runtime.GOOS == "windows" {
-		return `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, []string{
+		return powershellPath, []string{
 			"-Command",
 			`$x = Get-Content -Raw ${env:in} ; ($x + $x) | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}`,
 		}
 	}
-	return "/bin/sh", []string{
+	return shPath, []string{
 		"-c",
 		`while read line; do echo "$line"; echo "$line"; done < $in > $out`,
 	}
@@ -298,4 +398,36 @@ func singleFileOutputPath(dir zbstore.Directory, name string, data []byte, refs 
 		return "", err
 	}
 	return p, nil
+}
+
+type testBuildLogger struct {
+	tb testing.TB
+}
+
+func (l *testBuildLogger) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	return jsonrpc.ServeMux{
+		zbstore.LogMethod: jsonrpc.HandlerFunc(l.log),
+	}.JSONRPC(ctx, req)
+}
+
+func (l *testBuildLogger) log(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	args := new(zbstore.LogNotification)
+	if err := json.Unmarshal(req.Params, args); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	payload := args.Payload()
+	if len(payload) == 0 {
+		return nil, nil
+	}
+	l.tb.Logf("Build %s: %s", args.DrvPath, payload)
+	return nil, nil
+}
+
+func mustParseHash(tb testing.TB, s string) nix.Hash {
+	tb.Helper()
+	h, err := nix.ParseHash(s)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return h
 }
