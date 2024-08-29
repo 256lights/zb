@@ -128,7 +128,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			recv := srv.NewNARReceiver()
+			recv := srv.NewNARReceiver(ctx)
 			defer recv.Cleanup(ctx)
 
 			codec := zbstore.NewCodec(nopCloser{conn}, recv)

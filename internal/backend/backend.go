@@ -109,6 +109,11 @@ func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 			Result: json.RawMessage("false"),
 		}, nil
 	}
+	unlock, err := s.inProgress.lock(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if _, err := os.Lstat(filepath.Join(s.realDir, p.Base(), filepath.FromSlash(sub))); err != nil {
 		log.Debugf(ctx, "%s does not exist (%v)", args.Path, err)
 		return &jsonrpc.Response{
@@ -123,10 +128,12 @@ func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 
 // NARReceiver is a per-connection [zbstore.NARReceiver].
 type NARReceiver struct {
-	dir     zbstore.Directory
-	realDir string
-	dbPool  *sqlitemigration.Pool
-	tmpFile *os.File
+	ctx        context.Context
+	dir        zbstore.Directory
+	realDir    string
+	dbPool     *sqlitemigration.Pool
+	inProgress *mutexMap[zbstore.Path]
+	tmpFile    *os.File
 
 	hasher nix.Hasher
 	size   int64
@@ -134,12 +141,18 @@ type NARReceiver struct {
 
 // NewNARReceiver returns a new [NARReceiver] that is attached to the server.
 // Callers are responsible for calling [NARReceiver.Cleanup] after the receiver is no longer in use.
-func (s *Server) NewNARReceiver() *NARReceiver {
+func (s *Server) NewNARReceiver(ctx context.Context) *NARReceiver {
+	if ctx == nil {
+		// Easier to catch at this point on the stack than later.
+		panic("nil context passed to NewNARReceiver")
+	}
 	return &NARReceiver{
-		dir:     s.dir,
-		realDir: s.realDir,
-		dbPool:  s.db,
-		hasher:  *nix.NewHasher(nix.SHA256),
+		ctx:        ctx,
+		dir:        s.dir,
+		realDir:    s.realDir,
+		dbPool:     s.db,
+		inProgress: &s.inProgress,
+		hasher:     *nix.NewHasher(nix.SHA256),
 	}
 }
 
@@ -157,7 +170,7 @@ func (r *NARReceiver) Write(p []byte) (n int, err error) {
 }
 
 func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
-	ctx := context.TODO()
+	ctx := r.ctx
 	if r.tmpFile == nil {
 		// No bytes written? Not a valid NAR.
 		return
@@ -196,13 +209,41 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		return
 	}
 
+	unlock, err := r.inProgress.lock(ctx, trailer.StorePath)
+	if err != nil {
+		log.Errorf(ctx, "Failed to lock %s: %v", trailer.StorePath, err)
+		return
+	}
+	defer unlock()
+
+	realPath := filepath.Join(r.realDir, trailer.StorePath.Base())
+	if _, err := os.Lstat(realPath); err == nil {
+		log.Debugf(ctx, "Received NAR for %s. Exists in store, skipping...", trailer.StorePath)
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		log.Errorf(ctx, "Received NAR for %s. Failed to check for existence: %v", trailer.StorePath, err)
+		return
+	}
+
+	log.Debugf(ctx, "Extracting %s.nar to %s...", trailer.StorePath, realPath)
+	if err := extractNAR(realPath, r.tmpFile); err != nil {
+		log.Warnf(ctx, "Import of %s failed: %v", trailer.StorePath, err)
+		if err := os.RemoveAll(realPath); err != nil {
+			log.Errorf(ctx, "Failed to clean up partial import of %s: %v", trailer.StorePath, err)
+		}
+		return
+	}
+
+	log.Debugf(ctx, "Recording import of %s...", trailer.StorePath)
 	conn, err := r.dbPool.Get(ctx)
 	if err != nil {
 		log.Warnf(ctx, "Connecting to store database: %v", err)
+		if err := os.RemoveAll(realPath); err != nil {
+			log.Errorf(ctx, "Failed to clean up partial import of %s: %v", trailer.StorePath, err)
+		}
 		return
 	}
 	defer r.dbPool.Put(conn)
-
 	err = func() (err error) {
 		endFn, err := sqlitex.ImmediateTransaction(conn)
 		if err != nil {
@@ -219,24 +260,14 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 			CA:          ca,
 		})
 	}()
-	if errors.Is(err, errObjectExists) {
-		log.Debugf(ctx, "Received NAR for %s. Exists in database, skipping...", trailer.StorePath)
-		return
-	}
 	if err != nil {
-		log.Errorf(ctx, "Starting import of %s: %v", trailer.StorePath, err)
-		return
-	}
-	log.Debugf(ctx, "Inserted %s into database", trailer.StorePath)
-
-	realPath := filepath.Join(r.realDir, trailer.StorePath.Base())
-	if err := extractNAR(realPath, r.tmpFile); err != nil {
-		log.Warnf(ctx, "Import of %s failed: %v", trailer.StorePath, err)
+		log.Errorf(ctx, "Recording import of %s: %v", trailer.StorePath, err)
 		if err := os.RemoveAll(realPath); err != nil {
 			log.Errorf(ctx, "Failed to clean up partial import of %s: %v", trailer.StorePath, err)
 		}
 		return
 	}
+
 	log.Infof(ctx, "Imported %s", trailer.StorePath)
 }
 

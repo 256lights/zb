@@ -108,7 +108,7 @@ func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir strin
 	serverConn, clientConn := net.Pipe()
 
 	ctx, cancel := context.WithCancel(testlog.WithTB(context.Background(), tb))
-	serverReceiver := srv.NewNARReceiver()
+	serverReceiver := srv.NewNARReceiver(ctx)
 	serverCodec := zbstore.NewCodec(serverConn, serverReceiver)
 	wg.Add(1)
 	go func() {
