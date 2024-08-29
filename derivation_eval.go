@@ -4,7 +4,6 @@
 package zb
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"runtime/cgo"
@@ -293,31 +292,8 @@ func stringToEnvVar(l *lua.State, drv *zbstore.Derivation, idx int) (string, err
 	return s, nil
 }
 
-func marshalDerivation(drv *zbstore.Derivation) (zbstore.Path, nix.ContentAddress, []byte, error) {
-	if drv.Name == "" {
-		return "", nix.ContentAddress{}, nil, fmt.Errorf("missing name")
-	}
-	if drv.Dir == "" {
-		return "", nix.ContentAddress{}, nil, fmt.Errorf("missing store directory")
-	}
-
-	data, err := drv.MarshalText()
-	if err != nil {
-		return "", nix.ContentAddress{}, nil, err
-	}
-	h := nix.NewHasher(nix.SHA256)
-	h.Write(data)
-
-	ca := nix.TextContentAddress(h.SumHash())
-	p, err := zbstore.FixedCAOutputPath(drv.Dir, drv.Name+zbstore.DerivationExt, ca, drv.References())
-	if err != nil {
-		return "", ca, data, err
-	}
-	return p, ca, data, nil
-}
-
 func writeDerivation(ctx context.Context, store *jsonrpc.Client, drv *zbstore.Derivation) (zbstore.Path, error) {
-	p, ca, data, err := marshalDerivation(drv)
+	info, narBytes, _, err := drv.Export(nix.SHA256)
 	if err != nil {
 		if drv.Name == "" {
 			return "", fmt.Errorf("write derivation: %v", err)
@@ -327,15 +303,15 @@ func writeDerivation(ctx context.Context, store *jsonrpc.Client, drv *zbstore.De
 
 	var exists bool
 	err = jsonrpc.Do(ctx, store, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
-		Path: string(p),
+		Path: string(info.StorePath),
 	})
 	if err != nil {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
 	if exists {
 		// Already exists: no need to re-import.
-		log.Debugf(ctx, "Using existing store path %s", p)
-		return p, nil
+		log.Debugf(ctx, "Using existing store path %s", info.StorePath)
+		return info.StorePath, nil
 	}
 
 	exporter, closeExport, err := startExport(ctx, store)
@@ -344,14 +320,13 @@ func writeDerivation(ctx context.Context, store *jsonrpc.Client, drv *zbstore.De
 	}
 	defer closeExport(false)
 
-	err = writeSingleFileNAR(exporter, bytes.NewReader(data), int64(len(data)))
-	if err != nil {
+	if _, err := exporter.Write(narBytes); err != nil {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
 	err = exporter.Trailer(&zbstore.ExportTrailer{
-		StorePath:      p,
-		References:     drv.References().Others,
-		ContentAddress: ca,
+		StorePath:      info.StorePath,
+		References:     info.References,
+		ContentAddress: info.CA,
 	})
 	if err != nil {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
@@ -360,7 +335,7 @@ func writeDerivation(ctx context.Context, store *jsonrpc.Client, drv *zbstore.De
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
 
-	return p, nil
+	return info.StorePath, nil
 }
 
 func toDerivation(l *lua.State) (*zbstore.Derivation, error) {

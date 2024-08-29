@@ -8,10 +8,12 @@ import (
 	"cmp"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
 	"zombiezen.com/go/nix"
+	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/zb/internal/aterm"
 	"zombiezen.com/go/zb/sortedset"
 )
@@ -70,34 +72,55 @@ func ParseDerivation(dir Directory, name string, data []byte) (*Derivation, erro
 }
 
 // Export marshals the derivation in ATerm format
-// and computes the derivation's store path using the given hashing algorithm.
+// and computes the derivation's store metadata using the given hashing algorithm.
 //
 // At the moment, the only supported algorithm is [nix.SHA256].
-func (drv *Derivation) Export(hashType nix.HashType) (Path, []byte, error) {
+func (drv *Derivation) Export(hashType nix.HashType) (info *NARInfo, narBytes, drvBytes []byte, err error) {
 	if drv.Name == "" {
-		return "", nil, fmt.Errorf("export derivation: missing name")
+		return nil, nil, nil, fmt.Errorf("export derivation: missing name")
 	}
 	if drv.Dir == "" {
-		return "", nil, fmt.Errorf("export %s derivation: missing store directory", drv.Name)
+		return nil, nil, nil, fmt.Errorf("export derivation %s: missing store directory", drv.Name)
 	}
 
-	data, err := drv.marshalText(false)
+	drvBytes, err = drv.marshalText(false)
 	if err != nil {
-		return "", nil, err
+		return nil, nil, nil, err
 	}
-	h := nix.NewHasher(hashType)
-	h.Write(data)
+	narBuffer := new(bytes.Buffer)
+	narHasher := nix.NewHasher(hashType)
+	nw := nar.NewWriter(io.MultiWriter(narHasher, narBuffer))
+	if err := nw.WriteHeader(&nar.Header{Size: int64(len(drvBytes))}); err != nil {
+		return nil, nil, drvBytes, fmt.Errorf("export derivation %s: %v", drv.Name, err)
+	}
+	fileStart := nw.Offset()
+	if _, err := nw.Write(drvBytes); err != nil {
+		return nil, nil, drvBytes, fmt.Errorf("export derivation %s: %v", drv.Name, err)
+	}
+	if err := nw.Close(); err != nil {
+		return nil, nil, drvBytes, fmt.Errorf("export derivation %s: %v", drv.Name, err)
+	}
+	narBytes = narBuffer.Bytes()
+	// Point drvBytes to narBytes's backing array.
+	// The bytes will be the same, and then we can GC drvBytes quickly.
+	drvBytes = narBytes[fileStart : int(fileStart)+len(drvBytes)]
 
-	p, err := FixedCAOutputPath(
+	caHasher := nix.NewHasher(hashType)
+	caHasher.Write(drvBytes)
+	info = &NARInfo{
+		References:  drv.References().Others,
+		CA:          nix.TextContentAddress(caHasher.SumHash()),
+		NARHash:     narHasher.SumHash(),
+		NARSize:     int64(len(narBytes)),
+		Compression: nix.NoCompression,
+	}
+	info.StorePath, err = FixedCAOutputPath(
 		drv.Dir,
 		drv.Name+DerivationExt,
-		nix.TextContentAddress(h.SumHash()),
+		info.CA,
 		drv.References(),
 	)
-	if err != nil {
-		return "", data, err
-	}
-	return p, data, nil
+	return info, narBytes, drvBytes, err
 }
 
 // References returns the set of other store paths that the derivation references.

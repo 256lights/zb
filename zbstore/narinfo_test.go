@@ -333,6 +333,15 @@ func mustParseHash(tb testing.TB, s string) nix.Hash {
 	return h
 }
 
+func mustParseContentAddress(tb testing.TB, s string) ContentAddress {
+	tb.Helper()
+	ca, err := nix.ParseContentAddress(s)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return ca
+}
+
 func mustParseSignature(tb testing.TB, s string) *nix.Signature {
 	tb.Helper()
 	sig, err := nix.ParseSignature(s)

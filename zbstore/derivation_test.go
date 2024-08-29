@@ -4,7 +4,9 @@
 package zbstore
 
 import (
+	"bytes"
 	stdcmp "cmp"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,7 +22,7 @@ type derivationMarshalTest struct {
 	name     string
 	drv      *Derivation
 	want     []byte
-	wantPath Path
+	wantInfo *NARInfo
 }
 
 func derivationMarshalTests(tb testing.TB) []derivationMarshalTest {
@@ -46,8 +48,14 @@ func derivationMarshalTests(tb testing.TB) []derivationMarshalTest {
 				},
 			},
 
-			wantPath: "/nix/store/cs4n5mbm46xwzb9yxm983gzqh0k5b2hp-hello.drv",
-			want:     readTestdata(tb, "cs4n5mbm46xwzb9yxm983gzqh0k5b2hp-hello.drv"),
+			want: readTestdata(tb, "cs4n5mbm46xwzb9yxm983gzqh0k5b2hp-hello.drv"),
+			wantInfo: &NARInfo{
+				StorePath:   "/nix/store/cs4n5mbm46xwzb9yxm983gzqh0k5b2hp-hello.drv",
+				Compression: NoCompression,
+				NARHash:     mustParseHash(tb, "sha256-AWt/4VPlWMJuFr/Lv6udTDhLIiTxbrhahBVhOmS+DVY="),
+				NARSize:     400,
+				CA:          mustParseContentAddress(tb, "text:sha256:00pi87nqaryr7pxap7p5xns5xmzavrai1blrcwaygp6d44220yv1"),
+			},
 		},
 		{
 			name: "FixedOutput",
@@ -117,8 +125,21 @@ func derivationMarshalTests(tb testing.TB) []derivationMarshalTest {
 				},
 			},
 
-			want:     readTestdata(tb, "0006yk8jxi0nmbz09fq86zl037c1wx9b-automake-1.16.5.tar.xz.drv"),
-			wantPath: "/nix/store/0006yk8jxi0nmbz09fq86zl037c1wx9b-automake-1.16.5.tar.xz.drv",
+			want: readTestdata(tb, "0006yk8jxi0nmbz09fq86zl037c1wx9b-automake-1.16.5.tar.xz.drv"),
+			wantInfo: &NARInfo{
+				StorePath:   "/nix/store/0006yk8jxi0nmbz09fq86zl037c1wx9b-automake-1.16.5.tar.xz.drv",
+				Compression: NoCompression,
+				References: *sortedset.New[Path](
+					"/nix/store/6pj63b323pn53gpw3l5kdh1rly55aj15-bash-5.1-p16.drv",
+					"/nix/store/8kd1la3xqfzdcb3gsgpp3k98m7g3hw9d-curl-7.84.0.drv",
+					"/nix/store/g3m3mdgfsix265c945ncaxyyvx4cnx14-mirrors-list.drv",
+					"/nix/store/zq638s1j77mxzc52ql21l9ncl3qsjb2h-stdenv-linux.drv",
+					"/nix/store/lphxcbw5wqsjskipaw1fb8lcf6pm6ri6-builder.sh",
+				),
+				NARHash: mustParseHash(tb, "sha256-il2gtCUb4alEjO2MoHIAHoRspxs0TktnDPOcOA3Vt1g="),
+				NARSize: 2976,
+				CA:      mustParseContentAddress(tb, "text:sha256:1x46lr22vi3ql7dl0nlp5ninn93yhs5qnwn10qvsbn0rzlkdwwbp"),
+			},
 		},
 	}
 }
@@ -141,15 +162,36 @@ func TestDerivationExport(t *testing.T) {
 	t.Run("Export", func(t *testing.T) {
 		for _, test := range derivationMarshalTests(t) {
 			t.Run(test.name, func(t *testing.T) {
-				gotPath, got, err := test.drv.Export(nix.SHA256)
+				gotInfo, gotNAR, gotDrv, err := test.drv.Export(nix.SHA256)
+				if err != nil {
+					t.Error("Error:", err)
+				}
+				if diff := cmp.Diff(test.wantInfo, gotInfo, transformSortedSet[Path]()); diff != "" {
+					t.Errorf("info (-want +got):\n%s", diff)
+				}
+				if diff := cmp.Diff(test.want, gotDrv); diff != "" {
+					t.Errorf("drv (-want +got):\n%s", diff)
+				}
+
+				nr := nar.NewReader(bytes.NewReader(gotNAR))
+				hdr, err := nr.Next()
 				if err != nil {
 					t.Fatal(err)
 				}
-				if gotPath != test.wantPath {
-					t.Errorf("path = %q; want %q", gotPath, test.wantPath)
+				if got := hdr.Mode; !got.IsRegular() || got&0o111 != 0 {
+					t.Errorf("nar root mode = %v; want regular, non-executable", got)
 				}
-				if diff := cmp.Diff(test.want, got); diff != "" {
-					t.Errorf("data (-want +got):\n%s", diff)
+				if hdr.Mode.IsRegular() {
+					got, err := io.ReadAll(nr)
+					if err != nil {
+						t.Fatal("Read NAR content:", err)
+					}
+					if diff := cmp.Diff(test.want, got); diff != "" {
+						t.Errorf("drv inside NAR (-want +got):\n%s", diff)
+					}
+					if _, err := nr.Next(); err != io.EOF {
+						t.Errorf("after .drv file, nr.Next() = _, %v; want _, %v", err, io.EOF)
+					}
 				}
 			})
 		}

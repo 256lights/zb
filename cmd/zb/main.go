@@ -224,13 +224,13 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 			return fmt.Errorf("%v is not a derivation", result)
 		}
 		// TODO(someday): Evaluation should store the path of the exported result.
-		p, _, err := drv.Export(nix.SHA256)
+		drvInfo, _, _, err := drv.Export(nix.SHA256)
 		if err != nil {
 			return err
 		}
 		resp := new(zbstore.RealizeResponse)
 		err = jsonrpc.Do(ctx, storeClient, zbstore.RealizeMethod, resp, &zbstore.RealizeRequest{
-			DrvPath: p,
+			DrvPath: drvInfo.StorePath,
 		})
 		if err != nil {
 			return err
