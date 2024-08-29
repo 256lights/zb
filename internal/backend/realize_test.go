@@ -284,6 +284,84 @@ func TestRealizeFixed(t *testing.T) {
 	checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
 }
 
+func TestRealizeFailure(t *testing.T) {
+	ctx := testlog.WithTB(context.Background(), t)
+	dir, err := zbstore.CleanDirectory(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExporter(exportBuffer)
+	const drvName = "hello.txt"
+	// Create a derivation that fails after creating its output.
+	drvContent := &zbstore.Derivation{
+		Name:   drvName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		Outputs: map[string]*zbstore.DerivationOutput{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	if runtime.GOOS == "windows" {
+		drvContent.Builder = powershellPath
+		drvContent.Args = []string{"-Command", "New-Item ${env:out} -type file ; exit 1"}
+	} else {
+		drvContent.Builder = shPath
+		drvContent.Args = []string{"-c", "echo -n '' > $out ; exit 1"}
+	}
+	drvPath, err := storetest.ExportDerivation(exporter, drvContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	client := newTestServer(t, dir, string(dir), &testBuildLogger{t}, nil)
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(exportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
+		DrvPath: drvPath,
+	})
+	if err != nil {
+		t.Fatal("build drv:", err)
+	}
+	want := &zbstore.RealizeResponse{
+		Outputs: []*zbstore.RealizeOutput{
+			{
+				Name: zbstore.DefaultDerivationOutputName,
+			},
+		},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("realize response (-want +got):\n%s", diff)
+	}
+	// Ensure that the build didn't leave files in the store.
+	storeListing, err := os.ReadDir(string(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ent := range storeListing {
+		name := ent.Name()
+		if name != drvPath.Base() {
+			t.Errorf("unknown object %s left in store", name)
+		}
+	}
+}
+
 func checkSingleFileOutput(tb testing.TB, wantOutputPath zbstore.Path, wantOutputContent []byte, got *zbstore.RealizeResponse) {
 	tb.Helper()
 	want := &zbstore.RealizeResponse{

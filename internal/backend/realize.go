@@ -615,7 +615,11 @@ func runBuilderUnsandboxed(ctx context.Context, drvPath zbstore.Path, drv *zbsto
 	log.Debugf(ctx, "Starting builder for %s...", drvPath)
 	if err := c.Run(); err != nil {
 		log.Debugf(ctx, "Builder for %s has failed: %v", drvPath, err)
-		// TODO(soon): Clean up outputs.
+		for outName, outPath := range outPaths {
+			if err := os.RemoveAll(string(outPath)); err != nil {
+				log.Warnf(ctx, "Clean up %s!%s from failed build: %v", drvPath, outName, err)
+			}
+		}
 		return nil, fmt.Errorf("build %s: %w", drvPath, err)
 	}
 
