@@ -352,8 +352,8 @@ func findExistingRealizations(ctx context.Context, conn *sqlite.Conn, drvPath zb
 				return nil
 			}
 			if outPath.Dir() != drvPath.Dir() {
-				log.Warnf(ctx, "Database contains realization %s for %s!%s (wrong directory!)",
-					outPath, drvPath, outName)
+				log.Warnf(ctx, "Database contains realization %s for %v (wrong directory!)",
+					outPath, zbstore.OutputReference{DrvPath: drvPath, OutputName: outName})
 				return nil
 			}
 			outSet := result[outName]
@@ -443,7 +443,10 @@ func (s *Server) resolveDerivation(ctx context.Context, conn *sqlite.Conn, drv *
 			placeholder := zbstore.UnknownCAOutputPlaceholder(inputDrvPath, outputName)
 			actualPath := realizations[inputDrvPath][outputName]
 			if actualPath == "" {
-				return "", nil, nil, fmt.Errorf("resolve derivation: missing realization for %s!%s", inputDrvPath, outputName)
+				return "", nil, nil, fmt.Errorf("resolve derivation: missing realization for %v", zbstore.OutputReference{
+					DrvPath:    inputDrvPath,
+					OutputName: outputName,
+				})
 			}
 			newInputs.Add(actualPath)
 			rewrites = append(rewrites, placeholder, string(actualPath))
@@ -617,7 +620,11 @@ func runBuilderUnsandboxed(ctx context.Context, drvPath zbstore.Path, drv *zbsto
 		log.Debugf(ctx, "Builder for %s has failed: %v", drvPath, err)
 		for outName, outPath := range outPaths {
 			if err := os.RemoveAll(string(outPath)); err != nil {
-				log.Warnf(ctx, "Clean up %s!%s from failed build: %v", drvPath, outName, err)
+				ref := zbstore.OutputReference{
+					DrvPath:    drvPath,
+					OutputName: outName,
+				}
+				log.Warnf(ctx, "Clean up %v from failed build: %v", ref, err)
 			}
 		}
 		return nil, fmt.Errorf("build %s: %w", drvPath, err)
@@ -627,7 +634,7 @@ func runBuilderUnsandboxed(ctx context.Context, drvPath zbstore.Path, drv *zbsto
 	return outPaths, nil
 }
 
-func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.DerivationOutput) (map[string]zbstore.Path, *strings.Replacer, error) {
+func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.DerivationOutputType) (map[string]zbstore.Path, *strings.Replacer, error) {
 	dir := drvPath.Dir()
 	drvName, ok := drvPath.DerivationName()
 	if !ok {
@@ -642,7 +649,11 @@ func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.Derivatio
 		if !outType.IsFloating() {
 			p, ok := outType.Path(dir, drvName, outName)
 			if !ok {
-				return nil, nil, fmt.Errorf("compute output path for %s!%s: unhandled output type", drvPath, outName)
+				ref := zbstore.OutputReference{
+					DrvPath:    drvPath,
+					OutputName: outName,
+				}
+				return nil, nil, fmt.Errorf("compute output path for %v: unhandled output type", ref)
 			}
 			paths[outName] = p
 			rewrites = append(rewrites, placeholder, string(p))
@@ -662,7 +673,7 @@ func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.Derivatio
 // postProcessBuiltOutput computes the metadata for a realized output.
 // drvPath is the store path of the ".drv" file that was realized.
 // buildPath is the path of the store object created during realization.
-// If outputType is fixed, then buildPath must be the store path computed by [zbstore.DerivationOutput.Path].
+// If outputType is fixed, then buildPath must be the store path computed by [zbstore.DerivationOutputType.Path].
 // inputs is the set of store paths that were inputs for the realized derivation.
 //
 // If postProcessBuiltOutput does not return an error,
@@ -670,7 +681,7 @@ func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.Derivatio
 // and has the hash and content address in the returned info.
 // If the outputType is floating,
 // then postProcessBuiltOutput likely will have moved the build artifact to its computed path.
-func postProcessBuiltOutput(ctx context.Context, realStoreDir string, drvPath, buildPath zbstore.Path, outputType *zbstore.DerivationOutput, inputs *sortedset.Set[zbstore.Path]) (*zbstore.NARInfo, error) {
+func postProcessBuiltOutput(ctx context.Context, realStoreDir string, drvPath, buildPath zbstore.Path, outputType *zbstore.DerivationOutputType, inputs *sortedset.Set[zbstore.Path]) (*zbstore.NARInfo, error) {
 	if ca, ok := outputType.FixedCA(); ok {
 		log.Debugf(ctx, "Verifying fixed output %s...", buildPath)
 		narHash, narSize, err := postProcessFixedOutput(realStoreDir, buildPath, ca)
@@ -938,7 +949,11 @@ func tempPath(drvPath zbstore.Path, outputName string) (zbstore.Path, error) {
 	digest := storepath.MakeDigest(h, string(dir), h2, name)
 	p, err := dir.Object(digest + "-" + name)
 	if err != nil {
-		return "", fmt.Errorf("make build temp path for %s!%s: %v", drvPath, outputName, err)
+		ref := zbstore.OutputReference{
+			DrvPath:    drvPath,
+			OutputName: outputName,
+		}
+		return "", fmt.Errorf("make build temp path for %v: %v", ref, err)
 	}
 	return p, nil
 }

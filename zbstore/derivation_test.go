@@ -43,7 +43,7 @@ func derivationMarshalTests(tb testing.TB) []derivationMarshalTest {
 					"outputHashMode": "recursive",
 					"system":         "x86_64-linux",
 				},
-				Outputs: map[string]*DerivationOutput{
+				Outputs: map[string]*DerivationOutputType{
 					"out": RecursiveFileFloatingCAOutput(nix.SHA256),
 				},
 			},
@@ -120,7 +120,7 @@ func derivationMarshalTests(tb testing.TB) []derivationMarshalTest {
 				InputSources: *sortedset.New[Path](
 					"/nix/store/lphxcbw5wqsjskipaw1fb8lcf6pm6ri6-builder.sh",
 				),
-				Outputs: map[string]*DerivationOutput{
+				Outputs: map[string]*DerivationOutputType{
 					"out": FixedCAOutput(nix.FlatFileContentAddress(mustParseHash(tb, "sha256:f01d58cd6d9d77fbdca9eb4bbd5ead1988228fdb73d6f7a201f5f8d6b118b469"))),
 				},
 			},
@@ -201,7 +201,7 @@ func TestDerivationExport(t *testing.T) {
 func TestParseDerivation(t *testing.T) {
 	derivationCompareOptions := cmp.Options{
 		cmpopts.EquateEmpty(),
-		cmp.AllowUnexported(DerivationOutput{}),
+		cmp.AllowUnexported(DerivationOutputType{}),
 		transformSortedSet[Path](),
 		transformSortedSet[string](),
 	}
@@ -222,7 +222,7 @@ func TestParseDerivation(t *testing.T) {
 func TestDerivationOutputPath(t *testing.T) {
 	tests := []struct {
 		name       string
-		out        *DerivationOutput
+		out        *DerivationOutputType
 		drvName    string
 		outputName string
 		want       Path

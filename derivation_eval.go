@@ -63,18 +63,18 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 	switch typ := l.RawField(1, "outputHashMode"); typ {
 	case lua.TypeNil:
 		if !h.IsZero() {
-			drv.Outputs = map[string]*zbstore.DerivationOutput{
+			drv.Outputs = map[string]*zbstore.DerivationOutputType{
 				zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(nix.FlatFileContentAddress(h)),
 			}
 		}
 	case lua.TypeString:
 		switch mode, _ := l.ToString(-1); mode {
 		case "flat":
-			drv.Outputs = map[string]*zbstore.DerivationOutput{
+			drv.Outputs = map[string]*zbstore.DerivationOutputType{
 				zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(nix.FlatFileContentAddress(h)),
 			}
 		case "recursive":
-			drv.Outputs = map[string]*zbstore.DerivationOutput{
+			drv.Outputs = map[string]*zbstore.DerivationOutputType{
 				zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(nix.RecursiveFileContentAddress(h)),
 			}
 		default:
@@ -87,7 +87,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 
 	if h.IsZero() {
 		// TODO(someday): Multiple outputs.
-		drv.Outputs = map[string]*zbstore.DerivationOutput{
+		drv.Outputs = map[string]*zbstore.DerivationOutputType{
 			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
 		}
 	}
@@ -196,9 +196,11 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 			}
 			placeholder = string(p)
 		}
-		l.PushStringContext(placeholder, []string{
-			"!" + outputName + "!" + string(drvPath),
-		})
+		ref := zbstore.OutputReference{
+			DrvPath:    drvPath,
+			OutputName: outputName,
+		}
+		l.PushStringContext(placeholder, []string{"!" + ref.String()})
 		if err := l.SetField(tableCopyIndex, outputName, 0); err != nil {
 			return 0, fmt.Errorf("derivation: %v", err)
 		}
@@ -274,17 +276,17 @@ func stringToEnvVar(l *lua.State, drv *zbstore.Derivation, idx int) (string, err
 	s, _ := l.ToString(-1)
 	for _, dep := range l.StringContext(-1) {
 		if rest, isDrv := strings.CutPrefix(dep, "!"); isDrv {
-			outputName, drvPath, ok := strings.Cut(rest, "!")
-			if !ok {
-				return "", fmt.Errorf("internal error: malformed context %q", dep)
+			ref, err := zbstore.ParseOutputReference(rest)
+			if err != nil {
+				return "", fmt.Errorf("internal error: malformed context: %v", err)
 			}
 			if drv.InputDerivations == nil {
 				drv.InputDerivations = make(map[zbstore.Path]*sortedset.Set[string])
 			}
-			if drv.InputDerivations[zbstore.Path(drvPath)] == nil {
-				drv.InputDerivations[zbstore.Path(drvPath)] = new(sortedset.Set[string])
+			if drv.InputDerivations[ref.DrvPath] == nil {
+				drv.InputDerivations[ref.DrvPath] = new(sortedset.Set[string])
 			}
-			drv.InputDerivations[zbstore.Path(drvPath)].Add(outputName)
+			drv.InputDerivations[ref.DrvPath].Add(ref.OutputName)
 		} else {
 			drv.InputSources.Add(zbstore.Path(dep))
 		}

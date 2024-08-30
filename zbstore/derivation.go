@@ -46,7 +46,7 @@ type Derivation struct {
 	// The mapped values are the set of output names that are used.
 	InputDerivations map[Path]*sortedset.Set[string]
 	// Outputs is the set of outputs that the derivation produces.
-	Outputs map[string]*DerivationOutput
+	Outputs map[string]*DerivationOutputType
 }
 
 // ParseDerivation parses a derivation from ATerm format.
@@ -153,6 +153,9 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 		if i > 0 {
 			buf = append(buf, ',')
 		}
+		if !IsValidOutputName(outName) {
+			return nil, fmt.Errorf("marshal %s derivation: invalid output name %q", drv.Name, outName)
+		}
 		var err error
 		buf, err = drv.Outputs[outName].marshalText(buf, drv.Dir, drv.Name, outName, maskOutputs)
 		if err != nil {
@@ -245,7 +248,7 @@ func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
 		}
 		s.UnreadToken()
 
-		outName, outType, err := parseDerivationOutput(s)
+		outName, outType, err := parseDerivationOutputType(s)
 		if err != nil {
 			return fmt.Errorf("parse %s derivation: %v", drv.Name, err)
 		}
@@ -405,6 +408,16 @@ func (drv *Derivation) parseEnv(s *aterm.Scanner) error {
 	}
 }
 
+// DefaultDerivationOutputName is the name of the primary output of a derivation.
+// It is omitted in a number of contexts.
+const DefaultDerivationOutputName = "out"
+
+// IsValidOutputName reports whether the given string is valid as a derivation output name.
+func IsValidOutputName(name string) bool {
+	// TODO(someday): This should be an allow list of characters.
+	return name != "" && !strings.ContainsAny(name, "^!")
+}
+
 type derivationOutputType int8
 
 const (
@@ -412,44 +425,40 @@ const (
 	floatingCAOutputType
 )
 
-// DefaultDerivationOutputName is the name of the primary output of a derivation.
-// It is omitted in a number of contexts.
-const DefaultDerivationOutputName = "out"
-
-// A DerivationOutput describes the content addressing scheme of an output of a [Derivation].
-type DerivationOutput struct {
+// A DerivationOutputType describes the content addressing scheme of an output of a [Derivation].
+type DerivationOutputType struct {
 	typ      derivationOutputType
 	ca       nix.ContentAddress
 	method   contentAddressMethod
 	hashAlgo nix.HashType
 }
 
-// FixedCAOutput returns a [DerivationOutput]
+// FixedCAOutput returns a [DerivationOutputType]
 // that must match the given content address assertion.
-func FixedCAOutput(ca nix.ContentAddress) *DerivationOutput {
-	return &DerivationOutput{
+func FixedCAOutput(ca nix.ContentAddress) *DerivationOutputType {
+	return &DerivationOutputType{
 		typ: fixedCAOutputType,
 		ca:  ca,
 	}
 }
 
-// FlatFileFloatingCAOutput returns a [DerivationOutput]
+// FlatFileFloatingCAOutput returns a [DerivationOutputType]
 // that must be a single file
 // and will be hashed with the given algorithm.
 // The hash will not be known until the derivation is realized.
-func FlatFileFloatingCAOutput(hashAlgo nix.HashType) *DerivationOutput {
-	return &DerivationOutput{
+func FlatFileFloatingCAOutput(hashAlgo nix.HashType) *DerivationOutputType {
+	return &DerivationOutputType{
 		typ:      floatingCAOutputType,
 		method:   flatFileIngestionMethod,
 		hashAlgo: hashAlgo,
 	}
 }
 
-// RecursiveFileFloatingCAOutput returns a [DerivationOutput]
+// RecursiveFileFloatingCAOutput returns a [DerivationOutputType]
 // that is hashed as a NAR with the given algorithm.
 // The hash will not be known until the derivation is realized.
-func RecursiveFileFloatingCAOutput(hashAlgo nix.HashType) *DerivationOutput {
-	return &DerivationOutput{
+func RecursiveFileFloatingCAOutput(hashAlgo nix.HashType) *DerivationOutputType {
+	return &DerivationOutputType{
 		typ:      floatingCAOutputType,
 		method:   recursiveFileIngestionMethod,
 		hashAlgo: hashAlgo,
@@ -457,31 +466,31 @@ func RecursiveFileFloatingCAOutput(hashAlgo nix.HashType) *DerivationOutput {
 }
 
 // IsFixed reports whether the output was created by [FixedCAOutput].
-func (out *DerivationOutput) IsFixed() bool {
-	if out == nil {
+func (t *DerivationOutputType) IsFixed() bool {
+	if t == nil {
 		return false
 	}
-	return out.typ == fixedCAOutputType
+	return t.typ == fixedCAOutputType
 }
 
 // IsFloating reports whether the output's content hash cannot be known
 // until the derivation is realized.
 // This is true for outputs returned by
 // [FlatFileFloatingCAOutput] and [RecursiveFileFloatingCAOutput].
-func (out *DerivationOutput) IsFloating() bool {
-	if out == nil {
+func (t *DerivationOutputType) IsFloating() bool {
+	if t == nil {
 		return false
 	}
-	return out.typ == floatingCAOutputType
+	return t.typ == floatingCAOutputType
 }
 
 // HashType returns the hash type of the derivation output, if present.
-func (out *DerivationOutput) HashType() (_ nix.HashType, ok bool) {
+func (t *DerivationOutputType) HashType() (_ nix.HashType, ok bool) {
 	switch {
-	case out.IsFixed():
-		return out.ca.Hash().Type(), true
-	case out.IsFloating():
-		return out.hashAlgo, true
+	case t.IsFixed():
+		return t.ca.Hash().Type(), true
+	case t.IsFloating():
+		return t.hashAlgo, true
 	default:
 		return 0, false
 	}
@@ -489,7 +498,7 @@ func (out *DerivationOutput) HashType() (_ nix.HashType, ok bool) {
 
 // FixedCA returns a fixed hash output's content address.
 // ok is true only if the output was created by [FixedCAOutput].
-func (out *DerivationOutput) FixedCA() (_ ContentAddress, ok bool) {
+func (out *DerivationOutputType) FixedCA() (_ ContentAddress, ok bool) {
 	if !out.IsFixed() {
 		return ContentAddress{}, false
 	}
@@ -498,69 +507,69 @@ func (out *DerivationOutput) FixedCA() (_ ContentAddress, ok bool) {
 
 // IsRecursiveFile reports whether the derivation output
 // uses recursive (NAR) hashing.
-func (out *DerivationOutput) IsRecursiveFile() bool {
-	if out == nil {
+func (t *DerivationOutputType) IsRecursiveFile() bool {
+	if t == nil {
 		return false
 	}
-	return out.method == recursiveFileIngestionMethod
+	return t.method == recursiveFileIngestionMethod
 }
 
 // Path returns a fixed output's store object path
 // for the given store (e.g. "/zb/store"),
 // derivation name (e.g. "hello"),
 // and output name (e.g. "out").
-func (out *DerivationOutput) Path(store Directory, drvName, outputName string) (path Path, ok bool) {
-	if out == nil {
+func (t *DerivationOutputType) Path(store Directory, drvName, outputName string) (path Path, ok bool) {
+	if t == nil {
 		return "", false
 	}
-	switch out.typ {
+	switch t.typ {
 	case fixedCAOutputType:
 		if outputName != DefaultDerivationOutputName {
 			drvName += "-" + outputName
 		}
-		p, err := FixedCAOutputPath(store, drvName, out.ca, References{})
+		p, err := FixedCAOutputPath(store, drvName, t.ca, References{})
 		return p, err == nil
 	default:
 		return "", false
 	}
 }
 
-func (out *DerivationOutput) marshalText(dst []byte, storeDir Directory, drvName, outName string, maskOutputs bool) ([]byte, error) {
+func (t *DerivationOutputType) marshalText(dst []byte, storeDir Directory, drvName, outName string, maskOutputs bool) ([]byte, error) {
 	dst = append(dst, '(')
 	dst = aterm.AppendString(dst, outName)
-	if out == nil {
+	if t == nil {
 		dst = append(dst, `,"","","")`...)
 		return dst, nil
 	}
-	switch out.typ {
+	switch t.typ {
 	case fixedCAOutputType:
 		if maskOutputs {
 			dst = append(dst, `,""`...)
 		} else {
 			dst = append(dst, ',')
-			p, ok := out.Path(storeDir, drvName, outName)
+			p, ok := t.Path(storeDir, drvName, outName)
 			if !ok {
 				return dst, fmt.Errorf("marshal %s output: invalid path", outName)
 			}
 			dst = aterm.AppendString(dst, string(p))
 		}
 		dst = append(dst, ',')
-		h := out.ca.Hash()
-		dst = aterm.AppendString(dst, methodOfContentAddress(out.ca).prefix()+h.Type().String())
+		h := t.ca.Hash()
+		dst = aterm.AppendString(dst, methodOfContentAddress(t.ca).prefix()+h.Type().String())
 		dst = append(dst, ',')
 		dst = aterm.AppendString(dst, h.RawBase16())
 	case floatingCAOutputType:
 		dst = append(dst, `,"",`...)
-		dst = aterm.AppendString(dst, out.method.prefix()+out.hashAlgo.String())
+		dst = aterm.AppendString(dst, t.method.prefix()+t.hashAlgo.String())
 		dst = append(dst, `,""`...)
 	default:
-		return dst, fmt.Errorf("marshal %s output: invalid type %v", outName, out.typ)
+		return dst, fmt.Errorf("marshal %s output: invalid type %v", outName, t.typ)
 	}
 	dst = append(dst, ')')
 	return dst, nil
 }
 
-func parseDerivationOutput(s *aterm.Scanner) (outName string, out *DerivationOutput, err error) {
+func parseDerivationOutputType(s *aterm.Scanner) (outName string, out *DerivationOutputType, err error) {
 	tok, err := expectToken(s, aterm.LParen)
 	if err != nil {
 		return "", nil, fmt.Errorf("parse output: %v", err)
@@ -571,6 +580,9 @@ func parseDerivationOutput(s *aterm.Scanner) (outName string, out *DerivationOut
 		return "", nil, fmt.Errorf("parse output: name: %v", err)
 	}
 	outName = tok.Value
+	if !IsValidOutputName(outName) {
+		return "", nil, fmt.Errorf("parse output: name: invalid name %q", outName)
+	}
 
 	tok, err = expectToken(s, aterm.String)
 	if err != nil {
@@ -604,7 +616,7 @@ func parseDerivationOutput(s *aterm.Scanner) (outName string, out *DerivationOut
 	}
 	switch {
 	case path == "" && hashHex == "":
-		out = &DerivationOutput{
+		out = &DerivationOutputType{
 			typ:      floatingCAOutputType,
 			method:   method,
 			hashAlgo: hashAlgo,
@@ -649,6 +661,57 @@ func parseHashAlgorithm(s string) (contentAddressMethod, nix.HashType, error) {
 		return method, 0, err
 	}
 	return method, typ, nil
+}
+
+// OutputReference is a reference to an output of a derivation.
+type OutputReference struct {
+	DrvPath    Path
+	OutputName string
+}
+
+// ParseOutputReference parses the result of [OutputReference.String]
+// back into an OutputReference.
+func ParseOutputReference(s string) (OutputReference, error) {
+	i := strings.LastIndexByte(s, '!')
+	if i < 0 {
+		return OutputReference{}, fmt.Errorf("parse output reference %q: missing '!' separator", s)
+	}
+	result := OutputReference{OutputName: s[i+1:]}
+	if !IsValidOutputName(result.OutputName) {
+		return OutputReference{}, fmt.Errorf("parse output reference %q: invalid output name %q", s, result.OutputName)
+	}
+	var err error
+	result.DrvPath, err = ParsePath(s[:i])
+	if err != nil {
+		return OutputReference{}, fmt.Errorf("parse output reference %q: %v", s, err)
+	}
+	if _, isDrv := result.DrvPath.DerivationName(); !isDrv {
+		return OutputReference{}, fmt.Errorf("parse output reference %q: not a derivation", s)
+	}
+	return result, nil
+}
+
+// String returns the path and the output name separated by "!".
+func (ref OutputReference) String() string {
+	return string(ref.DrvPath) + "!" + ref.OutputName
+}
+
+// MarshalText returns the output reference in the same format as [OutputReference.String].
+func (ref OutputReference) MarshalText() ([]byte, error) {
+	if ref.DrvPath == "" {
+		return nil, fmt.Errorf("marshal output reference: empty path")
+	}
+	if !IsValidOutputName(ref.OutputName) {
+		return nil, fmt.Errorf("marshal output reference: invalid output name %q", ref.OutputName)
+	}
+	return []byte(ref.String()), nil
+}
+
+// UnmarshalText parses the output reference like [ParseOutputReference] into ref.
+func (ref *OutputReference) UnmarshalText(text []byte) error {
+	var err error
+	*ref, err = ParseOutputReference(string(text))
+	return err
 }
 
 // HashPlaceholder returns the placeholder string used in leiu of a derivation's output path.

@@ -55,7 +55,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 		InputSources: *sortedset.New(
 			inputFilePath,
 		),
-		Outputs: map[string]*zbstore.DerivationOutput{
+		Outputs: map[string]*zbstore.DerivationOutputType{
 			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
 		},
 	}
@@ -120,7 +120,7 @@ func TestRealizeMultiStep(t *testing.T) {
 		InputSources: *sortedset.New(
 			inputFilePath,
 		),
-		Outputs: map[string]*zbstore.DerivationOutput{
+		Outputs: map[string]*zbstore.DerivationOutputType{
 			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
 		},
 	}
@@ -141,7 +141,7 @@ func TestRealizeMultiStep(t *testing.T) {
 		InputDerivations: map[zbstore.Path]*sortedset.Set[string]{
 			drv1Path: sortedset.New(zbstore.DefaultDerivationOutputName),
 		},
-		Outputs: map[string]*zbstore.DerivationOutput{
+		Outputs: map[string]*zbstore.DerivationOutputType{
 			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
 		},
 	}
@@ -200,7 +200,7 @@ func TestRealizeFixed(t *testing.T) {
 		Env: map[string]string{
 			"out": zbstore.HashPlaceholder("out"),
 		},
-		Outputs: map[string]*zbstore.DerivationOutput{
+		Outputs: map[string]*zbstore.DerivationOutputType{
 			zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(wantOutputCA),
 		},
 	}
@@ -230,7 +230,7 @@ func TestRealizeFixed(t *testing.T) {
 		Env: map[string]string{
 			"out": zbstore.HashPlaceholder("out"),
 		},
-		Outputs: map[string]*zbstore.DerivationOutput{
+		Outputs: map[string]*zbstore.DerivationOutputType{
 			zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(wantOutputCA),
 		},
 	}
@@ -302,7 +302,7 @@ func TestRealizeFailure(t *testing.T) {
 		Env: map[string]string{
 			"out": zbstore.HashPlaceholder("out"),
 		},
-		Outputs: map[string]*zbstore.DerivationOutput{
+		Outputs: map[string]*zbstore.DerivationOutputType{
 			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
 		},
 	}
