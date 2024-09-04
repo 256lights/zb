@@ -17,6 +17,7 @@ import (
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/zb/internal/backend"
 	"zombiezen.com/go/zb/internal/jsonrpc"
+	"zombiezen.com/go/zb/internal/sets"
 	"zombiezen.com/go/zb/zbstore"
 )
 
@@ -73,7 +74,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
-	openConns := make(map[*net.UnixConn]struct{})
+	openConns := make(sets.Set[*net.UnixConn])
 	var openConnsMu sync.Mutex
 	wg.Add(1)
 	go func() {
@@ -87,7 +88,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 			log.Errorf(ctx, "Closing Unix socket: %v", err)
 		}
 		openConnsMu.Lock()
-		for conn := range openConns {
+		for conn := range openConns.All() {
 			if err := conn.CloseRead(); err != nil {
 				log.Errorf(ctx, "Closing Unix socket: %v", err)
 			}
@@ -122,7 +123,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 			return err
 		}
 		openConnsMu.Lock()
-		openConns[conn] = struct{}{}
+		openConns.Add(conn)
 		openConnsMu.Unlock()
 
 		wg.Add(1)
@@ -139,7 +140,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 			peer.Close()
 
 			openConnsMu.Lock()
-			delete(openConns, conn)
+			openConns.Delete(conn)
 			openConnsMu.Unlock()
 
 			if err := conn.Close(); err != nil {
