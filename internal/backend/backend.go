@@ -23,7 +23,7 @@ import (
 	"zombiezen.com/go/sqlite/sqlitemigration"
 	"zombiezen.com/go/sqlite/sqlitex"
 	"zombiezen.com/go/zb/internal/jsonrpc"
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/sets"
 	"zombiezen.com/go/zb/zbstore"
 )
 
@@ -273,7 +273,7 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 // verifyContentAddress validates that the content matches the given content address.
 // If the content address is the zero value,
 // then the content address is computed as a "source" store object.
-func verifyContentAddress(path zbstore.Path, narContent io.Reader, refs *sortedset.Set[zbstore.Path], ca nix.ContentAddress) (nix.ContentAddress, error) {
+func verifyContentAddress(path zbstore.Path, narContent io.Reader, refs *sets.Sorted[zbstore.Path], ca nix.ContentAddress) (nix.ContentAddress, error) {
 	storeRefs := zbstore.MakeReferences(path, refs)
 	if !ca.IsZero() {
 		if err := zbstore.ValidateContentAddress(ca, storeRefs); err != nil {

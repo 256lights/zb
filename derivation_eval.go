@@ -13,7 +13,7 @@ import (
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/lua"
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/sets"
 	"zombiezen.com/go/zb/zbstore"
 )
 
@@ -281,10 +281,10 @@ func stringToEnvVar(l *lua.State, drv *zbstore.Derivation, idx int) (string, err
 				return "", fmt.Errorf("internal error: malformed context: %v", err)
 			}
 			if drv.InputDerivations == nil {
-				drv.InputDerivations = make(map[zbstore.Path]*sortedset.Set[string])
+				drv.InputDerivations = make(map[zbstore.Path]*sets.Sorted[string])
 			}
 			if drv.InputDerivations[ref.DrvPath] == nil {
-				drv.InputDerivations[ref.DrvPath] = new(sortedset.Set[string])
+				drv.InputDerivations[ref.DrvPath] = new(sets.Sorted[string])
 			}
 			drv.InputDerivations[ref.DrvPath].Add(ref.OutputName)
 		} else {

@@ -1,8 +1,7 @@
 // Copyright 2024 Roxy Light
 // SPDX-License-Identifier: MIT
 
-// Package sortedset provides a set type implemented as a sorted list.
-package sortedset
+package sets
 
 import (
 	"cmp"
@@ -10,23 +9,23 @@ import (
 	"slices"
 )
 
-// Set is a sorted list of unique items.
+// Sorted is a sorted list of unique items.
 // The zero value is an empty set.
 // nil is treated like an empty set, but any attempts to add to it will panic.
-type Set[T cmp.Ordered] struct {
+type Sorted[T cmp.Ordered] struct {
 	elems []T
 }
 
-// New returns a new set with the given elements.
-// Equivalent to calling [Set.Add] on a zero set.
-func New[T cmp.Ordered](elem ...T) *Set[T] {
-	s := new(Set[T])
+// NewSorted returns a new set with the given elements.
+// Equivalent to calling [Sorted.Add] on a zero set.
+func NewSorted[T cmp.Ordered](elem ...T) *Sorted[T] {
+	s := new(Sorted[T])
 	s.Add(elem...)
 	return s
 }
 
 // Add adds the arguments to the set.
-func (s *Set[T]) Add(elem ...T) {
+func (s *Sorted[T]) Add(elem ...T) {
 	for _, x := range elem {
 		i, present := slices.BinarySearch(s.elems, x)
 		if !present {
@@ -36,14 +35,14 @@ func (s *Set[T]) Add(elem ...T) {
 }
 
 // AddSet adds the elements in other to s.
-func (s *Set[T]) AddSet(other *Set[T]) {
+func (s *Sorted[T]) AddSet(other *Sorted[T]) {
 	// TODO(someday): Because we know others.elems is sorted,
 	// we can almost certainly do this more efficiently.
 	s.Add(other.elems...)
 }
 
 // Has reports whether the set contains x.
-func (s *Set[T]) Has(x T) bool {
+func (s *Sorted[T]) Has(x T) bool {
 	if s == nil {
 		return false
 	}
@@ -52,21 +51,21 @@ func (s *Set[T]) Has(x T) bool {
 }
 
 // Clone returns a new set that contains the same elements as s.
-func (s *Set[T]) Clone() *Set[T] {
+func (s *Sorted[T]) Clone() *Sorted[T] {
 	if s == nil {
-		return new(Set[T])
+		return new(Sorted[T])
 	}
-	return &Set[T]{elems: slices.Clone(s.elems)}
+	return &Sorted[T]{elems: slices.Clone(s.elems)}
 }
 
 // Grow ensures that the set can add n more unique elements
 // without allocating.
-func (s *Set[T]) Grow(n int) {
+func (s *Sorted[T]) Grow(n int) {
 	s.elems = slices.Grow(s.elems, n)
 }
 
 // Len returns the number of elements in the set.
-func (s *Set[T]) Len() int {
+func (s *Sorted[T]) Len() int {
 	if s == nil {
 		return 0
 	}
@@ -74,12 +73,12 @@ func (s *Set[T]) Len() int {
 }
 
 // At returns the i'th element in ascending order of the set.
-func (s *Set[T]) At(i int) T {
+func (s *Sorted[T]) At(i int) T {
 	return s.elems[i]
 }
 
 // All returns an iterator of the elements of s.
-func (s *Set[T]) All() iter.Seq2[int, T] {
+func (s *Sorted[T]) All() iter.Seq2[int, T] {
 	return func(yield func(int, T) bool) {
 		for i := 0; i < s.Len(); i++ {
 			if !yield(i, s.At(i)) {
@@ -90,7 +89,7 @@ func (s *Set[T]) All() iter.Seq2[int, T] {
 }
 
 // Delete removes x from the set if present.
-func (s *Set[T]) Delete(x T) {
+func (s *Sorted[T]) Delete(x T) {
 	if s == nil {
 		return
 	}
@@ -103,7 +102,7 @@ func (s *Set[T]) Delete(x T) {
 
 // Clear removes all elements from the set,
 // but retains the space allocated for the set.
-func (s *Set[T]) Clear() {
+func (s *Sorted[T]) Clear() {
 	if s == nil {
 		return
 	}

@@ -5,7 +5,6 @@ package zbstore
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -15,7 +14,8 @@ import (
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/zb/internal/aterm"
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/internal/xmaps"
+	"zombiezen.com/go/zb/sets"
 )
 
 // DerivationExt is the file extension for a marshalled [Derivation].
@@ -41,10 +41,10 @@ type Derivation struct {
 	Env map[string]string
 
 	// InputSources is the set of source filesystem objects that this derivation depends on.
-	InputSources sortedset.Set[Path]
+	InputSources sets.Sorted[Path]
 	// InputDerivations is the set of derivations that this derivation depends on.
 	// The mapped values are the set of output names that are used.
-	InputDerivations map[Path]*sortedset.Set[string]
+	InputDerivations map[Path]*sets.Sorted[string]
 	// Outputs is the set of outputs that the derivation produces.
 	Outputs map[string]*DerivationOutputType
 }
@@ -149,7 +149,7 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 
 	var buf []byte
 	buf = append(buf, "Derive(["...)
-	for i, outName := range sortedKeys(drv.Outputs) {
+	for i, outName := range xmaps.SortedKeys(drv.Outputs) {
 		if i > 0 {
 			buf = append(buf, ',')
 		}
@@ -164,7 +164,7 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 	}
 
 	buf = append(buf, "],["...)
-	for i, drvPath := range sortedKeys(drv.InputDerivations) {
+	for i, drvPath := range xmaps.SortedKeys(drv.InputDerivations) {
 		if i > 0 {
 			buf = append(buf, ',')
 		}
@@ -212,7 +212,7 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 	}
 
 	buf = append(buf, "],["...)
-	for i, k := range sortedKeys(drv.Env) {
+	for i, k := range xmaps.SortedKeys(drv.Env) {
 		if i > 0 {
 			buf = append(buf, ',')
 		}
@@ -237,7 +237,7 @@ func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
 	if _, err := expectToken(s, aterm.LBracket); err != nil {
 		return fmt.Errorf("parse %s derivation: outputs: %v", drv.Name, err)
 	}
-	drv.Outputs = initMap(drv.Outputs)
+	drv.Outputs = xmaps.Init(drv.Outputs)
 	for {
 		tok, err := s.ReadToken()
 		if err != nil {
@@ -262,7 +262,7 @@ func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
 	if _, err := expectToken(s, aterm.LBracket); err != nil {
 		return fmt.Errorf("parse %s derivation: input derivations: %v", drv.Name, err)
 	}
-	drv.InputDerivations = initMap(drv.InputDerivations)
+	drv.InputDerivations = xmaps.Init(drv.InputDerivations)
 	for {
 		tok, err := s.ReadToken()
 		if err != nil {
@@ -335,7 +335,7 @@ func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
 	return nil
 }
 
-func parseInputDerivation(s *aterm.Scanner) (drvPath Path, outputNames *sortedset.Set[string], err error) {
+func parseInputDerivation(s *aterm.Scanner) (drvPath Path, outputNames *sets.Sorted[string], err error) {
 	if _, err := expectToken(s, aterm.LParen); err != nil {
 		return "", nil, fmt.Errorf("parse input derivation: %v", err)
 	}
@@ -346,7 +346,7 @@ func parseInputDerivation(s *aterm.Scanner) (drvPath Path, outputNames *sortedse
 	}
 	drvPathString := tok.Value
 
-	outputNames = new(sortedset.Set[string])
+	outputNames = new(sets.Sorted[string])
 	err = parseStringList(s, func(val string) error {
 		outputNames.Add(val)
 		return nil
@@ -370,7 +370,7 @@ func (drv *Derivation) parseEnv(s *aterm.Scanner) error {
 	if _, err := expectToken(s, aterm.LBracket); err != nil {
 		return fmt.Errorf("parse %s derivation: env: expected '[', found %v", drv.Name, err)
 	}
-	drv.Env = initMap(drv.Env)
+	drv.Env = xmaps.Init(drv.Env)
 	for {
 		tok, err := s.ReadToken()
 		if err != nil {
@@ -782,21 +782,4 @@ func expectToken(s *aterm.Scanner, kind aterm.TokenKind) (aterm.Token, error) {
 		return tok, fmt.Errorf("expected %s, found %v", want, tok)
 	}
 	return tok, nil
-}
-
-func sortedKeys[M ~map[K]V, K cmp.Ordered, V any](m M) []K {
-	keys := make([]K, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
-}
-
-func initMap[M ~map[K]V, K comparable, V any](m M) M {
-	if m == nil {
-		return make(M)
-	}
-	clear(m)
-	return m
 }

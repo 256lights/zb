@@ -15,7 +15,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/sets"
 )
 
 type derivationMarshalTest struct {
@@ -111,13 +111,13 @@ func derivationMarshalTests(tb testing.TB) []derivationMarshalTest {
 					"system":                      "x86_64-linux",
 					"urls":                        "mirror://gnu/automake/automake-1.16.5.tar.xz",
 				},
-				InputDerivations: map[Path]*sortedset.Set[string]{
-					"/nix/store/6pj63b323pn53gpw3l5kdh1rly55aj15-bash-5.1-p16.drv": sortedset.New("out"),
-					"/nix/store/8kd1la3xqfzdcb3gsgpp3k98m7g3hw9d-curl-7.84.0.drv":  sortedset.New("dev"),
-					"/nix/store/g3m3mdgfsix265c945ncaxyyvx4cnx14-mirrors-list.drv": sortedset.New("out"),
-					"/nix/store/zq638s1j77mxzc52ql21l9ncl3qsjb2h-stdenv-linux.drv": sortedset.New("out"),
+				InputDerivations: map[Path]*sets.Sorted[string]{
+					"/nix/store/6pj63b323pn53gpw3l5kdh1rly55aj15-bash-5.1-p16.drv": sets.NewSorted("out"),
+					"/nix/store/8kd1la3xqfzdcb3gsgpp3k98m7g3hw9d-curl-7.84.0.drv":  sets.NewSorted("dev"),
+					"/nix/store/g3m3mdgfsix265c945ncaxyyvx4cnx14-mirrors-list.drv": sets.NewSorted("out"),
+					"/nix/store/zq638s1j77mxzc52ql21l9ncl3qsjb2h-stdenv-linux.drv": sets.NewSorted("out"),
 				},
-				InputSources: *sortedset.New[Path](
+				InputSources: *sets.NewSorted[Path](
 					"/nix/store/lphxcbw5wqsjskipaw1fb8lcf6pm6ri6-builder.sh",
 				),
 				Outputs: map[string]*DerivationOutputType{
@@ -129,7 +129,7 @@ func derivationMarshalTests(tb testing.TB) []derivationMarshalTest {
 			wantInfo: &NARInfo{
 				StorePath:   "/nix/store/0006yk8jxi0nmbz09fq86zl037c1wx9b-automake-1.16.5.tar.xz.drv",
 				Compression: NoCompression,
-				References: *sortedset.New[Path](
+				References: *sets.NewSorted[Path](
 					"/nix/store/6pj63b323pn53gpw3l5kdh1rly55aj15-bash-5.1-p16.drv",
 					"/nix/store/8kd1la3xqfzdcb3gsgpp3k98m7g3hw9d-curl-7.84.0.drv",
 					"/nix/store/g3m3mdgfsix265c945ncaxyyvx4cnx14-mirrors-list.drv",
@@ -295,7 +295,7 @@ func hashString(typ nix.HashType, s string) nix.Hash {
 }
 
 func transformSortedSet[E stdcmp.Ordered]() cmp.Option {
-	return cmp.Transformer("transformSortedSet", func(s sortedset.Set[E]) []E {
+	return cmp.Transformer("transformSortedSet", func(s sets.Sorted[E]) []E {
 		list := make([]E, s.Len())
 		for i := range list {
 			list[i] = s.At(i)

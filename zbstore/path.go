@@ -17,7 +17,7 @@ import (
 	"zombiezen.com/go/nix/nixbase32"
 	"zombiezen.com/go/zb/internal/storepath"
 	"zombiezen.com/go/zb/internal/windowspath"
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/sets"
 )
 
 // Directory is the absolute path of a zb store.
@@ -323,11 +323,11 @@ type References struct {
 	// Self is true if the store object contains one or more references to itself.
 	Self bool
 	// Others holds paths of other store objects that the store object references.
-	Others sortedset.Set[Path]
+	Others sets.Sorted[Path]
 }
 
 // MakeReferences converts a set of complete store paths into a [References] value.
-func MakeReferences(self Path, refSet *sortedset.Set[Path]) References {
+func MakeReferences(self Path, refSet *sets.Sorted[Path]) References {
 	refs := References{
 		Self:   refSet.Has(self),
 		Others: *refSet.Clone(),
@@ -345,7 +345,7 @@ func (refs References) IsEmpty() bool {
 
 // ToSet converts the references to a set of paths
 // given the store object's own path.
-func (refs References) ToSet(self Path) *sortedset.Set[Path] {
+func (refs References) ToSet(self Path) *sets.Sorted[Path] {
 	result := refs.Others.Clone()
 	if refs.Self {
 		result.Add(self)

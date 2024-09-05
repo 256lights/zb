@@ -8,7 +8,7 @@ import (
 	"maps"
 )
 
-// Set is an unordered set with O(1) lookup.
+// Set is an unordered set with O(1) lookup, insertion, and deletion.
 // The zero value is an empty set.
 type Set[T comparable] map[T]struct{}
 

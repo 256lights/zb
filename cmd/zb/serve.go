@@ -17,7 +17,7 @@ import (
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/zb/internal/backend"
 	"zombiezen.com/go/zb/internal/jsonrpc"
-	"zombiezen.com/go/zb/internal/sets"
+	"zombiezen.com/go/zb/sets"
 	"zombiezen.com/go/zb/zbstore"
 )
 

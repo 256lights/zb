@@ -20,7 +20,7 @@ import (
 	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/storetest"
 	"zombiezen.com/go/zb/internal/system"
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/sets"
 	"zombiezen.com/go/zb/zbstore"
 )
 
@@ -52,7 +52,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 			"in":  string(inputFilePath),
 			"out": zbstore.HashPlaceholder("out"),
 		},
-		InputSources: *sortedset.New(
+		InputSources: *sets.NewSorted(
 			inputFilePath,
 		),
 		Outputs: map[string]*zbstore.DerivationOutputType{
@@ -117,7 +117,7 @@ func TestRealizeMultiStep(t *testing.T) {
 			"in":  string(inputFilePath),
 			"out": zbstore.HashPlaceholder("out"),
 		},
-		InputSources: *sortedset.New(
+		InputSources: *sets.NewSorted(
 			inputFilePath,
 		),
 		Outputs: map[string]*zbstore.DerivationOutputType{
@@ -138,8 +138,8 @@ func TestRealizeMultiStep(t *testing.T) {
 			"in":  zbstore.UnknownCAOutputPlaceholder(drv1Path, zbstore.DefaultDerivationOutputName),
 			"out": zbstore.HashPlaceholder("out"),
 		},
-		InputDerivations: map[zbstore.Path]*sortedset.Set[string]{
-			drv1Path: sortedset.New(zbstore.DefaultDerivationOutputName),
+		InputDerivations: map[zbstore.Path]*sets.Sorted[string]{
+			drv1Path: sets.NewSorted(zbstore.DefaultDerivationOutputName),
 		},
 		Outputs: map[string]*zbstore.DerivationOutputType{
 			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),

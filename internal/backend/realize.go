@@ -5,7 +5,6 @@ package backend
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -13,12 +12,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"iter"
 	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -34,7 +31,8 @@ import (
 	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/storepath"
 	"zombiezen.com/go/zb/internal/system"
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/internal/xmaps"
+	"zombiezen.com/go/zb/sets"
 	"zombiezen.com/go/zb/zbstore"
 )
 
@@ -191,7 +189,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		if err != nil {
 			curr.unlock()
 			resp := new(zbstore.RealizeResponse)
-			for _, outputName := range sortedKeys(curr.drv.Outputs) {
+			for _, outputName := range xmaps.SortedKeys(curr.drv.Outputs) {
 				resp.Outputs = append(resp.Outputs, &zbstore.RealizeOutput{
 					Name: outputName,
 				})
@@ -243,7 +241,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 
 	resp := new(zbstore.RealizeResponse)
 	outPaths := usedRealizations[ultimateDrvPath]
-	for outputName, outputPath := range sortedMap(outPaths) {
+	for outputName, outputPath := range xmaps.Sorted(outPaths) {
 		resp.Outputs = append(resp.Outputs, &zbstore.RealizeOutput{
 			Name: outputName,
 			Path: zbstore.NonNull(outputPath),
@@ -336,8 +334,8 @@ func (s *Server) preProcessDerivation(ctx context.Context, conn *sqlite.Conn, dr
 	return drv, nil, unlockFixedOutput, nil
 }
 
-func findExistingRealizations(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.Path) (map[string]*sortedset.Set[zbstore.Path], error) {
-	result := make(map[string]*sortedset.Set[zbstore.Path])
+func findExistingRealizations(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.Path) (map[string]*sets.Sorted[zbstore.Path], error) {
+	result := make(map[string]*sets.Sorted[zbstore.Path])
 	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "find_realizations.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":drv_path": drvPath,
@@ -358,7 +356,7 @@ func findExistingRealizations(ctx context.Context, conn *sqlite.Conn, drvPath zb
 			}
 			outSet := result[outName]
 			if outSet == nil {
-				outSet = new(sortedset.Set[zbstore.Path])
+				outSet = new(sets.Sorted[zbstore.Path])
 				result[outName] = outSet
 			}
 			outSet.Add(outPath)
@@ -437,7 +435,7 @@ func fixedOutputPath(drv *zbstore.Derivation) (zbstore.Path, bool) {
 // then writes the derivation to the store.
 func (s *Server) resolveDerivation(ctx context.Context, conn *sqlite.Conn, drv *zbstore.Derivation, realizations map[zbstore.Path]map[string]zbstore.Path) (resolvedDrvPath zbstore.Path, resolvedDrv *zbstore.Derivation, unlock func(), err error) {
 	var rewrites []string
-	newInputs := new(sortedset.Set[zbstore.Path])
+	newInputs := new(sets.Sorted[zbstore.Path])
 	for inputDrvPath, inputOutputNames := range drv.InputDerivations {
 		for _, outputName := range inputOutputNames.All() {
 			placeholder := zbstore.UnknownCAOutputPlaceholder(inputDrvPath, outputName)
@@ -604,7 +602,7 @@ func runBuilderUnsandboxed(ctx context.Context, drvPath zbstore.Path, drv *zbsto
 
 	c := exec.CommandContext(ctx, expandedDrv.Builder, expandedDrv.Args...)
 	setCancelFunc(c)
-	for k, v := range sortedMap(expandedDrv.Env) {
+	for k, v := range xmaps.Sorted(expandedDrv.Env) {
 		c.Env = append(c.Env, k+"="+v)
 	}
 	c.Dir = topTempDir
@@ -681,7 +679,7 @@ func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.Derivatio
 // and has the hash and content address in the returned info.
 // If the outputType is floating,
 // then postProcessBuiltOutput likely will have moved the build artifact to its computed path.
-func postProcessBuiltOutput(ctx context.Context, realStoreDir string, drvPath, buildPath zbstore.Path, outputType *zbstore.DerivationOutputType, inputs *sortedset.Set[zbstore.Path]) (*zbstore.NARInfo, error) {
+func postProcessBuiltOutput(ctx context.Context, realStoreDir string, drvPath, buildPath zbstore.Path, outputType *zbstore.DerivationOutputType, inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
 	if ca, ok := outputType.FixedCA(); ok {
 		log.Debugf(ctx, "Verifying fixed output %s...", buildPath)
 		narHash, narSize, err := postProcessFixedOutput(realStoreDir, buildPath, ca)
@@ -735,7 +733,7 @@ func postProcessFixedOutput(realStoreDir string, outputPath zbstore.Path, ca zbs
 
 var errFloatingOutputExists = errors.New("floating output resolved to existing store object")
 
-func postProcessFloatingOutput(ctx context.Context, realStoreDir string, buildPath zbstore.Path, inputs *sortedset.Set[zbstore.Path]) (*zbstore.NARInfo, error) {
+func postProcessFloatingOutput(ctx context.Context, realStoreDir string, buildPath zbstore.Path, inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
 	log.Debugf(ctx, "Processing floating output %s...", buildPath)
 	realBuildPath := filepath.Join(realStoreDir, buildPath.Base())
 	scan, err := scanFloatingOutput(realBuildPath, buildPath.Digest(), inputs)
@@ -795,7 +793,7 @@ type outputScanResults struct {
 // The digest is used to detect self references.
 // inputs are other store objects the derivation depends on,
 // which form the superset of all non-self-references that the scan can detect.
-func scanFloatingOutput(path string, digest string, inputs *sortedset.Set[zbstore.Path]) (*outputScanResults, error) {
+func scanFloatingOutput(path string, digest string, inputs *sets.Sorted[zbstore.Path]) (*outputScanResults, error) {
 	inputDigests := make([]string, 0, inputs.Len())
 	for _, input := range inputs.All() {
 		inputDigests = append(inputDigests, input.Digest())
@@ -1066,7 +1064,7 @@ func (mm *mutexMap[T]) lock(ctx context.Context, k T) (unlock func(), err error)
 
 func formatOutputPaths(m map[string]zbstore.Path) string {
 	sb := new(strings.Builder)
-	for i, outputName := range sortedKeys(m) {
+	for i, outputName := range xmaps.SortedKeys(m) {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
@@ -1075,25 +1073,6 @@ func formatOutputPaths(m map[string]zbstore.Path) string {
 		sb.WriteString(string(m[outputName]))
 	}
 	return sb.String()
-}
-
-func sortedKeys[M ~map[K]V, K cmp.Ordered, V any](m M) []K {
-	keys := make([]K, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
-}
-
-func sortedMap[M ~map[K]V, K cmp.Ordered, V any](m M) iter.Seq2[K, V] {
-	return func(yield func(K, V) bool) {
-		for _, k := range sortedKeys(m) {
-			if !yield(k, m[k]) {
-				return
-			}
-		}
-	}
 }
 
 type writeCounter int64

@@ -12,7 +12,7 @@ import (
 
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/sets"
 	"zombiezen.com/go/zb/zbstore"
 )
 
@@ -33,7 +33,7 @@ func ExportFlatFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, d
 
 // ExportText writes a text file (e.g. a ".drv" file)
 // to the exporter with the given content.
-func ExportText(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, refs *sortedset.Set[zbstore.Path]) (zbstore.Path, error) {
+func ExportText(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, refs *sets.Sorted[zbstore.Path]) (zbstore.Path, error) {
 	h := nix.NewHasher(nix.SHA256)
 	h.Write(data)
 	ca := nix.TextContentAddress(h.SumHash())
@@ -71,7 +71,7 @@ func ExportDerivation(exp *zbstore.Exporter, drv *zbstore.Derivation) (zbstore.P
 	return p, nil
 }
 
-func exportFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, ca zbstore.ContentAddress, refs *sortedset.Set[zbstore.Path]) (zbstore.Path, error) {
+func exportFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) (zbstore.Path, error) {
 	refsClone := *refs.Clone()
 	p, err := zbstore.FixedCAOutputPath(dir, name, ca, zbstore.References{Others: refsClone})
 	if err != nil {

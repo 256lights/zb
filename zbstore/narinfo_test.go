@@ -9,7 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/sets"
 )
 
 func TestNARInfoMarshalText(t *testing.T) {
@@ -34,7 +34,7 @@ func TestNARInfoMarshalText(t *testing.T) {
 				FileSize:    50088,
 				NARHash:     mustParseHash(t, "sha256:0yzhigwjl6bws649vcs2asa4lbs8hg93hyix187gc7s7a74w5h80"),
 				NARSize:     226488,
-				References: *sortedset.New[Path](
+				References: *sets.NewSorted[Path](
 					"/nix/store/3n58xw4373jp0ljirf06d8077j15pc4j-glibc-2.37-8",
 					"/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
 				),
@@ -124,7 +124,7 @@ func makeNARInfoUnmarshalTests(tb testing.TB) []narInfoUnmarshalTest {
 				FileSize:    50088,
 				NARHash:     mustParseHash(tb, "sha256:0yzhigwjl6bws649vcs2asa4lbs8hg93hyix187gc7s7a74w5h80"),
 				NARSize:     226488,
-				References: *sortedset.New[Path](
+				References: *sets.NewSorted[Path](
 					"/nix/store/3n58xw4373jp0ljirf06d8077j15pc4j-glibc-2.37-8",
 					"/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
 				),
@@ -268,7 +268,7 @@ func TestNARInfoClone(t *testing.T) {
 		FileSize:    50088,
 		NARHash:     mustParseHash(t, "sha256:0yzhigwjl6bws649vcs2asa4lbs8hg93hyix187gc7s7a74w5h80"),
 		NARSize:     226488,
-		References: *sortedset.New[Path](
+		References: *sets.NewSorted[Path](
 			"/nix/store/3n58xw4373jp0ljirf06d8077j15pc4j-glibc-2.37-8",
 			"/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
 		),
@@ -286,7 +286,7 @@ func TestNARInfoClone(t *testing.T) {
 		FileSize:    50088,
 		NARHash:     mustParseHash(t, "sha256:0yzhigwjl6bws649vcs2asa4lbs8hg93hyix187gc7s7a74w5h80"),
 		NARSize:     226488,
-		References: *sortedset.New[Path](
+		References: *sets.NewSorted[Path](
 			"/nix/store/3n58xw4373jp0ljirf06d8077j15pc4j-glibc-2.37-8",
 			"/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
 		),

@@ -10,7 +10,7 @@ import (
 	"strconv"
 
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/sets"
 )
 
 // NARInfoExtension is the file extension for a file containing NAR information.
@@ -47,7 +47,7 @@ type NARInfo struct {
 	// Nix requires this field to be set.
 	NARSize int64
 	// References is the set of other store objects that this store object references.
-	References sortedset.Set[Path]
+	References sets.Sorted[Path]
 	// Deriver is the name of the store object that is the store derivation
 	// of this store object.
 	Deriver Path

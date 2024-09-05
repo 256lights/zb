@@ -7,7 +7,7 @@ import (
 	"cmp"
 	"slices"
 
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/sets"
 )
 
 // A RefFinder records which elements in a set of search strings
@@ -15,7 +15,7 @@ import (
 type RefFinder struct {
 	root    *refFinderNode
 	threads []*refFinderNode
-	found   sortedset.Set[string]
+	found   sets.Sorted[string]
 }
 
 // NewRefFinder returns a new [RefFinder] that searches for the given strings.
@@ -49,7 +49,7 @@ func buildRefFinderTree(search []string) *refFinderNode {
 }
 
 // Found returns the set of references found in the written content so far.
-func (rf *RefFinder) Found() *sortedset.Set[string] {
+func (rf *RefFinder) Found() *sets.Sorted[string] {
 	return rf.found.Clone()
 }
 

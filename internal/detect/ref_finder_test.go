@@ -9,32 +9,32 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/sets"
 )
 
 var refFinderGoldens = []struct {
 	s      string
 	search []string
-	want   *sortedset.Set[string]
+	want   *sets.Sorted[string]
 }{
-	{"", nil, sortedset.New[string]()},
-	{"", []string{""}, sortedset.New("")},
-	{"foo", []string{""}, sortedset.New("")},
-	{"foo", []string{"f"}, sortedset.New("f")},
-	{"foo", []string{"o"}, sortedset.New("o")},
+	{"", nil, sets.NewSorted[string]()},
+	{"", []string{""}, sets.NewSorted("")},
+	{"foo", []string{""}, sets.NewSorted("")},
+	{"foo", []string{"f"}, sets.NewSorted("f")},
+	{"foo", []string{"o"}, sets.NewSorted("o")},
 
-	{"foo", []string{"foo"}, sortedset.New("foo")},
-	{"xfoo", []string{"foo"}, sortedset.New("foo")},
-	{"fooy", []string{"foo"}, sortedset.New("foo")},
-	{"xfooy", []string{"foo"}, sortedset.New("foo")},
-	{"bar", []string{"foo"}, sortedset.New[string]()},
+	{"foo", []string{"foo"}, sets.NewSorted("foo")},
+	{"xfoo", []string{"foo"}, sets.NewSorted("foo")},
+	{"fooy", []string{"foo"}, sets.NewSorted("foo")},
+	{"xfooy", []string{"foo"}, sets.NewSorted("foo")},
+	{"bar", []string{"foo"}, sets.NewSorted[string]()},
 
-	{"foo", []string{"f", "foo"}, sortedset.New("f", "foo")},
-	{"foo", []string{"o", "foo"}, sortedset.New("o", "foo")},
+	{"foo", []string{"f", "foo"}, sets.NewSorted("f", "foo")},
+	{"foo", []string{"o", "foo"}, sets.NewSorted("o", "foo")},
 
-	{"foo", []string{"foo", "bar"}, sortedset.New("foo")},
-	{"bar", []string{"foo", "bar"}, sortedset.New("bar")},
-	{"foobar", []string{"foo", "bar"}, sortedset.New("foo", "bar")},
+	{"foo", []string{"foo", "bar"}, sets.NewSorted("foo")},
+	{"bar", []string{"foo", "bar"}, sets.NewSorted("bar")},
+	{"foobar", []string{"foo", "bar"}, sets.NewSorted("foo", "bar")},
 }
 
 func FuzzRefFinder(f *testing.F) {
@@ -84,8 +84,8 @@ func TestRefFinderOracle(t *testing.T) {
 	}
 }
 
-func refFinderOracle(s string, search []string) *sortedset.Set[string] {
-	result := new(sortedset.Set[string])
+func refFinderOracle(s string, search []string) *sets.Sorted[string] {
+	result := new(sets.Sorted[string])
 	for _, substr := range search {
 		if strings.Contains(s, substr) {
 			result.Add(substr)
@@ -95,7 +95,7 @@ func refFinderOracle(s string, search []string) *sortedset.Set[string] {
 }
 
 func transformSortedSet[E stdcmp.Ordered]() cmp.Option {
-	return cmp.Transformer("transformSortedSet", func(s sortedset.Set[E]) []E {
+	return cmp.Transformer("transformSortedSet", func(s sets.Sorted[E]) []E {
 		list := make([]E, s.Len())
 		for i := range list {
 			list[i] = s.At(i)

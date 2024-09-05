@@ -11,7 +11,7 @@ import (
 
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
-	"zombiezen.com/go/zb/sortedset"
+	"zombiezen.com/go/zb/sets"
 )
 
 const (
@@ -24,7 +24,7 @@ const (
 // used in the `nix-store --export` format.
 type ExportTrailer struct {
 	StorePath      Path
-	References     sortedset.Set[Path]
+	References     sets.Sorted[Path]
 	Deriver        Path
 	ContentAddress nix.ContentAddress
 }
