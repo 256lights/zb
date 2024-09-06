@@ -10,9 +10,13 @@ import (
 )
 
 func TestMutexMap(t *testing.T) {
-	// Prevent this test from blocking for more than 10 seconds.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// Prevent this test from blocking past the test deadline.
+	ctx := context.Background()
+	if deadline, ok := t.Deadline(); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
 
 	mm := new(mutexMap[int])
 	unlock1, err := mm.lock(ctx, 1)
