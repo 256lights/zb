@@ -169,11 +169,11 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash
 	if err := upsertDrvHash(conn, drvHash); err != nil {
 		return fmt.Errorf("record realizations for %v: %v", drvHash, err)
 	}
-	for _, out := range outputs {
-		if err := upsertPath(conn, out.path); err != nil {
+	for _, output := range outputs {
+		if err := upsertPath(conn, output.path); err != nil {
 			return fmt.Errorf("record realizations for %v: %v", drvHash, err)
 		}
-		for path, eqClasses := range out.references {
+		for path, eqClasses := range output.references {
 			if err := upsertPath(conn, path); err != nil {
 				return fmt.Errorf("record realizations for %v: %v", drvHash, err)
 			}
@@ -214,7 +214,7 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash
 			return fmt.Errorf("record realizations for %s: output %s: %v", drvHash, outputName, err)
 		}
 
-		refClassStmt.SetText(":referrer", string(output.path))
+		refClassStmt.SetText(":referrer_path", string(output.path))
 		refClassStmt.SetText(":referrer_output_name", outputName)
 		for path, eqClasses := range output.references {
 			refClassStmt.SetText(":reference_path", string(path))

@@ -80,7 +80,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		derivations: drvCache,
 		drvHashes:   drvHashes,
 
-		realizations: make(map[equivalenceClass]realizationOutput),
+		realizations: make(map[equivalenceClass]cachedRealization),
 	}
 	wantOutputs := make(sets.Set[zbstore.OutputReference])
 	for outputName := range b.derivations[ultimateDrvPath].Outputs {
@@ -163,7 +163,12 @@ type builder struct {
 
 	derivations  map[zbstore.Path]*zbstore.Derivation
 	drvHashes    map[zbstore.Path]nix.Hash
-	realizations map[equivalenceClass]realizationOutput
+	realizations map[equivalenceClass]cachedRealization
+}
+
+type cachedRealization struct {
+	path    zbstore.Path
+	closure map[zbstore.Path]sets.Set[equivalenceClass]
 }
 
 func (b *builder) makeResponse(drvPath zbstore.Path) *zbstore.RealizeResponse {
@@ -336,11 +341,9 @@ func (b *builder) preprocess(ctx context.Context, output zbstore.OutputReference
 			outputPaths := map[string]realizationOutput{
 				output.OutputName: rout,
 			}
-			// TODO(soon): Wrap in immediate transaction.
-			if err := recordRealizations(ctx, b.conn, drvHash, outputPaths); err != nil {
+			if err := b.recordRealizations(ctx, drvHash, outputPaths); err != nil {
 				return fmt.Errorf("build %s: %v", output.DrvPath, err)
 			}
-			b.realizations[eqClass] = rout
 			return nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
@@ -376,7 +379,7 @@ func (b *builder) preprocess(ctx context.Context, output zbstore.OutputReference
 // because selecting a realization may imply selecting realizations from its closure.
 // If the returned map is empty,
 // then no compatible realizations were found.
-func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalenceClass) (newRealizations map[equivalenceClass]realizationOutput, err error) {
+func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalenceClass) (newRealizations map[equivalenceClass]cachedRealization, err error) {
 	isCompatible := func(ref pathAndEquivalenceClass) bool {
 		if ref.equivalenceClass.isZero() {
 			// Sources can't conflict.
@@ -391,8 +394,8 @@ func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalen
 	if err != nil {
 		return nil, err
 	}
-	rout := realizationOutput{
-		references: make(map[zbstore.Path]sets.Set[equivalenceClass]),
+	rout := cachedRealization{
+		closure: make(map[zbstore.Path]sets.Set[equivalenceClass]),
 	}
 	remaining := existing.Clone()
 	for outputPath := range existing.All() {
@@ -403,12 +406,12 @@ func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalen
 			path:             outputPath,
 			equivalenceClass: eqClass,
 		}
-		clear(rout.references)
+		clear(rout.closure)
 		canUse := true
 		err := closurePaths(b.conn, pe, func(ref pathAndEquivalenceClass) bool {
 			canUse = isCompatible(ref)
 			if canUse {
-				addToMultiMap(rout.references, ref.path, ref.equivalenceClass)
+				addToMultiMap(rout.closure, ref.path, ref.equivalenceClass)
 			} else {
 				log.Debugf(ctx, "Cannot use %s as %v: depends on %s (need %s)",
 					outputPath, eqClass, ref.path, b.realizations[ref.equivalenceClass].path)
@@ -455,10 +458,10 @@ func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalen
 	}
 
 	// Now that we have a candidate, fill out the closures.
-	newRealizations = map[equivalenceClass]realizationOutput{
+	newRealizations = map[equivalenceClass]cachedRealization{
 		eqClass: rout,
 	}
-	for refPath, eqClasses := range rout.references {
+	for refPath, eqClasses := range rout.closure {
 		for eqClass := range eqClasses.All() {
 			if _, exists := b.realizations[eqClass]; exists {
 				continue
@@ -470,18 +473,18 @@ func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalen
 				path:             refPath,
 				equivalenceClass: eqClass,
 			}
-			closureOutput := realizationOutput{
-				path:       refPath,
-				references: make(map[zbstore.Path]sets.Set[equivalenceClass]),
+			closureRealization := cachedRealization{
+				path:    refPath,
+				closure: make(map[zbstore.Path]sets.Set[equivalenceClass]),
 			}
 			err := closurePaths(b.conn, pe, func(pe pathAndEquivalenceClass) bool {
-				addToMultiMap(closureOutput.references, pe.path, pe.equivalenceClass)
+				addToMultiMap(closureRealization.closure, pe.path, pe.equivalenceClass)
 				return true
 			})
 			if err != nil {
 				return nil, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
 			}
-			newRealizations[eqClass] = closureOutput
+			newRealizations[eqClass] = closureRealization
 		}
 	}
 
@@ -630,7 +633,7 @@ func (b *builder) inputs(ctx context.Context, drvPath zbstore.Path) (map[zbstore
 		if !ok {
 			return nil, fmt.Errorf("input closure for %s: missing realization for %v", drvPath, input)
 		}
-		for refPath, refClasses := range out.references {
+		for refPath, refClasses := range out.closure {
 			dst := result[refPath]
 			if dst == nil {
 				dst = make(sets.Set[equivalenceClass])
@@ -771,7 +774,7 @@ func outputPathRewrites(outputMap map[string]zbstore.Path) iter.Seq2[string, zbs
 
 // derivationInputRewrites returns a substitution map
 // of output placeholders to realization paths.
-func derivationInputRewrites(drvHashes map[zbstore.Path]nix.Hash, realizations map[equivalenceClass]realizationOutput, drv *zbstore.Derivation) (map[string]zbstore.Path, error) {
+func derivationInputRewrites(drvHashes map[zbstore.Path]nix.Hash, realizations map[equivalenceClass]cachedRealization, drv *zbstore.Derivation) (map[string]zbstore.Path, error) {
 	// TODO(maybe): Also rewrite transitive derivation hashes?
 	result := make(map[string]zbstore.Path)
 	for ref := range drv.InputDerivationOutputs() {
@@ -932,7 +935,7 @@ func postprocessFixedOutput(realStoreDir string, outputPath zbstore.Path, ca zbs
 func (b *builder) postprocessFloatingOutput(ctx context.Context, buildPath zbstore.Path, inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
 	log.Debugf(ctx, "Processing floating output %s...", buildPath)
 	realBuildPath := b.server.realPath(buildPath)
-	scan, err := scanFloatingOutput(realBuildPath, buildPath.Digest(), inputs)
+	scan, err := scanFloatingOutput(ctx, realBuildPath, buildPath.Digest(), inputs)
 	if err != nil {
 		return nil, fmt.Errorf("post-process %s: %v", buildPath, err)
 	}
@@ -1012,7 +1015,8 @@ type outputScanResults struct {
 // The digest is used to detect self references.
 // closure is the transitive closure of store objects the derivation depends on,
 // which form the superset of all non-self-references that the scan can detect.
-func scanFloatingOutput(path string, digest string, closure *sets.Sorted[zbstore.Path]) (*outputScanResults, error) {
+func scanFloatingOutput(ctx context.Context, path string, digest string, closure *sets.Sorted[zbstore.Path]) (*outputScanResults, error) {
+	log.Debugf(ctx, "Scanning for references in %s. Possible: %s", path, closure)
 	wc := new(writeCounter)
 	h := nix.NewHasher(nix.SHA256)
 	refFinder := detect.NewRefFinder(func(yield func(string) bool) {
@@ -1057,6 +1061,7 @@ func scanFloatingOutput(path string, digest string, closure *sets.Sorted[zbstore
 		}
 		refs.Others.Add(closure.At(i))
 	}
+	log.Debugf(ctx, "Found references in %s (self=%t): %s", path, refs.Self, &refs.Others)
 
 	result := &outputScanResults{
 		ca:      ca,
@@ -1142,7 +1147,20 @@ func (b *builder) recordRealizations(ctx context.Context, drvHash nix.Hash, outp
 		return err
 	}
 	for outputName, output := range outputs {
-		b.realizations[newEquivalenceClass(drvHash, outputName)] = output
+		eqClass := newEquivalenceClass(drvHash, outputName)
+		closure := make(map[zbstore.Path]sets.Set[equivalenceClass])
+		pe := pathAndEquivalenceClass{path: output.path, equivalenceClass: eqClass}
+		err := closurePaths(b.conn, pe, func(pe pathAndEquivalenceClass) bool {
+			addToMultiMap(closure, pe.path, pe.equivalenceClass)
+			return true
+		})
+		if err != nil {
+			return err
+		}
+		b.realizations[eqClass] = cachedRealization{
+			path:    output.path,
+			closure: closure,
+		}
 	}
 	return nil
 }

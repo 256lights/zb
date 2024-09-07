@@ -270,6 +270,117 @@ func TestRealizeMultiStep(t *testing.T) {
 	checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
 }
 
+func TestRealizeReferenceToDep(t *testing.T) {
+	ctx := testlog.WithTB(context.Background(), t)
+	dir, err := zbstore.CleanDirectory(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const inputContent = "Hello, World!\n"
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExporter(exportBuffer)
+	inputFilePath, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const drv1OutputName = "hello2.txt"
+	drv1Content := &zbstore.Derivation{
+		Name:   drv1OutputName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"in":  string(inputFilePath),
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		InputSources: *sets.NewSorted(
+			inputFilePath,
+		),
+		Outputs: map[string]*zbstore.DerivationOutputType{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	drv1Content.Builder, drv1Content.Args = catcatBuilder()
+	drv1Path, err := storetest.ExportDerivation(exporter, drv1Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantOutputName = "hello-ref.txt"
+	drv2Content := &zbstore.Derivation{
+		Name:   wantOutputName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"in": zbstore.UnknownCAOutputPlaceholder(zbstore.OutputReference{
+				DrvPath:    drv1Path,
+				OutputName: zbstore.DefaultDerivationOutputName,
+			}),
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		InputDerivations: map[zbstore.Path]*sets.Sorted[string]{
+			drv1Path: sets.NewSorted(zbstore.DefaultDerivationOutputName),
+		},
+		Outputs: map[string]*zbstore.DerivationOutputType{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	if runtime.GOOS == "windows" {
+		drv2Content.Builder = powershellPath
+		drv2Content.Args = []string{
+			"-Command",
+			`${env:in} | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}`,
+		}
+	} else {
+		drv2Content.Builder = shPath
+		drv2Content.Args = []string{
+			"-c",
+			`echo -n "$in" > "$out"`,
+		}
+	}
+	drv2Path, err := storetest.ExportDerivation(exporter, drv2Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	client := newTestServer(t, dir, string(dir), &testBuildLogger{t}, nil)
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(exportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
+		DrvPath: drv2Path,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	drv1OutputContent := strings.Repeat(inputContent, 2)
+	drv1OutputPath, err := singleFileOutputPath(dir, drv1OutputName, []byte(drv1OutputContent), zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, []byte(drv1OutputPath), zbstore.References{
+		Others: *sets.NewSorted(
+			drv1OutputPath,
+		),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkSingleFileOutput(t, wantOutputPath, []byte(drv1OutputPath), got)
+}
+
 func TestRealizeFixed(t *testing.T) {
 	ctx := testlog.WithTB(context.Background(), t)
 	dir, err := zbstore.CleanDirectory(t.TempDir())

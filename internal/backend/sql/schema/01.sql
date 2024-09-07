@@ -68,7 +68,7 @@ create table "reference_classes" (
 
   foreign key ("referrer_drv_hash", "referrer_output_name", "referrer") references "realizations"
     on delete cascade,
-  check ("reference_drv_hash" is null = "reference_output_name" is null)
+  check (("reference_drv_hash" is null) = ("reference_output_name" is null))
 );
 
 create index "reference_classes_by_realization" on "reference_classes" (
