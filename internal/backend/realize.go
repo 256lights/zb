@@ -563,7 +563,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path) (err error) {
 			DrvPath:    drvPath,
 			OutputName: outputName,
 		}
-		info, err := b.postProcessBuiltOutput(ctx, ref, tempOutputPath, unlockFixedOutput, inputPaths)
+		info, err := b.postprocess(ctx, ref, tempOutputPath, unlockFixedOutput, inputPaths)
 		if err != nil {
 			return fmt.Errorf("build %s: %v", drvPath, err)
 		}
@@ -814,15 +814,15 @@ func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.Derivatio
 	return paths, nil
 }
 
-// postProcessBuiltOutput computes the metadata for a realized output
+// postprocess computes the metadata for a realized output
 // and ensures that it is recorded in the store.
 // inputs is the set of store paths that were inputs for the realized derivation.
 // buildPath is the path of the store object created during realization.
 // If the output is fixed, then buildPath must be the store path computed by [zbstore.Derivation.OutputPath]
 // and unlockBuildPath must be the unlock function obtained from b.server.writing.
 // If the outputType is floating,
-// then postProcessBuiltOutput will move the store object at buildPath to its computed path.
-func (b *builder) postProcessBuiltOutput(ctx context.Context, output zbstore.OutputReference, buildPath zbstore.Path, unlockBuildPath func(), inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
+// then postprocess will move the store object at buildPath to its computed path.
+func (b *builder) postprocess(ctx context.Context, output zbstore.OutputReference, buildPath zbstore.Path, unlockBuildPath func(), inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
 	drv := b.derivations[output.DrvPath]
 	if drv == nil {
 		return nil, fmt.Errorf("post-process %v: unknown derivation", output)
@@ -839,7 +839,7 @@ func (b *builder) postProcessBuiltOutput(ctx context.Context, output zbstore.Out
 		defer unlockBuildPath()
 
 		log.Debugf(ctx, "Verifying fixed output %s...", buildPath)
-		narHash, narSize, err := postProcessFixedOutput(b.server.realDir, buildPath, ca)
+		narHash, narSize, err := postprocessFixedOutput(b.server.realDir, buildPath, ca)
 		if err != nil {
 			return nil, err
 		}
@@ -870,16 +870,16 @@ func (b *builder) postProcessBuiltOutput(ctx context.Context, output zbstore.Out
 	}
 
 	// outputType has presumably been validated with [validateOutputs].
-	info, err := b.postProcessFloatingOutput(ctx, buildPath, inputs)
+	info, err := b.postprocessFloatingOutput(ctx, buildPath, inputs)
 	if info != nil {
 		info.Deriver = output.DrvPath
 	}
 	return info, err
 }
 
-// postProcessFixedOutput computes the NAR hash of the given store path
+// postprocessFixedOutput computes the NAR hash of the given store path
 // and verifies that it matches the content address.
-func postProcessFixedOutput(realStoreDir string, outputPath zbstore.Path, ca zbstore.ContentAddress) (narHash nix.Hash, narSize int64, err error) {
+func postprocessFixedOutput(realStoreDir string, outputPath zbstore.Path, ca zbstore.ContentAddress) (narHash nix.Hash, narSize int64, err error) {
 	realOutputPath := filepath.Join(realStoreDir, outputPath.Base())
 	wc := new(writeCounter)
 	h := nix.NewHasher(nix.SHA256)
@@ -904,7 +904,7 @@ func postProcessFixedOutput(realStoreDir string, outputPath zbstore.Path, ca zbs
 	return h.SumHash(), int64(*wc), nil
 }
 
-func (b *builder) postProcessFloatingOutput(ctx context.Context, buildPath zbstore.Path, inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
+func (b *builder) postprocessFloatingOutput(ctx context.Context, buildPath zbstore.Path, inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
 	log.Debugf(ctx, "Processing floating output %s...", buildPath)
 	realBuildPath := b.server.realPath(buildPath)
 	scan, err := scanFloatingOutput(realBuildPath, buildPath.Digest(), inputs)
