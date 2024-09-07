@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"iter"
+	"maps"
 	"slices"
 	"strings"
 
@@ -83,7 +85,7 @@ func (drv *Derivation) Export(hashType nix.HashType) (info *NARInfo, narBytes, d
 		return nil, nil, nil, fmt.Errorf("export derivation %s: missing store directory", drv.Name)
 	}
 
-	drvBytes, err = drv.marshalText(false)
+	drvBytes, err = drv.Marshal(nil)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -123,6 +125,47 @@ func (drv *Derivation) Export(hashType nix.HashType) (info *NARInfo, narBytes, d
 	return info, narBytes, drvBytes, err
 }
 
+// Clone returns a deep copy of drv.
+func (drv *Derivation) Clone() *Derivation {
+	drvClone := &Derivation{
+		Dir:          drv.Dir,
+		Name:         drv.Name,
+		System:       drv.System,
+		Builder:      drv.Builder,
+		Args:         slices.Clone(drv.Args),
+		Env:          maps.Clone(drv.Env),
+		InputSources: *drv.InputSources.Clone(),
+		Outputs:      maps.Clone(drv.Outputs),
+	}
+	if drv.InputDerivations != nil {
+		drvClone.InputDerivations = make(map[Path]*sets.Sorted[string], len(drv.InputDerivations))
+		for drvPath, outputNames := range drv.InputDerivations {
+			drvClone.InputDerivations[drvPath] = outputNames.Clone()
+		}
+	}
+	return drvClone
+}
+
+// InputDerivationOutputs returns an iterator over the output references
+// this derivation uses as inputs.
+// The iterator will produce references in lexicographic order of the derivation path,
+// then in lexicographic order of the output name within a derivation path.
+func (drv *Derivation) InputDerivationOutputs() iter.Seq[OutputReference] {
+	return func(yield func(OutputReference) bool) {
+		for inputDrvPath, inputOutputNames := range xmaps.Sorted(drv.InputDerivations) {
+			for _, inputOutputName := range inputOutputNames.All() {
+				ref := OutputReference{
+					DrvPath:    inputDrvPath,
+					OutputName: inputOutputName,
+				}
+				if !yield(ref) {
+					return
+				}
+			}
+		}
+	}
+}
+
 // References returns the set of other store paths that the derivation references.
 func (drv *Derivation) References() References {
 	refs := References{}
@@ -134,12 +177,52 @@ func (drv *Derivation) References() References {
 	return refs
 }
 
-// MarshalText converts the derivation to ATerm format.
-func (drv *Derivation) MarshalText() ([]byte, error) {
-	return drv.marshalText(false)
+// OutputPath returns a fixed output's store object path.
+// OutputPath returns an error if the output's path cannot be known ahead of realization.
+func (drv *Derivation) OutputPath(outputName string) (Path, error) {
+	outputType, ok := drv.Outputs[outputName]
+	if !ok {
+		return "", fmt.Errorf("output path for %s: no such output", outputName)
+	}
+	return derivationOutputPath(drv.Dir, drv.Name, outputName, outputType)
 }
 
-func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
+// derivationOutputPath returns a fixed output's store object path
+// for the given store (e.g. "/zb/store"),
+// derivation name (e.g. "hello"),
+// and output name (e.g. "out").
+func derivationOutputPath(store Directory, drvName, outputName string, t *DerivationOutputType) (Path, error) {
+	if t == nil {
+		return "", fmt.Errorf("output path for %s: non-fixed output type", outputName)
+	}
+	switch t.typ {
+	case fixedCAOutputType:
+		if outputName != DefaultDerivationOutputName {
+			drvName += "-" + outputName
+		}
+		return FixedCAOutputPath(store, drvName, t.ca, References{})
+	default:
+		return "", fmt.Errorf("output path for %s: non-fixed output type", outputName)
+	}
+}
+
+// MarshalText converts the derivation to ATerm format
+// by calling [Derivation.Marshal] with the default options.
+func (drv *Derivation) MarshalText() ([]byte, error) {
+	return drv.Marshal(nil)
+}
+
+// MarshalDerivationOptions holds parameters for [Derivation.Marshal].
+type MarshalDerivationOptions struct {
+	// MapInputDerivation is a function that rewrites the paths used for the input derivations
+	// if not nil.
+	// This is used for producing a representation of the derivation suitable for hashing.
+	MapInputDerivation func(Path) string
+}
+
+// Marshal converts the derivation to ATerm format.
+// Passing nil
+func (drv *Derivation) Marshal(opts *MarshalDerivationOptions) ([]byte, error) {
 	if drv.Name == "" {
 		return nil, fmt.Errorf("marshal derivation: missing name")
 	}
@@ -157,33 +240,23 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 			return nil, fmt.Errorf("marshal %s derivation: invalid output name %q", drv.Name, outName)
 		}
 		var err error
-		buf, err = drv.Outputs[outName].marshalText(buf, drv.Dir, drv.Name, outName, maskOutputs)
+		buf, err = drv.Outputs[outName].marshalText(buf, drv.Dir, drv.Name, outName)
 		if err != nil {
 			return nil, fmt.Errorf("marshal %s derivation: %v", drv.Name, err)
 		}
 	}
 
 	buf = append(buf, "],["...)
-	for i, drvPath := range xmaps.SortedKeys(drv.InputDerivations) {
-		if i > 0 {
-			buf = append(buf, ',')
-		}
-		buf = append(buf, '(')
+	for drvPath := range drv.InputDerivations {
 		if got := drvPath.Dir(); got != drv.Dir {
 			return nil, fmt.Errorf("marshal %s derivation: inputs: unexpected store directory %s (using %s)",
 				drv.Name, got, drv.Dir)
 		}
-		buf = aterm.AppendString(buf, string(drvPath))
-		buf = append(buf, ",["...)
-		// TODO(someday): This can be some kind of tree? See DerivedPathMap.
-		outputs := drv.InputDerivations[drvPath]
-		for j, out := range outputs.All() {
-			if j > 0 {
-				buf = append(buf, ',')
-			}
-			buf = aterm.AppendString(buf, out)
-		}
-		buf = append(buf, "])"...)
+	}
+	if opts != nil && opts.MapInputDerivation != nil {
+		buf = marshalInputDerivations(buf, remapInputDerivations(drv.InputDerivations, opts.MapInputDerivation))
+	} else {
+		buf = marshalInputDerivations(buf, drv.InputDerivations)
 	}
 
 	buf = append(buf, "],["...)
@@ -226,6 +299,39 @@ func (drv *Derivation) marshalText(maskOutputs bool) ([]byte, error) {
 	buf = append(buf, "])"...)
 
 	return buf, nil
+}
+
+func marshalInputDerivations[K ~string](buf []byte, m map[K]*sets.Sorted[string]) []byte {
+	for i, k := range xmaps.SortedKeys(m) {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		buf = append(buf, '(')
+		buf = aterm.AppendString(buf, string(k))
+		buf = append(buf, ",["...)
+		outputs := m[k]
+		for j, out := range outputs.All() {
+			if j > 0 {
+				buf = append(buf, ',')
+			}
+			buf = aterm.AppendString(buf, out)
+		}
+		buf = append(buf, "])"...)
+	}
+	return buf
+}
+
+func remapInputDerivations(inputDerivations map[Path]*sets.Sorted[string], remap func(Path) string) map[string]*sets.Sorted[string] {
+	m := make(map[string]*sets.Sorted[string])
+	for inputDrvPath, inputOutputNames := range inputDerivations {
+		k := remap(inputDrvPath)
+		if s := m[k]; s != nil {
+			s.AddSet(inputOutputNames)
+		} else {
+			m[k] = inputOutputNames.Clone()
+		}
+	}
+	return m
 }
 
 func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
@@ -514,27 +620,7 @@ func (t *DerivationOutputType) IsRecursiveFile() bool {
 	return t.method == recursiveFileIngestionMethod
 }
 
-// Path returns a fixed output's store object path
-// for the given store (e.g. "/zb/store"),
-// derivation name (e.g. "hello"),
-// and output name (e.g. "out").
-func (t *DerivationOutputType) Path(store Directory, drvName, outputName string) (path Path, ok bool) {
-	if t == nil {
-		return "", false
-	}
-	switch t.typ {
-	case fixedCAOutputType:
-		if outputName != DefaultDerivationOutputName {
-			drvName += "-" + outputName
-		}
-		p, err := FixedCAOutputPath(store, drvName, t.ca, References{})
-		return p, err == nil
-	default:
-		return "", false
-	}
-}
-
-func (t *DerivationOutputType) marshalText(dst []byte, storeDir Directory, drvName, outName string, maskOutputs bool) ([]byte, error) {
+func (t *DerivationOutputType) marshalText(dst []byte, storeDir Directory, drvName, outName string) ([]byte, error) {
 	dst = append(dst, '(')
 	dst = aterm.AppendString(dst, outName)
 	if t == nil {
@@ -543,16 +629,12 @@ func (t *DerivationOutputType) marshalText(dst []byte, storeDir Directory, drvNa
 	}
 	switch t.typ {
 	case fixedCAOutputType:
-		if maskOutputs {
-			dst = append(dst, `,""`...)
-		} else {
-			dst = append(dst, ',')
-			p, ok := t.Path(storeDir, drvName, outName)
-			if !ok {
-				return dst, fmt.Errorf("marshal %s output: invalid path", outName)
-			}
-			dst = aterm.AppendString(dst, string(p))
+		dst = append(dst, ',')
+		p, err := derivationOutputPath(storeDir, drvName, outName, t)
+		if err != nil {
+			return dst, fmt.Errorf("marshal %s output: %v", outName, err)
 		}
+		dst = aterm.AppendString(dst, string(p))
 		dst = append(dst, ',')
 		h := t.ca.Hash()
 		dst = aterm.AppendString(dst, methodOfContentAddress(t.ca).prefix()+h.Type().String())
@@ -727,19 +809,19 @@ func HashPlaceholder(outputName string) string {
 
 // UnknownCAOutputPlaceholder returns the placeholder
 // for an unknown output of a content-addressed derivation.
-func UnknownCAOutputPlaceholder(drvPath Path, outputName string) string {
+func UnknownCAOutputPlaceholder(ref OutputReference) string {
 	// We accept non-".drv" paths here for simplicity,
 	// so we don't use [Path.DerivationName].
-	drvName := strings.TrimSuffix(drvPath.Name(), DerivationExt)
+	drvName := strings.TrimSuffix(ref.DrvPath.Name(), DerivationExt)
 
 	h := nix.NewHasher(nix.SHA256)
 	h.WriteString("nix-upstream-output:")
-	h.WriteString(drvPath.Digest())
+	h.WriteString(ref.DrvPath.Digest())
 	h.WriteString(":")
 	h.WriteString(drvName)
-	if outputName != DefaultDerivationOutputName {
+	if ref.OutputName != DefaultDerivationOutputName {
 		h.WriteString("-")
-		h.WriteString(outputName)
+		h.WriteString(ref.OutputName)
 	}
 	return "/" + h.SumHash().RawBase32()
 }

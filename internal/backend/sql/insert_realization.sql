@@ -1,9 +1,9 @@
 insert into "realizations" (
-  "drv_path",
+  "drv_hash",
   "output_name",
   "output_path"
 ) values (
-  (select "id" from "paths" where "path" = :drv_path),
+  (select "id" from "drv_hashes" where ("algorithm", "bits") = (:drv_hash_algorithm, :drv_hash_bits)),
   :output_name,
   (select "id" from "paths" where "path" = :output_path)
-) on conflict ("drv_path", "output_name", "output_path") do nothing;
+) on conflict ("drv_hash", "output_name", "output_path") do nothing;

@@ -24,9 +24,22 @@ func NewSorted[T cmp.Ordered](elem ...T) *Sorted[T] {
 	return s
 }
 
+// Collect returns a new set that contains the elements of the given iterator.
+// Equivalent to calling [Sorted.AddSeq] on a zero set.
+func CollectSorted[T cmp.Ordered](seq iter.Seq[T]) *Sorted[T] {
+	s := new(Sorted[T])
+	s.AddSeq(seq)
+	return s
+}
+
 // Add adds the arguments to the set.
 func (s *Sorted[T]) Add(elem ...T) {
-	for _, x := range elem {
+	s.AddSeq(slices.Values(elem))
+}
+
+// AddSeq adds the values from seq to the set.
+func (s *Sorted[T]) AddSeq(seq iter.Seq[T]) {
+	for x := range seq {
 		i, present := slices.BinarySearch(s.elems, x)
 		if !present {
 			s.elems = slices.Insert(s.elems, i, x)

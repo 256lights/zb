@@ -17,6 +17,15 @@ type Deque[T any] struct {
 	n     int
 }
 
+// Collect collects values from seq into a new deque and returns it.
+func Collect[T any](seq iter.Seq[T]) *Deque[T] {
+	d := new(Deque[T])
+	for x := range seq {
+		d.PushBack(x)
+	}
+	return d
+}
+
 // Len returns the number of elements in the deque.
 func (d *Deque[T]) Len() int {
 	if d == nil {

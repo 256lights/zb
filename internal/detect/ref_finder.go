@@ -5,6 +5,7 @@ package detect
 
 import (
 	"cmp"
+	"iter"
 	"slices"
 
 	"zombiezen.com/go/zb/sets"
@@ -18,20 +19,24 @@ type RefFinder struct {
 	found   sets.Sorted[string]
 }
 
-// NewRefFinder returns a new [RefFinder] that searches for the given strings.
-func NewRefFinder(search []string) *RefFinder {
-	rf := &RefFinder{
-		root: buildRefFinderTree(search),
-	}
-	if slices.Contains(search, "") {
+// NewRefFinder returns a new [RefFinder] that searches for strings from the given sequence.
+func NewRefFinder(search iter.Seq[string]) *RefFinder {
+	rf := new(RefFinder)
+	var hasEmpty bool
+	rf.root, hasEmpty = buildRefFinderTree(search)
+	if hasEmpty {
 		rf.found.Add("")
 	}
 	return rf
 }
 
-func buildRefFinderTree(search []string) *refFinderNode {
-	root := new(refFinderNode)
-	for _, s := range search {
+func buildRefFinderTree(search iter.Seq[string]) (root *refFinderNode, hasEmpty bool) {
+	root = new(refFinderNode)
+	for s := range search {
+		if s == "" {
+			hasEmpty = true
+			continue
+		}
 		curr := root
 		for _, b := range []byte(s) {
 			if i, ok := curr.find(b); ok {
@@ -45,7 +50,7 @@ func buildRefFinderTree(search []string) *refFinderNode {
 		curr.match = s
 	}
 
-	return root
+	return root, hasEmpty
 }
 
 // Found returns the set of references found in the written content so far.

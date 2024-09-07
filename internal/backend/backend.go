@@ -6,7 +6,6 @@ package backend
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +13,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
@@ -45,7 +43,8 @@ type Server struct {
 	buildDir string
 	db       *sqlitemigration.Pool
 
-	inProgress mutexMap[zbstore.Path]
+	writing  mutexMap[zbstore.Path] // store objects being written
+	building mutexMap[zbstore.Path] // derivations being built
 }
 
 // NewServer returns a new [Server] for the given store directory and database path.
@@ -97,6 +96,10 @@ func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 	}.JSONRPC(ctx, req)
 }
 
+func (s *Server) realPath(path zbstore.Path) string {
+	return filepath.Join(s.realDir, path.Base())
+}
+
 func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	var args zbstore.ExistsRequest
 	if err := json.Unmarshal(req.Params, &args); err != nil {
@@ -109,12 +112,12 @@ func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 			Result: json.RawMessage("false"),
 		}, nil
 	}
-	unlock, err := s.inProgress.lock(ctx, p)
+	unlock, err := s.writing.lock(ctx, p)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	if _, err := os.Lstat(filepath.Join(s.realDir, p.Base(), filepath.FromSlash(sub))); err != nil {
+	if _, err := os.Lstat(filepath.Join(s.realPath(p), filepath.FromSlash(sub))); err != nil {
 		log.Debugf(ctx, "%s does not exist (%v)", args.Path, err)
 		return &jsonrpc.Response{
 			Result: json.RawMessage("false"),
@@ -128,12 +131,12 @@ func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 
 // NARReceiver is a per-connection [zbstore.NARReceiver].
 type NARReceiver struct {
-	ctx        context.Context
-	dir        zbstore.Directory
-	realDir    string
-	dbPool     *sqlitemigration.Pool
-	inProgress *mutexMap[zbstore.Path]
-	tmpFile    *os.File
+	ctx     context.Context
+	dir     zbstore.Directory
+	realDir string
+	dbPool  *sqlitemigration.Pool
+	writing *mutexMap[zbstore.Path]
+	tmpFile *os.File
 
 	hasher nix.Hasher
 	size   int64
@@ -147,12 +150,12 @@ func (s *Server) NewNARReceiver(ctx context.Context) *NARReceiver {
 		panic("nil context passed to NewNARReceiver")
 	}
 	return &NARReceiver{
-		ctx:        ctx,
-		dir:        s.dir,
-		realDir:    s.realDir,
-		dbPool:     s.db,
-		inProgress: &s.inProgress,
-		hasher:     *nix.NewHasher(nix.SHA256),
+		ctx:     ctx,
+		dir:     s.dir,
+		realDir: s.realDir,
+		dbPool:  s.db,
+		writing: &s.writing,
+		hasher:  *nix.NewHasher(nix.SHA256),
 	}
 }
 
@@ -209,7 +212,7 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		return
 	}
 
-	unlock, err := r.inProgress.lock(ctx, trailer.StorePath)
+	unlock, err := r.writing.lock(ctx, trailer.StorePath)
 	if err != nil {
 		log.Errorf(ctx, "Failed to lock %s: %v", trailer.StorePath, err)
 		return
@@ -344,57 +347,6 @@ func verifyContentAddress(path zbstore.Path, narContent io.Reader, refs *sets.So
 	return computed, nil
 }
 
-var errObjectExists = errors.New("store object exists")
-
-func insertObject(ctx context.Context, conn *sqlite.Conn, info *zbstore.NARInfo) (err error) {
-	log.Debugf(ctx, "Registering metadata for %s", info.StorePath)
-
-	defer sqlitex.Save(conn)(&err)
-
-	if err := upsertPath(conn, zbstore.Path(info.StorePath)); err != nil {
-		return fmt.Errorf("insert %s into database: %v", info.StorePath, err)
-	}
-	if err := upsertPath(conn, zbstore.Path(info.Deriver)); err != nil {
-		return fmt.Errorf("insert %s into database: %v", info.StorePath, err)
-	}
-	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "insert_object.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{
-			":path":     string(info.StorePath),
-			":nar_size": info.NARSize,
-			":nar_hash": info.NARHash.SRI(),
-			":ca":       info.CA.String(),
-		},
-	})
-	if sqlite.ErrCode(err) == sqlite.ResultConstraintRowID {
-		return fmt.Errorf("insert %s into database: %w", info.StorePath, errObjectExists)
-	}
-	if err != nil {
-		return fmt.Errorf("insert %s into database: %v", info.StorePath, err)
-	}
-
-	addRefStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "add_reference.sql")
-	if err != nil {
-		return fmt.Errorf("insert %s into database: %v", info.StorePath, err)
-	}
-	defer addRefStmt.Finalize()
-
-	addRefStmt.SetText(":referrer", string(info.StorePath))
-	for _, ref := range info.References.All() {
-		if err := upsertPath(conn, ref); err != nil {
-			return fmt.Errorf("insert %s into database: %v", info.StorePath, err)
-		}
-		addRefStmt.SetText(":reference", string(ref))
-		if _, err := addRefStmt.Step(); err != nil {
-			return fmt.Errorf("insert %s into database: add reference %s: %v", info.StorePath, ref, err)
-		}
-		if err := addRefStmt.Reset(); err != nil {
-			return fmt.Errorf("insert %s into database: add reference %s: %v", info.StorePath, ref, err)
-		}
-	}
-
-	return nil
-}
-
 // extractNAR extracts a NAR file to the local filesystem at the given path.
 func extractNAR(dst string, r io.Reader) error {
 	nr := nar.NewReader(r)
@@ -476,66 +428,4 @@ func marshalResponse(data any) (*jsonrpc.Response, error) {
 		return nil, jsonrpc.Error(jsonrpc.InternalError, err)
 	}
 	return &jsonrpc.Response{Result: jsonData}, nil
-}
-
-func upsertPath(conn *sqlite.Conn, path zbstore.Path) error {
-	if path == "" {
-		return nil
-	}
-	err := sqlitex.ExecuteFS(conn, sqlFiles(), "upsert_path.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{":path": string(path)},
-	})
-	if err != nil {
-		return fmt.Errorf("upsert path %s: %v", path, err)
-	}
-	return nil
-}
-
-func prepareConn(conn *sqlite.Conn) error {
-	if err := sqlitex.ExecuteTransient(conn, "PRAGMA journal_mode = wal;", nil); err != nil {
-		return err
-	}
-	if err := sqlitex.ExecuteTransient(conn, "PRAGMA foreign_keys = on;", nil); err != nil {
-		return err
-	}
-	return nil
-}
-
-//go:embed sql/*.sql
-//go:embed sql/schema/*.sql
-var rawSQLFiles embed.FS
-
-func sqlFiles() fs.FS {
-	sub, err := fs.Sub(rawSQLFiles, "sql")
-	if err != nil {
-		panic(err)
-	}
-	return sub
-}
-
-var schemaState struct {
-	init   sync.Once
-	schema sqlitemigration.Schema
-	err    error
-}
-
-func loadSchema() sqlitemigration.Schema {
-	schemaState.init.Do(func() {
-		for i := 1; ; i++ {
-			migration, err := fs.ReadFile(sqlFiles(), fmt.Sprintf("schema/%02d.sql", i))
-			if errors.Is(err, fs.ErrNotExist) {
-				break
-			}
-			if err != nil {
-				schemaState.err = err
-				return
-			}
-			schemaState.schema.Migrations = append(schemaState.schema.Migrations, string(migration))
-		}
-	})
-
-	if schemaState.err != nil {
-		panic(schemaState.err)
-	}
-	return schemaState.schema
 }

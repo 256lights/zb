@@ -165,9 +165,9 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 		case outType.IsFloating():
 			drv.Env[outputName] = zbstore.HashPlaceholder(outputName)
 		case outType.IsFixed():
-			p, ok := outType.Path(eval.storeDir, drv.Name, outputName)
-			if !ok {
-				panic("should have a path")
+			p, err := drv.OutputPath(outputName)
+			if err != nil {
+				panic(err)
 			}
 			drv.Env[outputName] = string(p)
 		default:
@@ -187,12 +187,15 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 		var placeholder string
 		switch {
 		case outType.IsFloating():
-			placeholder = zbstore.UnknownCAOutputPlaceholder(drvPath, zbstore.DefaultDerivationOutputName)
+			placeholder = zbstore.UnknownCAOutputPlaceholder(zbstore.OutputReference{
+				DrvPath:    drvPath,
+				OutputName: zbstore.DefaultDerivationOutputName,
+			})
 		case outType.IsFixed():
 			// TODO(someday): We already computed this earlier.
-			p, ok := outType.Path(eval.storeDir, drv.Name, outputName)
-			if !ok {
-				panic("should have a path")
+			p, err := drv.OutputPath(outputName)
+			if err != nil {
+				panic(err)
 			}
 			placeholder = string(p)
 		}

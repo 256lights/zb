@@ -35,6 +35,13 @@ func (s Set[T]) Add(elem ...T) {
 	}
 }
 
+// AddSeq adds the values from seq to the set.
+func (s Set[T]) AddSeq(seq iter.Seq[T]) {
+	for x := range seq {
+		s[x] = struct{}{}
+	}
+}
+
 // Has reports whether the set contains x.
 func (s Set[T]) Has(x T) bool {
 	_, present := s[x]

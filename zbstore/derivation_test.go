@@ -222,40 +222,40 @@ func TestParseDerivation(t *testing.T) {
 func TestDerivationOutputPath(t *testing.T) {
 	tests := []struct {
 		name       string
-		out        *DerivationOutputType
 		drvName    string
 		outputName string
+		outputType *DerivationOutputType
 		want       Path
 	}{
 		{
 			name:       "Text",
-			out:        FixedCAOutput(nix.TextContentAddress(hashString(nix.SHA256, "Hello, World!\n"))),
 			drvName:    "hello.txt",
 			outputName: "out",
+			outputType: FixedCAOutput(nix.TextContentAddress(hashString(nix.SHA256, "Hello, World!\n"))),
 			want:       "/nix/store/q4dz47g15qmlsm01aijr737w8avkaac6-hello.txt",
 		},
 		{
 			name:       "FlatFile",
-			out:        FixedCAOutput(nix.FlatFileContentAddress(hashString(nix.SHA256, "Hello, World!\n"))),
 			drvName:    "hello.txt",
 			outputName: "out",
+			outputType: FixedCAOutput(nix.FlatFileContentAddress(hashString(nix.SHA256, "Hello, World!\n"))),
 			want:       "/nix/store/22lrzcnq9ch2f3sz8d2idrm9gn72vcy2-hello.txt",
 		},
 		{
 			name:       "RecursiveFile",
-			out:        FixedCAOutput(nix.RecursiveFileContentAddress(helloNARHash(t))),
 			drvName:    "hello.txt",
 			outputName: "out",
+			outputType: FixedCAOutput(nix.RecursiveFileContentAddress(helloNARHash(t))),
 			want:       "/nix/store/8dh7w49x7r3xkwz39vavcq6znygmzrp0-hello.txt",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, ok := test.out.Path("/nix/store", test.drvName, test.outputName)
+			got, err := derivationOutputPath("/nix/store", test.drvName, test.outputName, test.outputType)
 			wantOK := test.want != ""
-			if got != test.want || ok != wantOK {
-				t.Errorf("out.Path(%q, %q, %q) = %q, %t; want %q, %t",
-					nix.DefaultStoreDirectory, test.drvName, test.outputName, got, ok, test.want, wantOK)
+			if got != test.want || (err == nil) != wantOK {
+				t.Errorf("out.Path(%q, %q, %q) = %q, %v; want %q, %t",
+					nix.DefaultStoreDirectory, test.drvName, test.outputName, got, err, test.want, wantOK)
 			}
 		})
 	}

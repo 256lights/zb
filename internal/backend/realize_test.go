@@ -134,7 +134,10 @@ func TestRealizeMultiStep(t *testing.T) {
 		Dir:    dir,
 		System: system.Current().String(),
 		Env: map[string]string{
-			"in":  zbstore.UnknownCAOutputPlaceholder(drv1Path, zbstore.DefaultDerivationOutputName),
+			"in": zbstore.UnknownCAOutputPlaceholder(zbstore.OutputReference{
+				DrvPath:    drv1Path,
+				OutputName: zbstore.DefaultDerivationOutputName,
+			}),
 			"out": zbstore.HashPlaceholder("out"),
 		},
 		InputDerivations: map[zbstore.Path]*sets.Sorted[string]{

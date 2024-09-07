@@ -5,6 +5,7 @@ package detect
 
 import (
 	stdcmp "cmp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -48,7 +49,7 @@ func FuzzRefFinder(f *testing.F) {
 		want := refFinderOracle(s, search)
 
 		t.Run("Write", func(t *testing.T) {
-			rf := NewRefFinder(search)
+			rf := NewRefFinder(slices.Values(search))
 			if n, err := rf.Write([]byte(s)); n != len(s) || err != nil {
 				t.Errorf("NewRefFinder(%q).Write(%q) = %d, %v; want %d, <nil>",
 					search, s, n, err, len(s))
@@ -61,7 +62,7 @@ func FuzzRefFinder(f *testing.F) {
 		})
 
 		t.Run("WriteString", func(t *testing.T) {
-			rf := NewRefFinder(search)
+			rf := NewRefFinder(slices.Values(search))
 			if n, err := rf.WriteString(s); n != len(s) || err != nil {
 				t.Errorf("NewRefFinder(%q).WriteString(%q) = %d, %v; want %d, <nil>",
 					search, s, n, err, len(s))

@@ -30,10 +30,18 @@ create table "references" (
 
 create index "back_references" on "references"("reference");
 
+create table "drv_hashes" (
+  "id" integer primary key not null,
+  "algorithm" text not null,
+  "bits" blob not null,
+
+  unique ("algorithm", "bits")
+);
+
 create table "realizations" (
-  "drv_path" integer
+  "drv_hash" integer
     not null
-    references "paths",
+    references "drv_hashes",
   "output_name" text
     not null
     default 'out',
@@ -41,7 +49,39 @@ create table "realizations" (
     not null
     references "paths",
 
-  primary key ("drv_path", "output_name", "output_path")
+  primary key ("drv_hash", "output_name", "output_path")
 ) without rowid;
 
 create index "realizations_by_output_path" on "realizations"("output_path");
+
+create table "reference_classes" (
+  "id" integer primary key not null,
+
+  "referrer" integer not null,
+  "referrer_drv_hash" integer not null,
+  "referrer_output_name" text not null,
+
+  "reference" integer not null,
+  "reference_drv_hash" integer
+    references "drv_hashes",
+  "reference_output_name" text,
+
+  foreign key ("referrer_drv_hash", "referrer_output_name", "referrer") references "realizations"
+    on delete cascade,
+  check ("reference_drv_hash" is null = "reference_output_name" is null)
+);
+
+create index "reference_classes_by_realization" on "reference_classes" (
+  "referrer_drv_hash",
+  "referrer_output_name",
+  "referrer"
+);
+
+create unique index "reference_classes_by_reference" on "reference_classes" (
+  "referrer",
+  "reference",
+  "referrer_drv_hash",
+  "referrer_output_name",
+  "reference_drv_hash",
+  "reference_output_name"
+);
