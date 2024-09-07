@@ -717,11 +717,13 @@ func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path, f ru
 	}
 
 	peerLogger := newRPCLogger(ctx, drvPath, peer(ctx))
-	bufferedPeerLogger := batchio.NewWriter(peerLogger, 8192, 1*time.Second)
+	bufferedPeerLogger := batchio.NewWriter(peerLogger, 8192, 250*time.Millisecond)
 	defer bufferedPeerLogger.Flush()
 
 	log.Debugf(ctx, "Starting builder for %s...", drvPath)
-	if err := f(ctx, expandedDrv, topTempDir, bufferedPeerLogger); err != nil {
+	err = f(ctx, expandedDrv, topTempDir, bufferedPeerLogger)
+	bufferedPeerLogger.Flush()
+	if err != nil {
 		log.Debugf(ctx, "Builder for %s has failed: %v", drvPath, err)
 		for outName, outPath := range outPaths {
 			if err := os.RemoveAll(string(outPath)); err != nil {
