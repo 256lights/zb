@@ -7,11 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"zombiezen.com/go/log/testlog"
@@ -362,6 +365,72 @@ func TestRealizeFailure(t *testing.T) {
 			t.Errorf("unknown object %s left in store", name)
 		}
 	}
+}
+
+func TestRealizeFetchURL(t *testing.T) {
+	ctx := testlog.WithTB(context.Background(), t)
+	dir, err := zbstore.CleanDirectory(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const fileContent = "Hello, World!\n"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/hello.txt", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, "hello.txt", time.Time{}, strings.NewReader(fileContent))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExporter(exportBuffer)
+	const wantOutputName = "hello.txt"
+	wantOutputCA := nix.FlatFileContentAddress(mustParseHash(t, "sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31"))
+	drvContent := &zbstore.Derivation{
+		Name:    wantOutputName,
+		Dir:     dir,
+		Builder: "builtin:fetchurl",
+		System:  "builtin",
+		Env: map[string]string{
+			"url": string(srv.URL + "/hello.txt"),
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		Outputs: map[string]*zbstore.DerivationOutputType{
+			zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(wantOutputCA),
+		},
+	}
+	drvPath, err := storetest.ExportDerivation(exporter, drvContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	client := newTestServer(t, dir, string(dir), &testBuildLogger{t}, nil)
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(exportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
+		DrvPath: drvPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantOutputPath, err := zbstore.FixedCAOutputPath(dir, wantOutputName, wantOutputCA, zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkSingleFileOutput(t, wantOutputPath, []byte(fileContent), got)
 }
 
 func checkSingleFileOutput(tb testing.TB, wantOutputPath zbstore.Path, wantOutputContent []byte, got *zbstore.RealizeResponse) {

@@ -536,7 +536,11 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path) (err error) {
 	}
 
 	// Arrange for builder to run.
-	tempOutPaths, err := b.runUnsandboxed(ctx, drvPath)
+	runFunc := runnerFunc(runSubprocess)
+	if drv.System == builtinSystem {
+		runFunc = runBuiltin
+	}
+	tempOutPaths, err := b.runUnsandboxed(ctx, drvPath, runFunc)
 	if err != nil {
 		return err
 	}
@@ -654,7 +658,9 @@ func (b *builder) inputs(ctx context.Context, drvPath zbstore.Path) (map[zbstore
 	return result, nil
 }
 
-func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path) (map[string]zbstore.Path, error) {
+type runnerFunc func(ctx context.Context, drv *zbstore.Derivation, dir string, logWriter io.Writer) error
+
+func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path, f runnerFunc) (map[string]zbstore.Path, error) {
 	drvName, isDrv := drvPath.DerivationName()
 	if !isDrv {
 		return nil, fmt.Errorf("build %s: not a derivation", drvPath)
@@ -699,21 +705,12 @@ func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path) (map
 		}
 	}
 
-	c := exec.CommandContext(ctx, expandedDrv.Builder, expandedDrv.Args...)
-	setCancelFunc(c)
-	for k, v := range xmaps.Sorted(expandedDrv.Env) {
-		c.Env = append(c.Env, k+"="+v)
-	}
-	c.Dir = topTempDir
-
 	peerLogger := newRPCLogger(ctx, drvPath, peer(ctx))
 	bufferedPeerLogger := batchio.NewWriter(peerLogger, 8192, 1*time.Second)
 	defer bufferedPeerLogger.Flush()
-	c.Stdout = bufferedPeerLogger
-	c.Stderr = bufferedPeerLogger
 
 	log.Debugf(ctx, "Starting builder for %s...", drvPath)
-	if err := c.Run(); err != nil {
+	if err := f(ctx, expandedDrv, topTempDir, bufferedPeerLogger); err != nil {
 		log.Debugf(ctx, "Builder for %s has failed: %v", drvPath, err)
 		for outName, outPath := range outPaths {
 			if err := os.RemoveAll(string(outPath)); err != nil {
@@ -729,6 +726,21 @@ func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path) (map
 
 	log.Debugf(ctx, "Builder for %s has finished successfully", drvPath)
 	return outPaths, nil
+}
+
+// runSubprocess runs a builder by running a subprocess.
+// It satisfies the [runnerFunc] signature.
+func runSubprocess(ctx context.Context, drv *zbstore.Derivation, dir string, logWriter io.Writer) error {
+	c := exec.CommandContext(ctx, drv.Builder, drv.Args...)
+	setCancelFunc(c)
+	for k, v := range xmaps.Sorted(drv.Env) {
+		c.Env = append(c.Env, k+"="+v)
+	}
+	c.Dir = dir
+	c.Stdout = logWriter
+	c.Stderr = logWriter
+
+	return c.Run()
 }
 
 // outputPathRewrites returns an iterator of mappings of output placeholders
@@ -1170,6 +1182,9 @@ func addToMultiMap[K comparable, V comparable, M ~map[K]sets.Set[V]](m M, k K, v
 }
 
 func canBuildLocally(drv *zbstore.Derivation) bool {
+	if drv.System == builtinSystem {
+		return true
+	}
 	host := system.Current()
 	want, err := system.Parse(drv.System)
 	if err != nil {
