@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,7 +71,79 @@ func TestRealizeSingleDerivation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, string(dir), &testBuildLogger{t}, nil)
+	logBuffer := new(bytes.Buffer)
+	client := newTestServer(t, dir, string(dir), &writerLogger{logBuffer}, nil)
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(exportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
+		DrvPath: drvPath,
+	})
+	gotLog := bytes.ReplaceAll(logBuffer.Bytes(), []byte("\r\n"), []byte("\n"))
+	if err != nil {
+		t.Fatalf("RPC error: %v\nlog:\n%s", err, gotLog)
+	}
+
+	if want := "catcat\n"; string(gotLog) != want {
+		t.Errorf("build log:\n%s\n(want %q)", gotLog, want)
+	}
+	const wantOutputContent = "Hello, World!\nHello, World!\n"
+	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, []byte(wantOutputContent), zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
+}
+
+func TestRealizeReuse(t *testing.T) {
+	ctx := testlog.WithTB(context.Background(), t)
+	dir, err := zbstore.CleanDirectory(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const inputContent = "Hello, World!\n"
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExporter(exportBuffer)
+	inputFilePath, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantOutputName = "hello2.txt"
+	drvContent := &zbstore.Derivation{
+		Name:   wantOutputName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"in":  string(inputFilePath),
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		InputSources: *sets.NewSorted(
+			inputFilePath,
+		),
+		Outputs: map[string]*zbstore.DerivationOutputType{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	drvContent.Builder, drvContent.Args = catcatBuilder()
+	drvPath, err := storetest.ExportDerivation(exporter, drvContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logBuffer := new(bytes.Buffer)
+	client := newTestServer(t, dir, string(dir), &writerLogger{logBuffer}, nil)
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -86,9 +159,20 @@ func TestRealizeSingleDerivation(t *testing.T) {
 		DrvPath: drvPath,
 	})
 	if err != nil {
-		t.Fatal(err)
+		gotLog := bytes.ReplaceAll(logBuffer.Bytes(), []byte("\r\n"), []byte("\n"))
+		t.Fatalf("first RPC error: %v\nlog:\n%s", err, gotLog)
+	}
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
+		DrvPath: drvPath,
+	})
+	gotLog := bytes.ReplaceAll(logBuffer.Bytes(), []byte("\r\n"), []byte("\n"))
+	if err != nil {
+		t.Fatalf("second RPC error: %v\nlog:\n%s", err, gotLog)
 	}
 
+	if want := "catcat\n"; string(gotLog) != want {
+		t.Errorf("build log:\n%s\n(want %q)", gotLog, want)
+	}
 	const wantOutputContent = "Hello, World!\nHello, World!\n"
 	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, []byte(wantOutputContent), zbstore.References{})
 	if err != nil {
@@ -468,16 +552,17 @@ func checkSingleFileOutput(tb testing.TB, wantOutputPath zbstore.Path, wantOutpu
 
 // catcatBuilder returns a builder that writes $in twice to $out
 // with no dependencies other than the system shell.
+// As a side-effect, it echoes "catcat" to its log to signal its execution.
 func catcatBuilder() (builder string, builderArgs []string) {
 	if runtime.GOOS == "windows" {
 		return powershellPath, []string{
 			"-Command",
-			`$x = Get-Content -Raw ${env:in} ; ($x + $x) | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}`,
+			`Write-Output "catcat" ; $x = Get-Content -Raw ${env:in} ; ($x + $x) | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}`,
 		}
 	}
 	return shPath, []string{
 		"-c",
-		`while read line; do echo "$line"; echo "$line"; done < $in > $out`,
+		`echo catcat >&2 ; while read line; do echo "$line"; echo "$line"; done < $in > $out`,
 	}
 }
 
@@ -495,6 +580,29 @@ func singleFileOutputPath(dir zbstore.Directory, name string, data []byte, refs 
 		return "", err
 	}
 	return p, nil
+}
+
+type writerLogger struct {
+	w io.Writer
+}
+
+func (wl *writerLogger) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	return jsonrpc.ServeMux{
+		zbstore.LogMethod: jsonrpc.HandlerFunc(wl.log),
+	}.JSONRPC(ctx, req)
+}
+
+func (wl *writerLogger) log(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	args := new(zbstore.LogNotification)
+	if err := json.Unmarshal(req.Params, args); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	payload := args.Payload()
+	if len(payload) == 0 {
+		return nil, nil
+	}
+	_, err := wl.w.Write(payload)
+	return nil, err
 }
 
 type testBuildLogger struct {

@@ -92,17 +92,20 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 
 	// First, see if there is a compatible set of usable realizations for those requested.
 	// If so, we can use those directly.
+	log.Debugf(ctx, "Searching for realizations for top-level %v...", wantOutputs)
 	mustBuild := false
 	for ref := range wantOutputs.All() {
 		eqClass, ok := b.toEquivalenceClass(ref)
 		if !ok {
 			return nil, fmt.Errorf("build %s: missing hash for %v", ultimateDrvPath, ref)
 		}
+		log.Debugf(ctx, "Top-level %v (drvHash=%s)", ref, eqClass.drvHashString)
 		newRealizations, err := b.pickRealizationsToReuse(ctx, eqClass)
 		if err != nil {
 			return nil, fmt.Errorf("build %s: %v", ultimateDrvPath, err)
 		}
 		if len(newRealizations) == 0 {
+			log.Debugf(ctx, "No compatible realizations for top-level %v. Kicking off build...", ref)
 			mustBuild = true
 			break
 		}
@@ -133,6 +136,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		// We perform a two-phase build.
 		// In the first phase, we realize any multi-output derivations
 		// and forbid usage of realizations for those targets specifically.
+		log.Debugf(ctx, "Running first phase of build with multi-output derivations: %v", multiOutputs)
 		if err := b.realize(ctx, multiOutputs, false); err != nil {
 			if isBuilderFailure(err) {
 				return marshalResponse(b.makeResponse(ultimateDrvPath))
@@ -141,6 +145,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		}
 		// In the second phase, we realize our originally requested outputs.
 		// This will reuse the realizations from the previous phase.
+		log.Debugf(ctx, "Running second phase of build to finish: %v", wantOutputs)
 		if err := b.realize(ctx, wantOutputs, true); err != nil {
 			if isBuilderFailure(err) {
 				return marshalResponse(b.makeResponse(ultimateDrvPath))
@@ -238,11 +243,11 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 			log.Debugf(ctx, "Resuming %s", curr.DrvPath)
 		} else {
 			// First visit to derivation.
-			log.Debugf(ctx, "Reached %v", curr)
 			drvHash := b.drvHashes[curr.DrvPath]
 			if drvHash.IsZero() {
 				return fmt.Errorf("realize %v: missing hash", curr)
 			}
+			log.Debugf(ctx, "Reached %v (drvHash=%v)", curr, drvHash)
 			unlock, err := b.server.building.lock(ctx, curr.DrvPath)
 			if err != nil {
 				return err
@@ -292,7 +297,9 @@ func (b *builder) preprocess(ctx context.Context, output zbstore.OutputReference
 		return fmt.Errorf("%s: unknown derivation", output.DrvPath)
 	}
 
-	if useExisting {
+	if !useExisting {
+		log.Debugf(ctx, "Skipping use of existing realizations for %v (drvHash=%s)", output, eqClass.drvHashString)
+	} else {
 		newRealizations, err := b.pickRealizationsToReuse(ctx, eqClass)
 		if err != nil {
 			return err
@@ -379,6 +386,7 @@ func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalen
 		return !hasExisting || ref.path == used.path
 	}
 
+	log.Debugf(ctx, "Searching for realizations for %v...", eqClass)
 	existing, err := findPossibleRealizations(ctx, b.conn, eqClass)
 	if err != nil {
 		return nil, err
@@ -411,12 +419,14 @@ func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalen
 			return nil, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
 		}
 		if canUse {
+			log.Debugf(ctx, "Found %s as a candidate for %v", outputPath, eqClass)
 			rout.path = outputPath
 			break
 		}
 	}
 
 	if rout.path == "" {
+		log.Debugf(ctx, "No suitable realizations exist for %v", eqClass)
 		return nil, nil
 	}
 
@@ -439,6 +449,7 @@ func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalen
 		if canUse {
 			// Multiple realizations are compatible.
 			// Return none of them.
+			log.Debugf(ctx, "Both %s and %s are viable candidates for %v. Returning nothing.", outputPath, rout.path, eqClass)
 			return nil, nil
 		}
 	}

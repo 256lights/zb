@@ -130,7 +130,7 @@ func findPossibleRealizations(ctx context.Context, conn *sqlite.Conn, eqClass eq
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "find_realizations.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":drv_hash_algorithm": drvHash.Type().String(),
-			":drv_hash_bits":      drvHash.Type().String(),
+			":drv_hash_bits":      drvHash.Bytes(nil),
 			":output_name":        eqClass.outputName,
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
