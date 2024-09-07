@@ -4,8 +4,10 @@
 package sets
 
 import (
+	"fmt"
 	"iter"
 	"maps"
+	"strings"
 )
 
 // Set is an unordered set with O(1) lookup, insertion, and deletion.
@@ -75,4 +77,57 @@ func (s Set[T]) Delete(x T) {
 // but retains the space allocated for the set.
 func (s Set[T]) Clear() {
 	clear(s)
+}
+
+// Format implements [fmt.Formatter]
+// by formatting its elements according to the printer state and verb
+// surrounded by braces.
+func (s Set[T]) Format(f fmt.State, verb rune) {
+	format(f, verb, s.All())
+}
+
+func format[T any](f fmt.State, verb rune, seq iter.Seq[T]) {
+	var buf [1]byte
+	buf[0] = '{'
+	f.Write(buf[:])
+
+	fmtString := new(strings.Builder)
+	fmtString.WriteByte('%')
+	for _, flag := range "+-# 0" {
+		if f.Flag(int(flag)) {
+			fmtString.WriteRune(flag)
+		}
+	}
+	width, hasWidth := f.Width()
+	if hasWidth {
+		fmtString.WriteByte('*')
+	}
+	precision, hasPrecision := f.Precision()
+	if hasPrecision {
+		fmtString.WriteString(".*")
+	}
+	fmtString.WriteRune(verb)
+	args := make([]any, 0, 3)
+	if hasWidth {
+		args = append(args, width)
+	}
+	if hasPrecision {
+		args = append(args, precision)
+	}
+	args = append(args, nil)
+
+	first := true
+	buf[0] = ' '
+	for x := range seq {
+		if first {
+			first = false
+		} else {
+			f.Write(buf[:])
+		}
+		args[len(args)-1] = x
+		fmt.Fprintf(f, fmtString.String(), args...)
+	}
+
+	buf[0] = '}'
+	f.Write(buf[:])
 }

@@ -5,6 +5,7 @@ package sets
 
 import (
 	"cmp"
+	"fmt"
 	"iter"
 	"slices"
 )
@@ -90,11 +91,22 @@ func (s *Sorted[T]) At(i int) T {
 	return s.elems[i]
 }
 
-// All returns an iterator of the elements of s.
+// All returns an iterator of the indices and elements of s.
 func (s *Sorted[T]) All() iter.Seq2[int, T] {
 	return func(yield func(int, T) bool) {
 		for i := 0; i < s.Len(); i++ {
 			if !yield(i, s.At(i)) {
+				return
+			}
+		}
+	}
+}
+
+// Values returns an iterator of the elements of s.
+func (s *Sorted[T]) Values() iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for i := 0; i < s.Len(); i++ {
+			if !yield(s.At(i)) {
 				return
 			}
 		}
@@ -120,4 +132,11 @@ func (s *Sorted[T]) Clear() {
 		return
 	}
 	s.elems = slices.Delete(s.elems, 0, len(s.elems))
+}
+
+// Format implements [fmt.Formatter]
+// by formatting its elements according to the printer state and verb
+// surrounded by braces.
+func (s *Sorted[T]) Format(f fmt.State, verb rune) {
+	format(f, verb, s.Values())
 }
