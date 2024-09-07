@@ -1,4 +1,4 @@
-# zombiezen build (zb) tool
+# zb
 
 zb is an experiment in hermetic, reproducible build systems.
 It is a prototype and should not be used for production purposes.
@@ -67,7 +67,8 @@ From there, the following libraries are available:
 - Establish a [source bootstrap](https://bootstrappable.org/benefits.html)
   that is equivalent to the [nixpkgs standard environment](https://nixos.org/manual/nixpkgs/unstable/#chap-stdenv).
   ([Partially implemented](demo/bootstrap.lua)
-  by following the [live-bootstrap](https://github.com/fosslinux/live-bootstrap/) steps.)
+  by following the [live-bootstrap](https://github.com/fosslinux/live-bootstrap/) steps.
+  See [#30](https://github.com/zombiezen/zb/issues/30) for ongoing work.)
 - Permit optional interoperability with the nixpkgs ecosystem.
   (Not implemented yet: [#2](https://github.com/zombiezen/zb/issues/2))
 
