@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -44,28 +45,28 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 	if err := json.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
-	ultimateDrvPath, subPath, err := s.dir.ParsePath(string(args.DrvPath))
+	drvPath, subPath, err := s.dir.ParsePath(string(args.DrvPath))
 	if err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 	if subPath != "" {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a store object", args.DrvPath))
 	}
-	if _, isDrv := ultimateDrvPath.DerivationName(); !isDrv {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a derivation", ultimateDrvPath))
+	if _, isDrv := drvPath.DerivationName(); !isDrv {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a derivation", drvPath))
 	}
-	log.Infof(ctx, "Requested to build %s", ultimateDrvPath)
+	log.Infof(ctx, "Requested to build %s", drvPath)
 	if string(s.dir) != s.realDir {
 		return nil, fmt.Errorf("store cannot build derivations (unsandboxed and storage directory does not match store)")
 	}
 
-	drvCache, err := s.readDerivationClosure(ctx, []zbstore.Path{ultimateDrvPath})
+	drvCache, err := s.readDerivationClosure(ctx, []zbstore.Path{drvPath})
 	if err != nil {
-		return nil, fmt.Errorf("build %s: %v", ultimateDrvPath, err)
+		return nil, fmt.Errorf("build %s: %v", drvPath, err)
 	}
 	drvHashes, err := hashDrvs(drvCache)
 	if err != nil {
-		return nil, fmt.Errorf("build %s: %v", ultimateDrvPath, err)
+		return nil, fmt.Errorf("build %s: %v", drvPath, err)
 	}
 
 	conn, err := s.db.Get(ctx)
@@ -74,87 +75,99 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 	}
 	defer s.db.Put(conn)
 
-	b := &builder{
-		server:      s,
-		conn:        conn,
-		derivations: drvCache,
-		drvHashes:   drvHashes,
-
-		realizations: make(map[equivalenceClass]cachedRealization),
-	}
 	wantOutputs := make(sets.Set[zbstore.OutputReference])
-	for outputName := range b.derivations[ultimateDrvPath].Outputs {
+	for outputName := range drvCache[drvPath].Outputs {
 		wantOutputs.Add(zbstore.OutputReference{
-			DrvPath:    ultimateDrvPath,
+			DrvPath:    drvPath,
 			OutputName: outputName,
 		})
 	}
+	b := s.newBuilder(conn, drvCache, drvHashes)
+	if err := b.realize(ctx, wantOutputs); err != nil {
+		if isBuilderFailure(err) {
+			return marshalResponse(b.makeRealizeResponse(drvPath))
+		}
+		return nil, fmt.Errorf("build %s: %v", drvPath, err)
+	}
+	return marshalResponse(b.makeRealizeResponse(drvPath))
+}
 
-	// First, see if there is a compatible set of usable realizations for those requested.
-	// If so, we can use those directly.
-	log.Debugf(ctx, "Searching for realizations for top-level %v...", wantOutputs)
-	mustBuild := false
-	for ref := range wantOutputs.All() {
-		eqClass, ok := b.toEquivalenceClass(ref)
-		if !ok {
-			return nil, fmt.Errorf("build %s: missing hash for %v", ultimateDrvPath, ref)
+func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.Response, err error) {
+	// Validate request.
+	var args zbstore.ExpandRequest
+	if err := json.Unmarshal(req.Params, &args); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	drvPath, subPath, err := s.dir.ParsePath(string(args.DrvPath))
+	if err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	if subPath != "" {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a store object", args.DrvPath))
+	}
+	if _, isDrv := drvPath.DerivationName(); !isDrv {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a derivation", drvPath))
+	}
+	temporaryDirectory := args.TemporaryDirectory
+	if temporaryDirectory == "" {
+		// Provide a static per-platform fallback.
+		// We don't use [os.TempDir] because that leaks environment variables
+		// from the build server.
+		if runtime.GOOS == "windows" {
+			return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("missing temporary directory"))
 		}
-		log.Debugf(ctx, "Top-level %v (drvHash=%s)", ref, eqClass.drvHashString)
-		newRealizations, err := b.pickRealizationsToReuse(ctx, eqClass)
-		if err != nil {
-			return nil, fmt.Errorf("build %s: %v", ultimateDrvPath, err)
-		}
-		if len(newRealizations) == 0 {
-			log.Debugf(ctx, "No compatible realizations for top-level %v. Kicking off build...", ref)
-			mustBuild = true
-			break
-		}
-		maps.Copy(b.realizations, newRealizations)
+		temporaryDirectory = "/tmp"
+	}
+	log.Infof(ctx, "Requested to expand %s", drvPath)
+	if string(s.dir) != s.realDir {
+		return nil, fmt.Errorf("store cannot build derivations (unsandboxed and storage directory does not match store)")
 	}
 
-	if mustBuild {
-		// We know we're building *something*.
-		// Multi-output derivations are particularly troublesome for us
-		// because if they need to be rebuilt, they can invalidate the usage of other realizations.
-		// We only allow realizations to be used for multi-output derivations
-		// if only one output from the derivation is used in the graph.
-		//
-		// Here's the reasoning:
-		// If a multi-output derivation's closure is deterministic,
-		// then we should only have a single known realization for each output.
-		// If the closure is not deterministic, we want to pick a set of outputs that were built together.
-		// If the derivation is *mostly* deterministic,
-		// then we have a good shot of being able to reuse more realizations throughout the rest of the build process
-		// because of the early cutoff optimization from content-addressing.
-
-		clear(b.realizations)
-		multiOutputs, err := findMultiOutputDerivationsInBuild(b.derivations, b.drvHashes, wantOutputs)
-		if err != nil {
-			return nil, fmt.Errorf("build %s: %v", ultimateDrvPath, err)
-		}
-
-		// We perform a two-phase build.
-		// In the first phase, we realize any multi-output derivations
-		// and forbid usage of realizations for those targets specifically.
-		log.Debugf(ctx, "Running first phase of build with multi-output derivations: %v", multiOutputs)
-		if err := b.realize(ctx, multiOutputs, false); err != nil {
-			if isBuilderFailure(err) {
-				return marshalResponse(b.makeResponse(ultimateDrvPath))
-			}
-			return nil, fmt.Errorf("build %s: %v", ultimateDrvPath, err)
-		}
-		// In the second phase, we realize our originally requested outputs.
-		// This will reuse the realizations from the previous phase.
-		log.Debugf(ctx, "Running second phase of build to finish: %v", wantOutputs)
-		if err := b.realize(ctx, wantOutputs, true); err != nil {
-			if isBuilderFailure(err) {
-				return marshalResponse(b.makeResponse(ultimateDrvPath))
-			}
-			return nil, fmt.Errorf("build %s: %v", ultimateDrvPath, err)
-		}
+	drvCache, err := s.readDerivationClosure(ctx, []zbstore.Path{drvPath})
+	if err != nil {
+		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
+	}
+	drvHashes, err := hashDrvs(drvCache)
+	if err != nil {
+		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
 	}
 
-	return marshalResponse(b.makeResponse(ultimateDrvPath))
+	conn, err := s.db.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer s.db.Put(conn)
+
+	drv := drvCache[drvPath]
+	inputs := sets.Collect(drv.InputDerivationOutputs())
+	b := s.newBuilder(conn, drvCache, drvHashes)
+	if err := b.realize(ctx, inputs); err != nil {
+		if isBuilderFailure(err) {
+			return marshalResponse(b.makeRealizeResponse(drvPath))
+		}
+		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
+	}
+
+	outPaths, err := tempOutputPaths(drvPath, drv.Outputs)
+	if err != nil {
+		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
+	}
+	inputRewrites, err := derivationInputRewrites(b.drvHashes, b.realizations, drv)
+	if err != nil {
+		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
+	}
+	r := newReplacer(xiter.Chain2(
+		outputPathRewrites(outPaths),
+		maps.All(inputRewrites),
+	))
+	expandedDrv := expandDerivationPlaceholders(r, drv)
+	fillBaseEnv(expandedDrv.Env, drv.Dir, temporaryDirectory)
+
+	return marshalResponse(&zbstore.ExpandResponse{
+		Builder: expandedDrv.Builder,
+		Args:    expandedDrv.Args,
+		Env:     expandedDrv.Env,
+	})
 }
 
 type builder struct {
@@ -171,7 +184,18 @@ type cachedRealization struct {
 	closure map[zbstore.Path]sets.Set[equivalenceClass]
 }
 
-func (b *builder) makeResponse(drvPath zbstore.Path) *zbstore.RealizeResponse {
+func (s *Server) newBuilder(conn *sqlite.Conn, derivations map[zbstore.Path]*zbstore.Derivation, drvHashes map[zbstore.Path]nix.Hash) *builder {
+	return &builder{
+		server:      s,
+		conn:        conn,
+		derivations: derivations,
+		drvHashes:   drvHashes,
+
+		realizations: make(map[equivalenceClass]cachedRealization),
+	}
+}
+
+func (b *builder) makeRealizeResponse(drvPath zbstore.Path) *zbstore.RealizeResponse {
 	resp := new(zbstore.RealizeResponse)
 	for _, outputName := range xmaps.SortedKeys(b.derivations[drvPath].Outputs) {
 		var p zbstore.Nullable[zbstore.Path]
@@ -208,7 +232,72 @@ func (b *builder) lookup(ref zbstore.OutputReference) (_ zbstore.Path, ok bool) 
 	return r.path, ok
 }
 
-func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputReference], useExistingForWant bool) error {
+func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) error {
+	// First, see if there is a compatible set of usable realizations for those requested.
+	// If so, we can use those directly.
+	log.Debugf(ctx, "Searching for realizations for top-level %v...", want)
+	mustBuild := false
+	newRealizations := make(map[equivalenceClass]cachedRealization)
+	for ref := range want.All() {
+		eqClass, ok := b.toEquivalenceClass(ref)
+		if !ok {
+			return fmt.Errorf("missing hash for %v", ref)
+		}
+		log.Debugf(ctx, "Top-level %v (drvHash=%s)", ref, eqClass.drvHashString)
+		realizationsForOutput, err := b.pickRealizationsToReuse(ctx, eqClass)
+		if err != nil {
+			return err
+		}
+		if len(realizationsForOutput) == 0 {
+			log.Debugf(ctx, "No compatible realizations for top-level %v. Kicking off build...", ref)
+			mustBuild = true
+			break
+		}
+		maps.Copy(newRealizations, realizationsForOutput)
+	}
+
+	if !mustBuild {
+		maps.Copy(b.realizations, newRealizations)
+		return nil
+	}
+
+	// We know we're building *something*.
+	// Multi-output derivations are particularly troublesome for us
+	// because if they need to be rebuilt, they can invalidate the usage of other realizations.
+	// We only allow realizations to be used for multi-output derivations
+	// if only one output from the derivation is used in the graph.
+	//
+	// Here's the reasoning:
+	// If a multi-output derivation's closure is deterministic,
+	// then we should only have a single known realization for each output.
+	// If the closure is not deterministic, we want to pick a set of outputs that were built together.
+	// If the derivation is *mostly* deterministic,
+	// then we have a good shot of being able to reuse more realizations throughout the rest of the build process
+	// because of the early cutoff optimization from content-addressing.
+
+	multiOutputs, err := findMultiOutputDerivationsInBuild(b.derivations, b.drvHashes, want)
+	if err != nil {
+		return err
+	}
+
+	// We perform a two-phase build.
+	// In the first phase, we realize any multi-output derivations
+	// and forbid usage of realizations for those targets specifically.
+	log.Debugf(ctx, "Running first phase of build with multi-output derivations: %v", multiOutputs)
+	if err := b.realizePhase(ctx, multiOutputs, false); err != nil {
+		return err
+	}
+	// In the second phase, we realize our originally requested outputs.
+	// This will reuse the realizations from the previous phase.
+	log.Debugf(ctx, "Running second phase of build to finish: %v", want)
+	if err := b.realizePhase(ctx, want, true); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (b *builder) realizePhase(ctx context.Context, want sets.Set[zbstore.OutputReference], useExistingForWant bool) error {
 	drvLocks := make(map[zbstore.Path]func())
 	defer func() {
 		for _, unlock := range drvLocks {
@@ -457,7 +546,8 @@ func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalen
 		}
 	}
 
-	// Now that we have a candidate, fill out the closures.
+	// Now that we selected our realization, fill out the closures.
+	log.Debugf(ctx, "Using sole viable candidate %s for %v", rout.path, eqClass)
 	newRealizations = map[equivalenceClass]cachedRealization{
 		eqClass: rout,
 	}
@@ -691,6 +781,10 @@ func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path, f ru
 	if log.IsEnabled(log.Debug) {
 		log.Debugf(ctx, "Output map for %s: %s", drvPath, formatOutputPaths(outPaths))
 	}
+	inputRewrites, err := derivationInputRewrites(b.drvHashes, b.realizations, drv)
+	if err != nil {
+		return nil, fmt.Errorf("build %s: %v", drvPath, err)
+	}
 
 	topTempDir, err := os.MkdirTemp(b.server.buildDir, "zb-build-"+drvName+"*")
 	if err != nil {
@@ -702,22 +796,12 @@ func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path, f ru
 		}
 	}()
 
-	inputRewrites, err := derivationInputRewrites(b.drvHashes, b.realizations, drv)
-	if err != nil {
-		return nil, fmt.Errorf("build %s: %v", drvPath, err)
-	}
 	r := newReplacer(xiter.Chain2(
 		outputPathRewrites(outPaths),
 		maps.All(inputRewrites),
 	))
 	expandedDrv := expandDerivationPlaceholders(r, drv)
-	baseEnv := make(map[string]string)
-	addBaseEnv(baseEnv, drv.Dir, topTempDir)
-	for k, v := range baseEnv {
-		if _, overridden := expandedDrv.Env[k]; !overridden {
-			expandedDrv.Env[k] = v
-		}
-	}
+	fillBaseEnv(expandedDrv.Env, drv.Dir, topTempDir)
 
 	peerLogger := newRPCLogger(ctx, drvPath, peer(ctx))
 	bufferedPeerLogger := batchio.NewWriter(peerLogger, 8192, 250*time.Millisecond)
@@ -833,7 +917,10 @@ func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.Derivatio
 			continue
 		}
 
-		tp, err := tempPath(drvPath, outName)
+		tp, err := tempPath(zbstore.OutputReference{
+			DrvPath:    drvPath,
+			OutputName: outName,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -1236,29 +1323,25 @@ func canBuildLocally(drv *zbstore.Derivation) bool {
 // tempPath is deterministic:
 // given the same drvPath and outputName,
 // it will return the same path.
-func tempPath(drvPath zbstore.Path, outputName string) (zbstore.Path, error) {
-	drvName, ok := drvPath.DerivationName()
+func tempPath(ref zbstore.OutputReference) (zbstore.Path, error) {
+	drvName, ok := ref.DrvPath.DerivationName()
 	if !ok {
-		return "", fmt.Errorf("make build temp path: %s is not a derivation", drvPath)
+		return "", fmt.Errorf("make build temp path: %s is not a derivation", ref.DrvPath)
 	}
 	h := sha256.New()
 	io.WriteString(h, "rewrite:")
-	io.WriteString(h, string(drvPath))
+	io.WriteString(h, string(ref.DrvPath))
 	io.WriteString(h, ":name:")
-	io.WriteString(h, outputName)
+	io.WriteString(h, ref.OutputName)
 	h2 := nix.NewHash(nix.SHA256, make([]byte, nix.SHA256.Size()))
 	name := drvName
-	if outputName != zbstore.DefaultDerivationOutputName {
-		name += "-" + outputName
+	if ref.OutputName != zbstore.DefaultDerivationOutputName {
+		name += "-" + ref.OutputName
 	}
-	dir := drvPath.Dir()
+	dir := ref.DrvPath.Dir()
 	digest := storepath.MakeDigest(h, string(dir), h2, name)
 	p, err := dir.Object(digest + "-" + name)
 	if err != nil {
-		ref := zbstore.OutputReference{
-			DrvPath:    drvPath,
-			OutputName: outputName,
-		}
 		return "", fmt.Errorf("make build temp path for %v: %v", ref, err)
 	}
 	return p, nil

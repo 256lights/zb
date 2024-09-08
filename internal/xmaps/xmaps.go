@@ -31,6 +31,17 @@ func Sorted[M ~map[K]V, K cmp.Ordered, V any](m M) iter.Seq2[K, V] {
 	}
 }
 
+// SetDefault returns m[k] or if m does not contain k,
+// then SetDefault sets m[k] to defaultValue and returns defaultValue.
+func SetDefault[M ~map[K]V, K comparable, V any](m M, k K, defaultValue V) V {
+	v, ok := m[k]
+	if !ok {
+		m[k] = defaultValue
+		v = defaultValue
+	}
+	return v
+}
+
 // Init clears m and returns m if m != nil
 // or returns a new map otherwise.
 func Init[M ~map[K]V, K comparable, V any](m M) M {

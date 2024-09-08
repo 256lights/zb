@@ -17,6 +17,8 @@ import (
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb"
+	"zombiezen.com/go/zb/internal/jsonrpc"
+	"zombiezen.com/go/zb/internal/xmaps"
 	"zombiezen.com/go/zb/zbstore"
 )
 
@@ -29,6 +31,7 @@ func newDerivationCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:          true,
 	}
 	c.AddCommand(
+		newDerivationEnvCommand(g),
 		newDerivationShowCommand(g),
 	)
 	return c
@@ -281,6 +284,123 @@ func marshalDerivationJSON(drvPath string, drv *zbstore.Derivation) ([]byte, err
 		return nil, fmt.Errorf("marshal derivation %s: %v", drvPath, err)
 	}
 	return data, nil
+}
+
+type derivationEnvOptions struct {
+	evalOptions
+	jsonFormat bool
+	tempDir    string
+}
+
+func newDerivationEnvCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:                   "env [options] [INSTALLABLE [...]]",
+		Short:                 "show the environment of one or more derivations",
+		DisableFlagsInUseLine: true,
+		Args:                  cobra.ArbitraryArgs,
+		SilenceErrors:         true,
+		SilenceUsage:          true,
+	}
+	opts := new(derivationEnvOptions)
+	c.Flags().StringVar(&opts.expr, "expr", "", "interpret installables as attribute paths relative to the Lua expression `expr`")
+	c.Flags().StringVar(&opts.file, "file", "", "interpret installables as attribute paths relative to the Lua expression stored in `path`")
+	c.Flags().BoolVar(&opts.jsonFormat, "json", false, "print environments as JSON")
+	c.Flags().StringVar(&opts.tempDir, "temp-dir", os.TempDir(), "temporary `dir`ectory to fill in")
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		opts.installables = args
+		return runDerivationEnv(cmd.Context(), g, opts)
+	}
+	return c
+}
+
+func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvOptions) error {
+	storeClient, waitStoreClient := g.storeClient(new(clientRPCHandler), nil)
+	defer func() {
+		storeClient.Close()
+		waitStoreClient()
+	}()
+	eval, err := zb.NewEval(g.storeDir, storeClient, g.cacheDB)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := eval.Close(); err != nil {
+			log.Errorf(ctx, "%v", err)
+		}
+	}()
+
+	var results []any
+	switch {
+	case opts.expr != "" && opts.file != "":
+		return fmt.Errorf("can specify at most one of --expr or --file")
+	case opts.expr != "":
+		results, err = eval.Expression(ctx, opts.expr, opts.installables)
+	case opts.file != "":
+		results, err = eval.File(ctx, opts.file, opts.installables)
+	default:
+		return fmt.Errorf("installables not supported yet")
+	}
+	if err != nil {
+		return err
+	}
+	if len(results) == 0 {
+		return fmt.Errorf("no evaluation results")
+	}
+
+	// TODO(soon): Batch.
+	for _, result := range results {
+		drv, _ := result.(*zbstore.Derivation)
+		if drv == nil {
+			return fmt.Errorf("%v is not a derivation", result)
+		}
+		// TODO(someday): Evaluation should store the path of the exported result.
+		drvInfo, _, _, err := drv.Export(nix.SHA256)
+		if err != nil {
+			return err
+		}
+
+		req := &zbstore.ExpandRequest{
+			DrvPath:            drvInfo.StorePath,
+			TemporaryDirectory: opts.tempDir,
+		}
+		if opts.jsonFormat {
+			// Dump expand response directly to preserve unknown fields.
+			jsonReq, err := json.Marshal(req)
+			if err != nil {
+				return fmt.Errorf("%s: marshal request: %v", drvInfo.StorePath, err)
+			}
+			resp, err := storeClient.JSONRPC(ctx, &jsonrpc.Request{
+				Method: zbstore.ExpandMethod,
+				Params: jsonReq,
+			})
+			if err != nil {
+				return fmt.Errorf("%s: %v", drvInfo.StorePath, err)
+			}
+			jsonBytes, err := dedentJSON(resp.Result)
+			if err != nil {
+				return fmt.Errorf("%s: %v", drvInfo.StorePath, err)
+			}
+			jsonBytes = append(jsonBytes, '\n')
+			if _, err := os.Stdout.Write(jsonBytes); err != nil {
+				return err
+			}
+			continue
+		}
+
+		resp := new(zbstore.ExpandResponse)
+		err = jsonrpc.Do(ctx, storeClient, zbstore.ExpandMethod, resp, req)
+		if err != nil {
+			return err
+		}
+
+		for k, v := range xmaps.Sorted(resp.Env) {
+			if _, err := fmt.Printf("%s=%s\n", k, v); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func collectStringSlice[S ~string](seq iter.Seq[S]) []string {

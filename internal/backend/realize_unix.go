@@ -9,20 +9,21 @@ import (
 	"os/exec"
 
 	"golang.org/x/sys/unix"
+	"zombiezen.com/go/zb/internal/xmaps"
 	"zombiezen.com/go/zb/zbstore"
 )
 
-func addBaseEnv(m map[string]string, storeDir zbstore.Directory, workDir string) {
-	m["PATH"] = "/path-not-set"
-	m["HOME"] = "/home-not-set"
-	m["ZB_STORE"] = string(storeDir)
-	m["ZB_BUILD_TOP"] = workDir
-	m["TMPDIR"] = workDir
-	m["TEMPDIR"] = workDir
-	m["TMP"] = workDir
-	m["TEMP"] = workDir
-	m["PWD"] = workDir
-	m["TERM"] = "xterm-256color"
+func fillBaseEnv(m map[string]string, storeDir zbstore.Directory, workDir string) {
+	xmaps.SetDefault(m, "PATH", "/path-not-set")
+	xmaps.SetDefault(m, "HOME", "/home-not-set")
+	xmaps.SetDefault(m, "ZB_STORE", string(storeDir))
+	xmaps.SetDefault(m, "ZB_BUILD_TOP", workDir)
+	xmaps.SetDefault(m, "TMPDIR", workDir)
+	xmaps.SetDefault(m, "TEMPDIR", workDir)
+	xmaps.SetDefault(m, "TMP", workDir)
+	xmaps.SetDefault(m, "TEMP", workDir)
+	xmaps.SetDefault(m, "PWD", workDir)
+	xmaps.SetDefault(m, "TERM", "xterm-256color")
 }
 
 func setCancelFunc(c *exec.Cmd) {

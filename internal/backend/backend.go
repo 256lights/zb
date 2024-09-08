@@ -92,6 +92,7 @@ func (s *Server) Close() error {
 func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	return jsonrpc.ServeMux{
 		zbstore.ExistsMethod:  jsonrpc.HandlerFunc(s.exists),
+		zbstore.ExpandMethod:  jsonrpc.HandlerFunc(s.expand),
 		zbstore.RealizeMethod: jsonrpc.HandlerFunc(s.realize),
 	}.JSONRPC(ctx, req)
 }

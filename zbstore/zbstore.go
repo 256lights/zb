@@ -60,6 +60,27 @@ type RealizeOutput struct {
 	Path Nullable[Path] `json:"path"`
 }
 
+// ExpandMethod is the name of the method that performs placeholder expansion
+// on a derivation.
+// This will cause its dependencies to be realized,
+// but the derivation itself will not.
+// [ExpandRequest] is used for the request
+// and [ExpandResponse] is used for the response.
+const ExpandMethod = "zb.expand"
+
+// ExpandRequest is the set of parameters for [ExpandMethod].
+type ExpandRequest struct {
+	DrvPath            Path   `json:"drvPath"`
+	TemporaryDirectory string `json:"tempDir"`
+}
+
+// ExpandResponse is the result for [ExpandMethod].
+type ExpandResponse struct {
+	Builder string            `json:"builder"`
+	Args    []string          `json:"args"`
+	Env     map[string]string `json:"env"`
+}
+
 // LogMethod is the name of the method invoked on the client
 // to record a log message from a running invocation.
 // [LogNotification] is used for the request
