@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 src_prepare() {
-    :
+    patch -Np0 -i "${patch_dir?}/ranlib.patch"
 }
 
 src_compile() {

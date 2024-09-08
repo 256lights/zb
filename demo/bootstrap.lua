@@ -629,6 +629,7 @@ do
       "pass1.kaem",
       "patches/coreutils.patch",
       "patches/mes-libc.patch",
+      "patches/ranlib.patch",
     }).."\z
         exec kaem -f pass1.kaem\n";
   }

@@ -20,6 +20,7 @@ cd ${pkg}
 # Patch
 patch -Np0 -i ../../patches/mes-libc.patch
 patch -Np0 -i ../../patches/coreutils.patch
+patch -Np0 -i ../../patches/ranlib.patch
 
 # Build
 make CC=tcc AR="tcc -ar" LDFLAGS="-static" bzip2
