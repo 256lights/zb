@@ -614,10 +614,14 @@ func (out *DerivationOutputType) FixedCA() (_ ContentAddress, ok bool) {
 // IsRecursiveFile reports whether the derivation output
 // uses recursive (NAR) hashing.
 func (t *DerivationOutputType) IsRecursiveFile() bool {
-	if t == nil {
+	switch {
+	case t.IsFixed():
+		return t.ca.IsRecursiveFile()
+	case t.IsFloating():
+		return t.method == recursiveFileIngestionMethod
+	default:
 		return false
 	}
-	return t.method == recursiveFileIngestionMethod
 }
 
 func (t *DerivationOutputType) marshalText(dst []byte, storeDir Directory, drvName, outName string) ([]byte, error) {

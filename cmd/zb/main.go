@@ -81,6 +81,7 @@ func main() {
 
 	rootCommand.AddCommand(
 		newBuildCommand(g),
+		newDerivationCommand(g),
 		newEvalCommand(g),
 		newServeCommand(g),
 	)
