@@ -5,23 +5,45 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
-	"go4.org/xdgdir"
 	"zombiezen.com/go/bass/sigterm"
 	"zombiezen.com/go/log"
+	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb"
+	"zombiezen.com/go/zb/internal/jsonrpc"
+	"zombiezen.com/go/zb/zbstore"
 )
 
 type globalConfig struct {
-	cacheDB string
+	storeDir    zbstore.Directory
+	storeSocket string
+	cacheDB     string
+}
+
+func (g *globalConfig) storeClient(localHandler jsonrpc.Handler, receiver zbstore.NARReceiver) (_ *jsonrpc.Client, wait func()) {
+	var wg sync.WaitGroup
+	c := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
+		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", g.storeSocket)
+		if err != nil {
+			return nil, err
+		}
+		codec := zbstore.NewCodec(conn, receiver)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			jsonrpc.Serve(context.Background(), codec, localHandler)
+		}()
+		return codec, nil
+	})
+	return c, wg.Wait
 }
 
 func main() {
@@ -33,10 +55,25 @@ func main() {
 	}
 
 	g := &globalConfig{
-		cacheDB: filepath.Join(xdgdir.Cache.Path(), "zb", "cache.db"),
+		cacheDB:     filepath.Join(cacheDir(), "zb", "cache.db"),
+		storeSocket: os.Getenv("ZB_STORE_SOCKET"),
 	}
+	var err error
+	g.storeDir, err = zbstore.DirectoryFromEnvironment()
+	if err != nil {
+		initLogging(false)
+		log.Errorf(context.Background(), "%v", err)
+		os.Exit(1)
+	}
+	if g.storeSocket == "" {
+		g.storeSocket = filepath.Join(defaultVarDir(), "server.sock")
+	}
+
 	rootCommand.PersistentFlags().StringVar(&g.cacheDB, "cache", g.cacheDB, "`path` to cache database")
+	rootCommand.PersistentFlags().Var((*storeDirectoryFlag)(&g.storeDir), "store", "path to store `dir`ectory")
+	rootCommand.PersistentFlags().StringVar(&g.storeSocket, "store-socket", g.storeSocket, "`path` to store server socket")
 	showDebug := rootCommand.PersistentFlags().Bool("debug", false, "show debugging output")
+
 	rootCommand.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		initLogging(*showDebug)
 		return nil
@@ -44,11 +81,13 @@ func main() {
 
 	rootCommand.AddCommand(
 		newBuildCommand(g),
+		newDerivationCommand(g),
 		newEvalCommand(g),
+		newServeCommand(g),
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), sigterm.Signals()...)
-	err := rootCommand.ExecuteContext(ctx)
+	err = rootCommand.ExecuteContext(ctx)
 	cancel()
 	if err != nil {
 		initLogging(*showDebug)
@@ -83,8 +122,12 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 }
 
 func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
-	// TODO(soon): Use zb store directory.
-	eval, err := zb.NewEval("/nix/store", g.cacheDB)
+	storeClient, waitStoreClient := g.storeClient(jsonrpc.MethodNotFoundHandler{}, nil)
+	defer func() {
+		storeClient.Close()
+		waitStoreClient()
+	}()
+	eval, err := zb.NewEval(g.storeDir, storeClient, g.cacheDB)
 	if err != nil {
 		return err
 	}
@@ -99,9 +142,9 @@ func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 	case opts.expr != "" && opts.file != "":
 		return fmt.Errorf("can specify at most one of --expr or --file")
 	case opts.expr != "":
-		results, err = eval.Expression(opts.expr, opts.installables)
+		results, err = eval.Expression(ctx, opts.expr, opts.installables)
 	case opts.file != "":
-		results, err = eval.File(opts.file, opts.installables)
+		results, err = eval.File(ctx, opts.file, opts.installables)
 	default:
 		return fmt.Errorf("installables not supported yet")
 	}
@@ -142,8 +185,12 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 }
 
 func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
-	// TODO(soon): Use zb store directory.
-	eval, err := zb.NewEval("/nix/store", g.cacheDB)
+	storeClient, waitStoreClient := g.storeClient(new(clientRPCHandler), nil)
+	defer func() {
+		storeClient.Close()
+		waitStoreClient()
+	}()
+	eval, err := zb.NewEval(g.storeDir, storeClient, g.cacheDB)
 	if err != nil {
 		return err
 	}
@@ -158,9 +205,9 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 	case opts.expr != "" && opts.file != "":
 		return fmt.Errorf("can specify at most one of --expr or --file")
 	case opts.expr != "":
-		results, err = eval.Expression(opts.expr, opts.installables)
+		results, err = eval.Expression(ctx, opts.expr, opts.installables)
 	case opts.file != "":
-		results, err = eval.File(opts.file, opts.installables)
+		results, err = eval.File(ctx, opts.file, opts.installables)
 	default:
 		return fmt.Errorf("installables not supported yet")
 	}
@@ -171,47 +218,73 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 		return fmt.Errorf("no evaluation results")
 	}
 
-	args := []string{"--realise"}
-	if opts.outLink != "" {
-		args = append(args, "--add-root", opts.outLink)
-	}
-	args = append(args, "--")
+	// TODO(soon): Batch.
 	for _, result := range results {
-		drv, _ := result.(*zb.Derivation)
+		drv, _ := result.(*zbstore.Derivation)
 		if drv == nil {
 			return fmt.Errorf("%v is not a derivation", result)
 		}
-		p, err := drv.StorePath()
+		// TODO(someday): Evaluation should store the path of the exported result.
+		drvInfo, _, _, err := drv.Export(nix.SHA256)
 		if err != nil {
 			return err
 		}
-		args = append(args, string(p))
-	}
-
-	stdout := new(strings.Builder)
-	c := exec.CommandContext(ctx, "nix-store", args...)
-	if opts.outLink == "" {
-		c.Stdout = os.Stdout
-	} else {
-		c.Stdout = stdout
-	}
-	c.Stderr = os.Stderr
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("nix-store --realise: %v", err)
-	}
-	if opts.outLink != "" {
-		outLinks := strings.FieldsFunc(stdout.String(), func(c rune) bool {
-			return c == '\n'
+		resp := new(zbstore.RealizeResponse)
+		err = jsonrpc.Do(ctx, storeClient, zbstore.RealizeMethod, resp, &zbstore.RealizeRequest{
+			DrvPath: drvInfo.StorePath,
 		})
-		for _, out := range outLinks {
-			target, err := os.Readlink(out)
-			if err != nil {
-				fmt.Println(out)
-			} else {
-				fmt.Println(target)
+		if err != nil {
+			return err
+		}
+		for _, out := range resp.Outputs {
+			if out.Path.Valid {
+				fmt.Println(out.Path.X)
 			}
 		}
 	}
+
+	return nil
+}
+
+type clientRPCHandler struct {
+}
+
+func (h *clientRPCHandler) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	return jsonrpc.ServeMux{
+		zbstore.LogMethod: jsonrpc.HandlerFunc(h.log),
+	}.JSONRPC(ctx, req)
+}
+
+func (h *clientRPCHandler) log(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	args := new(zbstore.LogNotification)
+	if err := json.Unmarshal(req.Params, args); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	payload := args.Payload()
+	if len(payload) == 0 {
+		return nil, nil
+	}
+	os.Stderr.Write(payload)
+	return nil, nil
+}
+
+// defaultVarDir returns "/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
+func defaultVarDir() string {
+	return filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "zb")
+}
+
+type storeDirectoryFlag zbstore.Directory
+
+func (f *storeDirectoryFlag) Type() string  { return "string" }
+func (f storeDirectoryFlag) String() string { return string(f) }
+func (f storeDirectoryFlag) Get() any       { return zbstore.Directory(f) }
+
+func (f *storeDirectoryFlag) Set(s string) error {
+	dir, err := zbstore.CleanDirectory(s)
+	if err != nil {
+		return err
+	}
+	*f = storeDirectoryFlag(dir)
 	return nil
 }
 

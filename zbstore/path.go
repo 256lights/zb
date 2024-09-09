@@ -1,78 +1,93 @@
 // Copyright 2024 Roxy Light
 // SPDX-License-Identifier: MIT
 
-package zb
+package zbstore
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	posixpath "path"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nixbase32"
+	"zombiezen.com/go/zb/internal/storepath"
 	"zombiezen.com/go/zb/internal/windowspath"
+	"zombiezen.com/go/zb/sets"
 )
 
-// StoreDirectory is the absolute path of a zb store.
-type StoreDirectory string
+// Directory is the absolute path of a zb store.
+type Directory string
 
 const (
-	// DefaultUnixStoreDirectory is the default zb store directory
+	// DefaultUnixDirectory is the default zb store directory
 	// on Unix-like systems.
-	DefaultUnixStoreDirectory StoreDirectory = "/zb/store"
+	DefaultUnixDirectory Directory = "/zb/store"
 
-	// DefaultWindowsStoreDirectory is the default zb store directory
+	// DefaultWindowsDirectory is the default zb store directory
 	// on Windows systems.
-	DefaultWindowsStoreDirectory StoreDirectory = `C:\zb\store`
+	DefaultWindowsDirectory Directory = `C:\zb\store`
 )
 
-// CleanStoreDirectory cleans an absolute POSIX-style or Windows-style path
-// as a [StoreDirectory].
+// DefaultDirectory returns the default zb store directory for the running operating system.
+// This will be one of [DefaultUnixDirectory] or [DefaultWindowsDirectory].
+func DefaultDirectory() Directory {
+	switch localPathStyle() {
+	case posixPathStyle:
+		return DefaultUnixDirectory
+	case windowsPathStyle:
+		return DefaultWindowsDirectory
+	default:
+		panic("unreachable")
+	}
+}
+
+// CleanDirectory cleans an absolute POSIX-style or Windows-style path
+// as a [Directory].
 // It returns an error if the path is not absolute.
-func CleanStoreDirectory(path string) (StoreDirectory, error) {
+func CleanDirectory(path string) (Directory, error) {
 	switch detectPathStyle(path) {
 	case posixPathStyle:
 		if !posixpath.IsAbs(path) {
 			return "", fmt.Errorf("store directory %q is not absolute", path)
 		}
-		return StoreDirectory(posixpath.Clean(path)), nil
+		return Directory(posixpath.Clean(path)), nil
 	case windowsPathStyle:
 		if !windowspath.IsAbs(path) {
 			return "", fmt.Errorf("store directory %q is not absolute", path)
 		}
-		return StoreDirectory(windowspath.Clean(path)), nil
+		return Directory(windowspath.Clean(path)), nil
 	default:
 		return "", fmt.Errorf("store directory %q is not absolute", path)
 	}
 }
 
-// StoreDirectoryFromEnvironment returns the zb store directory in use
+// DirectoryFromEnvironment returns the zb store [Directory] in use
 // based on the ZB_STORE_DIR environment variable,
-// falling back to [DefaultUnixStoreDirectory] or [DefaultWindowsStoreDirectory] if not set.
-func StoreDirectoryFromEnvironment() (StoreDirectory, error) {
+// falling back to [DefaultDirectory] if not set.
+func DirectoryFromEnvironment() (Directory, error) {
 	dir := os.Getenv("ZB_STORE_DIR")
 	if dir == "" {
-		if runtime.GOOS == "windows" {
-			return DefaultWindowsStoreDirectory, nil
-		}
-		return DefaultUnixStoreDirectory, nil
+		return DefaultDirectory(), nil
 	}
 	if !filepath.IsAbs(dir) {
 		// The directory must be in the format of the local OS.
 		return "", fmt.Errorf("store directory %q is not absolute", dir)
 	}
-	return CleanStoreDirectory(dir)
+	return CleanDirectory(dir)
 }
 
 // Object returns the store path for the given store object name.
-func (dir StoreDirectory) Object(name string) (StorePath, error) {
+func (dir Directory) Object(name string) (Path, error) {
 	joined := dir.Join(name)
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
 		return "", fmt.Errorf("parse zb store path %s: invalid object name %q", joined, name)
 	}
-	storePath, err := ParseStorePath(joined)
+	storePath, err := ParsePath(joined)
 	if err != nil {
 		return "", err
 	}
@@ -80,8 +95,8 @@ func (dir StoreDirectory) Object(name string) (StorePath, error) {
 }
 
 // Join joins any number of path elements to the store directory
-// separated by slashes.
-func (dir StoreDirectory) Join(elem ...string) string {
+// separated by the store directory's separator type.
+func (dir Directory) Join(elem ...string) string {
 	switch detectPathStyle(string(dir)) {
 	case windowsPathStyle:
 		return windowspath.Join(append([]string{string(dir)}, elem...)...)
@@ -90,15 +105,16 @@ func (dir StoreDirectory) Join(elem ...string) string {
 	}
 }
 
-// ParsePath verifies that a given absolute slash-separated path
+// ParsePath verifies that a given absolute path
 // begins with the store directory
 // and names either a store object or a file inside a store object.
 // On success, it returns the store object's name
-// and the relative path inside the store object, if any.
-func (dir StoreDirectory) ParsePath(path string) (storePath StorePath, sub string, err error) {
+// and the slash-separated relative path inside the store object, if any.
+func (dir Directory) ParsePath(path string) (storePath Path, sub string, err error) {
 	var cleaned, dirPrefix, tail string
 	var sep rune
-	switch detectPathStyle(string(dir)) {
+	style := detectPathStyle(string(dir))
+	switch style {
 	case posixPathStyle:
 		if !posixpath.IsAbs(path) {
 			return "", "", fmt.Errorf("parse zb store path %s: not absolute", path)
@@ -127,27 +143,36 @@ func (dir StoreDirectory) ParsePath(path string) (storePath StorePath, sub strin
 		return "", "", fmt.Errorf("parse zb store path %s: directory %s not absolute", path, dir)
 	}
 	childName, sub, _ := strings.Cut(tail, string(sep))
-	storePath, err = ParseStorePath(cleaned[:len(dirPrefix)+len(childName)])
+	storePath, err = ParsePath(cleaned[:len(dirPrefix)+len(childName)])
 	if err != nil {
 		return "", "", err
+	}
+	if style == windowsPathStyle {
+		sub = windowspath.ToSlash(sub)
 	}
 	return storePath, sub, nil
 }
 
-// StorePath is a zb store path:
+// IsNative reports whether the directory uses the same path style
+// as the running operating system.
+func (dir Directory) IsNative() bool {
+	return detectPathStyle(string(dir)) == localPathStyle()
+}
+
+// Path is a zb store path:
 // the absolute path of a zb store object in the filesystem.
 // For example: "/zb/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1"
 // or "C:\zb\store\s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1".
-type StorePath string
+type Path string
 
 const (
 	objectNameDigestLength = 32
 	maxObjectNameLength    = objectNameDigestLength + 1 + 211
 )
 
-// ParseStorePath parses an absolute slash-separated path as a store path
+// ParsePath parses an absolute path as a store path
 // (i.e. an immediate child of a zb store directory).
-func ParseStorePath(path string) (StorePath, error) {
+func ParsePath(path string) (Path, error) {
 	var cleaned, base string
 	switch detectPathStyle(path) {
 	case posixPathStyle:
@@ -176,23 +201,23 @@ func ParseStorePath(path string) (StorePath, error) {
 	if base[objectNameDigestLength] != '-' {
 		return "", fmt.Errorf("parse zb store path %s: digest not separated by dash", path)
 	}
-	return StorePath(cleaned), nil
+	return Path(cleaned), nil
 }
 
 // Dir returns the path's directory.
-func (path StorePath) Dir() StoreDirectory {
+func (path Path) Dir() Directory {
 	switch detectPathStyle(string(path)) {
 	case posixPathStyle:
-		return StoreDirectory(posixpath.Dir(string(path)))
+		return Directory(posixpath.Dir(string(path)))
 	case windowsPathStyle:
-		return StoreDirectory(windowspath.Dir(string(path)))
+		return Directory(windowspath.Dir(string(path)))
 	default:
 		return ""
 	}
 }
 
 // Base returns the last element of the path.
-func (path StorePath) Base() string {
+func (path Path) Base() string {
 	if path == "" {
 		return ""
 	}
@@ -206,13 +231,14 @@ func (path StorePath) Base() string {
 	}
 }
 
-// IsDerivation reports whether the name ends in ".drv".
-func (path StorePath) IsDerivation() bool {
-	return strings.HasSuffix(path.Base(), ".drv")
+// IsDerivation reports whether the name ends in [DerivationExt].
+func (path Path) IsDerivation() bool {
+	_, isDrv := path.DerivationName()
+	return isDrv
 }
 
-// Digest returns the digest part of the name.
-func (path StorePath) Digest() string {
+// Digest returns the digest part of the last element of the path.
+func (path Path) Digest() string {
 	base := path.Base()
 	if len(base) < objectNameDigestLength {
 		return ""
@@ -220,8 +246,9 @@ func (path StorePath) Digest() string {
 	return string(base[:objectNameDigestLength])
 }
 
-// Name returns the part of the name after the digest.
-func (path StorePath) Name() string {
+// Name returns the part of the last element of the path after the digest,
+// excluding the separating dash.
+func (path Path) Name() string {
 	base := path.Base()
 	if len(base) <= objectNameDigestLength+len("-") {
 		return ""
@@ -229,24 +256,101 @@ func (path StorePath) Name() string {
 	return string(base[objectNameDigestLength+len("-"):])
 }
 
+// DerivationName returns [Path.Name] with a suffix of [DerivationExt] stripped.
+// If the path does not end in [DerivationExt],
+// DerivationName returns ("", false).
+func (path Path) DerivationName() (drvName string, isDrv bool) {
+	drvName, isDrv = strings.CutSuffix(path.Name(), DerivationExt)
+	if !isDrv {
+		return "", false
+	}
+	return drvName, true
+}
+
+// Join joins any number of path elements to the store path
+// separated by the store path's separator type.
+func (path Path) Join(elem ...string) string {
+	elem = append([]string{path.Base()}, elem...)
+	return path.Dir().Join(elem...)
+}
+
+// IsNative reports whether the path uses the same path style
+// as the running operating system.
+func (path Path) IsNative() bool {
+	return detectPathStyle(string(path)) == localPathStyle()
+}
+
 // MarshalText returns a byte slice of the path
 // or an error if it's empty.
-func (path StorePath) MarshalText() ([]byte, error) {
+func (path Path) MarshalText() ([]byte, error) {
 	if path == "" {
 		return nil, fmt.Errorf("marshal zb store path: empty")
 	}
 	return []byte(path), nil
 }
 
-// UnmarshalText validates and cleans the path in the same way as [ParseStorePath]
+// UnmarshalText validates and cleans the path in the same way as [ParsePath]
 // and stores it into *path.
-func (path *StorePath) UnmarshalText(data []byte) error {
+func (path *Path) UnmarshalText(data []byte) error {
 	var err error
-	*path, err = ParseStorePath(string(data))
+	*path, err = ParsePath(string(data))
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+// makeStorePath computes a store path
+// according to https://nixos.org/manual/nix/stable/protocols/store-path.
+func makeStorePath(dir Directory, typ string, hash nix.Hash, name string, refs References) (Path, error) {
+	h := sha256.New()
+	io.WriteString(h, typ)
+	for _, ref := range refs.Others.All() {
+		io.WriteString(h, ":")
+		io.WriteString(h, string(ref))
+	}
+	if refs.Self {
+		io.WriteString(h, ":self")
+	}
+	digest := storepath.MakeDigest(h, string(dir), hash, name)
+	return dir.Object(digest + "-" + name)
+}
+
+// References represents a set of references to other store paths
+// that a store object contains for the purpose of generating a [Path].
+// The zero value is an empty set.
+type References struct {
+	// Self is true if the store object contains one or more references to itself.
+	Self bool
+	// Others holds paths of other store objects that the store object references.
+	Others sets.Sorted[Path]
+}
+
+// MakeReferences converts a set of complete store paths into a [References] value.
+func MakeReferences(self Path, refSet *sets.Sorted[Path]) References {
+	refs := References{
+		Self:   refSet.Has(self),
+		Others: *refSet.Clone(),
+	}
+	if refs.Self {
+		refs.Others.Delete(self)
+	}
+	return refs
+}
+
+// IsEmpty reports whether refs represents the empty set.
+func (refs References) IsEmpty() bool {
+	return !refs.Self && refs.Others.Len() == 0
+}
+
+// ToSet converts the references to a set of paths
+// given the store object's own path.
+func (refs References) ToSet(self Path) *sets.Sorted[Path] {
+	result := refs.Others.Clone()
+	if refs.Self {
+		result.Add(self)
+	}
+	return result
 }
 
 type pathStyle int8

@@ -21,31 +21,50 @@ import (
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 	"zombiezen.com/go/sqlite/sqlitex"
+	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/lua"
+	"zombiezen.com/go/zb/zbstore"
 )
 
 //go:embed prelude.lua
 var preludeSource string
 
 type Eval struct {
-	l        lua.State
-	storeDir StoreDirectory
-	cache    *sqlite.Conn
+	l         lua.State
+	store     *jsonrpc.Client
+	storeDir  zbstore.Directory
+	cachePool *sqlitemigration.Pool
 }
 
-func NewEval(storeDir StoreDirectory, cacheDB string) (_ *Eval, err error) {
+func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) (_ *Eval, err error) {
 	if err := os.MkdirAll(filepath.Dir(cacheDB), 0o777); err != nil {
 		return nil, fmt.Errorf("zb: new eval: %v", err)
 	}
-	eval := &Eval{storeDir: storeDir}
-	eval.cache, err = openCache(context.TODO(), cacheDB)
-	if err != nil {
-		return nil, fmt.Errorf("zb: new eval: %v", err)
+	var schema sqlitemigration.Schema
+	for i := 1; ; i++ {
+		migration, err := fs.ReadFile(sqlFiles(), fmt.Sprintf("schema/%02d.sql", i))
+		if errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("zb new eval: read migrations: %v", err)
+		}
+		schema.Migrations = append(schema.Migrations, string(migration))
+	}
+
+	eval := &Eval{
+		store:    store,
+		storeDir: storeDir,
+		cachePool: sqlitemigration.NewPool(cacheDB, schema, sqlitemigration.Options{
+			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
+			PoolSize:    1,
+			PrepareConn: prepareCache,
+		}),
 	}
 	defer func() {
 		if err != nil {
 			eval.l.Close()
-			eval.cache.Close()
+			eval.cachePool.Close()
 			err = fmt.Errorf("zb: new eval: %v", err)
 		}
 	}()
@@ -73,9 +92,6 @@ func NewEval(storeDir StoreDirectory, cacheDB string) (_ *Eval, err error) {
 
 	// Set other built-ins.
 	err = lua.SetFuncs(&eval.l, 0, map[string]lua.Function{
-		"derivation": eval.derivationFunction,
-		"path":       eval.pathFunction,
-		"toFile":     eval.toFileFunction,
 		"baseNameOf": func(l *lua.State) (int, error) {
 			path, err := lua.CheckString(l, 1)
 			if err != nil {
@@ -116,47 +132,66 @@ func NewEval(storeDir StoreDirectory, cacheDB string) (_ *Eval, err error) {
 	return eval, nil
 }
 
-func openCache(ctx context.Context, path string) (*sqlite.Conn, error) {
-	conn, err := sqlite.OpenConn(path, sqlite.OpenReadWrite, sqlite.OpenCreate)
-	if err != nil {
+func (eval *Eval) pushG() error {
+	if !eval.l.CheckStack(2) {
+		return fmt.Errorf("access %s.%s: stack overflow", lua.LoadedTable, lua.GName)
+	}
+	if tp := lua.Metatable(&eval.l, lua.LoadedTable); tp != lua.TypeTable {
+		eval.l.Pop(1)
+		return fmt.Errorf("%s is a %v instead of a table", lua.LoadedTable, tp)
+	}
+	if tp, err := eval.l.Field(-1, lua.GName, 0); err != nil {
+		eval.l.Pop(2)
+		return fmt.Errorf("field %s.%s: %v", lua.LoadedTable, lua.GName, err)
+	} else if tp != lua.TypeTable {
+		eval.l.Pop(2)
+		return fmt.Errorf("%s.%s is a %v instead of a table", lua.LoadedTable, lua.GName, tp)
+	}
+	eval.l.Remove(-2)
+	return nil
+}
+
+func (eval *Eval) initScope(ctx context.Context, cache *sqlite.Conn) (cleanup func(), err error) {
+	if err := eval.pushG(); err != nil {
 		return nil, err
 	}
-	conn.SetInterrupt(ctx.Done())
-	if err := sqlitex.ExecuteTransient(conn, "PRAGMA journal_mode=wal;", nil); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("open cache %s: enable write-ahead logging: %v", path, err)
+	fmap := map[string]lua.Function{
+		"derivation": func(l *lua.State) (int, error) {
+			return eval.derivationFunction(ctx, l)
+		},
+		"path": func(l *lua.State) (int, error) {
+			return eval.pathFunction(ctx, cache, l)
+		},
+		"toFile": func(l *lua.State) (int, error) {
+			return eval.toFileFunction(ctx, l)
+		},
 	}
-	if err := sqlitex.ExecuteTransient(conn, "PRAGMA foreign_keys=on;", nil); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("open cache %s: enable write-ahead logging: %v", path, err)
-	}
-
-	if err := prepareCache(conn); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("open cache %s: %v", path, err)
-	}
-
-	var schema sqlitemigration.Schema
-	for i := 1; ; i++ {
-		migration, err := fs.ReadFile(sqlFiles(), fmt.Sprintf("schema/%02d.sql", i))
-		if errors.Is(err, fs.ErrNotExist) {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("open cache %s: read migrations: %v", path, err)
-		}
-		schema.Migrations = append(schema.Migrations, string(migration))
-	}
-	err = sqlitemigration.Migrate(ctx, conn, schema)
+	err = lua.SetFuncs(&eval.l, 0, fmap)
+	eval.l.Pop(1)
 	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("open cache %s: %v", path, err)
+		return nil, fmt.Errorf("add global functions: %v", err)
+	}
+	for k := range fmap {
+		fmap[k] = nil
 	}
 
-	return conn, nil
+	return func() {
+		if err := eval.pushG(); err != nil {
+			return
+		}
+		lua.SetFuncs(&eval.l, 0, fmap)
+		eval.l.Pop(1)
+	}, nil
 }
 
 func prepareCache(conn *sqlite.Conn) error {
+	if err := sqlitex.ExecuteTransient(conn, "PRAGMA journal_mode=wal;", nil); err != nil {
+		return fmt.Errorf("enable write-ahead logging: %v", err)
+	}
+	if err := sqlitex.ExecuteTransient(conn, "PRAGMA foreign_keys=on;", nil); err != nil {
+		return fmt.Errorf("enable foreign keys: %v", err)
+	}
+
 	err := conn.CreateFunction("store_path_name", &sqlite.FunctionImpl{
 		NArgs: 1,
 		Scalar: func(ctx sqlite.Context, args []sqlite.Value) (sqlite.Value, error) {
@@ -187,7 +222,7 @@ func prepareCache(conn *sqlite.Conn) error {
 func (eval *Eval) Close() error {
 	var errors [2]error
 	errors[0] = eval.l.Close()
-	errors[1] = eval.cache.Close()
+	errors[1] = eval.cachePool.Close()
 	for _, err := range errors {
 		if err != nil {
 			return err
@@ -196,8 +231,19 @@ func (eval *Eval) Close() error {
 	return nil
 }
 
-func (eval *Eval) File(exprFile string, attrPaths []string) ([]any, error) {
+func (eval *Eval) File(ctx context.Context, exprFile string, attrPaths []string) ([]any, error) {
+	cache, err := eval.cachePool.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer eval.cachePool.Put(cache)
+
 	defer eval.l.SetTop(0)
+	cleanup, err := eval.initScope(ctx, cache)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
 	if err := loadFile(&eval.l, exprFile); err != nil {
 		return nil, err
 	}
@@ -208,8 +254,19 @@ func (eval *Eval) File(exprFile string, attrPaths []string) ([]any, error) {
 	return eval.attrPaths(attrPaths)
 }
 
-func (eval *Eval) Expression(expr string, attrPaths []string) ([]any, error) {
+func (eval *Eval) Expression(ctx context.Context, expr string, attrPaths []string) ([]any, error) {
+	cache, err := eval.cachePool.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer eval.cachePool.Put(cache)
+
 	defer eval.l.SetTop(0)
+	cleanup, err := eval.initScope(ctx, cache)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
 	if err := loadExpression(&eval.l, expr); err != nil {
 		return nil, err
 	}

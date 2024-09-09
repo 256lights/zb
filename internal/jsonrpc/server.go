@@ -40,6 +40,15 @@ func (f HandlerFunc) JSONRPC(ctx context.Context, req *Request) (*Response, erro
 	return f(ctx, req)
 }
 
+// MethodNotFoundHandler implements [Handler]
+// by returning a [MethodNotFound] error for all requests.
+type MethodNotFoundHandler struct{}
+
+// JSONRPC returns an error for which [ErrorCode] returns [MethodNotFound].
+func (MethodNotFoundHandler) JSONRPC(ctx context.Context, req *Request) (*Response, error) {
+	return nil, Error(MethodNotFound, fmt.Errorf("method %q not found", req.Method))
+}
+
 type server struct {
 	mu    sync.Mutex
 	codec ServerCodec

@@ -14,123 +14,84 @@ import (
 	"zombiezen.com/go/zb/internal/jsonrpc"
 )
 
-// apiContentType is the MIME media type for the zb store API.
-const apiContentType = "application/zb-store-api+json"
-
-// exportContentType is the MIME media type for a `nix-store --export` stream.
-const exportContentType = "application/zb-store-export"
+const (
+	// requestContentType is the MIME media type for zb store API requests.
+	requestContentType = "application/zb-store-request+json"
+	// responseContentType is the MIME media type for zb store API responses.
+	responseContentType = "application/zb-store-response+json"
+	// exportContentType is the MIME media type for a `nix-store --export` stream.
+	exportContentType = "application/zb-store-export"
+)
 
 const maxAPIMessageSize = 1 << 20 // 1 MiB
 
-// ServerCodec implements [jsonrpc.ServerCodec] on an [io.ReadWriteCloser]
+// Codec implements [jsonrpc.ServerCodec] and [jsonrpc.ClientCodec]
+// on an [io.ReadWriteCloser]
 // using the Language Server Protocol "base protocol" for framing.
-type ServerCodec struct {
-	c codec
-}
-
-// NewServerCodec returns a new [ServerCodec]
-// that uses the given connection.
-func NewServerCodec(rwc io.ReadWriteCloser, receiver NARReceiver) *ServerCodec {
-	sc := new(ServerCodec)
-	sc.c.init(rwc, receiver)
-	return sc
-}
-
-// ReadRequest implements [jsonrpc.ServerCodec].
-func (sc *ServerCodec) ReadRequest() (json.RawMessage, error) {
-	return sc.c.read()
-}
-
-// WriteResponse implements [jsonrpc.ServerCodec].
-func (sc *ServerCodec) WriteResponse(response json.RawMessage) error {
-	return sc.c.write(response)
-}
-
-// Close closes the underlying connection.
-func (sc *ServerCodec) Close() error {
-	return sc.c.Close()
-}
-
-// ClientCodec implements [jsonrpc.ClientCodec] on an [io.ReadWriteCloser]
-// using the Language Server Protocol "base protocol" for framing.
-type ClientCodec struct {
-	c codec
-}
-
-// NewClientCodec returns a new [ClientCodec]
-// that uses the given connection.
-func NewClientCodec(rwc io.ReadWriteCloser) *ClientCodec {
-	cc := new(ClientCodec)
-	cc.c.init(rwc, nil)
-	return cc
-}
-
-// WriteRequest implements [jsonrpc.ClientCodec].
-func (cc *ClientCodec) WriteRequest(request json.RawMessage) error {
-	return cc.c.write(request)
-}
-
-// Export sends a `nix-store --export` dump.
-func (cc *ClientCodec) Export(r io.Reader) error {
-	return cc.c.export(r)
-}
-
-// ReadResponse implements [jsonrpc.ClientCodec].
-func (cc *ClientCodec) ReadResponse() (json.RawMessage, error) {
-	return cc.c.read()
-}
-
-// Close closes the underlying connection.
-func (cc *ClientCodec) Close() error {
-	return cc.c.Close()
-}
-
-type codec struct {
+type Codec struct {
 	w *jsonrpc.Writer
 	c io.Closer
 
-	apiMessages <-chan json.RawMessage
-	readDone    <-chan struct{}
-	readError   error // can only be read after apiMessages is closed
+	requestMessages  <-chan json.RawMessage
+	responseMessages <-chan json.RawMessage
+	readError        error // can only be read after requestMessages and responseMessages or closed
+	readDone         <-chan struct{}
 }
 
-func (c *codec) init(rwc io.ReadWriteCloser, receiver NARReceiver) {
+// NewCodec returns a new [Codec] that uses the given connection.
+func NewCodec(rwc io.ReadWriteCloser, receiver NARReceiver) *Codec {
 	if receiver == nil {
 		receiver = nopReceiver{}
 	}
-	apiMessages := make(chan json.RawMessage)
+
+	c := new(Codec)
+	requestMessages := make(chan json.RawMessage)
+	responseMessages := make(chan json.RawMessage)
 	readDone := make(chan struct{})
-	*c = codec{
-		w:           jsonrpc.NewWriter(rwc),
-		c:           rwc,
-		apiMessages: apiMessages,
-		readDone:    readDone,
+	*c = Codec{
+		w:                jsonrpc.NewWriter(rwc),
+		c:                rwc,
+		requestMessages:  requestMessages,
+		responseMessages: responseMessages,
+		readDone:         readDone,
 	}
 	go func() {
 		defer func() {
-			close(apiMessages)
+			close(requestMessages)
+			close(responseMessages)
 			close(readDone)
 		}()
-		c.readError = readLoop(apiMessages, receiver, jsonrpc.NewReader(rwc))
+		c.readError = readLoop(requestMessages, responseMessages, receiver, jsonrpc.NewReader(rwc))
 	}()
+	return c
 }
 
-func (c *codec) read() (json.RawMessage, error) {
-	msg, ok := <-c.apiMessages
+// ReadRequest implements [jsonrpc.ServerCodec].
+func (c *Codec) ReadRequest() (json.RawMessage, error) {
+	msg, ok := <-c.requestMessages
 	if !ok {
 		return nil, c.readError
 	}
 	return msg, nil
 }
 
-func readLoop(apiMessages chan<- json.RawMessage, receiver NARReceiver, r *jsonrpc.Reader) error {
+// ReadResponse implements [jsonrpc.ClientCodec].
+func (c *Codec) ReadResponse() (json.RawMessage, error) {
+	msg, ok := <-c.responseMessages
+	if !ok {
+		return nil, c.readError
+	}
+	return msg, nil
+}
+
+func readLoop(requestMessages, responseMessages chan<- json.RawMessage, receiver NARReceiver, r *jsonrpc.Reader) error {
 	for {
 		header, bodySize, err := r.NextMessage()
 		if err != nil {
 			return err
 		}
 		switch ct := header.Get("Content-Type"); ct {
-		case apiContentType:
+		case requestContentType, responseContentType:
 			if bodySize < 0 {
 				return fmt.Errorf("remote sent api message without valid Content-Length")
 			}
@@ -141,7 +102,11 @@ func readLoop(apiMessages chan<- json.RawMessage, receiver NARReceiver, r *jsonr
 			if err != nil {
 				return err
 			}
-			apiMessages <- body
+			if ct == requestContentType {
+				requestMessages <- body
+			} else {
+				responseMessages <- body
+			}
 		case exportContentType:
 			err := receiveExport(receiver, r)
 			if err != nil && (bodySize < 0 || errors.As(err, new(recvError))) {
@@ -156,22 +121,34 @@ func readLoop(apiMessages chan<- json.RawMessage, receiver NARReceiver, r *jsonr
 	}
 }
 
-func (c *codec) write(msg json.RawMessage) error {
+// WriteRequest implements [jsonrpc.ClientCodec].
+func (c *Codec) WriteRequest(request json.RawMessage) error {
+	return c.write(requestContentType, request)
+}
+
+// WriteResponse implements [jsonrpc.ServerCodec].
+func (c *Codec) WriteResponse(response json.RawMessage) error {
+	return c.write(responseContentType, response)
+}
+
+func (c *Codec) write(contentType string, msg json.RawMessage) error {
 	hdr := jsonrpc.Header{
 		"Content-Length": {strconv.Itoa(len(msg))},
-		"Content-Type":   {apiContentType},
+		"Content-Type":   {contentType},
 	}
 	return c.w.WriteMessage(hdr, bytes.NewReader(msg))
 }
 
-func (c *codec) export(r io.Reader) error {
+// Export sends a `nix-store --export` dump.
+func (c *Codec) Export(r io.Reader) error {
 	hdr := jsonrpc.Header{
 		"Content-Type": {exportContentType},
 	}
 	return c.w.WriteMessage(hdr, r)
 }
 
-func (c *codec) Close() error {
+// Close closes the underlying connection.
+func (c *Codec) Close() error {
 	err := c.c.Close()
 	<-c.readDone
 	return err

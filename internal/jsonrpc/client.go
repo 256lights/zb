@@ -327,7 +327,7 @@ func (c *Client) Codec(ctx context.Context) (codec RequestWriter, release func()
 	select {
 	case c.codecRequests <- clientCodecRequest{codecChan, releaseChan}:
 	case <-ctx.Done():
-		return nil, nil, fmt.Errorf("obtain jsonrpc client connection: %w", err)
+		return nil, nil, fmt.Errorf("obtain jsonrpc client connection: %w", ctx.Err())
 	}
 	codec = <-codecChan
 	var once sync.Once

@@ -16,8 +16,8 @@ import (
 
 func TestCodec(t *testing.T) {
 	c1, c2 := net.Pipe()
-	serverCodec := NewServerCodec(c1, nil)
-	clientCodec := NewClientCodec(c2)
+	serverCodec := NewCodec(c1, nil)
+	clientCodec := NewCodec(c2, nil)
 	serveDone := make(chan struct{})
 	defer func() {
 		if err := clientCodec.Close(); err != nil {

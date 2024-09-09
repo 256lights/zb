@@ -1,4 +1,7 @@
-package zb
+// Copyright 2024 Roxy Light
+// SPDX-License-Identifier: MIT
+
+package zbstore
 
 import (
 	posixpath "path"
@@ -8,12 +11,12 @@ import (
 	"zombiezen.com/go/zb/internal/windowspath"
 )
 
-var storePathTests = []struct {
+var pathTests = []struct {
 	path    string
 	windows bool
 	err     bool
 
-	dir          StoreDirectory
+	dir          Directory
 	base         string
 	digestPart   string
 	namePart     string
@@ -133,16 +136,16 @@ var storePathTests = []struct {
 	},
 }
 
-func TestParseStorePath(t *testing.T) {
-	for _, test := range storePathTests {
-		storePath, err := ParseStorePath(test.path)
+func TestParsePath(t *testing.T) {
+	for _, test := range pathTests {
+		storePath, err := ParsePath(test.path)
 		if test.err {
 			if err == nil {
 				t.Errorf("ParseStorePath(%q) = %q, <nil>; want _, <error>", test.path, storePath)
 			}
 			continue
 		}
-		if want := StorePath(cleanPathForTest(test.path, test.windows)); storePath != want || err != nil {
+		if want := Path(cleanPathForTest(test.path, test.windows)); storePath != want || err != nil {
 			t.Errorf("ParseStorePath(%q) = %q, %v; want %q, <nil>", test.path, storePath, err, want)
 		}
 		if err != nil {
@@ -166,13 +169,13 @@ func TestParseStorePath(t *testing.T) {
 	}
 }
 
-func TestStoreDirectoryObject(t *testing.T) {
-	for _, test := range storePathTests {
+func TestDirectoryObject(t *testing.T) {
+	for _, test := range pathTests {
 		if test.err {
 			continue
 		}
 		got, err := test.dir.Object(test.base)
-		want := StorePath(cleanPathForTest(test.path, test.windows))
+		want := Path(cleanPathForTest(test.path, test.windows))
 		if got != want || err != nil {
 			t.Errorf("StoreDirectory(%q).Object(%q) = %q, %v; want %q, <nil>",
 				test.dir, test.base, got, err, want)
@@ -186,25 +189,25 @@ func TestStoreDirectoryObject(t *testing.T) {
 		"foo/bar",
 	}
 	for _, name := range badObjectNames {
-		got, err := DefaultUnixStoreDirectory.Object(name)
+		got, err := DefaultUnixDirectory.Object(name)
 		if err == nil {
 			t.Errorf("StoreDirectory(%q).Object(%q) = %q, <nil>; want _, <error>",
-				DefaultUnixStoreDirectory, name, got)
+				DefaultUnixDirectory, name, got)
 		}
-		got, err = DefaultWindowsStoreDirectory.Object(name)
+		got, err = DefaultWindowsDirectory.Object(name)
 		if err == nil {
 			t.Errorf("StoreDirectory(%q).Object(%q) = %q, <nil>; want _, <error>",
-				DefaultWindowsStoreDirectory, name, got)
+				DefaultWindowsDirectory, name, got)
 		}
 	}
 }
 
-func TestStoreDirectoryParsePath(t *testing.T) {
+func TestDirectoryParsePath(t *testing.T) {
 	type parsePathTest struct {
-		dir  StoreDirectory
+		dir  Directory
 		path string
 
-		want StorePath
+		want Path
 		sub  string
 		err  bool
 	}
@@ -221,7 +224,7 @@ func TestStoreDirectoryParsePath(t *testing.T) {
 			path: `C:\zb\store\s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1\bin\hello`,
 
 			want: `C:\zb\store\s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1`,
-			sub:  `bin\hello`,
+			sub:  `bin/hello`,
 		},
 		{
 			dir:  "/zb/store",
@@ -265,14 +268,14 @@ func TestStoreDirectoryParsePath(t *testing.T) {
 			sub:  "bin/arp",
 		},
 	}
-	for _, test := range storePathTests {
+	for _, test := range pathTests {
 		if test.err {
 			continue
 		}
 		tests = append(tests, parsePathTest{
 			dir:  test.dir,
 			path: test.path,
-			want: StorePath(cleanPathForTest(test.path, test.windows)),
+			want: Path(cleanPathForTest(test.path, test.windows)),
 		})
 	}
 

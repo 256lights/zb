@@ -2,7 +2,7 @@
 -- SPDX-License-Identifier: MIT
 
 return derivation {
-  name = "hello";
+  name = "hello.txt";
   ["in"] = path "hello.txt";
   builder = "/bin/sh";
   system = "x86_64-linux";

@@ -5,22 +5,26 @@ package zb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
+	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/lua"
+	"zombiezen.com/go/zb/zbstore"
 )
 
-func (eval *Eval) pathFunction(l *lua.State) (int, error) {
+func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.State) (nResults int, err error) {
 	var p string
 	var name string
 	switch l.Type(1) {
@@ -52,7 +56,7 @@ func (eval *Eval) pathFunction(l *lua.State) (int, error) {
 		return 0, lua.NewTypeError(l, 1, "string or table")
 	}
 
-	p, err := absSourcePath(l, p)
+	p, err = absSourcePath(l, p)
 	if err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
@@ -60,32 +64,47 @@ func (eval *Eval) pathFunction(l *lua.State) (int, error) {
 		name = filepath.Base(p)
 	}
 
-	if err := walkPath(eval.cache, p); err != nil {
+	if err := walkPath(ctx, cache, p); err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
 	defer func() {
-		sqlitex.ExecuteScriptFS(eval.cache, sqlFiles(), "walk/drop.sql", nil)
+		sqlitex.ExecuteScriptFS(cache, sqlFiles(), "walk/drop.sql", nil)
 		// TODO(soon): Log error.
 	}()
 
 	// If we already imported and it exists in the store, don't do an import.
-	if prevStorePath, err := eval.checkStamp(p, name); err == nil {
-		if _, err := os.Lstat(string(prevStorePath)); err == nil {
-			log.Debugf(context.TODO(), "Using existing store path %s", prevStorePath)
+	if prevStorePath, err := eval.checkStamp(cache, p, name); err != nil {
+		log.Debugf(ctx, "%v", err)
+	} else {
+		var exists bool
+		err := jsonrpc.Do(ctx, eval.store, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
+			Path: string(prevStorePath),
+		})
+		if err != nil {
+			log.Debugf(ctx, "Unable to query store path %s: %v", prevStorePath, err)
+		} else if exists {
+			log.Debugf(ctx, "Using existing store path %s", prevStorePath)
 			l.PushStringContext(string(prevStorePath), []string{string(prevStorePath)})
 			return 1, nil
 		}
 	}
 
-	imp, err := startImport(context.TODO())
+	exporter, closeExport, err := startExport(ctx, eval.store)
 	if err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
-	defer imp.Close()
+	defer closeExport(false)
 
-	h := nix.NewHasher(nix.SHA256)
-	w := nar.NewWriter(io.MultiWriter(h, imp))
-	err = sqlitex.ExecuteTransientFS(eval.cache, sqlFiles(), "walk/iterate.sql", &sqlitex.ExecOptions{
+	pr, pw := io.Pipe()
+	caChan := make(chan nix.ContentAddress)
+	go func() {
+		defer close(caChan)
+		ca, _, _ := zbstore.SourceSHA256ContentAddress("", pr)
+		caChan <- ca
+	}()
+
+	w := nar.NewWriter(io.MultiWriter(pw, exporter))
+	err = sqlitex.ExecuteTransientFS(cache, sqlFiles(), "walk/iterate.sql", &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			fpath := stmt.GetText("path")
 			var subpath string
@@ -147,34 +166,41 @@ func (eval *Eval) pathFunction(l *lua.State) (int, error) {
 		},
 	})
 	if err != nil {
+		pw.CloseWithError(err)
+		<-caChan
 		return 0, fmt.Errorf("path: %v", err)
 	}
 	if err := w.Close(); err != nil {
+		pw.CloseWithError(err)
+		<-caChan
 		return 0, fmt.Errorf("path: %v", err)
 	}
 
-	sum := h.SumHash()
-	storePath, err := fixedCAOutputPath(eval.storeDir, name, nix.RecursiveFileContentAddress(sum), storeReferences{})
+	pw.Close()
+	ca := <-caChan
+
+	storePath, err := zbstore.FixedCAOutputPath(eval.storeDir, name, ca, zbstore.References{})
 	if err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
-	err = imp.Trailer(&nixExportTrailer{
-		storePath: storePath,
+	err = exporter.Trailer(&zbstore.ExportTrailer{
+		StorePath:      storePath,
+		ContentAddress: ca,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
-	if err := imp.Close(); err != nil {
+	if err := closeExport(true); err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
 
 	err = func() (err error) {
-		endFn, err := sqlitex.ImmediateTransaction(eval.cache)
+		endFn, err := sqlitex.ImmediateTransaction(cache)
 		if err != nil {
 			return err
 		}
 		defer endFn(&err)
-		return updateCache(eval.cache, storePath)
+		return updateCache(cache, storePath)
 	}()
 	if err != nil {
 		return 0, fmt.Errorf("path: updating cache: %v", err)
@@ -184,7 +210,7 @@ func (eval *Eval) pathFunction(l *lua.State) (int, error) {
 	return 1, nil
 }
 
-func (eval *Eval) toFileFunction(l *lua.State) (int, error) {
+func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error) {
 	name, err := lua.CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -196,43 +222,51 @@ func (eval *Eval) toFileFunction(l *lua.State) (int, error) {
 
 	h := nix.NewHasher(nix.SHA256)
 	h.WriteString(s)
-	var refs storeReferences
+	var refs zbstore.References
 	for _, dep := range l.StringContext(2) {
 		if strings.HasPrefix(dep, "!") {
 			return 0, fmt.Errorf("toFile %q: cannot depend on derivation outputs", name)
 		}
-		refs.others.Add(StorePath(dep))
+		refs.Others.Add(zbstore.Path(dep))
 	}
 
-	storePath, err := fixedCAOutputPath(eval.storeDir, name, nix.TextContentAddress(h.SumHash()), refs)
+	ca := nix.TextContentAddress(h.SumHash())
+	storePath, err := zbstore.FixedCAOutputPath(eval.storeDir, name, ca, refs)
 	if err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 
-	if _, err := os.Lstat(string(storePath)); err == nil {
+	var exists bool
+	err = jsonrpc.Do(ctx, eval.store, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
+		Path: string(storePath),
+	})
+	if err != nil {
+		log.Debugf(ctx, "Unable to query store path %s: %v", storePath, err)
+	} else if exists {
 		// Already exists: no need to re-import.
-		log.Debugf(context.TODO(), "Using existing store path %s", storePath)
+		log.Debugf(ctx, "Using existing store path %s", storePath)
 		l.PushStringContext(string(storePath), []string{string(storePath)})
 		return 1, nil
 	}
 
-	imp, err := startImport(context.TODO())
+	exporter, closeExport, err := startExport(ctx, eval.store)
 	if err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
-	defer imp.Close()
-	err = writeSingleFileNAR(imp, strings.NewReader(s), int64(len(s)))
+	defer closeExport(false)
+	err = writeSingleFileNAR(exporter, strings.NewReader(s), int64(len(s)))
 	if err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
-	err = imp.Trailer(&nixExportTrailer{
-		storePath:  storePath,
-		references: refs.others,
+	err = exporter.Trailer(&zbstore.ExportTrailer{
+		StorePath:      storePath,
+		References:     refs.Others,
+		ContentAddress: ca,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
-	if err := imp.Close(); err != nil {
+	if err := closeExport(true); err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 
@@ -287,20 +321,20 @@ func absSourcePath(l *lua.State, path string) (string, error) {
 // path must be a cleaned, absolute path.
 // name is the intended name of the store object.
 // [Eval.walkPath] must be called before calling checkStamp.
-func (eval *Eval) checkStamp(path, name string) (_ StorePath, err error) {
-	var found StorePath
-	err = sqlitex.ExecuteTransientFS(eval.cache, sqlFiles(), "find.sql", &sqlitex.ExecOptions{
+func (eval *Eval) checkStamp(cache *sqlite.Conn, path, name string) (_ zbstore.Path, err error) {
+	var found zbstore.Path
+	err = sqlitex.ExecuteTransientFS(cache, sqlFiles(), "find.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":name": name,
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			p, err := ParseStorePath(stmt.GetText("path"))
+			p, err := zbstore.ParsePath(stmt.GetText("path"))
 			if err != nil || p.Dir() != eval.storeDir {
 				// Skip.
 				return nil
 			}
 			if found != "" {
-				return fmt.Errorf("multiple store paths found for %s (hash collision)", path)
+				return fmt.Errorf("multiple store paths found for %s (hash collision): %s and %s", path, found, p)
 			}
 			found = p
 			return nil
@@ -318,7 +352,7 @@ func (eval *Eval) checkStamp(path, name string) (_ StorePath, err error) {
 // walkPath creates a temporary table on the connection called "curr"
 // and inserts the paths and their stamps into the table.
 // walkPath only operates on the TEMP schema.
-func walkPath(conn *sqlite.Conn, path string) (err error) {
+func walkPath(ctx context.Context, conn *sqlite.Conn, path string) (err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("walk %s: %v", path, err)
@@ -353,6 +387,7 @@ func walkPath(conn *sqlite.Conn, path string) (err error) {
 		insertStmt.SetInt64(":mode", int64(rootInfo.Mode()))
 		insertStmt.SetInt64(":size", -1)
 		insertStmt.SetText(":stamp", rootStamp)
+		log.Debugf(ctx, "walk %s stamp=%s", path, rootStamp)
 		if _, err := insertStmt.Step(); err != nil {
 			return err
 		}
@@ -378,6 +413,7 @@ func walkPath(conn *sqlite.Conn, path string) (err error) {
 				insertStmt.SetInt64(":size", -1)
 			}
 			insertStmt.SetText(":stamp", entryStamp)
+			log.Debugf(ctx, "walk %s stamp=%s", path, entryStamp)
 			_, err = insertStmt.Step()
 			insertStmt.ClearBindings()
 			insertStmt.Reset()
@@ -395,7 +431,7 @@ func walkPath(conn *sqlite.Conn, path string) (err error) {
 	return nil
 }
 
-func updateCache(conn *sqlite.Conn, storePath StorePath) (err error) {
+func updateCache(conn *sqlite.Conn, storePath zbstore.Path) (err error) {
 	defer sqlitex.Save(conn)(&err)
 
 	err = sqlitex.ExecuteScriptFS(conn, sqlFiles(), "invalidate.sql", nil)
@@ -469,6 +505,64 @@ func collatePath(a, b string) int {
 	default:
 		return 0
 	}
+}
+
+func startExport(ctx context.Context, store *jsonrpc.Client) (exporter *zbstore.Exporter, closeFunc func(ok bool) error, err error) {
+	conn, releaseConn, err := storeCodec(ctx, store)
+	if err != nil {
+		return nil, nil, fmt.Errorf("export to store: %v", err)
+	}
+	pr, pw := io.Pipe()
+	done := make(chan error)
+	go func() {
+		err := conn.Export(pr)
+		pr.Close()
+		done <- err
+		close(done)
+	}()
+
+	exporter = zbstore.NewExporter(pw)
+	var once sync.Once
+	closeFunc = func(ok bool) error {
+		var errs [3]error
+		errs[0] = errors.New("already closed")
+
+		once.Do(func() {
+			if ok {
+				errs[0] = exporter.Close()
+				if errs[0] != nil {
+					errs[1] = pw.CloseWithError(errs[0])
+				} else {
+					errs[1] = pw.Close()
+				}
+			} else {
+				errs[0] = pw.CloseWithError(errors.New("export interrupted"))
+			}
+			errs[2] = <-done
+			releaseConn()
+		})
+
+		for _, err := range errs {
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return exporter, closeFunc, nil
+}
+
+func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstore.Codec, release func(), err error) {
+	generic, release, err := client.Codec(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	codec, ok := generic.(*zbstore.Codec)
+	if !ok {
+		release()
+		return nil, nil, fmt.Errorf("store connection is %T (want %T)", generic, (*zbstore.Codec)(nil))
+	}
+	return codec, release, nil
 }
 
 func stamp(path string, info fs.FileInfo) (string, error) {
