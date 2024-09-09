@@ -42,7 +42,7 @@ Other examples:
 Prerequisites:
 
 - Knowledge of using the command-line for your OS (e.g. Terminal.app, Command Prompt, etc.)
-- [Go](https://go.dev/dl/) 1.22 or later.
+- [Go](https://go.dev/dl/) 1.23 or later.
 
 ### Linux or macOS
 
