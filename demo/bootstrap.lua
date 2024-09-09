@@ -2588,7 +2588,7 @@ boot.xz = bashStep {
 
   tarballs = {
     fetchurl {
-      url = "http://ixpeering.dl.sourceforge.net/project/lzmautils/xz-5.4.1.tar.bz2";
+      url = "https://downloads.sourceforge.net/lzmautils/xz-5.4.1.tar.bz2";
       hash = "sha256:dd172acb53867a68012f94c17389401b2f274a1aa5ae8f84cbfb8b7e383ea8d3";
     },
   };
