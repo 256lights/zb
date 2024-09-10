@@ -14,7 +14,6 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
-	"zombiezen.com/go/bass/sigterm"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/zb"
@@ -86,7 +85,7 @@ func main() {
 		newServeCommand(g),
 	)
 
-	ctx, cancel := signal.NotifyContext(context.Background(), sigterm.Signals()...)
+	ctx, cancel := signal.NotifyContext(context.Background(), interruptSignals...)
 	err = rootCommand.ExecuteContext(ctx)
 	cancel()
 	if err != nil {

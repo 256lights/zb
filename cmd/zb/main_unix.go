@@ -5,7 +5,17 @@
 
 package main
 
-import "go4.org/xdgdir"
+import (
+	"os"
+
+	"go4.org/xdgdir"
+	"golang.org/x/sys/unix"
+)
+
+var interruptSignals = []os.Signal{
+	unix.SIGTERM,
+	unix.SIGINT,
+}
 
 func cacheDir() string {
 	return xdgdir.Cache.Path()

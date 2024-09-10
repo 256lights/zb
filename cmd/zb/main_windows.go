@@ -5,6 +5,8 @@ package main
 
 import "os"
 
+var interruptSignals = []os.Signal{os.Interrupt}
+
 func cacheDir() string {
 	dir, err := os.UserCacheDir()
 	if err != nil {
