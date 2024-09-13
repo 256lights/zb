@@ -68,6 +68,9 @@ create table "reference_classes" (
 
   foreign key ("referrer_drv_hash", "referrer_output_name", "referrer") references "realizations"
     on delete cascade,
+  -- Foreign key constraint is only checked if all fields are non-NULL.
+  foreign key ("reference_drv_hash", "reference_output_name", "reference") references "realizations"
+    on delete restrict,
   check (("reference_drv_hash" is null) = ("reference_output_name" is null))
 );
 

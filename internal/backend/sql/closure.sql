@@ -1,4 +1,9 @@
 with
+  "valid_objects" ("id") as (
+    select "id" from "objects"
+    union
+    select "referrer" from "reference_classes"
+  ),
   "closure"("path_id", "drv_hash_id", "output_name") as (
     select
         "paths"."id",
@@ -13,21 +18,23 @@ with
         nullif(:output_name, '')
       from
         "paths"
-        -- Ensure that object exists in store.
-        join "objects" using ("id")
-      where
-        "path" = :path
+        -- Ensure that object exists in store or is a known realization.
+        join "valid_objects" using ("id")
+      where "path" = :path
     union
       select
-        r."reference",
+        coalesce(rc."reference", r."reference"),
         rc."reference_drv_hash",
         rc."reference_output_name"
       from
-        "closure"
-        join "references" as r on "closure"."path_id" = r."referrer"
-        left join "reference_classes" as rc on
+        "reference_classes" as rc
+        full join "references" as r on
           (r."referrer", r."reference") = (rc."referrer", rc."reference") and
-          ("closure"."drv_hash_id", "closure"."output_name") is (rc."referrer_drv_hash", rc."referrer_output_name")
+          rc."reference_drv_hash" is null and
+          rc."reference_output_name" is null
+        join "closure" on
+          ("closure"."path_id", "closure"."drv_hash_id", "closure"."output_name") is
+            (coalesce(rc."referrer", r."referrer"), rc."referrer_drv_hash", rc."referrer_output_name")
   )
 
 select

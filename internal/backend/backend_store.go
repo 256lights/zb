@@ -121,17 +121,15 @@ func validateOutputs(drv *zbstore.Derivation) error {
 	return nil
 }
 
-func findPossibleRealizations(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass) (sets.Set[zbstore.Path], error) {
-	drvHash, err := eqClass.drvHash()
-	if err != nil {
-		return nil, fmt.Errorf("find existing realizations for %v: %v", eqClass, err)
-	}
-	result := make(sets.Set[zbstore.Path])
+func findPossibleRealizations(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass) (presentInStore, absentFromStore sets.Set[zbstore.Path], err error) {
+	drvHash := eqClass.drvHashKey.toHash()
+	presentInStore = make(sets.Set[zbstore.Path])
+	absentFromStore = make(sets.Set[zbstore.Path])
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "find_realizations.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":drv_hash_algorithm": drvHash.Type().String(),
 			":drv_hash_bits":      drvHash.Bytes(nil),
-			":output_name":        eqClass.outputName,
+			":output_name":        eqClass.outputName.Value(),
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			rawPath := stmt.GetText("output_path")
@@ -140,14 +138,18 @@ func findPossibleRealizations(ctx context.Context, conn *sqlite.Conn, eqClass eq
 				log.Warnf(ctx, "Database contains realization with invalid path %q for %v (%v)", rawPath, eqClass, err)
 				return nil
 			}
-			result.Add(outPath)
+			if stmt.GetBool("present_in_store") {
+				presentInStore.Add(outPath)
+			} else {
+				absentFromStore.Add(outPath)
+			}
 			return nil
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("find existing realizations for %v: %v", eqClass, err)
+		return nil, nil, fmt.Errorf("find existing realizations for %v: %v", eqClass, err)
 	}
-	return result, nil
+	return presentInStore, absentFromStore, nil
 }
 
 type realizationOutput struct {
@@ -178,10 +180,7 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash
 				return fmt.Errorf("record realizations for %v: %v", drvHash, err)
 			}
 			for eqClass := range eqClasses.All() {
-				h, err := eqClass.drvHash()
-				if err != nil {
-					return fmt.Errorf("record realizations for %v: %v", drvHash, err)
-				}
+				h := eqClass.drvHashKey.toHash()
 				if err := upsertDrvHash(conn, h); err != nil {
 					return fmt.Errorf("record realizations for %v: %v", drvHash, err)
 				}
@@ -224,13 +223,10 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash
 					refClassStmt.SetNull(":reference_drv_hash_bits")
 					refClassStmt.SetNull(":reference_output_name")
 				} else {
-					h, err := eqClass.drvHash()
-					if err != nil {
-						return fmt.Errorf("record realizations for %s: output %s: reference %s: %v", drvHash, outputName, path, err)
-					}
+					h := eqClass.drvHashKey.toHash()
 					refClassStmt.SetText(":reference_drv_hash_algorithm", h.Type().String())
 					refClassStmt.SetBytes(":reference_drv_hash_bits", h.Bytes(nil))
-					refClassStmt.SetText(":reference_output_name", eqClass.outputName)
+					refClassStmt.SetText(":reference_output_name", eqClass.outputName.Value())
 				}
 
 				if _, err := refClassStmt.Step(); err != nil {
@@ -255,6 +251,9 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash
 // during evaluation of the given equivalence class.
 // If closurePaths does not return an error,
 // closurePaths is guaranteed to have called yield at least once.
+//
+// closurePaths uses information from both the references table and the reference classes table.
+// closurePaths may return an incomplete closure for paths that don't exist on the disk.
 func closurePaths(conn *sqlite.Conn, pe pathAndEquivalenceClass, yield func(pathAndEquivalenceClass) bool) error {
 	errStop := errors.New("stop iteration")
 
@@ -265,13 +264,10 @@ func closurePaths(conn *sqlite.Conn, pe pathAndEquivalenceClass, yield func(path
 		":output_name":        nil,
 	}
 	if !pe.equivalenceClass.isZero() {
-		h, err := pe.equivalenceClass.drvHash()
-		if err != nil {
-			return fmt.Errorf("find closure of %s: %v", pe.path, err)
-		}
+		h := pe.equivalenceClass.drvHashKey.toHash()
 		args[":drv_hash_algorithm"] = h.Type().String()
 		args[":drv_hash_bits"] = h.Bytes(nil)
-		args[":output_name"] = pe.equivalenceClass.outputName
+		args[":output_name"] = pe.equivalenceClass.outputName.Value()
 	}
 
 	dir := pe.path.Dir()
@@ -322,6 +318,22 @@ func closurePaths(conn *sqlite.Conn, pe pathAndEquivalenceClass, yield func(path
 		return fmt.Errorf("find closure of %s: object not in store", pe.path)
 	}
 	return nil
+}
+
+// objectExists checks for the existence of a store object in the store database.
+func objectExists(conn *sqlite.Conn, path zbstore.Path) (bool, error) {
+	var exists bool
+	err := sqlitex.ExecuteFS(conn, sqlFiles(), "object_exists.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{":path": string(path)},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			exists = stmt.ColumnBool(0)
+			return nil
+		},
+	})
+	if err != nil {
+		return false, fmt.Errorf("check existence of %s: %v", path, err)
+	}
+	return exists, nil
 }
 
 func insertObject(ctx context.Context, conn *sqlite.Conn, info *zbstore.NARInfo) (err error) {

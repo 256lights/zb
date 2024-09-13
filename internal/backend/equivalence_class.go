@@ -6,18 +6,18 @@ package backend
 import (
 	"fmt"
 	"maps"
-	"slices"
+	"unique"
 
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/zb/internal/xslices"
+	"zombiezen.com/go/zb/sets"
 	"zombiezen.com/go/zb/zbstore"
 )
 
 // equivalenceClass is an equivalence class of [zbstore.OutputReference] values.
 // It represents a single output of equivalent derivations.
 type equivalenceClass struct {
-	drvHashString string
-	outputName    string
+	drvHashKey hashKey
+	outputName unique.Handle[string]
 }
 
 func newEquivalenceClass(drvHash nix.Hash, outputName string) equivalenceClass {
@@ -25,16 +25,9 @@ func newEquivalenceClass(drvHash nix.Hash, outputName string) equivalenceClass {
 		panic("both equivalence class fields must be set")
 	}
 	return equivalenceClass{
-		drvHashString: drvHash.SRI(),
-		outputName:    outputName,
+		drvHashKey: makeHashKey(drvHash),
+		outputName: unique.Make(outputName),
 	}
-}
-
-func (eqClass equivalenceClass) drvHash() (nix.Hash, error) {
-	if eqClass.isZero() {
-		return nix.Hash{}, nil
-	}
-	return nix.ParseHash(eqClass.drvHashString)
 }
 
 func (eqClass equivalenceClass) isZero() bool {
@@ -45,7 +38,7 @@ func (eqClass equivalenceClass) String() string {
 	if eqClass.isZero() {
 		return "ε"
 	}
-	return eqClass.drvHashString + "!" + eqClass.outputName
+	return eqClass.drvHashKey.toHash().String() + "!" + eqClass.outputName.Value()
 }
 
 type pathAndEquivalenceClass struct {
@@ -53,63 +46,78 @@ type pathAndEquivalenceClass struct {
 	equivalenceClass equivalenceClass
 }
 
-// hashDrvs computes the equivalence classes for the given derivations.
-// hashDrvs returns an error
-// if the derivations contain references to derivations not present in the map.
-func hashDrvs(derivations map[zbstore.Path]*zbstore.Derivation) (map[zbstore.Path]nix.Hash, error) {
-	stack := slices.Collect(maps.Keys(derivations))
-	result := make(map[zbstore.Path]nix.Hash)
-	for len(stack) > 0 {
-		curr := xslices.Last(stack)
-		if _, visited := result[curr]; visited {
-			stack = xslices.Pop(stack, 1)
-			continue
-		}
-
-		drv := derivations[curr]
-		if drv == nil {
-			return nil, fmt.Errorf("hash derivations: %s: missing", curr)
-		}
-
-		if ca, ok := drv.Outputs[zbstore.DefaultDerivationOutputName].FixedCA(); ok && len(drv.Outputs) == 1 {
-			p, err := zbstore.FixedCAOutputPath(drv.Dir, drv.Name, ca, zbstore.References{})
-			if err != nil {
-				return nil, fmt.Errorf("hash derivations: %s: %v", curr, err)
-			}
-			result[curr] = hashDrvFixed(ca, p)
-			stack = xslices.Pop(stack, 1)
-			continue
-		}
-
-		unhashedDeps := false
-		for inputDrvPath := range drv.InputDerivations {
-			if _, visited := result[inputDrvPath]; !visited {
-				stack = append(stack, inputDrvPath)
-				unhashedDeps = true
-			}
-		}
-		if unhashedDeps {
-			continue
-		}
-
-		atermData, err := drv.Marshal(&zbstore.MarshalDerivationOptions{
-			MapInputDerivation: func(p zbstore.Path) string {
-				return result[p].RawBase16()
-			},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("hash derivations: %s: %v", curr, err)
-		}
-		h := nix.NewHasher(nix.SHA256)
-		h.Write(atermData)
-		result[curr] = h.SumHash()
-		stack = xslices.Pop(stack, 1)
+// hashDrv computes the hash for the given derivation
+// based on the realizations of its input derivations.
+// This hash is intended for use in [newEquivalenceClass].
+func hashDrv(drv *zbstore.Derivation, realization func(ref zbstore.OutputReference) (zbstore.Path, bool)) (nix.Hash, error) {
+	if drv.Outputs[zbstore.DefaultDerivationOutputName].IsFixed() {
+		return hashDrvFixed(drv)
 	}
-	return result, nil
+
+	rewrites, err := derivationInputRewrites(drv, realization)
+	if err != nil {
+		return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)
+	}
+	expandedDrv := expandDerivationPlaceholders(newReplacer(maps.All(rewrites)), drv)
+	expandedDrv.InputDerivations = nil
+	expandedDrv.InputSources.AddSeq(maps.Values(rewrites))
+	return hashDrvFloating(expandedDrv)
+}
+
+// pseudoHashDrv computes a hash of a derivation
+// that can be used for comparing derivations for structural similarity.
+// If hashDrv(drv1) == hashDrv(drv2),
+// then pseudoHashDrv(drv1) == pseudoHashDrv(drv2)
+// (but the converse is not necessarily true).
+func pseudoHashDrv(drv *zbstore.Derivation) (nix.Hash, error) {
+	if drv.Outputs[zbstore.DefaultDerivationOutputName].IsFixed() {
+		return hashDrvFixed(drv)
+	}
+
+	var pseudoInputs sets.Sorted[zbstore.Path]
+	const fakeDigest = "00000000000000000000000000000000"
+	for _, input := range drv.InputSources.All() {
+		rewritten, err := input.Dir().Object(fakeDigest + "-" + input.Name())
+		if err != nil {
+			return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)
+		}
+		pseudoInputs.Add(rewritten)
+	}
+	rewrites := make(map[string]zbstore.Path)
+	for input := range drv.InputDerivationOutputs() {
+		inputDrvName, ok := input.DrvPath.DerivationName()
+		if !ok {
+			return nix.Hash{}, fmt.Errorf("hash derivation: invalid input derivation %s", input.DrvPath)
+		}
+		base := fakeDigest + "-" + inputDrvName
+		if input.OutputName != zbstore.DefaultDerivationOutputName {
+			base += "-" + input.OutputName
+		}
+		rewritten, err := input.DrvPath.Dir().Object(base)
+		if err != nil {
+			return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)
+		}
+		placeholder := zbstore.UnknownCAOutputPlaceholder(input)
+		pseudoInputs.Add(rewritten)
+		rewrites[placeholder] = rewritten
+	}
+
+	expandedDrv := expandDerivationPlaceholders(newReplacer(maps.All(rewrites)), drv)
+	expandedDrv.InputDerivations = nil
+	expandedDrv.InputSources = pseudoInputs
+	return hashDrvFloating(expandedDrv)
 }
 
 // hashDrvFixed computes the equivalence class for a fixed-output derivation.
-func hashDrvFixed(ca zbstore.ContentAddress, outputPath zbstore.Path) nix.Hash {
+func hashDrvFixed(drv *zbstore.Derivation) (nix.Hash, error) {
+	ca, isFixed := drv.Outputs[zbstore.DefaultDerivationOutputName].FixedCA()
+	if !isFixed || len(drv.Outputs) != 1 {
+		return nix.Hash{}, fmt.Errorf("hash derivation: not fixed")
+	}
+	outputPath, err := drv.OutputPath(zbstore.DefaultDerivationOutputName)
+	if err != nil {
+		return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)
+	}
 	h2 := nix.NewHasher(nix.SHA256)
 	h2.WriteString("fixed:out:")
 	switch {
@@ -121,5 +129,43 @@ func hashDrvFixed(ca zbstore.ContentAddress, outputPath zbstore.Path) nix.Hash {
 	h2.WriteString(ca.Hash().Base16())
 	h2.WriteString(":")
 	h2.WriteString(string(outputPath))
-	return h2.SumHash()
+	return h2.SumHash(), nil
+}
+
+func hashDrvFloating(expandedDrv *zbstore.Derivation) (nix.Hash, error) {
+	atermData, err := expandedDrv.MarshalText()
+	if err != nil {
+		return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)
+	}
+	h := nix.NewHasher(nix.SHA256)
+	h.WriteString("floating:")
+	h.WriteString(expandedDrv.Name)
+	h.WriteString(":") // ':' guaranteed not to appear in a store object name.
+	h.Write(atermData)
+	return h.SumHash(), nil
+}
+
+// hashKey is a copy of a [nix.Hash] that can be efficiently compared for equality.
+type hashKey unique.Handle[string]
+
+func makeHashKey(h nix.Hash) hashKey {
+	if h.IsZero() {
+		return hashKey{}
+	}
+	return hashKey(unique.Make(h.SRI()))
+}
+
+func (hk hashKey) isZero() bool {
+	return hk == hashKey{}
+}
+
+func (hk hashKey) toHash() nix.Hash {
+	if hk.isZero() {
+		return nix.Hash{}
+	}
+	h, err := nix.ParseHash(unique.Handle[string](hk).Value())
+	if err != nil {
+		panic(err)
+	}
+	return h
 }

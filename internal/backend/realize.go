@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unique"
 
 	"zombiezen.com/go/batchio"
 	"zombiezen.com/go/log"
@@ -64,10 +65,6 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 	if err != nil {
 		return nil, fmt.Errorf("build %s: %v", drvPath, err)
 	}
-	drvHashes, err := hashDrvs(drvCache)
-	if err != nil {
-		return nil, fmt.Errorf("build %s: %v", drvPath, err)
-	}
 
 	conn, err := s.db.Get(ctx)
 	if err != nil {
@@ -82,7 +79,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 			OutputName: outputName,
 		})
 	}
-	b := s.newBuilder(conn, drvCache, drvHashes)
+	b := s.newBuilder(conn, drvCache)
 	if err := b.realize(ctx, wantOutputs); err != nil {
 		if isBuilderFailure(err) {
 			return marshalResponse(b.makeRealizeResponse(drvPath))
@@ -127,10 +124,6 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 	if err != nil {
 		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
 	}
-	drvHashes, err := hashDrvs(drvCache)
-	if err != nil {
-		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
-	}
 
 	conn, err := s.db.Get(ctx)
 	if err != nil {
@@ -140,7 +133,7 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 
 	drv := drvCache[drvPath]
 	inputs := sets.Collect(drv.InputDerivationOutputs())
-	b := s.newBuilder(conn, drvCache, drvHashes)
+	b := s.newBuilder(conn, drvCache)
 	if err := b.realize(ctx, inputs); err != nil {
 		if isBuilderFailure(err) {
 			return marshalResponse(b.makeRealizeResponse(drvPath))
@@ -152,7 +145,7 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 	if err != nil {
 		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
 	}
-	inputRewrites, err := derivationInputRewrites(b.drvHashes, b.realizations, drv)
+	inputRewrites, err := derivationInputRewrites(drv, b.lookup)
 	if err != nil {
 		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
 	}
@@ -180,17 +173,22 @@ type builder struct {
 }
 
 type cachedRealization struct {
-	path    zbstore.Path
+	// path is the path of the realized store object.
+	path zbstore.Path
+
+	// closure is a map of paths transitively referenced by the realization's path
+	// to a set of equivalence classes that may have produced that path.
+	// The zero [equivalenceClass] indicates that the path was a "source".
 	closure map[zbstore.Path]sets.Set[equivalenceClass]
 }
 
-func (s *Server) newBuilder(conn *sqlite.Conn, derivations map[zbstore.Path]*zbstore.Derivation, drvHashes map[zbstore.Path]nix.Hash) *builder {
+func (s *Server) newBuilder(conn *sqlite.Conn, derivations map[zbstore.Path]*zbstore.Derivation) *builder {
 	return &builder{
 		server:      s,
 		conn:        conn,
 		derivations: derivations,
-		drvHashes:   drvHashes,
 
+		drvHashes:    make(map[zbstore.Path]nix.Hash),
 		realizations: make(map[equivalenceClass]cachedRealization),
 	}
 }
@@ -233,90 +231,31 @@ func (b *builder) lookup(ref zbstore.OutputReference) (_ zbstore.Path, ok bool) 
 }
 
 func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) error {
-	// First, see if there is a compatible set of usable realizations for those requested.
-	// If so, we can use those directly.
-	log.Debugf(ctx, "Searching for realizations for top-level %v...", want)
-	mustBuild := false
-	newRealizations := make(map[equivalenceClass]cachedRealization)
-	for ref := range want.All() {
-		eqClass, ok := b.toEquivalenceClass(ref)
-		if !ok {
-			return fmt.Errorf("missing hash for %v", ref)
-		}
-		log.Debugf(ctx, "Top-level %v (drvHash=%s)", ref, eqClass.drvHashString)
-		realizationsForOutput, err := b.pickRealizationsToReuse(ctx, eqClass)
-		if err != nil {
-			return err
-		}
-		if len(realizationsForOutput) == 0 {
-			log.Debugf(ctx, "No compatible realizations for top-level %v. Kicking off build...", ref)
-			mustBuild = true
-			break
-		}
-		maps.Copy(newRealizations, realizationsForOutput)
-	}
+	log.Debugf(ctx, "Will realize %v...", want)
 
-	if !mustBuild {
-		maps.Copy(b.realizations, newRealizations)
-		return nil
-	}
-
-	// We know we're building *something*.
 	// Multi-output derivations are particularly troublesome for us
-	// because if they need to be rebuilt, they can invalidate the usage of other realizations.
-	// We only allow realizations to be used for multi-output derivations
-	// if only one output from the derivation is used in the graph.
-	//
-	// Here's the reasoning:
-	// If a multi-output derivation's closure is deterministic,
-	// then we should only have a single known realization for each output.
-	// If the closure is not deterministic, we want to pick a set of outputs that were built together.
-	// If the derivation is *mostly* deterministic,
+	// because if we realize they need to be built
+	// after we've already picked a realization for one of the outputs,
+	// the build can invalidate the usage of other realizations.
+	// (However, this can only occur if more than one output is used in the build.)
+	// As long as the derivation is *mostly* deterministic,
 	// then we have a good shot of being able to reuse more realizations throughout the rest of the build process
 	// because of the early cutoff optimization from content-addressing.
-
-	multiOutputs, err := findMultiOutputDerivationsInBuild(b.derivations, b.drvHashes, want)
+	multiOutputs, err := findMultiOutputDerivationsInBuild(b.derivations, want)
 	if err != nil {
 		return err
 	}
+	log.Debugf(ctx, "Found multi-outputs for %v: %v", want, multiOutputs)
 
-	// We perform a two-phase build.
-	// In the first phase, we realize any multi-output derivations
-	// and forbid usage of realizations for those targets specifically.
-	log.Debugf(ctx, "Running first phase of build with multi-output derivations: %v", multiOutputs)
-	if err := b.realizePhase(ctx, multiOutputs, false); err != nil {
-		return err
-	}
-	// In the second phase, we realize our originally requested outputs.
-	// This will reuse the realizations from the previous phase.
-	log.Debugf(ctx, "Running second phase of build to finish: %v", want)
-	if err := b.realizePhase(ctx, want, true); err != nil {
-		return err
-	}
+	// TODO(soon): Find realizations we can use without requiring all build dependencies.
 
-	return nil
-}
-
-func (b *builder) realizePhase(ctx context.Context, want sets.Set[zbstore.OutputReference], useExistingForWant bool) error {
+	log.Debugf(ctx, "Realizing %v...", want)
 	drvLocks := make(map[zbstore.Path]func())
 	defer func() {
 		for _, unlock := range drvLocks {
 			unlock()
 		}
 	}()
-
-	var ignoreExistingDrvSet sets.Set[string]
-	if !useExistingForWant {
-		ignoreExistingDrvSet = make(sets.Set[string])
-		for output := range want.All() {
-			drvHash := b.drvHashes[output.DrvPath]
-			if drvHash.IsZero() {
-				return fmt.Errorf("realize %v: missing hash", output)
-			}
-			ignoreExistingDrvSet.Add(drvHash.SRI())
-		}
-	}
-
 	stack := slices.Collect(want.All())
 	for len(stack) > 0 {
 		curr := xslices.Last(stack)
@@ -332,30 +271,12 @@ func (b *builder) realizePhase(ctx context.Context, want sets.Set[zbstore.Output
 		if _, ok := drv.Outputs[curr.OutputName]; !ok {
 			return fmt.Errorf("realize %v: unknown output %q", curr, curr.OutputName)
 		}
-
-		if _, intendToBuild := drvLocks[curr.DrvPath]; intendToBuild {
+		drvHash := b.drvHashes[curr.DrvPath]
+		if !drvHash.IsZero() {
 			log.Debugf(ctx, "Resuming %s", curr.DrvPath)
 		} else {
 			// First visit to derivation.
-			drvHash := b.drvHashes[curr.DrvPath]
-			if drvHash.IsZero() {
-				return fmt.Errorf("realize %v: missing hash", curr)
-			}
-			log.Debugf(ctx, "Reached %v (drvHash=%v)", curr, drvHash)
-			unlock, err := b.server.building.lock(ctx, curr.DrvPath)
-			if err != nil {
-				return err
-			}
-			drvLocks[curr.DrvPath] = unlock
-			log.Debugf(ctx, "Acquired lock on %s", curr.DrvPath)
-			if err := b.preprocess(ctx, curr, !ignoreExistingDrvSet.Has(drvHash.SRI())); err != nil {
-				return err
-			}
-			if _, realized := b.lookup(curr); realized {
-				drvLocks[curr.DrvPath]()
-				delete(drvLocks, curr.DrvPath)
-				continue
-			}
+			log.Debugf(ctx, "Reached %v", curr)
 			unmetDependencies := false
 			for ref := range drv.InputDerivationOutputs() {
 				if _, realized := b.lookup(ref); !realized {
@@ -371,9 +292,24 @@ func (b *builder) realizePhase(ctx context.Context, want sets.Set[zbstore.Output
 				log.Debugf(ctx, "Pausing %s to build dependencies", curr.DrvPath)
 				continue
 			}
+			drvHash, err := hashDrv(drv, b.lookup)
+			if err != nil {
+				return fmt.Errorf("realize %s: %v", curr, err)
+			}
+			log.Debugf(ctx, "Hashed %s to %v", curr.DrvPath, drvHash)
+			b.drvHashes[curr.DrvPath] = drvHash
 		}
 
-		if err := b.do(ctx, curr.DrvPath); err != nil {
+		log.Debugf(ctx, "Waiting for build lock on %s...", curr.DrvPath)
+		unlock, err := b.server.building.lock(ctx, curr.DrvPath)
+		if err != nil {
+			return err
+		}
+		drvLocks[curr.DrvPath] = unlock
+		log.Debugf(ctx, "Acquired build lock on %s", curr.DrvPath)
+		outputs := sets.New(curr.OutputName)
+		outputs.AddSeq(multiOutputs[curr.DrvPath].All())
+		if err := b.do(ctx, curr.DrvPath, outputs); err != nil {
 			return err
 		}
 		drvLocks[curr.DrvPath]()
@@ -383,109 +319,156 @@ func (b *builder) realizePhase(ctx context.Context, want sets.Set[zbstore.Output
 	return nil
 }
 
-// preprocess checks whether the given output has existing realizations
-// or otherwise ensures the derivation is suitable for realizing.
-func (b *builder) preprocess(ctx context.Context, output zbstore.OutputReference, useExisting bool) error {
-	eqClass, ok := b.toEquivalenceClass(output)
-	if !ok {
-		return fmt.Errorf("%s: unknown derivation", output.DrvPath)
+var (
+	errRealizationNotFound  = errors.New("no suitable realizations exist")
+	errMultipleRealizations = errors.New("multiple valid realizations")
+)
+
+// fetchRealization finds a realization to use for a derivation output
+// from the store database
+// that is compatible with existing realizations in the builder.
+// fetchRealization returns an error that unwraps to [errRealizationNotFound]
+// if no such realization could be found.
+// If fetchRealization does not return an error,
+// then b.realizations will have a value for eqClass.
+//
+// If mustExist is true, then the realization must be present in the store
+// to be considered.
+// Otherwise, fetchRealization will return a set of keys added to b.realizations
+// that name paths not in the store.
+//
+// fetchRealization may add realizations for equivalence classes beyond the given one
+// because selecting a realization may imply selecting realizations from its closure.
+// fetchRealization will only add realizations to b.realizations
+// if it does not return an error.
+func (b *builder) fetchRealization(ctx context.Context, eqClass equivalenceClass, mustExist bool) (absentRealizations sets.Set[equivalenceClass], err error) {
+	if _, exists := b.realizations[eqClass]; exists {
+		return nil, nil
 	}
 
-	if !useExisting {
-		log.Debugf(ctx, "Skipping use of existing realizations for %v (drvHash=%s)", output, eqClass.drvHashString)
-	} else {
-		newRealizations, err := b.pickRealizationsToReuse(ctx, eqClass)
+	defer func() {
+		// Don't add absent realizations to the realization set if we return an error.
 		if err != nil {
-			return err
-		}
-		if len(newRealizations) > 0 {
-			maps.Copy(b.realizations, newRealizations)
-			return nil
-		}
-	}
-
-	drv := b.derivations[output.DrvPath]
-	if drv == nil {
-		return fmt.Errorf("build %s: unknown derivation", output.DrvPath)
-	}
-	if _, hasOutput := drv.Outputs[output.OutputName]; !hasOutput {
-		return fmt.Errorf("build %s: unknown output %q", output.DrvPath, output.OutputName)
-	}
-	if outputPath, err := drv.OutputPath(output.OutputName); err == nil {
-		// Fixed output.
-		log.Debugf(ctx, "%s has fixed output %s. Waiting for lock to check for reuse...", output.DrvPath, outputPath)
-		unlockFixedOutput, err := b.server.writing.lock(ctx, outputPath)
-		if err != nil {
-			return fmt.Errorf("build %s: wait for %s: %w", output.DrvPath, outputPath, err)
-		}
-		_, err = os.Lstat(b.server.realPath(outputPath))
-		unlockFixedOutput()
-		log.Debugf(ctx, "%s exists=%t (output of %s)", outputPath, err == nil, output.DrvPath)
-
-		if err == nil {
-			drvHash := b.drvHashes[output.DrvPath]
-			// Fixed output derivations have a single output
-			// and their outputs must contain no references.
-			rout := realizationOutput{path: outputPath}
-			outputPaths := map[string]realizationOutput{
-				output.OutputName: rout,
+			for eqClass := range absentRealizations.All() {
+				delete(b.realizations, eqClass)
 			}
-			if err := b.recordRealizations(ctx, drvHash, outputPaths); err != nil {
-				return fmt.Errorf("build %s: %v", output.DrvPath, err)
-			}
-			return nil
+			absentRealizations = nil
 		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return err
+	}()
+	defer sqlitex.Save(b.conn)(&err)
+
+	log.Debugf(ctx, "Searching for realizations for %v...", eqClass)
+	presentInStore, absentFromStore, err := findPossibleRealizations(ctx, b.conn, eqClass)
+	if err != nil {
+		return nil, err
+	}
+
+	var r cachedRealization
+	present := false
+	r.path, r.closure, err = b.pickRealizationFromSet(ctx, eqClass, presentInStore)
+	switch {
+	case err == nil:
+		present = true
+	case errors.Is(err, errMultipleRealizations):
+		return nil, fmt.Errorf("pick compatible realization for %v: %w", eqClass, errRealizationNotFound)
+	case errors.Is(err, errRealizationNotFound):
+		if mustExist {
+			return nil, err
+		}
+		r.path, r.closure, err = b.pickRealizationFromSet(ctx, eqClass, absentFromStore)
+		if errors.Is(err, errMultipleRealizations) {
+			return nil, fmt.Errorf("pick compatible realization for %v: %w", eqClass, errRealizationNotFound)
+		}
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, err
+	}
+
+	// Now that we selected our realization, fill out the closures.
+	log.Debugf(ctx, "Using sole viable candidate %s for %v", r.path, eqClass)
+	b.realizations[eqClass] = r
+	if !present {
+		absentRealizations = sets.New(eqClass)
+	}
+	for refPath, eqClasses := range r.closure {
+		refPathExists := true
+		if !present {
+			var err error
+			refPathExists, err = objectExists(b.conn, refPath)
+			if err != nil {
+				return absentRealizations, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
+			}
+		}
+
+		for eqClass := range eqClasses.All() {
+			if eqClass.isZero() {
+				continue
+			}
+			if _, exists := b.realizations[eqClass]; exists {
+				continue
+			}
+			pe := pathAndEquivalenceClass{
+				path:             refPath,
+				equivalenceClass: eqClass,
+			}
+			closureRealization := cachedRealization{
+				path:    refPath,
+				closure: make(map[zbstore.Path]sets.Set[equivalenceClass]),
+			}
+			err = closurePaths(b.conn, pe, func(pe pathAndEquivalenceClass) bool {
+				addToMultiMap(closureRealization.closure, pe.path, pe.equivalenceClass)
+				return true
+			})
+			if err != nil {
+				return absentRealizations, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
+			}
+			b.realizations[eqClass] = closureRealization
+			if !refPathExists {
+				absentRealizations.Add(eqClass)
+			}
 		}
 	}
 
-	if !canBuildLocally(drv) {
-		return fmt.Errorf("build %s: a %s system is required, but host is a %v system",
-			output.DrvPath, drv.System, system.Current())
-	}
-	for _, input := range drv.InputSources.All() {
-		log.Debugf(ctx, "Waiting for lock on %s (input to %s)...", input, output.DrvPath)
-		unlockInput, err := b.server.writing.lock(ctx, input)
+	return absentRealizations, nil
+}
+
+// fetchRealizationSet finds a set of realizations to use for the given set of derivation outputs
+// from the store database
+// that is compatible with existing realizations in the builder
+// and with elements in the set.
+// fetchRealizationSet returns an error that unwraps to [errRealizationNotFound]
+// if no such set of realizations could be found.
+// If fetchRealizationSet does not return an error,
+// then b.realizations will have a value for all elements of eqClasses.
+// Only realizations in the store will be considered.
+//
+// fetchRealizationSet may add realizations for equivalence classes beyond the given one
+// because selecting a realization may imply selecting realizations from its closure.
+// fetchRealizationSet will only add realizations to b.realizations
+// if it does not return an error.
+func (b *builder) fetchRealizationSet(ctx context.Context, eqClasses sets.Set[equivalenceClass]) (err error) {
+	defer sqlitex.Save(b.conn)(&err)
+
+	oldRealizations := maps.Clone(b.realizations)
+	defer func() {
 		if err != nil {
-			return fmt.Errorf("build %s: wait for %s: %w", output.DrvPath, input, err)
+			b.realizations = oldRealizations
 		}
-		_, err = os.Lstat(b.server.realPath(input))
-		unlockInput()
-		log.Debugf(ctx, "%s exists=%t (input to %s)", input, err == nil, output.DrvPath)
-		if err != nil {
-			// TODO(someday): Import from substituter if not found.
-			return fmt.Errorf("build %s: input %s not present (%v)", output.DrvPath, input, err)
+	}()
+
+	for eqClass := range eqClasses.All() {
+		if _, err := b.fetchRealization(ctx, eqClass, true); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// pickRealizationsToReuse picks a realization to use for a derivation output
-// from the given set of existing store paths
-// that is compatible with existing realizations in the builder.
-// pickRealizationsToReuse can return realizations for multiple equivalence classes
-// because selecting a realization may imply selecting realizations from its closure.
-// If the returned map is empty,
-// then no compatible realizations were found.
-func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalenceClass) (newRealizations map[equivalenceClass]cachedRealization, err error) {
-	isCompatible := func(ref pathAndEquivalenceClass) bool {
-		if ref.equivalenceClass.isZero() {
-			// Sources can't conflict.
-			return true
-		}
-		used, hasExisting := b.realizations[ref.equivalenceClass]
-		return !hasExisting || ref.path == used.path
-	}
-
-	log.Debugf(ctx, "Searching for realizations for %v...", eqClass)
-	existing, err := findPossibleRealizations(ctx, b.conn, eqClass)
-	if err != nil {
-		return nil, err
-	}
-	rout := cachedRealization{
-		closure: make(map[zbstore.Path]sets.Set[equivalenceClass]),
-	}
+func (b *builder) pickRealizationFromSet(ctx context.Context, eqClass equivalenceClass, existing sets.Set[zbstore.Path]) (zbstore.Path, map[zbstore.Path]sets.Set[equivalenceClass], error) {
+	var selectedPath zbstore.Path
+	closure := make(map[zbstore.Path]sets.Set[equivalenceClass])
 	remaining := existing.Clone()
 	for outputPath := range existing.All() {
 		log.Debugf(ctx, "Checking whether %s can be used as %v...", outputPath, eqClass)
@@ -495,12 +478,12 @@ func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalen
 			path:             outputPath,
 			equivalenceClass: eqClass,
 		}
-		clear(rout.closure)
+		clear(closure)
 		canUse := true
 		err := closurePaths(b.conn, pe, func(ref pathAndEquivalenceClass) bool {
-			canUse = isCompatible(ref)
+			canUse = b.isCompatible(ref)
 			if canUse {
-				addToMultiMap(rout.closure, ref.path, ref.equivalenceClass)
+				addToMultiMap(closure, ref.path, ref.equivalenceClass)
 			} else {
 				log.Debugf(ctx, "Cannot use %s as %v: depends on %s (need %s)",
 					outputPath, eqClass, ref.path, b.realizations[ref.equivalenceClass].path)
@@ -508,18 +491,18 @@ func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalen
 			return canUse
 		})
 		if err != nil {
-			return nil, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
+			return "", nil, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
 		}
 		if canUse {
 			log.Debugf(ctx, "Found %s as a candidate for %v", outputPath, eqClass)
-			rout.path = outputPath
+			selectedPath = outputPath
 			break
 		}
 	}
 
-	if rout.path == "" {
+	if selectedPath == "" {
 		log.Debugf(ctx, "No suitable realizations exist for %v", eqClass)
-		return nil, nil
+		return "", nil, fmt.Errorf("pick compatible realization for %v: %w", eqClass, errRealizationNotFound)
 	}
 
 	// TODO(someday): In the case where there are multiple valid candidates,
@@ -532,74 +515,71 @@ func (b *builder) pickRealizationsToReuse(ctx context.Context, eqClass equivalen
 		}
 		canUse := true
 		err := closurePaths(b.conn, pe, func(ref pathAndEquivalenceClass) bool {
-			canUse = isCompatible(ref)
+			canUse = b.isCompatible(ref)
 			return canUse
 		})
 		if err != nil {
-			return nil, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
+			return "", nil, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
 		}
 		if canUse {
 			// Multiple realizations are compatible.
 			// Return none of them.
-			log.Debugf(ctx, "Both %s and %s are viable candidates for %v. Returning nothing.", outputPath, rout.path, eqClass)
-			return nil, nil
+			log.Debugf(ctx, "Both %s and %s are viable candidates for %v. Returning nothing.", outputPath, selectedPath, eqClass)
+			return "", nil, fmt.Errorf("pick compatible realization for %v: %w", eqClass, errMultipleRealizations)
 		}
 	}
 
-	// Now that we selected our realization, fill out the closures.
-	log.Debugf(ctx, "Using sole viable candidate %s for %v", rout.path, eqClass)
-	newRealizations = map[equivalenceClass]cachedRealization{
-		eqClass: rout,
-	}
-	for refPath, eqClasses := range rout.closure {
-		for eqClass := range eqClasses.All() {
-			if _, exists := b.realizations[eqClass]; exists {
-				continue
-			}
-			if _, alreadyLookedUp := newRealizations[eqClass]; alreadyLookedUp {
-				continue
-			}
-			pe := pathAndEquivalenceClass{
-				path:             refPath,
-				equivalenceClass: eqClass,
-			}
-			closureRealization := cachedRealization{
-				path:    refPath,
-				closure: make(map[zbstore.Path]sets.Set[equivalenceClass]),
-			}
-			err := closurePaths(b.conn, pe, func(pe pathAndEquivalenceClass) bool {
-				addToMultiMap(closureRealization.closure, pe.path, pe.equivalenceClass)
-				return true
-			})
-			if err != nil {
-				return nil, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
-			}
-			newRealizations[eqClass] = closureRealization
-		}
-	}
-
-	return newRealizations, nil
+	return selectedPath, closure, nil
 }
 
-// do runs a derivation's builder and records the realizations.
-// The caller must have realized all of the derivation's inputs before calling do.
-func (b *builder) do(ctx context.Context, drvPath zbstore.Path) (err error) {
+// isCompatible reports whether the given path can be used
+// for the given (potentially zero) equivalence class
+// with respect to the rest of the builder's realizations.
+func (b *builder) isCompatible(pe pathAndEquivalenceClass) bool {
+	if pe.equivalenceClass.isZero() {
+		// Sources can't conflict.
+		return true
+	}
+	used, hasExisting := b.realizations[pe.equivalenceClass]
+	return !hasExisting || pe.path == used.path
+}
+
+// do ensures that a single derivation has realizations for the given set of outputs,
+// either by reusing existing realizations or by building it.
+// b.drvHashes must have a non-zero value for drvPath before calling do
+// (which implies the caller realized all of the derivation's inputs)
+// or else do returns an error.
+func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets.Set[string]) (err error) {
 	drv := b.derivations[drvPath]
 	if drv == nil {
 		return fmt.Errorf("build %s: unknown derivation", drvPath)
 	}
 	drvHash := b.drvHashes[drvPath]
 	if drvHash.IsZero() {
-		return fmt.Errorf("build %s: derivation not hashed", drvPath)
+		return fmt.Errorf("build %s: missing hash", drvPath)
+	}
+	for outputName := range outputNames.All() {
+		if drv.Outputs[outputName] == nil {
+			ref := zbstore.OutputReference{
+				DrvPath:    drvPath,
+				OutputName: outputName,
+			}
+			return fmt.Errorf("build %v: no such output", ref)
+		}
 	}
 
-	// No-op if the derivation has already been realized.
-	fullyRealized := xiter.All(maps.Keys(drv.Outputs), func(outputName string) bool {
-		_, realized := b.realizations[newEquivalenceClass(drvHash, outputName)]
-		return realized
+	// Search for existing realizations first.
+	wantEqClasses := sets.Collect(func(yield func(equivalenceClass) bool) {
+		for outputName := range outputNames.All() {
+			if !yield(newEquivalenceClass(drvHash, outputName)) {
+				return
+			}
+		}
 	})
-	if fullyRealized {
+	if err := b.fetchRealizationSet(ctx, wantEqClasses); err == nil {
 		return nil
+	} else if !errors.Is(err, errRealizationNotFound) {
+		return fmt.Errorf("build %s: %v", drvPath, err)
 	}
 
 	// If fixed output, acquire write lock on output path.
@@ -618,8 +598,6 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path) (err error) {
 		}
 		defer unlockFixedOutput()
 
-		// It's possible that another build produced our fixed output
-		// since pre-processing.
 		_, err = os.Lstat(b.server.realPath(outputPath))
 		log.Debugf(ctx, "%s exists=%t (output of %s)", outputPath, err == nil, drvPath)
 		if err == nil {
@@ -636,6 +614,26 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path) (err error) {
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("build %s: %v", drvPath, err)
+		}
+	}
+
+	// Verify that builder can run.
+	if !canBuildLocally(drv) {
+		return fmt.Errorf("build %s: a %s system is required, but host is a %v system",
+			drvPath, drv.System, system.Current())
+	}
+	for _, input := range drv.InputSources.All() {
+		log.Debugf(ctx, "Waiting for lock on %s (input to %s)...", input, drvPath)
+		unlockInput, err := b.server.writing.lock(ctx, input)
+		if err != nil {
+			return fmt.Errorf("build %s: wait for %s: %w", drvPath, input, err)
+		}
+		_, err = os.Lstat(b.server.realPath(input))
+		unlockInput()
+		log.Debugf(ctx, "%s exists=%t (input to %s)", input, err == nil, drvPath)
+		if err != nil {
+			// TODO(someday): Import from substituter if not found.
+			return fmt.Errorf("build %s: input %s not present (%v)", drvPath, input, err)
 		}
 	}
 
@@ -781,7 +779,7 @@ func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path, f ru
 	if log.IsEnabled(log.Debug) {
 		log.Debugf(ctx, "Output map for %s: %s", drvPath, formatOutputPaths(outPaths))
 	}
-	inputRewrites, err := derivationInputRewrites(b.drvHashes, b.realizations, drv)
+	inputRewrites, err := derivationInputRewrites(drv, b.lookup)
 	if err != nil {
 		return nil, fmt.Errorf("build %s: %v", drvPath, err)
 	}
@@ -858,21 +856,16 @@ func outputPathRewrites(outputMap map[string]zbstore.Path) iter.Seq2[string, zbs
 
 // derivationInputRewrites returns a substitution map
 // of output placeholders to realization paths.
-func derivationInputRewrites(drvHashes map[zbstore.Path]nix.Hash, realizations map[equivalenceClass]cachedRealization, drv *zbstore.Derivation) (map[string]zbstore.Path, error) {
+func derivationInputRewrites(drv *zbstore.Derivation, realization func(ref zbstore.OutputReference) (zbstore.Path, bool)) (map[string]zbstore.Path, error) {
 	// TODO(maybe): Also rewrite transitive derivation hashes?
 	result := make(map[string]zbstore.Path)
 	for ref := range drv.InputDerivationOutputs() {
 		placeholder := zbstore.UnknownCAOutputPlaceholder(ref)
-		h := drvHashes[ref.DrvPath]
-		if h.IsZero() {
-			return nil, fmt.Errorf("compute input rewrites: %s: missing hash", ref.DrvPath)
+		rpath, ok := realization(ref)
+		if !ok {
+			return nil, fmt.Errorf("compute input rewrites: missing realization for %v", ref)
 		}
-		eqClass := newEquivalenceClass(h, ref.OutputName)
-		r := realizations[eqClass]
-		if r.path == "" {
-			return nil, fmt.Errorf("compute input rewrites: %v: missing realization", ref)
-		}
-		result[placeholder] = r.path
+		result[placeholder] = rpath
 	}
 	return result, nil
 }
@@ -1224,6 +1217,7 @@ func finalizeFloatingOutput(dir zbstore.Directory, buildPath, finalPath string) 
 
 // recordRealizations calls [recordRealizations] in a transaction
 // and on success, saves the realizations into b.realizations.
+// The outputs must exist in the store.
 func (b *builder) recordRealizations(ctx context.Context, drvHash nix.Hash, outputs map[string]realizationOutput) (err error) {
 	endFn, err := sqlitex.ImmediateTransaction(b.conn)
 	if err != nil {
@@ -1254,35 +1248,42 @@ func (b *builder) recordRealizations(ctx context.Context, drvHash nix.Hash, outp
 
 // findMultiOutputDerivationsInBuild identifies the set of derivations required to build the want set
 // that have more than one used output.
-func findMultiOutputDerivationsInBuild(derivations map[zbstore.Path]*zbstore.Derivation, drvHashes map[zbstore.Path]nix.Hash, want sets.Set[zbstore.OutputReference]) (sets.Set[zbstore.OutputReference], error) {
-	used := make(map[string]sets.Set[string])
-	drvPathMap := make(map[string]sets.Set[zbstore.Path])
+func findMultiOutputDerivationsInBuild(derivations map[zbstore.Path]*zbstore.Derivation, want sets.Set[zbstore.OutputReference]) (map[zbstore.Path]sets.Set[string], error) {
+	drvHashes := make(map[zbstore.Path]hashKey)
+	used := make(map[hashKey]sets.Set[unique.Handle[string]])
+	drvPathMap := make(map[hashKey]sets.Set[zbstore.Path])
 	stack := slices.Collect(want.All())
 	for len(stack) > 0 {
 		curr := xslices.Last(stack)
 		stack = xslices.Pop(stack, 1)
 
-		h := drvHashes[curr.DrvPath]
-		if h.IsZero() {
-			return nil, fmt.Errorf("missing derivation hash for %s", curr.DrvPath)
+		drv := derivations[curr.DrvPath]
+		if drv == nil {
+			return nil, fmt.Errorf("%s: unknown derivation", curr.DrvPath)
 		}
-		sri := h.SRI()
-		if used[sri].Len() == 0 {
-			used[sri] = make(sets.Set[string])
+
+		hk, hashed := drvHashes[curr.DrvPath]
+		if !hashed {
+			h, err := pseudoHashDrv(drv)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %v", curr.DrvPath, err)
+			}
+			hk = makeHashKey(h)
+			drvHashes[curr.DrvPath] = hk
+		}
+		if used[hk].Len() == 0 {
+			used[hk] = make(sets.Set[unique.Handle[string]])
 			stack = slices.AppendSeq(stack, derivations[curr.DrvPath].InputDerivationOutputs())
 		}
-		addToMultiMap(used, sri, curr.OutputName)
-		addToMultiMap(drvPathMap, sri, curr.DrvPath)
+		addToMultiMap(used, hk, unique.Make(curr.OutputName))
+		addToMultiMap(drvPathMap, hk, curr.DrvPath)
 	}
-	result := make(sets.Set[zbstore.OutputReference])
+	result := make(map[zbstore.Path]sets.Set[string])
 	for drvHash, usedOutputNames := range used {
 		if usedOutputNames.Len() > 1 {
 			for drvPath := range drvPathMap[drvHash].All() {
 				for outputName := range usedOutputNames.All() {
-					result.Add(zbstore.OutputReference{
-						DrvPath:    drvPath,
-						OutputName: outputName,
-					})
+					addToMultiMap(result, drvPath, outputName.Value())
 				}
 			}
 		}

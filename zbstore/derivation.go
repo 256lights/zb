@@ -85,7 +85,7 @@ func (drv *Derivation) Export(hashType nix.HashType) (info *NARInfo, narBytes, d
 		return nil, nil, nil, fmt.Errorf("export derivation %s: missing store directory", drv.Name)
 	}
 
-	drvBytes, err = drv.Marshal(nil)
+	drvBytes, err = drv.MarshalText()
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -209,20 +209,6 @@ func derivationOutputPath(store Directory, drvName, outputName string, t *Deriva
 // MarshalText converts the derivation to ATerm format
 // by calling [Derivation.Marshal] with the default options.
 func (drv *Derivation) MarshalText() ([]byte, error) {
-	return drv.Marshal(nil)
-}
-
-// MarshalDerivationOptions holds parameters for [Derivation.Marshal].
-type MarshalDerivationOptions struct {
-	// MapInputDerivation is a function that rewrites the paths used for the input derivations
-	// if not nil.
-	// This is used for producing a representation of the derivation suitable for hashing.
-	MapInputDerivation func(Path) string
-}
-
-// Marshal converts the derivation to ATerm format.
-// Passing nil
-func (drv *Derivation) Marshal(opts *MarshalDerivationOptions) ([]byte, error) {
 	if drv.Name == "" {
 		return nil, fmt.Errorf("marshal derivation: missing name")
 	}
@@ -253,11 +239,7 @@ func (drv *Derivation) Marshal(opts *MarshalDerivationOptions) ([]byte, error) {
 				drv.Name, got, drv.Dir)
 		}
 	}
-	if opts != nil && opts.MapInputDerivation != nil {
-		buf = marshalInputDerivations(buf, remapInputDerivations(drv.InputDerivations, opts.MapInputDerivation))
-	} else {
-		buf = marshalInputDerivations(buf, drv.InputDerivations)
-	}
+	buf = marshalInputDerivations(buf, drv.InputDerivations)
 
 	buf = append(buf, "],["...)
 	for i, src := range drv.InputSources.All() {
@@ -319,19 +301,6 @@ func marshalInputDerivations[K ~string](buf []byte, m map[K]*sets.Sorted[string]
 		buf = append(buf, "])"...)
 	}
 	return buf
-}
-
-func remapInputDerivations(inputDerivations map[Path]*sets.Sorted[string], remap func(Path) string) map[string]*sets.Sorted[string] {
-	m := make(map[string]*sets.Sorted[string])
-	for inputDrvPath, inputOutputNames := range inputDerivations {
-		k := remap(inputDrvPath)
-		if s := m[k]; s != nil {
-			s.AddSet(inputOutputNames)
-		} else {
-			m[k] = inputOutputNames.Clone()
-		}
-	}
-	return m
 }
 
 func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
