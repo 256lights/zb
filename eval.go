@@ -23,6 +23,7 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/lua"
+	"zombiezen.com/go/zb/internal/xiter"
 	"zombiezen.com/go/zb/zbstore"
 )
 
@@ -71,7 +72,7 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 
 	registerDerivationMetatable(&eval.l)
 
-	base := lua.NewOpenBase(io.Discard, loadfileFunction)
+	base := lua.NewOpenBase(io.Discard, nil)
 	if err := lua.Require(&eval.l, lua.GName, true, base); err != nil {
 		return nil, err
 	}
@@ -83,11 +84,11 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 	eval.l.PushClosure(1, loadFunction)
 	eval.l.RawSetField(-2, "load")
 
-	// Replace dofile.
-	if tp := eval.l.RawField(-1, "loadfile"); tp != lua.TypeFunction {
-		return nil, fmt.Errorf("loadfile is not a function")
-	}
-	eval.l.PushClosure(1, dofileFunction)
+	// Clear loadfile and dofile for now.
+	// (They get added back in [Eval.initScope].)
+	eval.l.PushBoolean(false)
+	eval.l.RawSetField(-2, "loadfile")
+	eval.l.PushBoolean(false)
 	eval.l.RawSetField(-2, "dofile")
 
 	// Set other built-ins.
@@ -159,6 +160,9 @@ func (eval *Eval) initScope(ctx context.Context, cache *sqlite.Conn) (cleanup fu
 		"derivation": func(l *lua.State) (int, error) {
 			return eval.derivationFunction(ctx, l)
 		},
+		"loadfile": func(l *lua.State) (int, error) {
+			return eval.loadfileFunction(ctx, l)
+		},
 		"path": func(l *lua.State) (int, error) {
 			return eval.pathFunction(ctx, cache, l)
 		},
@@ -167,13 +171,19 @@ func (eval *Eval) initScope(ctx context.Context, cache *sqlite.Conn) (cleanup fu
 		},
 	}
 	err = lua.SetFuncs(&eval.l, 0, fmap)
-	eval.l.Pop(1)
 	if err != nil {
+		eval.l.Pop(1)
 		return nil, fmt.Errorf("add global functions: %v", err)
 	}
 	for k := range fmap {
 		fmap[k] = nil
 	}
+
+	// dofile needs loadfile as its first upvalue.
+	eval.l.RawField(-1, "loadfile")
+	eval.l.PushClosure(1, dofileFunction)
+	eval.l.RawSetField(-2, "dofile")
+	fmap["dofile"] = nil
 
 	return func() {
 		if err := eval.pushG(); err != nil {
@@ -475,15 +485,53 @@ func loadFunction(l *lua.State) (int, error) {
 }
 
 // loadfileFunction is the global loadfile function implementation.
-func loadfileFunction(l *lua.State) (int, error) {
+func (eval *Eval) loadfileFunction(ctx context.Context, l *lua.State) (int, error) {
 	filename, err := lua.CheckString(l, 1)
 	if err != nil {
 		return 0, err
 	}
-	if len(l.StringContext(1)) > 0 {
-		l.PushNil()
-		l.PushString("import from derivation not supported")
-		return 2, nil
+
+	// TODO(someday): If we have dependencies and we're using a non-local store,
+	// export the store object and read it.
+	var rewrites []string
+	for _, dep := range l.StringContext(1) {
+		rawOutRef, isDrvOutput := strings.CutPrefix(dep, derivationOutputContextPrefix)
+		if !isDrvOutput {
+			continue
+		}
+		outputRef, err := zbstore.ParseOutputReference(rawOutRef)
+		if err != nil {
+			l.PushNil()
+			l.PushString(fmt.Sprintf("internal error: parse string context: %v", err))
+			return 2, nil
+		}
+		resp := new(zbstore.RealizeResponse)
+		// TODO(someday): Only realize single output.
+		// TODO(someday): Batch.
+		err = jsonrpc.Do(ctx, eval.store, zbstore.RealizeMethod, resp, &zbstore.RealizeRequest{
+			DrvPath: outputRef.DrvPath,
+		})
+		if err != nil {
+			l.PushNil()
+			l.PushString(fmt.Sprintf("realize %v: %v", outputRef, err))
+			return 2, nil
+		}
+		output, err := xiter.Single(resp.OutputsByName(outputRef.OutputName))
+		if err != nil {
+			l.PushNil()
+			l.PushString(fmt.Sprintf("realize %v: outputs: %v", outputRef, err))
+			return 2, nil
+		}
+		if !output.Path.Valid || output.Path.X == "" {
+			l.PushNil()
+			l.PushString(fmt.Sprintf("realize %v: build failed", outputRef))
+			return 2, nil
+		}
+		placeholder := zbstore.UnknownCAOutputPlaceholder(outputRef)
+		rewrites = append(rewrites, placeholder, string(output.Path.X))
+	}
+	if len(rewrites) > 0 {
+		filename = strings.NewReplacer(rewrites...).Replace(filename)
 	}
 
 	const modeArg = 2
@@ -534,9 +582,6 @@ func dofileFunction(l *lua.State) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if len(l.StringContext(1)) > 0 {
-		return 0, errors.New("dofile: import from derivation not supported")
-	}
 	l.SetTop(1)
 
 	// Perform path resolution here instead of at loadfile,
@@ -546,6 +591,7 @@ func dofileFunction(l *lua.State) (int, error) {
 		return 0, fmt.Errorf("dofile: %v", err)
 	}
 	if resolved != filename {
+		// Relative paths will not be store paths.
 		l.PushString(resolved)
 		l.Replace(1)
 	}

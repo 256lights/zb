@@ -224,7 +224,7 @@ func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error)
 	h.WriteString(s)
 	var refs zbstore.References
 	for _, dep := range l.StringContext(2) {
-		if strings.HasPrefix(dep, "!") {
+		if strings.HasPrefix(dep, derivationOutputContextPrefix) {
 			return 0, fmt.Errorf("toFile %q: cannot depend on derivation outputs", name)
 		}
 		refs.Others.Add(zbstore.Path(dep))

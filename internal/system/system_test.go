@@ -44,6 +44,7 @@ func TestSystem(t *testing.T) {
 
 func TestCurrent(t *testing.T) {
 	got := Current()
+	t.Logf("Current() = %q", got)
 	if got.OS == "" || got.Arch == "" || got.ABI == "" {
 		t.Errorf("Current() = %+v (should not have empty fields)", got)
 	}

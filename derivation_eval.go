@@ -17,6 +17,8 @@ import (
 	"zombiezen.com/go/zb/zbstore"
 )
 
+const derivationOutputContextPrefix = "!"
+
 const derivationTypeName = "derivation"
 
 func registerDerivationMetatable(l *lua.State) {
@@ -203,7 +205,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 			DrvPath:    drvPath,
 			OutputName: outputName,
 		}
-		l.PushStringContext(placeholder, []string{"!" + ref.String()})
+		l.PushStringContext(placeholder, []string{derivationOutputContextPrefix + ref.String()})
 		if err := l.SetField(tableCopyIndex, outputName, 0); err != nil {
 			return 0, fmt.Errorf("derivation: %v", err)
 		}
@@ -278,7 +280,7 @@ func stringToEnvVar(l *lua.State, drv *zbstore.Derivation, idx int) (string, err
 	defer l.Pop(1)
 	s, _ := l.ToString(-1)
 	for _, dep := range l.StringContext(-1) {
-		if rest, isDrv := strings.CutPrefix(dep, "!"); isDrv {
+		if rest, isDrv := strings.CutPrefix(dep, derivationOutputContextPrefix); isDrv {
 			ref, err := zbstore.ParseOutputReference(rest)
 			if err != nil {
 				return "", fmt.Errorf("internal error: malformed context: %v", err)
