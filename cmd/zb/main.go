@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/zb"
+	"zombiezen.com/go/zb/internal/frontend"
 	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/zbstore"
 )
@@ -126,7 +126,7 @@ func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 		storeClient.Close()
 		waitStoreClient()
 	}()
-	eval, err := zb.NewEval(g.storeDir, storeClient, g.cacheDB)
+	eval, err := frontend.NewEval(g.storeDir, storeClient, g.cacheDB)
 	if err != nil {
 		return err
 	}
@@ -189,7 +189,7 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 		storeClient.Close()
 		waitStoreClient()
 	}()
-	eval, err := zb.NewEval(g.storeDir, storeClient, g.cacheDB)
+	eval, err := frontend.NewEval(g.storeDir, storeClient, g.cacheDB)
 	if err != nil {
 		return err
 	}

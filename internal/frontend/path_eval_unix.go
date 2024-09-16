@@ -3,7 +3,7 @@
 
 //go:build !windows
 
-package zb
+package frontend
 
 import (
 	"io/fs"

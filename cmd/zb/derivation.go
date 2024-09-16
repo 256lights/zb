@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/zb"
+	"zombiezen.com/go/zb/internal/frontend"
 	"zombiezen.com/go/zb/internal/jsonrpc"
 	"zombiezen.com/go/zb/internal/xmaps"
 	"zombiezen.com/go/zb/zbstore"
@@ -75,7 +75,7 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 		storeClient.Close()
 		waitStoreClient()
 	}()
-	eval, err := zb.NewEval(g.storeDir, storeClient, g.cacheDB)
+	eval, err := frontend.NewEval(g.storeDir, storeClient, g.cacheDB)
 	if err != nil {
 		return err
 	}
@@ -319,7 +319,7 @@ func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvO
 		storeClient.Close()
 		waitStoreClient()
 	}()
-	eval, err := zb.NewEval(g.storeDir, storeClient, g.cacheDB)
+	eval, err := frontend.NewEval(g.storeDir, storeClient, g.cacheDB)
 	if err != nil {
 		return err
 	}
