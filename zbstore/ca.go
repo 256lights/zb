@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package zbstore
@@ -8,8 +8,8 @@ import (
 	"io"
 	"strings"
 
+	"zb.256lights.llc/pkg/internal/detect"
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/zb/internal/detect"
 )
 
 // A ContentAddress is a content-addressibility assertion.

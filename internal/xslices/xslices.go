@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 // Package xslices provides more generic functions in the spirit of the [slices] package.

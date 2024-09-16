@@ -1,4 +1,4 @@
--- Copyright 2024 Roxy Light
+-- Copyright 2024 The zb Authors
 -- SPDX-License-Identifier: MIT
 
 local stage0 <const> = dofile("stage0-posix/x86_64-linux.lua")

@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package zbstore
@@ -13,11 +13,11 @@ import (
 	"runtime"
 	"strings"
 
+	"zb.256lights.llc/pkg/internal/storepath"
+	"zb.256lights.llc/pkg/internal/windowspath"
+	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nixbase32"
-	"zombiezen.com/go/zb/internal/storepath"
-	"zombiezen.com/go/zb/internal/windowspath"
-	"zombiezen.com/go/zb/sets"
 )
 
 // Directory is the absolute path of a zb store.

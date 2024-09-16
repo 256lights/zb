@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package backend
@@ -23,21 +23,21 @@ import (
 	"time"
 	"unique"
 
+	"zb.256lights.llc/pkg/internal/detect"
+	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/storepath"
+	"zb.256lights.llc/pkg/internal/system"
+	"zb.256lights.llc/pkg/internal/xiter"
+	"zb.256lights.llc/pkg/internal/xmaps"
+	"zb.256lights.llc/pkg/internal/xslices"
+	"zb.256lights.llc/pkg/sets"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/batchio"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
-	"zombiezen.com/go/zb/internal/detect"
-	"zombiezen.com/go/zb/internal/jsonrpc"
-	"zombiezen.com/go/zb/internal/storepath"
-	"zombiezen.com/go/zb/internal/system"
-	"zombiezen.com/go/zb/internal/xiter"
-	"zombiezen.com/go/zb/internal/xmaps"
-	"zombiezen.com/go/zb/internal/xslices"
-	"zombiezen.com/go/zb/sets"
-	"zombiezen.com/go/zb/zbstore"
 )
 
 func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.Response, err error) {

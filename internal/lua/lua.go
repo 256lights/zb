@@ -42,7 +42,7 @@ import (
 	"io"
 	"unsafe"
 
-	"zombiezen.com/go/zb/internal/lua54"
+	"zb.256lights.llc/pkg/internal/lua54"
 )
 
 // Version number.

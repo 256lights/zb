@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package frontend
@@ -11,12 +11,12 @@ import (
 	"sync"
 	"testing"
 
+	"zb.256lights.llc/pkg/internal/backend"
+	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/system"
+	"zb.256lights.llc/pkg/internal/testcontext"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log/testlog"
-	"zombiezen.com/go/zb/internal/backend"
-	"zombiezen.com/go/zb/internal/jsonrpc"
-	"zombiezen.com/go/zb/internal/system"
-	"zombiezen.com/go/zb/internal/testcontext"
-	"zombiezen.com/go/zb/zbstore"
 )
 
 func TestImportFromDerivation(t *testing.T) {

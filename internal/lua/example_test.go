@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"log"
 
-	"zombiezen.com/go/zb/internal/lua"
+	"zb.256lights.llc/pkg/internal/lua"
 )
 
 func Example() {

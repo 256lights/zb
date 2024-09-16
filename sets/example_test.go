@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package sets_test
@@ -6,7 +6,7 @@ package sets_test
 import (
 	"fmt"
 
-	"zombiezen.com/go/zb/sets"
+	"zb.256lights.llc/pkg/sets"
 )
 
 func ExampleSet_Format() {

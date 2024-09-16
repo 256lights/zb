@@ -29,7 +29,7 @@ import (
 	"math/rand"
 	"os"
 
-	"zombiezen.com/go/zb/internal/lua54"
+	"zb.256lights.llc/pkg/internal/lua54"
 )
 
 // OpenLibraries opens all standard Lua libraries into the given state

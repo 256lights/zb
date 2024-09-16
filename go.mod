@@ -1,4 +1,4 @@
-module zombiezen.com/go/zb
+module zb.256lights.llc/pkg
 
 go 1.23.0
 

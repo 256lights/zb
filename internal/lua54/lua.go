@@ -64,7 +64,7 @@ import (
 //   data[6] = (uint8_t)(funcID >> 48);
 //   data[7] = (uint8_t)(funcID >> 56);
 //
-//   if (luaL_newmetatable(L, "zombiezen.com/go/zb/internal/lua.Function")) {
+//   if (luaL_newmetatable(L, "zb.256lights.llc/pkg/internal/lua.Function")) {
 //     lua_pushcfunction(L, zombiezen_lua_gcfunc);
 //     lua_setfield(L, -2, "__gc");
 //     lua_pushboolean(L, 0);

@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package main
@@ -10,8 +10,8 @@ import (
 	"io"
 	"strconv"
 
-	"zombiezen.com/go/zb/internal/jsonstring"
-	"zombiezen.com/go/zb/internal/xslices"
+	"zb.256lights.llc/pkg/internal/jsonstring"
+	"zb.256lights.llc/pkg/internal/xslices"
 )
 
 func dedentJSON(data json.RawMessage) ([]byte, error) {

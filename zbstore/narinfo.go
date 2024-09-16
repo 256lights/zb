@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package zbstore
@@ -9,8 +9,8 @@ import (
 	"io"
 	"strconv"
 
+	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/zb/sets"
 )
 
 // NARInfoExtension is the file extension for a file containing NAR information.

@@ -1,4 +1,4 @@
--- Copyright 2024 Roxy Light
+-- Copyright 2024 The zb Authors
 -- SPDX-License-Identifier: MIT
 
 ---@param args {url: string, hash: string, name: string?, executable: boolean?}

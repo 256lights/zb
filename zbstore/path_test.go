@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package zbstore
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"zombiezen.com/go/zb/internal/windowspath"
+	"zb.256lights.llc/pkg/internal/windowspath"
 )
 
 var pathTests = []struct {

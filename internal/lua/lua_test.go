@@ -30,7 +30,7 @@ import (
 	"testing/iotest"
 	"unsafe"
 
-	"zombiezen.com/go/zb/internal/lua54"
+	"zb.256lights.llc/pkg/internal/lua54"
 )
 
 func TestLoad(t *testing.T) {

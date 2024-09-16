@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 // Package jsonrpc provides a stream-based implementation of the JSON-RPC 2.0 specification,
@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"zombiezen.com/go/zb/internal/jsonstring"
+	"zb.256lights.llc/pkg/internal/jsonstring"
 )
 
 // Request represents a parsed [JSON-RPC request].

@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package zbstore
@@ -9,9 +9,9 @@ import (
 	"io"
 	"slices"
 
+	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
-	"zombiezen.com/go/zb/sets"
 )
 
 const (

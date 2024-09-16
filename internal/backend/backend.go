@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 // Package backend provides a [zbstore] implementation backed by local compute resources.
@@ -14,15 +14,15 @@ import (
 	"os"
 	"path/filepath"
 
+	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/sets"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 	"zombiezen.com/go/sqlite/sqlitex"
-	"zombiezen.com/go/zb/internal/jsonrpc"
-	"zombiezen.com/go/zb/sets"
-	"zombiezen.com/go/zb/zbstore"
 )
 
 // Options is the set of optional parameters to [NewServer].

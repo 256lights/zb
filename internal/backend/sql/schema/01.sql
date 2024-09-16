@@ -1,4 +1,4 @@
--- Copyright 2024 Roxy Light
+-- Copyright 2024 The zb Authors
 -- SPDX-License-Identifier: MIT
 
 -- Store paths keyed by integers to save space.

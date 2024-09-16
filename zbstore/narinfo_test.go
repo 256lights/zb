@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package zbstore
@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/zb/sets"
 )
 
 func TestNARInfoMarshalText(t *testing.T) {

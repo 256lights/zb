@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package backend
@@ -8,9 +8,9 @@ import (
 	"maps"
 	"unique"
 
+	"zb.256lights.llc/pkg/sets"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/zb/sets"
-	"zombiezen.com/go/zb/zbstore"
 )
 
 // equivalenceClass is an equivalence class of [zbstore.OutputReference] values.

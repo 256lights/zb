@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package main
@@ -14,12 +14,12 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"zb.256lights.llc/pkg/internal/frontend"
+	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/xmaps"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/zb/internal/frontend"
-	"zombiezen.com/go/zb/internal/jsonrpc"
-	"zombiezen.com/go/zb/internal/xmaps"
-	"zombiezen.com/go/zb/zbstore"
 )
 
 func newDerivationCommand(g *globalConfig) *cobra.Command {

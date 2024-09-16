@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package frontend
@@ -9,12 +9,12 @@ import (
 	"runtime/cgo"
 	"strings"
 
+	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/lua"
+	"zb.256lights.llc/pkg/sets"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/zb/internal/jsonrpc"
-	"zombiezen.com/go/zb/internal/lua"
-	"zombiezen.com/go/zb/sets"
-	"zombiezen.com/go/zb/zbstore"
 )
 
 const derivationOutputContextPrefix = "!"

@@ -34,8 +34,8 @@ import (
 )
 
 const (
-	ioInput  = "_zombiezen_IO_input"
-	ioOutput = "_zombiezen_IO_output"
+	ioInput  = "_zb_IO_input"
+	ioOutput = "_zb_IO_output"
 )
 
 // IOLibrary is a pure Go implementation of the standard Lua "io" library.

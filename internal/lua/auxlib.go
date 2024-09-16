@@ -27,7 +27,7 @@ import (
 	"strconv"
 	"unsafe"
 
-	"zombiezen.com/go/zb/internal/lua54"
+	"zb.256lights.llc/pkg/internal/lua54"
 )
 
 // Metafield pushes onto the stack the field event

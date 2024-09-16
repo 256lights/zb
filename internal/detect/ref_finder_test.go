@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package detect
@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"zombiezen.com/go/zb/sets"
+	"zb.256lights.llc/pkg/sets"
 )
 
 var refFinderGoldens = []struct {

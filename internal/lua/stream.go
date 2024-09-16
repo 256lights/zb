@@ -31,10 +31,10 @@ import (
 	"strings"
 	"unsafe"
 
-	"zombiezen.com/go/zb/internal/bufseek"
+	"zb.256lights.llc/pkg/internal/bufseek"
 )
 
-const streamMetatableName = "*zombiezen.com/go/zb/internal/lua.stream"
+const streamMetatableName = "*zb.256lights.llc/pkg/internal/lua.stream"
 
 // PushReader pushes a Lua file object onto the stack
 // that reads from the given reader.

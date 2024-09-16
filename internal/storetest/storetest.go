@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 // Package storetest provides utilities for interacting with the zb store in tests.
@@ -10,10 +10,10 @@ import (
 	"io"
 	"io/fs"
 
+	"zb.256lights.llc/pkg/sets"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
-	"zombiezen.com/go/zb/sets"
-	"zombiezen.com/go/zb/zbstore"
 )
 
 // ExportFlatFile writes a fixed-hash flat file to the exporter with the given content.

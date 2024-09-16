@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package detect
@@ -8,7 +8,7 @@ import (
 	"iter"
 	"slices"
 
-	"zombiezen.com/go/zb/sets"
+	"zb.256lights.llc/pkg/sets"
 )
 
 // A RefFinder records which elements in a set of search strings

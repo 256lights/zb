@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package jsonrpc
@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"zb.256lights.llc/pkg/internal/jsonstring"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/xcontext"
-	"zombiezen.com/go/zb/internal/jsonstring"
 )
 
 // ClientCodec represents a single connection from a client to a server.

@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package zbstore_test
@@ -6,7 +6,7 @@ package zbstore_test
 import (
 	"fmt"
 
-	"zombiezen.com/go/zb/zbstore"
+	"zb.256lights.llc/pkg/zbstore"
 )
 
 func ExampleParseOutputReference() {

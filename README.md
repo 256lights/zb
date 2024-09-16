@@ -91,7 +91,7 @@ From there, the following libraries are available:
   that is equivalent to the [nixpkgs standard environment](https://nixos.org/manual/nixpkgs/unstable/#chap-stdenv).
   ([Partially implemented](demo/bootstrap.lua)
   by following the [live-bootstrap](https://github.com/fosslinux/live-bootstrap/) steps.
-  See [#30](https://github.com/zombiezen/zb/issues/30) for ongoing work.)
+  See [#30](https://github.com/256lights/zb/issues/30) for ongoing work.)
 
 ## License
 

@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package backend
@@ -6,8 +6,8 @@ package backend
 import (
 	"os/exec"
 
-	"zombiezen.com/go/zb/internal/xmaps"
-	"zombiezen.com/go/zb/zbstore"
+	"zb.256lights.llc/pkg/internal/xmaps"
+	"zb.256lights.llc/pkg/zbstore"
 )
 
 func fillBaseEnv(m map[string]string, storeDir zbstore.Directory, workDir string) {

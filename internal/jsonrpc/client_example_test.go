@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package jsonrpc_test
@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"zombiezen.com/go/zb/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/jsonrpc"
 )
 
 func ExampleClient_Codec() {

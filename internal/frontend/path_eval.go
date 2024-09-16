@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package frontend
@@ -14,14 +14,14 @@ import (
 	"strings"
 	"sync"
 
+	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/lua"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
-	"zombiezen.com/go/zb/internal/jsonrpc"
-	"zombiezen.com/go/zb/internal/lua"
-	"zombiezen.com/go/zb/zbstore"
 )
 
 func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.State) (nResults int, err error) {

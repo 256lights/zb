@@ -1,4 +1,4 @@
-// Copyright 2024 Roxy Light
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package zbstore
@@ -13,11 +13,11 @@ import (
 	"slices"
 	"strings"
 
+	"zb.256lights.llc/pkg/internal/aterm"
+	"zb.256lights.llc/pkg/internal/xmaps"
+	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
-	"zombiezen.com/go/zb/internal/aterm"
-	"zombiezen.com/go/zb/internal/xmaps"
-	"zombiezen.com/go/zb/sets"
 )
 
 // DerivationExt is the file extension for a marshalled [Derivation].
