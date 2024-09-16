@@ -702,6 +702,13 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		return fmt.Errorf("build %s: %v", drvPath, err)
 	}
 
+	log.Infof(ctx, "Built %s: %s", drvPath, formatOutputPaths(maps.Collect(func(yield func(string, zbstore.Path) bool) {
+		for outputName, r := range outputs {
+			if !yield(outputName, r.path) {
+				return
+			}
+		}
+	})))
 	return nil
 }
 
