@@ -10,6 +10,12 @@ The build model is mostly the same as in [Nix](https://nixos.org/),
 but build targets are configured in [Lua](https://www.lua.org/)
 instead of a domain-specific language.
 
+For more motivation on the development of zb,
+see the early blog posts:
+
+- [zb: A Build System Prototype](https://www.zombiezen.com/blog/2024/06/zb-build-system-prototype/)
+- [zb: An Early-Stage Build System](https://www.zombiezen.com/blog/2024/09/zb-early-stage-build-system/)
+
 [dolstra_purely_2006]: https://edolstra.github.io/pubs/phd-thesis.pdf
 [mokhov_build_2018]: https://doi.org/10.1145/3236774
 
