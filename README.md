@@ -46,10 +46,11 @@ Prerequisites:
 
 ### Linux or macOS
 
-1. `sudo mkdir /zb`
-2. `go build ./cmd/zb`
-3. Start the build server (only on startup): `./zb serve &`
-4. Run a build: `./zb build --file demo/hello.lua`
+1. `sudo mkdir /zb && sudo chown $(id -u):$(id -g) /zb`
+2. Clone this repository to your computer and `cd` into it.
+3. `go build ./cmd/zb`
+4. Start the build server (only on startup): `./zb serve &`
+5. Run a build: `./zb build --file demo/hello.lua`
 
 You can use `./zb --help` to get more information on commands.
 
@@ -62,9 +63,10 @@ since zb depends on Windows support for Unix sockets.
    If you're using the [Chocolatey package manager](https://community.chocolatey.org/),
    you can run `choco install mingw`.
 2. Create a `C:\zb` directory.
-3. `go build .\cmd\zb`
-4. Start the build server in one terminal: `.\zb.exe serve`
-5. Run a build: `.\zb.exe build --file demo/hello_windows.lua`
+3. Clone this repository to your computer and `cd` into it.
+4. `go build .\cmd\zb`
+5. Start the build server in one terminal: `.\zb.exe serve`
+6. Run a build in another terminal: `.\zb.exe build --file demo/hello_windows.lua`
 
 ### Next Steps
 
