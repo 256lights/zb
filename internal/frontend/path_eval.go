@@ -26,10 +26,12 @@ import (
 
 func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.State) (nResults int, err error) {
 	var p string
+	var pcontext []string
 	var name string
 	switch l.Type(1) {
 	case lua.TypeString:
 		p, _ = l.ToString(1)
+		pcontext = l.StringContext(1)
 	case lua.TypeTable:
 		typ, err := l.Field(1, "path", 0)
 		if err != nil {
@@ -42,6 +44,7 @@ func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.S
 		if err != nil {
 			return 0, fmt.Errorf("path: %v", err)
 		}
+		pcontext = l.StringContext(-1)
 		l.Pop(1)
 
 		typ, err = l.Field(1, "name", 0)
@@ -56,7 +59,7 @@ func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.S
 		return 0, lua.NewTypeError(l, 1, "string or table")
 	}
 
-	p, err = absSourcePath(l, p)
+	p, err = absSourcePath(l, p, pcontext)
 	if err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
@@ -84,7 +87,7 @@ func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.S
 			log.Debugf(ctx, "Unable to query store path %s: %v", prevStorePath, err)
 		} else if exists {
 			log.Debugf(ctx, "Using existing store path %s", prevStorePath)
-			l.PushStringContext(string(prevStorePath), []string{string(prevStorePath)})
+			pushStorePath(l, prevStorePath)
 			return 1, nil
 		}
 	}
@@ -206,7 +209,7 @@ func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.S
 		return 0, fmt.Errorf("path: updating cache: %v", err)
 	}
 
-	l.PushStringContext(string(storePath), []string{string(storePath)})
+	pushStorePath(l, storePath)
 	return 1, nil
 }
 
@@ -224,10 +227,14 @@ func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error)
 	h.WriteString(s)
 	var refs zbstore.References
 	for _, dep := range l.StringContext(2) {
-		if strings.HasPrefix(dep, derivationOutputContextPrefix) {
+		c, err := parseContextString(dep)
+		if err != nil {
+			return 0, fmt.Errorf("internal error: %v", err)
+		}
+		if c.path == "" {
 			return 0, fmt.Errorf("toFile %q: cannot depend on derivation outputs", name)
 		}
-		refs.Others.Add(zbstore.Path(dep))
+		refs.Others.Add(c.path)
 	}
 
 	ca := nix.TextContentAddress(h.SumHash())
@@ -245,7 +252,7 @@ func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error)
 	} else if exists {
 		// Already exists: no need to re-import.
 		log.Debugf(ctx, "Using existing store path %s", storePath)
-		l.PushStringContext(string(storePath), []string{string(storePath)})
+		pushStorePath(l, storePath)
 		return 1, nil
 	}
 
@@ -270,7 +277,7 @@ func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error)
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 
-	l.PushStringContext(string(storePath), []string{string(storePath)})
+	pushStorePath(l, storePath)
 	return 1, nil
 }
 
@@ -290,10 +297,38 @@ func writeSingleFileNAR(w io.Writer, r io.Reader, sz int64) error {
 
 // absSourcePath takes a source path passed as an argument from Lua to Go
 // and resolves it relative to the calling function.
-func absSourcePath(l *lua.State, path string) (string, error) {
+func absSourcePath(l *lua.State, path string, context []string) (string, error) {
 	if filepath.IsAbs(path) {
 		return path, nil
 	}
+	if strings.HasPrefix(path, "/") {
+		// We may be specifying a store path via a placeholder, possibly with a trailing child path.
+		// Such placeholders have a leading slash, followed by a long hash digest.
+		// On non-POSIX systems, such a path might not be recognized as an absolute path.
+		// We treat this as an absolute path while preserving the placeholder.
+		for _, dep := range context {
+			c, err := parseContextString(dep)
+			if err != nil {
+				return "", fmt.Errorf("resolve path: internal error: %v", err)
+			}
+			if c.outputReference.IsZero() {
+				continue
+			}
+			placeholder := zbstore.UnknownCAOutputPlaceholder(c.outputReference)
+			slashTail, match := strings.CutPrefix(path, placeholder)
+			if !match {
+				continue
+			}
+			tail := filepath.FromSlash(slashTail)
+			if tail == slashTail {
+				// We can just return the original string.
+				// Reduces allocations.
+				return path, nil
+			}
+			return placeholder + filepath.FromSlash(tail), nil
+		}
+	}
+
 	// TODO(maybe): This is probably wonky with tail calls.
 	debugInfo := l.Stack(1).Info("S")
 	if debugInfo == nil {

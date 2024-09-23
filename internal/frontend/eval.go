@@ -490,44 +490,44 @@ func (eval *Eval) loadfileFunction(ctx context.Context, l *lua.State) (int, erro
 	if err != nil {
 		return 0, err
 	}
+	filenameContext := l.StringContext(1)
 
 	// TODO(someday): If we have dependencies and we're using a non-local store,
 	// export the store object and read it.
 	var rewrites []string
-	for _, dep := range l.StringContext(1) {
-		rawOutRef, isDrvOutput := strings.CutPrefix(dep, derivationOutputContextPrefix)
-		if !isDrvOutput {
-			continue
-		}
-		outputRef, err := zbstore.ParseOutputReference(rawOutRef)
+	for _, dep := range filenameContext {
+		c, err := parseContextString(dep)
 		if err != nil {
 			l.PushNil()
-			l.PushString(fmt.Sprintf("internal error: parse string context: %v", err))
+			l.PushString(fmt.Sprintf("internal error: %v", err))
 			return 2, nil
+		}
+		if c.outputReference.IsZero() {
+			continue
 		}
 		resp := new(zbstore.RealizeResponse)
 		// TODO(someday): Only realize single output.
 		// TODO(someday): Batch.
 		err = jsonrpc.Do(ctx, eval.store, zbstore.RealizeMethod, resp, &zbstore.RealizeRequest{
-			DrvPath: outputRef.DrvPath,
+			DrvPath: c.outputReference.DrvPath,
 		})
 		if err != nil {
 			l.PushNil()
-			l.PushString(fmt.Sprintf("realize %v: %v", outputRef, err))
+			l.PushString(fmt.Sprintf("realize %v: %v", c.outputReference, err))
 			return 2, nil
 		}
-		output, err := xiter.Single(resp.OutputsByName(outputRef.OutputName))
+		output, err := xiter.Single(resp.OutputsByName(c.outputReference.OutputName))
 		if err != nil {
 			l.PushNil()
-			l.PushString(fmt.Sprintf("realize %v: outputs: %v", outputRef, err))
+			l.PushString(fmt.Sprintf("realize %v: outputs: %v", c.outputReference, err))
 			return 2, nil
 		}
 		if !output.Path.Valid || output.Path.X == "" {
 			l.PushNil()
-			l.PushString(fmt.Sprintf("realize %v: build failed", outputRef))
+			l.PushString(fmt.Sprintf("realize %v: build failed", c.outputReference))
 			return 2, nil
 		}
-		placeholder := zbstore.UnknownCAOutputPlaceholder(outputRef)
+		placeholder := zbstore.UnknownCAOutputPlaceholder(c.outputReference)
 		rewrites = append(rewrites, placeholder, string(output.Path.X))
 	}
 	if len(rewrites) > 0 {
@@ -552,7 +552,7 @@ func (eval *Eval) loadfileFunction(ctx context.Context, l *lua.State) (int, erro
 	const envArg = 3
 	hasEnv := l.Type(envArg) != lua.TypeNone
 
-	filename, err = absSourcePath(l, filename)
+	filename, err = absSourcePath(l, filename, filenameContext)
 	if err != nil {
 		l.PushNil()
 		l.PushString(err.Error())
@@ -586,7 +586,7 @@ func dofileFunction(l *lua.State) (int, error) {
 
 	// Perform path resolution here instead of at loadfile,
 	// since loadfile would just obtain our call record.
-	resolved, err := absSourcePath(l, filename)
+	resolved, err := absSourcePath(l, filename, l.StringContext(1))
 	if err != nil {
 		return 0, fmt.Errorf("dofile: %v", err)
 	}

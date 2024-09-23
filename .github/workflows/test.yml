@@ -1,0 +1,28 @@
+# Copyright 2024 The zb Authors
+# SPDX-License-Identifier: MIT
+
+name: Test
+on:
+  push:
+jobs:
+  cli:
+    name: Test CLI
+    runs-on: ${{matrix.os}}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - name: Run tests
+        run: go test -mod=readonly -race ./...

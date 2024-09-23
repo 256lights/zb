@@ -17,8 +17,6 @@ import (
 	"zombiezen.com/go/nix"
 )
 
-const derivationOutputContextPrefix = "!"
-
 const derivationTypeName = "derivation"
 
 func registerDerivationMetatable(l *lua.State) {
@@ -181,7 +179,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
 
-	l.PushStringContext(string(drvPath), []string{string(drvPath)})
+	pushStorePath(l, drvPath)
 	if err := l.SetField(tableCopyIndex, "drvPath", 0); err != nil {
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
@@ -205,7 +203,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 			DrvPath:    drvPath,
 			OutputName: outputName,
 		}
-		l.PushStringContext(placeholder, []string{derivationOutputContextPrefix + ref.String()})
+		l.PushStringContext(placeholder, []string{contextValue{outputReference: ref}.String()})
 		if err := l.SetField(tableCopyIndex, outputName, 0); err != nil {
 			return 0, fmt.Errorf("derivation: %v", err)
 		}
@@ -280,20 +278,23 @@ func stringToEnvVar(l *lua.State, drv *zbstore.Derivation, idx int) (string, err
 	defer l.Pop(1)
 	s, _ := l.ToString(-1)
 	for _, dep := range l.StringContext(-1) {
-		if rest, isDrv := strings.CutPrefix(dep, derivationOutputContextPrefix); isDrv {
-			ref, err := zbstore.ParseOutputReference(rest)
-			if err != nil {
-				return "", fmt.Errorf("internal error: malformed context: %v", err)
-			}
+		c, err := parseContextString(dep)
+		if err != nil {
+			return "", fmt.Errorf("internal error: %v", err)
+		}
+		switch {
+		case c.path != "":
+			drv.InputSources.Add(zbstore.Path(dep))
+		case !c.outputReference.IsZero():
 			if drv.InputDerivations == nil {
 				drv.InputDerivations = make(map[zbstore.Path]*sets.Sorted[string])
 			}
-			if drv.InputDerivations[ref.DrvPath] == nil {
-				drv.InputDerivations[ref.DrvPath] = new(sets.Sorted[string])
+			if drv.InputDerivations[c.outputReference.DrvPath] == nil {
+				drv.InputDerivations[c.outputReference.DrvPath] = new(sets.Sorted[string])
 			}
-			drv.InputDerivations[ref.DrvPath].Add(ref.OutputName)
-		} else {
-			drv.InputSources.Add(zbstore.Path(dep))
+			drv.InputDerivations[c.outputReference.DrvPath].Add(c.outputReference.OutputName)
+		default:
+			return "", fmt.Errorf("internal error: unhandled context %v", c)
 		}
 	}
 	return s, nil
@@ -452,4 +453,49 @@ func concatDerivation(l *lua.State) (int, error) {
 		return 0, err
 	}
 	return 1, nil
+}
+
+const derivationOutputContextPrefix = "!"
+
+// A contextValue is a parsed Lua context string.
+// It is conceptually a union type:
+// at most one of the fields will have a non-zero value.
+type contextValue struct {
+	path            zbstore.Path
+	outputReference zbstore.OutputReference
+}
+
+// parseContextString parses a marshaled [contextValue].
+// It is the inverse of [contextValue.String].
+func parseContextString(s string) (contextValue, error) {
+	if rest, isDrv := strings.CutPrefix(s, derivationOutputContextPrefix); isDrv {
+		ref, err := zbstore.ParseOutputReference(rest)
+		if err != nil {
+			return contextValue{}, fmt.Errorf("parse context string: %v", err)
+		}
+		return contextValue{outputReference: ref}, nil
+	}
+
+	p, err := zbstore.ParsePath(s)
+	if err != nil {
+		return contextValue{}, fmt.Errorf("parse context string: %v", err)
+	}
+	return contextValue{path: p}, nil
+}
+
+// String marshals a [contextValue] to a string.
+// It is the inverse of [parseContextString].
+func (c contextValue) String() string {
+	switch {
+	case c.path != "":
+		return string(c.path)
+	case !c.outputReference.IsZero():
+		return derivationOutputContextPrefix + c.outputReference.String()
+	default:
+		return "<nil>"
+	}
+}
+
+func pushStorePath(l *lua.State, path zbstore.Path) {
+	l.PushStringContext(string(path), []string{contextValue{path: path}.String()})
 }
