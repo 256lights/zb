@@ -746,6 +746,11 @@ func ParseOutputReference(s string) (OutputReference, error) {
 	return result, nil
 }
 
+// IsZero reports whether the reference is the zero value.
+func (ref OutputReference) IsZero() bool {
+	return ref == OutputReference{}
+}
+
 // String returns the path and the output name separated by "!".
 func (ref OutputReference) String() string {
 	return string(ref.DrvPath) + "!" + ref.OutputName
