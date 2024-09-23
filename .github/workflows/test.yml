@@ -5,7 +5,8 @@ name: Test
 on:
   push:
 jobs:
-  build:
+  cli:
+    name: Test CLI
     runs-on: ${{matrix.os}}
     strategy:
       fail-fast: false
