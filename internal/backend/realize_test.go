@@ -328,13 +328,13 @@ func TestRealizeReferenceToDep(t *testing.T) {
 		drv2Content.Builder = powershellPath
 		drv2Content.Args = []string{
 			"-Command",
-			`${env:in} | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}`,
+			"(${env:in} + \"`n\")" + ` | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}`,
 		}
 	} else {
 		drv2Content.Builder = shPath
 		drv2Content.Args = []string{
 			"-c",
-			`echo -n "$in" > "$out"`,
+			`echo "$in" > "$out"`,
 		}
 	}
 	drv2Path, err := storetest.ExportDerivation(exporter, drv2Content)
@@ -370,7 +370,8 @@ func TestRealizeReferenceToDep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, []byte(drv1OutputPath), zbstore.References{
+	wantOutputContent := append([]byte(drv1OutputPath), '\n')
+	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, wantOutputContent, zbstore.References{
 		Others: *sets.NewSorted(
 			drv1OutputPath,
 		),
@@ -378,7 +379,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkSingleFileOutput(t, wantOutputPath, []byte(drv1OutputPath), got)
+	checkSingleFileOutput(t, wantOutputPath, wantOutputContent, got)
 }
 
 func TestRealizeFixed(t *testing.T) {
@@ -511,7 +512,7 @@ func TestRealizeFailure(t *testing.T) {
 		drvContent.Args = []string{"-Command", "New-Item ${env:out} -type file ; exit 1"}
 	} else {
 		drvContent.Builder = shPath
-		drvContent.Args = []string{"-c", "echo -n '' > $out ; exit 1"}
+		drvContent.Args = []string{"-c", "echo > $out ; exit 1"}
 	}
 	drvPath, err := storetest.ExportDerivation(exporter, drvContent)
 	if err != nil {

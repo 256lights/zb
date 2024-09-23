@@ -10,7 +10,7 @@ end
 
 local function forSystem(_, currentSystem)
   local drvName <const> = "hello.lua"
-  local content <const> = [[return "Hello, World!"]].."\n"
+  local content <const> = [[return "Hello, World!"]]
   local drv
   if isWindows(currentSystem) then
     drv = derivation {
@@ -18,7 +18,7 @@ local function forSystem(_, currentSystem)
       builder = [[C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe]];
       args = {
         "-Command",
-        [[${env:content} | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}]],
+        [[${env:content} | Out-File -Encoding ascii -FilePath ${env:out}]],
       };
       content = content;
       system = currentSystem;
@@ -29,7 +29,7 @@ local function forSystem(_, currentSystem)
       builder = "/bin/sh";
       args = {
         "-c",
-        [[echo -n "$content" > "$out"]],
+        [[echo "$content" > "$out"]],
       };
       content = content;
       system = currentSystem;
