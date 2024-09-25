@@ -57,9 +57,6 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a derivation", drvPath))
 	}
 	log.Infof(ctx, "Requested to build %s", drvPath)
-	if string(s.dir) != s.realDir {
-		return nil, fmt.Errorf("store cannot build derivations (unsandboxed and storage directory does not match store)")
-	}
 
 	drvCache, err := s.readDerivationClosure(ctx, []zbstore.Path{drvPath})
 	if err != nil {
@@ -638,11 +635,19 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 	}
 
 	// Arrange for builder to run.
-	runFunc := runnerFunc(runSubprocess)
-	if drv.System == builtinSystem {
-		runFunc = runBuiltin
+	var runner runnerFunc
+	switch {
+	case drv.System == builtinSystem:
+		log.Debugf(ctx, "Runner for %s is builtin", drvPath)
+		runner = runBuiltin
+	case b.server.sandbox:
+		log.Debugf(ctx, "Runner for %s is sandbox", drvPath)
+		runner = runSandboxed
+	default:
+		log.Debugf(ctx, "Runner for %s is unsandboxed", drvPath)
+		runner = runSubprocess
 	}
-	tempOutPaths, err := b.runUnsandboxed(ctx, drvPath, runFunc)
+	tempOutPaths, err := b.runBuilder(ctx, drvPath, runner)
 	if err != nil {
 		return err
 	}
@@ -767,9 +772,52 @@ func (b *builder) inputs(ctx context.Context, drvPath zbstore.Path) (map[zbstore
 	return result, nil
 }
 
-type runnerFunc func(ctx context.Context, drv *zbstore.Derivation, dir string, logWriter io.Writer) error
+// A runnerFunc is a function that can execute a builder.
+//
+// A runnerFunc should:
+//   - Run the builder program
+//     with the working directory
+//     (and TMPDIR or equivalent environment variables)
+//     set to invocation.buildDir.
+//     Mapping the location is acceptable,
+//     as long as files are physically stored in invocation.buildDir.
+//   - Return a [builderFailure] if the builder did not run succesfully
+//     (e.g. a user build failure).
+//     Any other type of error is treated as an internal backend failure.
+//   - Create filesystem objects in invocation.realStoreDir
+//     for each output path in invocation.outputPaths.
+type runnerFunc func(ctx context.Context, invocation *builderInvocation) error
 
-func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path, f runnerFunc) (map[string]zbstore.Path, error) {
+type builderInvocation struct {
+	// derivation is the derivation whose builder should be executed.
+	// The caller is responsible for expanding any placeholders
+	// in the derivation's fields.
+	derivation *zbstore.Derivation
+	// derivationPath is the path of the derivation whose builder is being executed.
+	derivationPath zbstore.Path
+	// outputPaths is the map of output name to path this builder is expected to produce.
+	outputPaths map[string]zbstore.Path
+
+	// realStoreDir is the directory where the store is located in the local filesystem.
+	realStoreDir string
+	// buildDir is the temporary directory created for this build.
+	buildDir string
+	// logWriter is where all builder output should be sent.
+	logWriter io.Writer
+	// lookup returns the store path for the given derivation output.
+	// lookup should return paths for the inputs to the derivation the runner is building
+	// at least.
+	lookup func(ref zbstore.OutputReference) (zbstore.Path, bool)
+	// closure calls yield for each store object
+	// in the transitive closure of the store object at the given path.
+	closure func(path zbstore.Path, yield func(zbstore.Path) bool) error
+	// sandboxPaths is a map of paths inside the sandbox
+	// to paths on the host machine.
+	// For sandboxed runners, these paths will be made available inside the sandbox.
+	sandboxPaths map[string]string
+}
+
+func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, f runnerFunc) (map[string]zbstore.Path, error) {
 	drvName, isDrv := drvPath.DerivationName()
 	if !isDrv {
 		return nil, fmt.Errorf("build %s: not a derivation", drvPath)
@@ -791,13 +839,13 @@ func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path, f ru
 		return nil, fmt.Errorf("build %s: %v", drvPath, err)
 	}
 
-	topTempDir, err := os.MkdirTemp(b.server.buildDir, "zb-build-"+drvName+"*")
+	buildDir, err := os.MkdirTemp(b.server.buildDir, "zb-build-"+drvName+"*")
 	if err != nil {
 		return nil, fmt.Errorf("build %s: %v", drvPath, err)
 	}
 	defer func() {
-		if err := os.RemoveAll(topTempDir); err != nil {
-			log.Warnf(ctx, "Failed to clean up %s: %v", topTempDir, err)
+		if err := os.RemoveAll(buildDir); err != nil {
+			log.Warnf(ctx, "Failed to clean up %s: %v", buildDir, err)
 		}
 	}()
 
@@ -806,14 +854,30 @@ func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path, f ru
 		maps.All(inputRewrites),
 	))
 	expandedDrv := expandDerivationPlaceholders(r, drv)
-	fillBaseEnv(expandedDrv.Env, drv.Dir, topTempDir)
 
 	peerLogger := newRPCLogger(ctx, drvPath, peer(ctx))
 	bufferedPeerLogger := batchio.NewWriter(peerLogger, 8192, 250*time.Millisecond)
 	defer bufferedPeerLogger.Flush()
 
 	log.Debugf(ctx, "Starting builder for %s...", drvPath)
-	err = f(ctx, expandedDrv, topTempDir, bufferedPeerLogger)
+	err = f(ctx, &builderInvocation{
+		derivation:     expandedDrv,
+		derivationPath: drvPath,
+		outputPaths:    outPaths,
+
+		realStoreDir: b.server.realDir,
+		buildDir:     buildDir,
+		logWriter:    bufferedPeerLogger,
+		sandboxPaths: b.server.sandboxPaths,
+
+		lookup: b.lookup,
+		closure: func(path zbstore.Path, yield func(zbstore.Path) bool) error {
+			pe := pathAndEquivalenceClass{path: path}
+			return closurePaths(b.conn, pe, func(pe pathAndEquivalenceClass) bool {
+				return yield(pe.path)
+			})
+		},
+	})
 	bufferedPeerLogger.Flush()
 	if err != nil {
 		log.Debugf(ctx, "Builder for %s has failed: %v", drvPath, err)
@@ -826,7 +890,7 @@ func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path, f ru
 				log.Warnf(ctx, "Clean up %v from failed build: %v", ref, err)
 			}
 		}
-		return nil, builderFailure{fmt.Errorf("build %s: %w", drvPath, err)}
+		return nil, fmt.Errorf("build %s: %w", drvPath, err)
 	}
 
 	log.Debugf(ctx, "Builder for %s has finished successfully", drvPath)
@@ -835,17 +899,27 @@ func (b *builder) runUnsandboxed(ctx context.Context, drvPath zbstore.Path, f ru
 
 // runSubprocess runs a builder by running a subprocess.
 // It satisfies the [runnerFunc] signature.
-func runSubprocess(ctx context.Context, drv *zbstore.Derivation, dir string, logWriter io.Writer) error {
-	c := exec.CommandContext(ctx, drv.Builder, drv.Args...)
+func runSubprocess(ctx context.Context, invocation *builderInvocation) error {
+	if string(invocation.derivation.Dir) != invocation.realStoreDir {
+		return fmt.Errorf("store is unsandboxed and storage directory does not match store (%s)", invocation.derivation.Dir)
+	}
+
+	c := exec.CommandContext(ctx, invocation.derivation.Builder, invocation.derivation.Args...)
 	setCancelFunc(c)
-	for k, v := range xmaps.Sorted(drv.Env) {
+	env := maps.Clone(invocation.derivation.Env)
+	fillBaseEnv(env, invocation.derivation.Dir, invocation.buildDir)
+	for k, v := range xmaps.Sorted(env) {
 		c.Env = append(c.Env, k+"="+v)
 	}
-	c.Dir = dir
-	c.Stdout = logWriter
-	c.Stderr = logWriter
+	c.Dir = invocation.buildDir
+	c.Stdout = invocation.logWriter
+	c.Stderr = invocation.logWriter
 
-	return c.Run()
+	if err := c.Run(); err != nil {
+		return builderFailure{err}
+	}
+
+	return nil
 }
 
 // outputPathRewrites returns an iterator of mappings of output placeholders
@@ -1353,6 +1427,27 @@ func tempPath(ref zbstore.OutputReference) (zbstore.Path, error) {
 		return "", fmt.Errorf("make build temp path for %v: %v", ref, err)
 	}
 	return p, nil
+}
+
+func firstPresentFile(paths iter.Seq[string]) (string, error) {
+	var firstError error
+	for path := range paths {
+		_, err := os.Lstat(path)
+		switch {
+		case err == nil:
+			return path, nil
+		case !errors.Is(err, os.ErrNotExist):
+			return "", err
+		default:
+			if firstError == nil {
+				firstError = err
+			}
+		}
+	}
+	if firstError == nil {
+		firstError = fmt.Errorf("no files searched")
+	}
+	return "", firstError
 }
 
 // rpcLogger is an [io.Writer] that sends its data as [zbstore.LogMethod] RPCs.

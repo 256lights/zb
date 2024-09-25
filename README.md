@@ -55,7 +55,7 @@ Prerequisites:
 1. `sudo mkdir /zb && sudo chown $(id -u):$(id -g) /zb`
 2. Clone this repository to your computer and `cd` into it.
 3. `go build ./cmd/zb`
-4. Start the build server (only on startup): `./zb serve &`
+4. Start the build server (only on startup): `./zb serve --sandbox=0 &`
 5. Run a build: `./zb build --file demo/hello.lua`
 
 You can use `./zb --help` to get more information on commands.

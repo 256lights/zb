@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/sets"
@@ -33,6 +34,23 @@ type Options struct {
 	// BuildDir is where realizations' working directories will be placed.
 	// If empty, defaults to [os.TempDir].
 	BuildDir string
+	// If DisableSandbox is true, then builders are always run without the sandbox.
+	// Otherwise, sandboxing is used whenever possible.
+	DisableSandbox bool
+	// SandboxPaths is a map of paths inside the sandbox
+	// to paths on the host machine.
+	// These paths will be made available to sandboxed builders.
+	SandboxPaths map[string]string
+}
+
+// SystemSupportsSandbox reports whether the host operating system supports sandboxing.
+func SystemSupportsSandbox() bool {
+	return runtime.GOOS == "linux"
+}
+
+// CanSandbox reports whether the current execution environment supports sandboxing.
+func CanSandbox() bool {
+	return SystemSupportsSandbox() && os.Geteuid() == 0
 }
 
 // Server is a local store.
@@ -43,6 +61,9 @@ type Server struct {
 	buildDir string
 	db       *sqlitemigration.Pool
 
+	sandbox      bool
+	sandboxPaths map[string]string
+
 	writing  mutexMap[zbstore.Path] // store objects being written
 	building mutexMap[zbstore.Path] // derivations being built
 }
@@ -52,9 +73,11 @@ type Server struct {
 // NewServer will panic if given a store directory that is not native
 func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	srv := &Server{
-		dir:      dir,
-		realDir:  opts.RealDir,
-		buildDir: opts.BuildDir,
+		dir:          dir,
+		realDir:      opts.RealDir,
+		buildDir:     opts.BuildDir,
+		sandbox:      !opts.DisableSandbox && CanSandbox(),
+		sandboxPaths: opts.SandboxPaths,
 
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,

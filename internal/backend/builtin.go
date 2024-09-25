@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"zb.256lights.llc/pkg/zbstore"
 )
@@ -20,20 +21,20 @@ const (
 
 // runBuiltin runs a pre-defined builder function.
 // It satisfies the [runnerFunc] signature.
-func runBuiltin(ctx context.Context, drv *zbstore.Derivation, dir string, logWriter io.Writer) error {
-	switch drv.Builder {
+func runBuiltin(ctx context.Context, invocation *builderInvocation) error {
+	switch invocation.derivation.Builder {
 	case builtinBuilderPrefix + "fetchurl":
-		if err := fetchURL(ctx, drv); err != nil {
-			fmt.Fprintf(logWriter, "%s: %v\n", drv.Builder, err)
-			return fmt.Errorf("%s failed", drv.Builder)
+		if err := fetchURL(ctx, invocation.derivation, invocation.realStoreDir); err != nil {
+			fmt.Fprintf(invocation.logWriter, "%s: %v\n", invocation.derivation.Builder, err)
+			return builderFailure{fmt.Errorf("%s failed", invocation.derivation.Builder)}
 		}
 		return nil
 	default:
-		return fmt.Errorf("builtin %q not found", drv.Builder)
+		return builderFailure{fmt.Errorf("builtin %q not found", invocation.derivation.Builder)}
 	}
 }
 
-func fetchURL(ctx context.Context, drv *zbstore.Derivation) error {
+func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string) error {
 	href := drv.Env["url"]
 	if href == "" {
 		return fmt.Errorf("missing url environment variable")
@@ -42,6 +43,7 @@ func fetchURL(ctx context.Context, drv *zbstore.Derivation) error {
 	if outputPath == "" {
 		return fmt.Errorf("missing %s environment variable", zbstore.DefaultDerivationOutputName)
 	}
+	outputPath = strings.ReplaceAll(outputPath, string(drv.Dir), realStoreDir)
 	if !drv.Outputs[zbstore.DefaultDerivationOutputName].IsFixed() {
 		return fmt.Errorf("output is not fixed")
 	}

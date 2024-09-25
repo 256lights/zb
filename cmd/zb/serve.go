@@ -11,19 +11,24 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/system"
+	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 )
 
 type serveOptions struct {
-	dbPath   string
-	buildDir string
+	dbPath       string
+	buildDir     string
+	sandbox      bool
+	sandboxPaths map[string]string
 }
 
 func newServeCommand(g *globalConfig) *cobra.Command {
@@ -36,10 +41,14 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:          true,
 	}
 	opts := &serveOptions{
-		dbPath: filepath.Join(defaultVarDir(), "db.sqlite"),
+		dbPath:       filepath.Join(defaultVarDir(), "db.sqlite"),
+		sandbox:      backend.SystemSupportsSandbox(),
+		sandboxPaths: make(map[string]string),
 	}
 	c.Flags().StringVar(&opts.dbPath, "db", opts.dbPath, "`path` to store database file")
 	c.Flags().StringVar(&opts.buildDir, "build-root", os.TempDir(), "`dir`ectory to store temporary build artifacts")
+	c.Flags().BoolVar(&opts.sandbox, "sandbox", opts.sandbox, "run builders in a restricted environment")
+	c.Flags().Var(pathMapFlag(opts.sandboxPaths), "sandbox-path", "`path` to allow in sandbox (can be passed multiple times)")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		return runServe(cmd.Context(), g, opts)
 	}
@@ -49,6 +58,12 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 	if !g.storeDir.IsNative() {
 		return fmt.Errorf("%s cannot be used on this system", g.storeDir)
+	}
+	if opts.sandbox && !backend.CanSandbox() {
+		if !backend.SystemSupportsSandbox() {
+			return fmt.Errorf("sandboxing requested but not supported on %v", system.Current())
+		}
+		return fmt.Errorf("sandboxing requested but unable to use (are you running with admin privileges?)")
 	}
 	if err := os.MkdirAll(filepath.Dir(string(g.storeDir)), 0o755); err != nil {
 		return err
@@ -64,11 +79,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 	}
 	// TODO(someday): Properly set permissions on the created database.
 
-	laddr := &net.UnixAddr{
-		Net:  "unix",
-		Name: g.storeSocket,
-	}
-	l, err := net.ListenUnix(laddr.Net, laddr)
+	l, err := listenUnix(g.storeSocket)
 	if err != nil {
 		return err
 	}
@@ -106,7 +117,9 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 
 	log.Infof(ctx, "Listening on %s", g.storeSocket)
 	srv := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
-		BuildDir: opts.buildDir,
+		BuildDir:       opts.buildDir,
+		SandboxPaths:   opts.sandboxPaths,
+		DisableSandbox: !opts.sandbox,
 	})
 	defer func() {
 		if err := srv.Close(); err != nil {
@@ -148,6 +161,64 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 			}
 		}()
 	}
+}
+
+func listenUnix(path string) (*net.UnixListener, error) {
+	laddr := &net.UnixAddr{
+		Net:  "unix",
+		Name: path,
+	}
+	l, err := net.ListenUnix(laddr.Net, laddr)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO(soon): Restrict to a group.
+	if err := os.Chmod(path, 0o777); err != nil {
+		l.Close()
+		return nil, err
+	}
+
+	return l, nil
+}
+
+type pathMapFlag map[string]string
+
+func (f pathMapFlag) Type() string {
+	return "string"
+}
+
+func (f pathMapFlag) String() string {
+	sb := new(strings.Builder)
+	first := true
+	for k, v := range xmaps.Sorted(f) {
+		if first {
+			first = false
+		} else {
+			sb.WriteString(" ")
+		}
+		sb.WriteString(k)
+		if k != v || strings.Contains(k, "=") || strings.Contains(v, "=") {
+			sb.WriteString("=")
+			sb.WriteString(v)
+		}
+	}
+	return sb.String()
+}
+
+func (f pathMapFlag) Get() any {
+	return map[string]string(f)
+}
+
+func (f pathMapFlag) Set(s string) error {
+	for _, word := range strings.Fields(s) {
+		k, v, isMap := strings.Cut(word, "=")
+		if !isMap {
+			v = k
+		}
+		f[k] = v
+	}
+	return nil
 }
 
 type nopCloser struct {

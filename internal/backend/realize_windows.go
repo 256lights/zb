@@ -4,6 +4,8 @@
 package backend
 
 import (
+	"context"
+	"fmt"
 	"os/exec"
 
 	"zb.256lights.llc/pkg/internal/xmaps"
@@ -22,4 +24,12 @@ func fillBaseEnv(m map[string]string, storeDir zbstore.Directory, workDir string
 
 func setCancelFunc(c *exec.Cmd) {
 	// Default behavior of exec.CommandContext is fine, no-op.
+}
+
+func defaultSystemCertFile() (string, error) {
+	return "", nil
+}
+
+func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
+	return fmt.Errorf("TODO(someday)")
 }

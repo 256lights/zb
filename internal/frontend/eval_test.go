@@ -68,8 +68,9 @@ func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir strin
 
 	var wg sync.WaitGroup
 	srv := backend.NewServer(storeDir, filepath.Join(helperDir, "db.sqlite"), &backend.Options{
-		RealDir:  realStoreDir,
-		BuildDir: buildDir,
+		RealDir:        realStoreDir,
+		BuildDir:       buildDir,
+		DisableSandbox: true,
 	})
 	serverConn, clientConn := net.Pipe()
 
