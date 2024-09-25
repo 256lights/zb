@@ -13,6 +13,8 @@ import (
 func fillBaseEnv(m map[string]string, storeDir zbstore.Directory, workDir string) {
 	xmaps.SetDefault(m, "PATH", `C:\path-not-set`)
 	xmaps.SetDefault(m, "HOME", `C:\home-not-set`)
+	xmaps.SetDefault(m, "TMP", workDir)
+	xmaps.SetDefault(m, "TEMP", workDir)
 	xmaps.SetDefault(m, "ZB_STORE", string(storeDir))
 	xmaps.SetDefault(m, "ZB_BUILD_TOP", workDir)
 	// TODO(someday): More.
