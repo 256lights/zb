@@ -1021,45 +1021,23 @@ func (b *builder) postprocess(ctx context.Context, output zbstore.OutputReferenc
 		return nil, fmt.Errorf("post-process %v: no such output", output)
 	}
 
+	var info *zbstore.NARInfo
+	var err error
 	if ca, ok := outputType.FixedCA(); ok {
 		if unlockBuildPath == nil {
 			return nil, fmt.Errorf("post-process %v: write lock was not held", output)
 		}
 		defer unlockBuildPath()
 
-		log.Debugf(ctx, "Verifying fixed output %s...", buildPath)
-		narHash, narSize, err := postprocessFixedOutput(b.server.realDir, buildPath, ca)
-		if err != nil {
-			return nil, err
+		info, err = b.postprocessFixedOutput(ctx, buildPath, ca)
+	} else {
+		if unlockBuildPath != nil {
+			unlockBuildPath()
+			return nil, fmt.Errorf("post-process %v: unexpected write lock", output)
 		}
-		info := &zbstore.NARInfo{
-			StorePath:   buildPath,
-			Deriver:     output.DrvPath,
-			Compression: nix.NoCompression,
-			NARHash:     narHash,
-			NARSize:     narSize,
-			CA:          ca,
-		}
-		err = func() (err error) {
-			endFn, err := sqlitex.ImmediateTransaction(b.conn)
-			if err != nil {
-				return err
-			}
-			defer endFn(&err)
-			return insertObject(ctx, b.conn, info)
-		}()
-		if err != nil {
-			err = fmt.Errorf("post-process %v: %v", output, err)
-		}
-		return info, err
+		// outputType has presumably been validated with [validateOutputs].
+		info, err = b.postprocessFloatingOutput(ctx, buildPath, inputs)
 	}
-
-	if unlockBuildPath != nil {
-		return nil, fmt.Errorf("post-process %v: unexpected write lock", output)
-	}
-
-	// outputType has presumably been validated with [validateOutputs].
-	info, err := b.postprocessFloatingOutput(ctx, buildPath, inputs)
 	if info != nil {
 		info.Deriver = output.DrvPath
 	}
@@ -1068,8 +1046,10 @@ func (b *builder) postprocess(ctx context.Context, output zbstore.OutputReferenc
 
 // postprocessFixedOutput computes the NAR hash of the given store path
 // and verifies that it matches the content address.
-func postprocessFixedOutput(realStoreDir string, outputPath zbstore.Path, ca zbstore.ContentAddress) (narHash nix.Hash, narSize int64, err error) {
-	realOutputPath := filepath.Join(realStoreDir, outputPath.Base())
+func (b *builder) postprocessFixedOutput(ctx context.Context, outputPath zbstore.Path, ca zbstore.ContentAddress) (info *zbstore.NARInfo, err error) {
+	log.Debugf(ctx, "Verifying fixed output %s...", outputPath)
+
+	realOutputPath := b.server.realPath(outputPath)
 	wc := new(writeCounter)
 	h := nix.NewHasher(nix.SHA256)
 	pr, pw := io.Pipe()
@@ -1088,9 +1068,31 @@ func postprocessFixedOutput(realStoreDir string, outputPath zbstore.Path, ca zbs
 	}()
 
 	if _, err := verifyContentAddress(outputPath, pr, nil, ca); err != nil {
-		return nix.Hash{}, 0, err
+		return nil, err
 	}
-	return h.SumHash(), int64(*wc), nil
+
+	info = &zbstore.NARInfo{
+		StorePath:   outputPath,
+		Compression: nix.NoCompression,
+		NARHash:     h.SumHash(),
+		NARSize:     int64(*wc),
+		CA:          ca,
+	}
+	err = func() (err error) {
+		endFn, err := sqlitex.ImmediateTransaction(b.conn)
+		if err != nil {
+			return err
+		}
+		defer endFn(&err)
+		return insertObject(ctx, b.conn, info)
+	}()
+	if err != nil {
+		err = fmt.Errorf("post-process %v: %v", outputPath, err)
+	}
+
+	makePublicReadOnly(ctx, realOutputPath)
+
+	return info, nil
 }
 
 func (b *builder) postprocessFloatingOutput(ctx context.Context, buildPath zbstore.Path, inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
@@ -1161,6 +1163,8 @@ func (b *builder) postprocessFloatingOutput(ctx context.Context, buildPath zbsto
 	if err != nil {
 		return nil, fmt.Errorf("post-process %v: %v", buildPath, err)
 	}
+
+	makePublicReadOnly(ctx, realFinalPath)
 
 	return info, nil
 }

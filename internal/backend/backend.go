@@ -16,6 +16,7 @@ import (
 	"runtime"
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -294,6 +295,8 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		return
 	}
 
+	makePublicReadOnly(ctx, realPath)
+
 	log.Infof(ctx, "Imported %s", trailer.StorePath)
 }
 
@@ -426,6 +429,19 @@ func (r *NARReceiver) Cleanup(ctx context.Context) {
 	if err := os.Remove(name); err != nil {
 		log.Warnf(ctx, "Unable to remove store temp file: %v", err)
 	}
+}
+
+// makePublicReadOnly calls [osutil.MakePublicReadOnly]
+// and logs any errors instead of causing them to stop the operation.
+func makePublicReadOnly(ctx context.Context, path string) {
+	log.Debugf(ctx, "Marking %s read-only...", path)
+	osutil.MakePublicReadOnly(path, func(err error) error {
+		// Log errors, but don't abort the chmod attempt.
+		// Subsequent use of this store object can still succeed,
+		// and we want to mark as many files read-only as possible.
+		log.Warnf(ctx, "%v", err)
+		return nil
+	})
 }
 
 type peerContextKey struct{}

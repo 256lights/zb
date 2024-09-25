@@ -10,6 +10,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // MkdirAll creates a directory with the specified name,
@@ -93,4 +94,42 @@ func FirstPresentFile(paths iter.Seq[string]) (string, error) {
 		firstError = errors.New("no files searched")
 	}
 	return "", firstError
+}
+
+// MakePublicReadOnly removes any write permissions on the filesystem object at the given path
+// and adds read permissions for all users.
+// If the path names a directory,
+// then this applies recursively to any filesystem objects in the directory.
+//
+// If onError is not nil, it will be used to handle any errors encountered.
+// Its return value is handled in the same manner as in [io/fs.WalkDirFunc].
+func MakePublicReadOnly(path string, onError func(error) error) error {
+	if onError == nil {
+		onError = func(err error) error { return err }
+	}
+	return filepath.WalkDir(path, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return onError(err)
+		}
+
+		existingMode := os.FileMode(0o666)
+		if runtime.GOOS != "windows" {
+			info, err := entry.Info()
+			if err != nil {
+				return onError(err)
+			}
+			const permMask = os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky | os.ModeAppend | os.ModeExclusive | os.ModeTemporary
+			existingMode = info.Mode() & permMask
+		}
+
+		newMode := (existingMode | 0o444) &^ 0o222 // +r-w
+		if entry.IsDir() || existingMode&0o111 != 0 {
+			newMode |= 0o111 // +x
+		}
+		if err := os.Chmod(path, newMode); err != nil {
+			return onError(err)
+		}
+
+		return nil
+	})
 }
