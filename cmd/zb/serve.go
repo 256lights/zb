@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/sets"
@@ -65,10 +66,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 		}
 		return fmt.Errorf("sandboxing requested but unable to use (are you running with admin privileges?)")
 	}
-	if err := os.MkdirAll(filepath.Dir(string(g.storeDir)), 0o755); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(string(g.storeDir), 0o755|os.ModeSticky); err != nil {
+	if err := osutil.MkdirAll(string(g.storeDir), 0o755, 0o755|os.ModeSticky); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(g.storeSocket), 0o755); err != nil {

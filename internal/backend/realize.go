@@ -1429,27 +1429,6 @@ func tempPath(ref zbstore.OutputReference) (zbstore.Path, error) {
 	return p, nil
 }
 
-func firstPresentFile(paths iter.Seq[string]) (string, error) {
-	var firstError error
-	for path := range paths {
-		_, err := os.Lstat(path)
-		switch {
-		case err == nil:
-			return path, nil
-		case !errors.Is(err, os.ErrNotExist):
-			return "", err
-		default:
-			if firstError == nil {
-				firstError = err
-			}
-		}
-	}
-	if firstError == nil {
-		firstError = fmt.Errorf("no files searched")
-	}
-	return "", firstError
-}
-
 // rpcLogger is an [io.Writer] that sends its data as [zbstore.LogMethod] RPCs.
 // It has no buffering: callers should introduce buffering.
 type rpcLogger struct {

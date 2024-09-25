@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 
 	"golang.org/x/sys/unix"
+	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -173,7 +174,7 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 		return nil, fmt.Errorf("using non-native store %s", opts.storeDir)
 	}
 
-	if err := mkdirPerm(filepath.Join(dir, "tmp"), 0o777|os.ModeSticky); err != nil {
+	if err := osutil.MkdirPerm(filepath.Join(dir, "tmp"), 0o777|os.ModeSticky); err != nil {
 		return nil, err
 	}
 	workDir := filepath.Join(dir, opts.workDir)
@@ -189,19 +190,19 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 	if err := os.Mkdir(etcDir, 0o755); err != nil {
 		return nil, err
 	}
-	if err := writeFilePerm(filepath.Join(etcDir, "passwd"), sandboxPasswd(opts.builderUID, opts.builderGID), 0o444); err != nil {
+	if err := osutil.WriteFilePerm(filepath.Join(etcDir, "passwd"), sandboxPasswd(opts.builderUID, opts.builderGID), 0o444); err != nil {
 		return nil, err
 	}
-	if err := writeFilePerm(filepath.Join(etcDir, "group"), sandboxGroup(opts.builderGID), 0o444); err != nil {
+	if err := osutil.WriteFilePerm(filepath.Join(etcDir, "group"), sandboxGroup(opts.builderGID), 0o444); err != nil {
 		return nil, err
 	}
 	const hostsContent = "127.0.0.1 localhost\n::1 localhost\n"
-	if err := writeFilePerm(filepath.Join(etcDir, "hosts"), []byte(hostsContent), 0o444); err != nil {
+	if err := osutil.WriteFilePerm(filepath.Join(etcDir, "hosts"), []byte(hostsContent), 0o444); err != nil {
 		return nil, err
 	}
 	if opts.network {
 		const nsswitchContent = "hosts: files dns\nservices: files\n"
-		if err := writeFilePerm(filepath.Join(etcDir, "nsswitch.conf"), []byte(nsswitchContent), 0o444); err != nil {
+		if err := osutil.WriteFilePerm(filepath.Join(etcDir, "nsswitch.conf"), []byte(nsswitchContent), 0o444); err != nil {
 			return nil, err
 		}
 		for newname, oldname := range linuxNetworkBindMounts(etcDir, opts) {
@@ -219,12 +220,12 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 	}
 
 	devDir := filepath.Join(dir, "dev")
-	if err := mkdirPerm(devDir, 0o755); err != nil {
+	if err := osutil.MkdirPerm(devDir, 0o755); err != nil {
 		return nil, err
 	}
 	if exists("/dev/shm") {
 		shmDir := filepath.Join(devDir, "shm")
-		if err := mkdirPerm(shmDir, 0o755); err != nil {
+		if err := osutil.MkdirPerm(shmDir, 0o755); err != nil {
 			return nil, err
 		}
 		if opts.shmSize != "" {
@@ -239,7 +240,7 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 	}
 
 	ptsDir := filepath.Join(devDir, "pts")
-	if err := mkdirPerm(ptsDir, 0o755); err != nil {
+	if err := osutil.MkdirPerm(ptsDir, 0o755); err != nil {
 		return nil, err
 	}
 	if exists("/dev/pts/ptmx") {
@@ -297,7 +298,7 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 	}
 
 	procDir := filepath.Join(dir, "proc")
-	if err := mkdirPerm(procDir, 0o755); err != nil {
+	if err := osutil.MkdirPerm(procDir, 0o755); err != nil {
 		return nil, err
 	}
 	if err := unix.Mount("none", procDir, "proc", 0, ""); err != nil {
@@ -310,7 +311,7 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 	if err := os.MkdirAll(filepath.Dir(storeDir), 0o755); err != nil {
 		return nil, err
 	}
-	if err := mkdirPerm(storeDir, 0o755|os.ModeSticky); err != nil {
+	if err := osutil.MkdirPerm(storeDir, 0o755|os.ModeSticky); err != nil {
 		return nil, err
 	}
 	// Bind-mount input paths.
@@ -418,40 +419,6 @@ func bindMount(ctx context.Context, oldname, newname string) (isMount bool, err 
 	return true, nil
 }
 
-// mkdirPerm creates a new directory with the given mode bits.
-// It ignores any umask.
-func mkdirPerm(name string, perm os.FileMode) error {
-	if err := os.Mkdir(name, perm); err != nil {
-		return err
-	}
-	if err := os.Chmod(name, perm); err != nil {
-		return err
-	}
-	return nil
-}
-
-// writeFilePerm writes data to the named file, creating it if necessary,
-// and ensuring it has the given permissions (ignoring umask).
-func writeFilePerm(name string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm|0o200)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return fmt.Errorf("write %s: %v", name, err)
-	}
-	err = f.Chmod(perm)
-	err2 := f.Close()
-	if err == nil {
-		err = err2
-	}
-	if err != nil {
-		return fmt.Errorf("write %s: %v", name, err)
-	}
-	return nil
-}
-
 func linuxNetworkBindMounts(etcDir string, opts *linuxSandboxOptions) iter.Seq2[string, string] {
 	return func(yield func(string, string) bool) {
 		if !yield(filepath.Join(etcDir, "resolv.conf"), "/etc/resolv.conf") {
@@ -504,7 +471,7 @@ func defaultSystemCertFile() (string, error) {
 			return
 		}
 	})
-	return firstPresentFile(paths)
+	return osutil.FirstPresentFile(paths)
 }
 
 func linuxDeviceBindMounts(devDir string) iter.Seq2[string, string] {
