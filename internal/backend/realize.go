@@ -633,6 +633,14 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 			return fmt.Errorf("build %s: input %s not present (%v)", drvPath, input, err)
 		}
 	}
+	buildUser, err := b.server.users.acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("build %s: %v", drvPath, err)
+	}
+	if buildUser != nil {
+		log.Debugf(ctx, "Using build user %v", buildUser)
+	}
+	defer b.server.users.release(buildUser)
 
 	// Arrange for builder to run.
 	var runner runnerFunc
@@ -647,7 +655,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		log.Debugf(ctx, "Runner for %s is unsandboxed", drvPath)
 		runner = runSubprocess
 	}
-	tempOutPaths, err := b.runBuilder(ctx, drvPath, runner)
+	tempOutPaths, err := b.runBuilder(ctx, drvPath, buildUser, runner)
 	if err != nil {
 		return err
 	}
@@ -811,13 +819,16 @@ type builderInvocation struct {
 	// closure calls yield for each store object
 	// in the transitive closure of the store object at the given path.
 	closure func(path zbstore.Path, yield func(zbstore.Path) bool) error
+	// user is the Unix user to run the build as.
+	// If nil, then the current process's user should be used.
+	user *BuildUser
 	// sandboxPaths is a map of paths inside the sandbox
 	// to paths on the host machine.
 	// For sandboxed runners, these paths will be made available inside the sandbox.
 	sandboxPaths map[string]string
 }
 
-func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, f runnerFunc) (map[string]zbstore.Path, error) {
+func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, buildUser *BuildUser, f runnerFunc) (map[string]zbstore.Path, error) {
 	drvName, isDrv := drvPath.DerivationName()
 	if !isDrv {
 		return nil, fmt.Errorf("build %s: not a derivation", drvPath)
@@ -848,6 +859,11 @@ func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, f runner
 			log.Warnf(ctx, "Failed to clean up %s: %v", buildDir, err)
 		}
 	}()
+	if buildUser != nil {
+		if err := os.Chown(buildDir, buildUser.UID, -1); err != nil {
+			return nil, fmt.Errorf("build %s: %v", drvPath, err)
+		}
+	}
 
 	r := newReplacer(xiter.Chain2(
 		outputPathRewrites(outPaths),
@@ -868,6 +884,7 @@ func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, f runner
 		realStoreDir: b.server.realDir,
 		buildDir:     buildDir,
 		logWriter:    bufferedPeerLogger,
+		user:         buildUser,
 		sandboxPaths: b.server.sandboxPaths,
 
 		lookup: b.lookup,
@@ -914,6 +931,7 @@ func runSubprocess(ctx context.Context, invocation *builderInvocation) error {
 	c.Dir = invocation.buildDir
 	c.Stdout = invocation.logWriter
 	c.Stderr = invocation.logWriter
+	c.SysProcAttr = sysProcAttrForUser(invocation.user)
 
 	if err := c.Run(); err != nil {
 		return builderFailure{err}

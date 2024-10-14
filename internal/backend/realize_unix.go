@@ -7,6 +7,7 @@ package backend
 
 import (
 	"os/exec"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 	"zb.256lights.llc/pkg/internal/xmaps"
@@ -24,6 +25,18 @@ func fillBaseEnv(m map[string]string, storeDir zbstore.Directory, workDir string
 	xmaps.SetDefault(m, "TEMP", workDir)
 	xmaps.SetDefault(m, "PWD", workDir)
 	xmaps.SetDefault(m, "TERM", "xterm-256color")
+}
+
+func sysProcAttrForUser(user *BuildUser) *syscall.SysProcAttr {
+	if user == nil {
+		return nil
+	}
+	return &syscall.SysProcAttr{
+		Credential: &syscall.Credential{
+			Uid: uint32(user.UID),
+			Gid: uint32(user.GID),
+		},
+	}
 }
 
 func setCancelFunc(c *exec.Cmd) {

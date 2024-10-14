@@ -10,7 +10,10 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -26,10 +29,11 @@ import (
 )
 
 type serveOptions struct {
-	dbPath       string
-	buildDir     string
-	sandbox      bool
-	sandboxPaths map[string]string
+	dbPath          string
+	buildDir        string
+	buildUsersGroup string
+	sandbox         bool
+	sandboxPaths    map[string]string
 }
 
 func newServeCommand(g *globalConfig) *cobra.Command {
@@ -46,8 +50,12 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 		sandbox:      backend.SystemSupportsSandbox(),
 		sandboxPaths: make(map[string]string),
 	}
+	if osutil.IsRoot() {
+		opts.buildUsersGroup = backend.DefaultBuildUsersGroup
+	}
 	c.Flags().StringVar(&opts.dbPath, "db", opts.dbPath, "`path` to store database file")
 	c.Flags().StringVar(&opts.buildDir, "build-root", os.TempDir(), "`dir`ectory to store temporary build artifacts")
+	c.Flags().StringVar(&opts.buildUsersGroup, "build-users-group", opts.buildUsersGroup, "name of Unix `group` of users to run builds as")
 	c.Flags().BoolVar(&opts.sandbox, "sandbox", opts.sandbox, "run builders in a restricted environment")
 	c.Flags().Var(pathMapFlag(opts.sandboxPaths), "sandbox-path", "`path` to allow in sandbox (can be passed multiple times)")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
@@ -66,7 +74,11 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 		}
 		return fmt.Errorf("sandboxing requested but unable to use (are you running with admin privileges?)")
 	}
-	if err := osutil.MkdirAll(string(g.storeDir), 0o755, 0o755|os.ModeSticky); err != nil {
+	storeDirGroupID, buildUsers, err := buildUsersForGroup(ctx, opts.buildUsersGroup)
+	if err != nil {
+		return err
+	}
+	if err := ensureStoreDirectory(string(g.storeDir), storeDirGroupID); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(g.storeSocket), 0o755); err != nil {
@@ -118,6 +130,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 		BuildDir:       opts.buildDir,
 		SandboxPaths:   opts.sandboxPaths,
 		DisableSandbox: !opts.sandbox,
+		BuildUsers:     buildUsers,
 	})
 	defer func() {
 		if err := srv.Close(); err != nil {
@@ -159,6 +172,65 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 			}
 		}()
 	}
+}
+
+func ensureStoreDirectory(path string, gid int) error {
+	if err := os.MkdirAll(filepath.Dir(string(path)), 0o755); err != nil {
+		return err
+	}
+	const mode os.FileMode = 0o775 | os.ModeSticky
+	if err := os.Mkdir(path, mode); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			err = nil
+		}
+		return err
+	}
+	// Run an extra chmod to bypass umask.
+	if err := os.Chmod(path, mode); err != nil {
+		return err
+	}
+	if gid == -1 || gid == os.Getegid() {
+		return nil
+	}
+	if err := os.Chown(path, -1, gid); err != nil {
+		return err
+	}
+	return nil
+}
+
+func buildUsersForGroup(ctx context.Context, name string) (gid int, buildUsers []backend.BuildUser, err error) {
+	if name == "" {
+		return -1, nil, nil
+	}
+	if runtime.GOOS == "windows" {
+		return -1, nil, fmt.Errorf("cannot set --build-users-group on Windows")
+	}
+	g, userNames, err := osutil.LookupGroup(ctx, name)
+	if err != nil {
+		return -1, nil, err
+	}
+	gid, err = strconv.Atoi(g.Gid)
+	if err != nil {
+		return -1, nil, fmt.Errorf("build users group id: %v", err)
+	}
+	log.Debugf(ctx, "Using build group %s (gid=%d), users=%v", name, gid, userNames)
+	for _, userName := range userNames {
+		u, err := user.Lookup(userName)
+		if err != nil {
+			return gid, nil, fmt.Errorf("build users group: %v", err)
+		}
+		var buildUser backend.BuildUser
+		buildUser.UID, err = strconv.Atoi(u.Uid)
+		if err != nil {
+			return gid, nil, fmt.Errorf("build users group: user %s: user id: %v", userName, err)
+		}
+		buildUser.GID, err = strconv.Atoi(u.Gid)
+		if err != nil {
+			return gid, nil, fmt.Errorf("build users group: user %s: group id: %v", userName, err)
+		}
+		buildUsers = append(buildUsers, buildUser)
+	}
+	return gid, buildUsers, nil
 }
 
 func listenUnix(path string) (*net.UnixListener, error) {

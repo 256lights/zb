@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"syscall"
 
 	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/zbstore"
@@ -20,6 +21,10 @@ func fillBaseEnv(m map[string]string, storeDir zbstore.Directory, workDir string
 	xmaps.SetDefault(m, "ZB_STORE", string(storeDir))
 	xmaps.SetDefault(m, "ZB_BUILD_TOP", workDir)
 	// TODO(someday): More.
+}
+
+func sysProcAttrForUser(user *BuildUser) *syscall.SysProcAttr {
+	return nil
 }
 
 func setCancelFunc(c *exec.Cmd) {

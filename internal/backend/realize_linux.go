@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 	"zb.256lights.llc/pkg/internal/osutil"
@@ -22,15 +23,15 @@ import (
 	"zombiezen.com/go/log"
 )
 
-func runSandboxed(ctx context.Context, opts *builderInvocation) error {
+func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
 	inputs := make(sets.Set[zbstore.Path])
-	inputs.AddSeq(opts.derivation.InputSources.Values())
-	for input := range opts.derivation.InputDerivationOutputs() {
-		inputPath, ok := opts.lookup(input)
+	inputs.AddSeq(invocation.derivation.InputSources.Values())
+	for input := range invocation.derivation.InputDerivationOutputs() {
+		inputPath, ok := invocation.lookup(input)
 		if !ok {
 			return fmt.Errorf("missing store path for %v", input)
 		}
-		err := opts.closure(inputPath, func(path zbstore.Path) bool {
+		err := invocation.closure(inputPath, func(path zbstore.Path) bool {
 			inputs.Add(path)
 			return true
 		})
@@ -40,12 +41,12 @@ func runSandboxed(ctx context.Context, opts *builderInvocation) error {
 	}
 	// If any of the sandbox paths reference a store path,
 	// then add the store object's closure as an input.
-	for _, hostPath := range opts.sandboxPaths {
-		hostStorePath, _, err := opts.derivation.Dir.ParsePath(hostPath)
+	for _, hostPath := range invocation.sandboxPaths {
+		hostStorePath, _, err := invocation.derivation.Dir.ParsePath(hostPath)
 		if err != nil {
 			continue
 		}
-		err = opts.closure(hostStorePath, func(path zbstore.Path) bool {
+		err = invocation.closure(hostStorePath, func(path zbstore.Path) bool {
 			inputs.Add(path)
 			return true
 		})
@@ -61,8 +62,8 @@ func runSandboxed(ctx context.Context, opts *builderInvocation) error {
 
 	// Create the chroot directory inside the store
 	// so we can rename the outputs to their expected locations.
-	chrootDir := filepath.Join(opts.realStoreDir, opts.derivationPath.Base()+".chroot")
-	if err := os.Mkdir(chrootDir, 0o775); err != nil {
+	chrootDir := filepath.Join(invocation.realStoreDir, invocation.derivationPath.Base()+".chroot")
+	if err := os.Mkdir(chrootDir, 0o755); err != nil {
 		return err
 	}
 	defer func() {
@@ -72,50 +73,55 @@ func runSandboxed(ctx context.Context, opts *builderInvocation) error {
 	}()
 
 	const workDir = "/build"
-	cleanupMounts, err := setupSandboxFilesystem(ctx, chrootDir, &linuxSandboxOptions{
-		storeDir:     opts.derivation.Dir,
-		realStoreDir: opts.realStoreDir,
+	opts := &linuxSandboxOptions{
+		storeDir:     invocation.derivation.Dir,
+		realStoreDir: invocation.realStoreDir,
 		workDir:      workDir,
-		realWorkDir:  opts.buildDir,
+		realWorkDir:  invocation.buildDir,
 		inputs:       inputs,
-		extra:        opts.sandboxPaths,
+		extra:        invocation.sandboxPaths,
 
-		// TODO(soon): Use separate UID/GID.
 		builderUID: os.Geteuid(),
 		builderGID: os.Getegid(),
 
-		network: opts.derivation.Outputs[zbstore.DefaultDerivationOutputName].IsFixed(),
+		network: invocation.derivation.Outputs[zbstore.DefaultDerivationOutputName].IsFixed(),
 		caFile:  caFile,
 		// TODO(maybe): This seems high to me.
 		shmSize: "50%",
-	})
+	}
+	if invocation.user != nil {
+		opts.builderUID = invocation.user.UID
+		opts.builderGID = invocation.user.GID
+	}
+	cleanupMounts, err := setupSandboxFilesystem(ctx, chrootDir, opts)
 	if err != nil {
 		return err
 	}
 	defer cleanupMounts()
 
-	c := exec.CommandContext(ctx, opts.derivation.Builder, opts.derivation.Args...)
+	c := exec.CommandContext(ctx, invocation.derivation.Builder, invocation.derivation.Args...)
 	setCancelFunc(c)
-	env := maps.Clone(opts.derivation.Env)
-	fillBaseEnv(env, opts.derivation.Dir, workDir)
+	env := maps.Clone(invocation.derivation.Env)
+	fillBaseEnv(env, invocation.derivation.Dir, workDir)
 	for k, v := range xmaps.Sorted(env) {
 		c.Env = append(c.Env, k+"="+v)
 	}
 	c.Dir = workDir
-	c.Stdout = opts.logWriter
-	c.Stderr = opts.logWriter
-	c.SysProcAttr = &unix.SysProcAttr{
-		Chroot: chrootDir,
-		// TODO(soon): Use separate UID/GID.
+	c.Stdout = invocation.logWriter
+	c.Stderr = invocation.logWriter
+	c.SysProcAttr = sysProcAttrForUser(invocation.user)
+	if c.SysProcAttr == nil {
+		c.SysProcAttr = new(syscall.SysProcAttr)
 	}
+	c.SysProcAttr.Chroot = chrootDir
 
 	if err := c.Run(); err != nil {
 		return builderFailure{err}
 	}
 
-	for _, outputPath := range opts.outputPaths {
+	for _, outputPath := range invocation.outputPaths {
 		src := filepath.Join(chrootDir, string(outputPath))
-		dst := filepath.Join(opts.realStoreDir, outputPath.Base())
+		dst := filepath.Join(invocation.realStoreDir, outputPath.Base())
 		if err := os.Rename(src, dst); err != nil {
 			return err
 		}
@@ -169,6 +175,13 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 		_, err := os.Lstat(path)
 		return err == nil
 	}
+	doBindMount := func(ctx context.Context, oldname, newname string) error {
+		isMount, err := bindMount(ctx, oldname, newname)
+		if isMount {
+			mounts = append(mounts, newname)
+		}
+		return err
+	}
 
 	if !opts.storeDir.IsNative() {
 		return nil, fmt.Errorf("using non-native store %s", opts.storeDir)
@@ -178,12 +191,8 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 		return nil, err
 	}
 	workDir := filepath.Join(dir, opts.workDir)
-	isMount, err := bindMount(ctx, opts.realWorkDir, workDir)
-	if err != nil {
+	if err := doBindMount(ctx, opts.realWorkDir, workDir); err != nil {
 		return nil, err
-	}
-	if isMount {
-		mounts = append(mounts, workDir)
 	}
 
 	etcDir := filepath.Join(dir, "etc")
@@ -206,12 +215,8 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 			return nil, err
 		}
 		for newname, oldname := range linuxNetworkBindMounts(etcDir, opts) {
-			isMount, err := bindMount(ctx, oldname, newname)
-			if err != nil {
+			if err := doBindMount(ctx, oldname, newname); err != nil {
 				return nil, err
-			}
-			if isMount {
-				mounts = append(mounts, newname)
 			}
 		}
 	}
@@ -262,20 +267,12 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 		case errors.Is(err, unix.EINVAL):
 			// Fallback: bind-mount /dev/pts and /dev/ptmx.
 			log.Debugf(ctx, "Failed to mount devpts at %s, falling back to bind mounts... (%v)", ptsDir, err)
-			ptsIsMount, err := bindMount(ctx, "/dev/pts", ptsDir)
-			if err != nil {
+			if err := doBindMount(ctx, "/dev/pts", ptsDir); err != nil {
 				return nil, err
-			}
-			if ptsIsMount {
-				mounts = append(mounts, ptsDir)
 			}
 
-			ptmxIsMount, err := bindMount(ctx, "/dev/ptmx", ptmxPath)
-			if err != nil {
+			if err := doBindMount(ctx, "/dev/ptmx", ptmxPath); err != nil {
 				return nil, err
-			}
-			if ptmxIsMount {
-				mounts = append(mounts, ptmxPath)
 			}
 		default:
 			return nil, err
@@ -283,12 +280,8 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 	}
 
 	for newname, oldname := range linuxDeviceBindMounts(devDir) {
-		isMount, err := bindMount(ctx, oldname, newname)
-		if err != nil {
+		if err := doBindMount(ctx, oldname, newname); err != nil {
 			return nil, err
-		}
-		if isMount {
-			mounts = append(mounts, newname)
 		}
 	}
 	for newname, oldname := range linuxDeviceSymlinks(devDir) {
@@ -311,7 +304,10 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 	if err := os.MkdirAll(filepath.Dir(storeDir), 0o755); err != nil {
 		return nil, err
 	}
-	if err := osutil.MkdirPerm(storeDir, 0o755|os.ModeSticky); err != nil {
+	if err := osutil.MkdirPerm(storeDir, 0o775|os.ModeSticky); err != nil {
+		return nil, err
+	}
+	if err := os.Chown(storeDir, opts.builderUID, opts.builderGID); err != nil {
 		return nil, err
 	}
 	// Bind-mount input paths.
@@ -320,24 +316,16 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 			return nil, fmt.Errorf("input %s is not inside %s", input, opts.storeDir)
 		}
 		dst := filepath.Join(dir, string(input))
-		isMount, err := bindMount(ctx, filepath.Join(opts.realStoreDir, input.Base()), dst)
-		if err != nil {
+		if err := doBindMount(ctx, filepath.Join(opts.realStoreDir, input.Base()), dst); err != nil {
 			return nil, err
-		}
-		if isMount {
-			mounts = append(mounts, dst)
 		}
 	}
 
 	// Bind-mount requested extras.
 	for sandboxPath, hostPath := range opts.extra {
 		dst := filepath.Join(dir, sandboxPath)
-		isMount, err := bindMount(ctx, hostPath, dst)
-		if err != nil {
+		if err := doBindMount(ctx, hostPath, dst); err != nil {
 			return nil, err
-		}
-		if isMount {
-			mounts = append(mounts, dst)
 		}
 	}
 
@@ -349,7 +337,7 @@ func sandboxPasswd(builderUID, builderGID int) []byte {
 	buf := new(bytes.Buffer)
 	buf.WriteString("root:x:0:0:Nix build user:/build:/noshell\n")
 	if builderUID != 0 {
-		fmt.Fprintf(buf, "zbld:x:%d:%d:zb build user:/build:/noshell\n", builderUID, builderGID)
+		fmt.Fprintf(buf, "%s:x:%d:%d:zb build user:/build:/noshell\n", DefaultBuildUsersGroup, builderUID, builderGID)
 	}
 	buf.WriteString("nobody:x:65534:65534:Nobody:/:/noshell\n")
 	return buf.Bytes()
@@ -359,7 +347,7 @@ func sandboxGroup(builderGID int) []byte {
 	buf := new(bytes.Buffer)
 	buf.WriteString("root:x:0:\n")
 	if builderGID != 0 {
-		fmt.Fprintf(buf, "zbld:!:%d:\n", builderGID)
+		fmt.Fprintf(buf, "%s:!:%d:\n", DefaultBuildUsersGroup, builderGID)
 	}
 	buf.WriteString("nogroup:x:65534:\n")
 	return buf.Bytes()

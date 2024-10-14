@@ -13,28 +13,6 @@ import (
 	"runtime"
 )
 
-// MkdirAll creates a directory with the specified name,
-// along with any necessary parents,
-// and returns nil,
-// or else returns an error.
-// The permission bits parentsPerm (before umask)
-// are used for any parent directories that MkdirAll creates;
-// the permission bits perm (before umask)
-// are used for creating the directory with the specified name.
-// If path is already a directory, MkdirAll does nothing and returns nil.
-//
-// (This is mostly the same as [os.MkdirAll]
-// with additional control over the parent directory permissions.)
-func MkdirAll(name string, parentsPerm, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(name), parentsPerm); err != nil {
-		return err
-	}
-	if err := os.Mkdir(name, perm); err != nil && !errors.Is(err, os.ErrExist) {
-		return err
-	}
-	return nil
-}
-
 // MkdirPerm creates a new directory with the given permission bits (after umask).
 func MkdirPerm(name string, perm os.FileMode) error {
 	if err := os.Mkdir(name, perm); err != nil {
@@ -96,6 +74,11 @@ func FirstPresentFile(paths iter.Seq[string]) (string, error) {
 	return "", firstError
 }
 
+const (
+	rootUID = 0
+	rootGID = 0
+)
+
 // MakePublicReadOnly removes any write permissions on the filesystem object at the given path
 // and adds read permissions for all users.
 // If the path names a directory,
@@ -128,6 +111,12 @@ func MakePublicReadOnly(path string, onError func(error) error) error {
 		}
 		if err := os.Chmod(path, newMode); err != nil {
 			return onError(err)
+		}
+
+		if IsRoot() {
+			if err := os.Chown(path, rootUID, rootGID); err != nil {
+				return onError(err)
+			}
 		}
 
 		return nil

@@ -27,6 +27,10 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
+// DefaultBuildUsersGroup is the conventional name of the Unix group
+// for the users that execute builders on behalf of the daemon.
+const DefaultBuildUsersGroup = "zbld"
+
 // Options is the set of optional parameters to [NewServer].
 type Options struct {
 	// RealDir is where the store objects are located physically on disk.
@@ -35,6 +39,7 @@ type Options struct {
 	// BuildDir is where realizations' working directories will be placed.
 	// If empty, defaults to [os.TempDir].
 	BuildDir string
+
 	// If DisableSandbox is true, then builders are always run without the sandbox.
 	// Otherwise, sandboxing is used whenever possible.
 	DisableSandbox bool
@@ -42,6 +47,23 @@ type Options struct {
 	// to paths on the host machine.
 	// These paths will be made available to sandboxed builders.
 	SandboxPaths map[string]string
+
+	// BuildUsers is the set of user IDs to use for builds on non-Windows systems.
+	// If empty, then builds will use the current process's privileges.
+	// [NewServer] will panic if multiple entries have the same user ID.
+	BuildUsers []BuildUser
+}
+
+// BuildUser is a descriptor for a Unix user.
+type BuildUser struct {
+	// UID is the user ID.
+	UID int
+	// GID is the user's primary group ID.
+	GID int
+}
+
+func (user BuildUser) String() string {
+	return fmt.Sprintf("%d:%d", user.UID, user.GID)
 }
 
 // SystemSupportsSandbox reports whether the host operating system supports sandboxing.
@@ -67,18 +89,23 @@ type Server struct {
 
 	writing  mutexMap[zbstore.Path] // store objects being written
 	building mutexMap[zbstore.Path] // derivations being built
+	users    *userSet
 }
 
 // NewServer returns a new [Server] for the given store directory and database path.
 // Callers are responsible for calling [Server.Close] on the returned server.
-// NewServer will panic if given a store directory that is not native
 func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
+	users, err := newUserSet(opts.BuildUsers)
+	if err != nil {
+		panic(err)
+	}
 	srv := &Server{
 		dir:          dir,
 		realDir:      opts.RealDir,
 		buildDir:     opts.BuildDir,
 		sandbox:      !opts.DisableSandbox && CanSandbox(),
 		sandboxPaths: opts.SandboxPaths,
+		users:        users,
 
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
