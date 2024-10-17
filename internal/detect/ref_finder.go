@@ -7,6 +7,8 @@ import (
 	"cmp"
 	"iter"
 	"slices"
+	"unicode"
+	"unicode/utf16"
 
 	"zb.256lights.llc/pkg/sets"
 )
@@ -37,19 +39,9 @@ func buildRefFinderTree(search iter.Seq[string]) (root *refFinderNode, hasEmpty 
 			hasEmpty = true
 			continue
 		}
-		curr := root
-		for _, b := range []byte(s) {
-			if i, ok := curr.find(b); ok {
-				curr = curr.children[i]
-			} else {
-				newNode := &refFinderNode{b: b}
-				curr.children = slices.Insert(curr.children, i, newNode)
-				curr = newNode
-			}
-		}
-		curr.match = s
+		root.add(s, encodeUTF8)
+		root.add(s, encodeUTF16LE)
 	}
-
 	return root, hasEmpty
 }
 
@@ -120,4 +112,64 @@ func (node *refFinderNode) find(b byte) (i int, ok bool) {
 	return slices.BinarySearchFunc(node.children, b, func(child *refFinderNode, b byte) int {
 		return cmp.Compare(child.b, b)
 	})
+}
+
+func (node *refFinderNode) add(s string, encode func(string) iter.Seq[byte]) {
+	for b := range encode(s) {
+		if i, ok := node.find(b); ok {
+			node = node.children[i]
+		} else {
+			newNode := &refFinderNode{b: b}
+			node.children = slices.Insert(node.children, i, newNode)
+			node = newNode
+		}
+	}
+	node.match = s
+}
+
+func encodeUTF8(s string) iter.Seq[byte] {
+	return func(yield func(byte) bool) {
+		for _, b := range []byte(s) {
+			if !yield(b) {
+				return
+			}
+		}
+	}
+}
+
+func encodeUTF16LE(s string) iter.Seq[byte] {
+	return func(yield func(byte) bool) {
+		for _, r := range s {
+			switch utf16.RuneLen(r) {
+			case 1:
+				if !yield(byte(r)) {
+					return
+				}
+				if !yield(byte(r >> 8)) {
+					return
+				}
+			case 2:
+				r1, r2 := utf16.EncodeRune(r)
+				if !yield(byte(r1)) {
+					return
+				}
+				if !yield(byte(r1 >> 8)) {
+					return
+				}
+				if !yield(byte(r2)) {
+					return
+				}
+				if !yield(byte(r2 >> 8)) {
+					return
+				}
+			default:
+				if !yield(byte(unicode.ReplacementChar & 0xff)) {
+					return
+				}
+				if !yield(byte(unicode.ReplacementChar >> 8)) {
+					return
+				}
+			}
+		}
+	}
 }

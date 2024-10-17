@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/google/go-cmp/cmp"
 	"zb.256lights.llc/pkg/sets"
@@ -23,15 +24,20 @@ var refFinderGoldens = []struct {
 	{"foo", []string{""}, sets.NewSorted("")},
 	{"foo", []string{"f"}, sets.NewSorted("f")},
 	{"foo", []string{"o"}, sets.NewSorted("o")},
+	{"f\x00o\x00o\x00", []string{"f"}, sets.NewSorted("f")},
 
 	{"foo", []string{"foo"}, sets.NewSorted("foo")},
+	{"f\x00o\x00o\x00", []string{"foo"}, sets.NewSorted("foo")},
 	{"xfoo", []string{"foo"}, sets.NewSorted("foo")},
 	{"fooy", []string{"foo"}, sets.NewSorted("foo")},
 	{"xfooy", []string{"foo"}, sets.NewSorted("foo")},
+	{"x\x00f\x00o\x00o\x00y\x00", []string{"foo"}, sets.NewSorted("foo")},
 	{"bar", []string{"foo"}, sets.NewSorted[string]()},
 
 	{"foo", []string{"f", "foo"}, sets.NewSorted("f", "foo")},
+	{"f\x00o\x00o\x00", []string{"f", "foo"}, sets.NewSorted("f", "foo")},
 	{"foo", []string{"o", "foo"}, sets.NewSorted("o", "foo")},
+	{"f\x00o\x00o\x00", []string{"o", "foo"}, sets.NewSorted("o", "foo")},
 
 	{"foo", []string{"foo", "bar"}, sets.NewSorted("foo")},
 	{"bar", []string{"foo", "bar"}, sets.NewSorted("bar")},
@@ -90,6 +96,16 @@ func refFinderOracle(s string, search []string) *sets.Sorted[string] {
 	for _, substr := range search {
 		if strings.Contains(s, substr) {
 			result.Add(substr)
+			continue
+		}
+		encoded := new(strings.Builder)
+		for _, codeUnit := range utf16.Encode([]rune(substr)) {
+			encoded.WriteByte(byte(codeUnit))
+			encoded.WriteByte(byte(codeUnit >> 8))
+		}
+		if strings.Contains(s, encoded.String()) {
+			result.Add(substr)
+			continue
 		}
 	}
 	return result
