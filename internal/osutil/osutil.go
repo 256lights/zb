@@ -105,7 +105,7 @@ func MakePublicReadOnly(path string, onError func(error) error) error {
 			existingMode = info.Mode() & permMask
 		}
 
-		newMode := (existingMode | 0o444) &^ 0o222 // +r-w
+		newMode := (existingMode | 0o444) &^ (0o222 | os.ModeSetuid | os.ModeSetgid) // +r-sw
 		if entry.IsDir() || existingMode&0o111 != 0 {
 			newMode |= 0o111 // +x
 		}
