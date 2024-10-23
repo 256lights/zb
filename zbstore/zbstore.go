@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"iter"
 	"unicode/utf8"
+
+	"zombiezen.com/go/nix"
 )
 
 // ExistsMethod is the name of the method that checks whether a store path exists.
@@ -18,6 +20,37 @@ const ExistsMethod = "zb.exists"
 // ExistsRequest is the set of parameters for [ExistsMethod].
 type ExistsRequest struct {
 	Path string `json:"path"`
+}
+
+// InfoMethod is the name of the method that returns information about a store object.
+// [InfoRequest] is used for the request
+// and [InfoResponse] is used for the response.
+const InfoMethod = "zb.info"
+
+// InfoRequest is the set of parameters for [InfoMethod].
+type InfoRequest struct {
+	Path Path `json:"path"`
+}
+
+// InfoResponse is the result for [InfoMethod].
+type InfoResponse struct {
+	// Info is the information for the requested path,
+	// or null if the path does not exist.
+	Info *ObjectInfo `json:"info"`
+}
+
+// ObjectInfo is a condensed version of [NARInfo] used in [InfoResponse].
+type ObjectInfo struct {
+	// NARHash is the hash of the decompressed .nar file.
+	// Nix requires this field to be set.
+	NARHash nix.Hash `json:"narHash"`
+	// NARSize is the size of the decompressed .nar file in bytes.
+	// Nix requires this field to be set.
+	NARSize int64 `json:"narSize"`
+	// References is the set of other store objects that this store object references.
+	References []Path `json:"references"`
+	// CA is a content-addressability assertion.
+	CA ContentAddress `json:"ca"`
 }
 
 // RealizeMethod is the name of the method that triggers a build of a store path.

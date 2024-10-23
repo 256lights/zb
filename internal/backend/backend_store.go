@@ -242,6 +242,55 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash
 	return nil
 }
 
+// pathInfo returns basic information about an object in the store.
+func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *zbstore.ObjectInfo, err error) {
+	defer sqlitex.Save(conn)(&err)
+
+	var info *zbstore.ObjectInfo
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "info.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{":path": string(path)},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			info = new(zbstore.ObjectInfo)
+			info.NARSize = stmt.GetInt64("nar_size")
+			var err error
+			info.NARHash, err = nix.ParseHash(stmt.GetText("nar_hash"))
+			if err != nil {
+				return err
+			}
+			info.CA, err = nix.ParseContentAddress(stmt.GetText("ca"))
+			if err != nil {
+				return err
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("path info for %s: %v", path, err)
+	}
+	if info == nil {
+		return nil, fmt.Errorf("path info for %s: %w", path, errObjectNotExist)
+	}
+
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "references.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{":path": string(path)},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			ref, err := zbstore.ParsePath(stmt.GetText("path"))
+			if err != nil {
+				return err
+			}
+			info.References = append(info.References, ref)
+			return nil
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("path info for %s: references: %v", path, err)
+	}
+
+	return info, nil
+}
+
+var errObjectNotExist = errors.New("object not in store")
+
 // closurePaths finds all store paths that the given path transitively refers to
 // and calls the yield function with each path,
 // including the original path itself.
@@ -315,7 +364,7 @@ func closurePaths(conn *sqlite.Conn, pe pathAndEquivalenceClass, yield func(path
 		return fmt.Errorf("find closure of %s: %v", pe.path, err)
 	}
 	if !calledYield {
-		return fmt.Errorf("find closure of %s: object not in store", pe.path)
+		return fmt.Errorf("find closure of %s: %w", pe.path, errObjectNotExist)
 	}
 	return nil
 }

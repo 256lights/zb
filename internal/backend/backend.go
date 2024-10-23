@@ -143,6 +143,7 @@ func (s *Server) Close() error {
 func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	return jsonrpc.ServeMux{
 		zbstore.ExistsMethod:  jsonrpc.HandlerFunc(s.exists),
+		zbstore.InfoMethod:    jsonrpc.HandlerFunc(s.info),
 		zbstore.ExpandMethod:  jsonrpc.HandlerFunc(s.expand),
 		zbstore.RealizeMethod: jsonrpc.HandlerFunc(s.realize),
 	}.JSONRPC(ctx, req)
@@ -179,6 +180,35 @@ func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 	return &jsonrpc.Response{
 		Result: json.RawMessage("true"),
 	}, nil
+}
+
+func (s *Server) info(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	var args zbstore.InfoRequest
+	if err := json.Unmarshal(req.Params, &args); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	if args.Path.Dir() != s.dir {
+		return marshalResponse(&zbstore.InfoResponse{})
+	}
+
+	conn, err := s.db.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer s.db.Put(conn)
+
+	log.Debugf(ctx, "Looking up path info for %s...", args.Path)
+	info, err := pathInfo(conn, args.Path)
+	if errors.Is(err, errObjectNotExist) {
+		return marshalResponse(&zbstore.InfoResponse{})
+	}
+	if info.References == nil {
+		// Don't send null for the array.
+		info.References = []zbstore.Path{}
+	}
+	return marshalResponse(&zbstore.InfoResponse{
+		Info: info,
+	})
 }
 
 // NARReceiver is a per-connection [zbstore.NARReceiver].

@@ -83,6 +83,7 @@ func main() {
 		newDerivationCommand(g),
 		newEvalCommand(g),
 		newServeCommand(g),
+		newStoreCommand(g),
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), interruptSignals...)
