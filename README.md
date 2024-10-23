@@ -1,6 +1,8 @@
 # zb
 
-zb is an experiment in hermetic, reproducible build systems.
+zb
+(pronounced "zee bee" or "zeeb")
+is an experiment in hermetic, reproducible build systems.
 It has not stabilized and should not be used for production purposes.
 
 zb is based on the ideas in [The purely functional software deployment model by Eelco Dolstra][dolstra_purely_2006]
