@@ -246,6 +246,8 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 }
 
 type clientRPCHandler struct {
+	mu          sync.Mutex
+	prevDrvPath zbstore.Path
 }
 
 func (h *clientRPCHandler) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
@@ -262,6 +264,20 @@ func (h *clientRPCHandler) log(ctx context.Context, req *jsonrpc.Request) (*json
 	payload := args.Payload()
 	if len(payload) == 0 {
 		return nil, nil
+	}
+
+	h.mu.Lock()
+	isNewDrvPath := args.DrvPath != h.prevDrvPath
+	h.prevDrvPath = args.DrvPath
+	h.mu.Unlock()
+
+	if isNewDrvPath {
+		oldPayload := payload
+		payload = nil
+		payload = append(payload, "--- "...)
+		payload = append(payload, args.DrvPath...)
+		payload = append(payload, " ---\n"...)
+		payload = append(payload, oldPayload...)
 	}
 	os.Stderr.Write(payload)
 	return nil, nil
