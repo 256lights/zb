@@ -11,6 +11,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -200,6 +201,7 @@ func TestClient(t *testing.T) {
 			},
 		},
 	}
+
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -245,6 +247,62 @@ func TestClient(t *testing.T) {
 			}
 			wg.Wait()
 		})
+	}
+}
+
+func TestClientCancel(t *testing.T) {
+	ctx := context.Background()
+	if d, ok := t.Deadline(); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, d)
+		defer cancel()
+	}
+	openCount := 0
+
+	codec := newTestClientCodec(t, []clientTestWireInteraction{
+		{
+			wantRequests: []any{
+				map[string]any{
+					"jsonrpc": "2.0",
+					"method":  "hang",
+					"id":      "1",
+				},
+				map[string]any{
+					"jsonrpc": "2.0",
+					"method":  "$/cancelRequest",
+					"params": map[string]any{
+						"id": "1",
+					},
+				},
+			},
+			responses: []json.RawMessage{
+				json.RawMessage(`{"jsonrpc": "2.0", "result": 123, "id": "1"}`),
+			},
+		},
+	})
+	client := NewClient(func(ctx context.Context) (ClientCodec, error) {
+		openCount++
+		if openCount > 1 {
+			t.Errorf("OpenFunc called %d times", openCount)
+			return nil, fmt.Errorf("open called %d times", openCount)
+		}
+		return codec, nil
+	})
+	defer func() {
+		if err := client.Close(); err != nil {
+			t.Error("Close:", err)
+		}
+	}()
+
+	callCtx, cancelCall := context.WithTimeout(ctx, 10*time.Millisecond)
+	defer cancelCall()
+	got, err := client.JSONRPC(callCtx, &Request{
+		Method: "hang",
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || got != nil {
+		t.Errorf("client.JSONRPC(...) = %v, %v; want <nil>, %v", got, err, context.DeadlineExceeded)
+	} else {
+		t.Log("error (expected):", err)
 	}
 }
 
@@ -344,7 +402,7 @@ func (c *testClientCodec) WriteRequest(request json.RawMessage) error {
 		c.lockedAdvance()
 		return err
 	}
-	if diff := cmp.Diff(c.interactions[c.currInteraction].wantRequests[0], parsed); diff != "" {
+	if diff := cmp.Diff(c.interactions[c.currInteraction].wantRequests[c.requestIndex], parsed); diff != "" {
 		c.tb.Errorf("client request (-want +got):\n%s", diff)
 	}
 	c.requestIndex++

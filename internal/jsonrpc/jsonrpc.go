@@ -207,6 +207,16 @@ func (id *requestID) UnmarshalJSON(data []byte) error {
 	}
 }
 
+// cancelMethod is the reserved method name for canceling a request.
+// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#cancelRequest
+const cancelMethod = "$/cancelRequest"
+
+// cancelParams is the parameter object for a cancellation request.
+// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#cancelRequest
+type cancelParams struct {
+	ID requestID `json:"id"`
+}
+
 // inverseFilterMap returns a new map that contains all the keys
 // for which f(k) reports false.
 func inverseFilterMap[K comparable, V any, M ~map[K]V](m M, f func(K) bool) map[K]V {

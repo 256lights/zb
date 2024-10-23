@@ -50,15 +50,21 @@ func (MethodNotFoundHandler) JSONRPC(ctx context.Context, req *Request) (*Respon
 }
 
 type server struct {
-	mu    sync.Mutex
-	codec ServerCodec
+	writeLock sync.Mutex
+	codec     ServerCodec
+
+	mu        sync.Mutex
+	cancelMap map[requestID]context.CancelFunc
 }
 
 // Serve serves JSON-RPC requests for a connection.
 // Serve will read requests from the codec until ReadRequest returns an error,
 // which Serve will return once all requests have completed.
 func Serve(ctx context.Context, codec ServerCodec, handler Handler) error {
-	srv := &server{codec: codec}
+	srv := &server{
+		codec:     codec,
+		cancelMap: make(map[requestID]context.CancelFunc),
+	}
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
@@ -69,41 +75,57 @@ func Serve(ctx context.Context, codec ServerCodec, handler Handler) error {
 		}
 
 		// TODO(someday): Support batches.
-		var parsed rawRequest
-		if err := json.Unmarshal(content, &parsed); err != nil {
-			err = Error(ParseError, err)
+		parsed := new(serverRequest)
+		if err := parsed.UnmarshalJSON(content); err != nil {
 			srv.writeError(err)
 			continue
+		}
+
+		requestCtx, cancel := context.WithCancel(ctx)
+		if !parsed.Notification {
+			srv.mu.Lock()
+			srv.cancelMap[parsed.id] = cancel
+			srv.mu.Unlock()
 		}
 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			srv.single(ctx, handler, parsed)
+			srv.single(requestCtx, handler, parsed, cancel)
 		}()
 	}
 }
 
-func (srv *server) single(ctx context.Context, handler Handler, raw rawRequest) {
-	id, req, err := raw.toRequest()
-	if err != nil {
-		srv.writeError(err)
-		return
-	}
+func (srv *server) single(ctx context.Context, handler Handler, req *serverRequest, cancel context.CancelFunc) {
+	defer cancel()
+	// Make defensive copy of request information.
+	notification := req.Notification
 
-	// Make copies of Server fields so we can't race later.
-	resp, err := handler.JSONRPC(ctx, req)
-	if req.Notification {
+	var resp *Response
+	var err error
+	switch req.Method {
+	case cancelMethod:
+		resp, err = srv.cancel(&req.Request)
+	default:
+		resp, err = handler.JSONRPC(ctx, &req.Request)
+	}
+	cancel()
+
+	if notification {
 		// Notifications do not receive a response.
 		return
 	}
 
+	srv.mu.Lock()
+	delete(srv.cancelMap, req.id)
+	srv.mu.Unlock()
+
 	buf := new(bytes.Buffer)
 	if err != nil {
-		marshalError(buf, id, err)
+		marshalError(buf, req.id, err)
 	} else {
 		buf.WriteString(`{"jsonrpc":"2.0","id":`)
-		idJSON, err := id.MarshalJSON()
+		idJSON, err := req.id.MarshalJSON()
 		if err != nil {
 			panic(err)
 		}
@@ -127,17 +149,33 @@ func (srv *server) single(ctx context.Context, handler Handler, raw rawRequest) 
 		buf.WriteString("}")
 	}
 
+	srv.writeLock.Lock()
+	defer srv.writeLock.Unlock()
+	srv.codec.WriteResponse(json.RawMessage(buf.Bytes()))
+}
+
+// cancel handles a [cancelMethod] request.
+func (srv *server) cancel(req *Request) (*Response, error) {
+	var args cancelParams
+	if err := json.Unmarshal(req.Params, &args); err != nil {
+		return nil, Error(InvalidParams, err)
+	}
+
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
-	srv.codec.WriteResponse(json.RawMessage(buf.Bytes()))
+	if cancel := srv.cancelMap[args.ID]; cancel != nil {
+		cancel()
+	}
+	delete(srv.cancelMap, args.ID)
+	return nil, nil
 }
 
 func (srv *server) writeError(err error) {
 	buf := new(bytes.Buffer)
 	marshalError(buf, requestID{}, err)
 
-	srv.mu.Lock()
-	defer srv.mu.Unlock()
+	srv.writeLock.Lock()
+	defer srv.writeLock.Unlock()
 	srv.codec.WriteResponse(json.RawMessage(buf.Bytes()))
 }
 
@@ -154,67 +192,50 @@ func (mux ServeMux) JSONRPC(ctx context.Context, req *Request) (*Response, error
 	return h.JSONRPC(ctx, req)
 }
 
-type rawRequest map[string]json.RawMessage
-
-func (req rawRequest) toRequest() (requestID, *Request, error) {
-	if err := req.checkVersion(); err != nil {
-		return requestID{}, nil, err
-	}
-	req2 := new(Request)
-	var err error
-	req2.Method, err = req.method()
-	if err != nil {
-		return requestID{}, nil, err
-	}
-	req2.Params = req.params()
-	id, idPresent, err := req.id()
-	if err != nil {
-		return requestID{}, nil, err
-	}
-	req2.Notification = !idPresent
-	req2.Extra = inverseFilterMap(req, isReservedRequestField)
-
-	return id, req2, nil
+type serverRequest struct {
+	id requestID
+	Request
 }
 
-func (req rawRequest) checkVersion() error {
-	version := req["jsonrpc"]
+func (req *serverRequest) UnmarshalJSON(data []byte) error {
+	raw := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return Error(ParseError, err)
+	}
+
+	version := raw["jsonrpc"]
 	if len(version) == 0 {
 		return Error(InvalidRequest, fmt.Errorf("jsonrpc version missing in request"))
 	}
-	var s string
-	if err := json.Unmarshal(version, &s); err != nil {
+	var versionString string
+	if err := json.Unmarshal(version, &versionString); err != nil {
 		return Error(InvalidRequest, fmt.Errorf("jsonrpc version: %v", err))
 	}
-	if s != "2.0" {
-		return Error(InvalidRequest, fmt.Errorf("jsonrpc version %q not supported", s))
+	if versionString != "2.0" {
+		return Error(InvalidRequest, fmt.Errorf("jsonrpc version %q not supported", versionString))
 	}
+
+	err := json.Unmarshal(raw["method"], &req.Method)
+	if err != nil {
+		return Error(InvalidRequest, fmt.Errorf("jsonrpc method: %v", err))
+	}
+
+	req.Params = raw["params"]
+
+	rawID := raw["id"]
+	req.Notification = len(rawID) == 0
+	if req.Notification {
+		req.id = requestID{}
+	} else {
+		err = req.id.UnmarshalJSON(rawID)
+		if err != nil {
+			return Error(InvalidRequest, fmt.Errorf("jsonrpc id: %v", err))
+		}
+	}
+
+	req.Extra = inverseFilterMap(raw, isReservedRequestField)
+
 	return nil
-}
-
-func (req rawRequest) method() (string, error) {
-	var s string
-	err := json.Unmarshal(req["method"], &s)
-	if err != nil {
-		err = Error(InvalidRequest, fmt.Errorf("jsonrpc method: %v", err))
-	}
-	return s, err
-}
-
-func (req rawRequest) id() (id requestID, present bool, err error) {
-	raw := req["id"]
-	if len(raw) == 0 {
-		return requestID{}, false, nil
-	}
-	err = id.UnmarshalJSON(raw)
-	if err != nil {
-		return requestID{}, false, Error(InvalidRequest, fmt.Errorf("jsonrpc id: %v", err))
-	}
-	return id, true, nil
-}
-
-func (req rawRequest) params() json.RawMessage {
-	return req["params"]
 }
 
 func marshalError(buf *bytes.Buffer, id requestID, err error) {

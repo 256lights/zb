@@ -93,12 +93,13 @@ func (c *Client) JSONRPC(ctx context.Context, req *Request) (*Response, error) {
 		return nil, Error(InvalidRequest, fmt.Errorf("call json rpc %s: params must be an object or an array", req.Method))
 	}
 
+	write := make(chan error, 1)
+	creq := clientRequest{
+		context: ctx,
+		Request: req,
+		write:   write,
+	}
 	if req.Notification {
-		write := make(chan error, 1)
-		creq := clientRequest{
-			Request: req,
-			write:   write,
-		}
 		select {
 		case c.comms <- creq:
 			select {
@@ -116,30 +117,17 @@ func (c *Client) JSONRPC(ctx context.Context, req *Request) (*Response, error) {
 	}
 
 	responseChan := make(chan rawResponse, 1)
-	creq := clientRequest{
-		Request:  req,
-		response: responseChan,
-	}
+	creq.response = responseChan
 	select {
 	case c.comms <- creq:
 	case <-ctx.Done():
 		return nil, fmt.Errorf("call json rpc %s: %w", req.Method, ctx.Err())
 	}
-	select {
-	case raw := <-responseChan:
-		if raw == nil {
-			// Disconnected before response received.
-			return nil, fmt.Errorf("call json rpc %s: connection interrupted", req.Method)
-		}
-
-		resp, err := raw.toResponse()
-		if err != nil {
-			return resp, fmt.Errorf("call json rpc %s: %w", req.Method, err)
-		}
-		return resp, nil
-	case <-ctx.Done():
-		return nil, fmt.Errorf("call json rpc %s: %w", req.Method, ctx.Err())
+	resp, err := (<-responseChan).toResponse()
+	if err != nil {
+		return resp, fmt.Errorf("call json rpc %s: %w", req.Method, err)
 	}
+	return resp, nil
 }
 
 func (c *Client) communicate(ctx context.Context, open OpenFunc) {
@@ -169,6 +157,12 @@ func (c *Client) communicate(ctx context.Context, open OpenFunc) {
 	}
 }
 
+type inflightRequestState struct {
+	context      context.Context
+	responseChan chan<- rawResponse
+	ignoreCancel func()
+}
+
 func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Closer) {
 	// Read messages in a separate goroutine,
 	// so we can select on them down below.
@@ -185,19 +179,31 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 		}
 	}()
 
-	responseChans := make(map[int64]chan<- rawResponse)
+	inflight := make(map[int64]inflightRequestState)
+	cancels := make(chan int64)
+	var cancelGroup sync.WaitGroup
 
 	defer func() {
 		log.Debugf(ctx, "Shutting down JSON-RPC connection")
 		closer.Close()
 		// Inform any pending application calls that the response will never come.
-		for id, c := range responseChans {
+		for id, r := range inflight {
 			log.Debugf(ctx, "Response for %v dropped", id)
-			c <- nil
+			r.responseChan <- rawResponse{error: errInterrupt}
+			r.ignoreCancel()
 		}
-		responseChans = nil
+		inflight = nil
+
 		// Drain the reader goroutine.
 		for range messages {
+		}
+
+		// Drain the cancels channel.
+		go func() {
+			cancelGroup.Wait()
+			close(cancels)
+		}()
+		for range cancels {
 		}
 	}()
 
@@ -210,21 +216,35 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 				// Connection fault.
 				return
 			}
-			dispatchResponse(ctx, msg, responseChans)
+			dispatchResponse(ctx, msg, inflight)
 		case req := <-c.comms:
 			// Handle incoming application requests.
 
 			buf.Reset()
 			buf.WriteString(`{"jsonrpc":"2.0","method":`)
 			buf.Write(jsonstring.Append(nil, req.Method))
+			id := int64(-1)
 			if req.Notification {
 				log.Debugf(ctx, "Writing %s JSON-RPC notification", req.Method)
 			} else {
-				id := nextID
+				id = nextID
 				nextID++
-				if req.response != nil {
-					responseChans[id] = req.response
+
+				cancelGroup.Add(1)
+				stopAfterFunc := context.AfterFunc(req.context, func() {
+					cancels <- id
+					cancelGroup.Done()
+				})
+				inflight[id] = inflightRequestState{
+					context:      req.context,
+					responseChan: req.response,
+					ignoreCancel: func() {
+						if stopAfterFunc() {
+							cancelGroup.Done()
+						}
+					},
 				}
+
 				buf.WriteString(`,"id":`)
 				clientID := marshalClientID(nil, id)
 				buf.Write(clientID)
@@ -244,6 +264,40 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 				log.Debugf(ctx, "Failed to send message: %v", err)
 				return
 			}
+		case id := <-cancels:
+			// A request's context has been canceled.
+
+			state, waiting := inflight[id]
+			if !waiting {
+				continue
+			}
+
+			buf.Reset()
+			buf.WriteString(`{"jsonrpc":"2.0","method":"`)
+			buf.WriteString(cancelMethod) // Method name is JSON safe.
+			buf.WriteString(`","params":{"id":`)
+			clientID := marshalClientID(nil, id)
+			buf.Write(clientID)
+			buf.WriteString(`}}`)
+			log.Debugf(ctx, "Canceling JSON-RPC with id=%s", clientID)
+
+			// Remove from in-flight.
+			// We don't reuse IDs unless we wrap 2^64,
+			// so we'll drop the server's response and that's okay.
+			if state.responseChan != nil {
+				state.responseChan <- rawResponse{
+					error: state.context.Err(),
+				}
+			}
+			if state.ignoreCancel != nil {
+				state.ignoreCancel()
+			}
+			delete(inflight, id)
+
+			if err := conn.WriteRequest(json.RawMessage(buf.Bytes())); err != nil {
+				log.Debugf(ctx, "Failed to send message: %v", err)
+				return
+			}
 		case r := <-c.codecRequests:
 			r.codec <- conn
 		appUse:
@@ -259,7 +313,7 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 						// Connection fault.
 						return
 					}
-					dispatchResponse(ctx, msg, responseChans)
+					dispatchResponse(ctx, msg, inflight)
 				}
 			}
 		case <-ctx.Done():
@@ -270,9 +324,11 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 	}
 }
 
+var errInterrupt = errors.New("connection interrupted")
+
 // dispatchResponse sends a server response (possibly a batch)
 // to the corresponding listener(s).
-func dispatchResponse(ctx context.Context, msg json.RawMessage, responseChans map[int64]chan<- rawResponse) {
+func dispatchResponse(ctx context.Context, msg json.RawMessage, inflight map[int64]inflightRequestState) {
 	batch, err := unmarshalResponseBatch(msg)
 	if err != nil {
 		log.Warnf(ctx, "JSON-RPC server returned invalid JSON: %v", err)
@@ -295,12 +351,15 @@ func dispatchResponse(ctx context.Context, msg json.RawMessage, responseChans ma
 			// We only make *numeric* string IDs.
 			continue
 		}
-		c := responseChans[idNum]
-		if c == nil {
-			continue
+
+		state := inflight[idNum]
+		if state.responseChan != nil {
+			state.responseChan <- resp
 		}
-		c <- resp
-		delete(responseChans, idNum)
+		if state.ignoreCancel != nil {
+			state.ignoreCancel()
+		}
+		delete(inflight, idNum)
 	}
 }
 
@@ -339,6 +398,7 @@ func (c *Client) Codec(ctx context.Context) (codec RequestWriter, release func()
 // A clientRequest is sent from client methods to the connection handler
 // to be written on the wire.
 type clientRequest struct {
+	context context.Context
 	*Request
 
 	// write is a channel that will receive a notification of the write's result if non-nil.
@@ -347,7 +407,7 @@ type clientRequest struct {
 
 	// response is the channel that will receive the response message if non-nil.
 	// It must have a buffer of at least 1.
-	// If the connection is interrupted before a response is recieved,
+	// If the connection is interrupted before a response is received,
 	// it will receive a nil message.
 	response chan<- rawResponse
 }
@@ -357,15 +417,21 @@ type clientCodecRequest struct {
 	release <-chan struct{}
 }
 
-type rawResponse map[string]json.RawMessage
+type rawResponse struct {
+	msg   map[string]json.RawMessage
+	error error
+}
 
 func (resp rawResponse) toResponse() (*Response, error) {
+	if resp.error != nil {
+		return nil, resp.error
+	}
 	if err := resp.checkVersion(); err != nil {
 		return nil, err
 	}
-	extra := inverseFilterMap(resp, isReservedResponseField)
+	extra := inverseFilterMap(resp.msg, isReservedResponseField)
 
-	switch resultField, errorField := resp["result"], resp["error"]; {
+	switch resultField, errorField := resp.msg["result"], resp.msg["error"]; {
 	case len(resultField) > 0 && len(errorField) > 0:
 		err := fmt.Errorf("jsonrpc response contains both result and error")
 		if len(extra) > 0 {
@@ -404,7 +470,7 @@ func (resp rawResponse) toResponse() (*Response, error) {
 }
 
 func (resp rawResponse) checkVersion() error {
-	version := resp["jsonrpc"]
+	version := resp.msg["jsonrpc"]
 	if len(version) == 0 {
 		return fmt.Errorf("jsonrpc version missing in response")
 	}
@@ -419,7 +485,7 @@ func (resp rawResponse) checkVersion() error {
 }
 
 func (resp rawResponse) id() (requestID, error) {
-	raw := resp["id"]
+	raw := resp.msg["id"]
 	if len(raw) == 0 {
 		return requestID{}, fmt.Errorf("jsonrpc response missing id")
 	}
@@ -471,7 +537,7 @@ func unmarshalClientID(s string) (int64, bool) {
 func unmarshalResponseBatch(msg json.RawMessage) ([]rawResponse, error) {
 	if len(msg) == 0 || msg[0] != '[' {
 		var response rawResponse
-		if err := json.Unmarshal(msg, &response); err != nil {
+		if err := json.Unmarshal(msg, &response.msg); err != nil {
 			return nil, err
 		}
 		return []rawResponse{response}, nil
@@ -485,11 +551,8 @@ func unmarshalResponseBatch(msg json.RawMessage) ([]rawResponse, error) {
 	}
 
 	responses := make([]rawResponse, len(array))
-	for i, r := range array {
-		var rr rawResponse
-		if err := json.Unmarshal(r, &rr); err == nil {
-			responses[i] = rr
-		}
+	for i, data := range array {
+		responses[i].error = json.Unmarshal(data, &responses[i].msg)
 	}
 	return responses, nil
 }

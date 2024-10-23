@@ -66,6 +66,20 @@ func TestServe(t *testing.T) {
 			},
 		},
 		{
+			name: "Cancel",
+			requests: []json.RawMessage{
+				json.RawMessage(`{"jsonrpc": "2.0", "method": "hang", "id": 1}`),
+				json.RawMessage(`{"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": 1}}`),
+			},
+			responses: []any{
+				map[string]any{
+					"jsonrpc": "2.0",
+					"result":  nil,
+					"id":      json.Number("1"),
+				},
+			},
+		},
+		{
 			name: "NonExistentNotification",
 			requests: []json.RawMessage{
 				json.RawMessage(`{"jsonrpc": "2.0", "method": "foobar"}`),
@@ -125,6 +139,9 @@ func TestServe(t *testing.T) {
 			return &Response{
 				Result: json.RawMessage(strconv.AppendInt(nil, result, 10)),
 			}, nil
+		case "hang":
+			<-ctx.Done()
+			return nil, nil
 		default:
 			return nil, Error(MethodNotFound, fmt.Errorf("unknown method %q", req.Method))
 		}
@@ -133,6 +150,11 @@ func TestServe(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
+			if d, ok := t.Deadline(); ok {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithDeadline(ctx, d)
+				defer cancel()
+			}
 			codec := &testServerCodec{requests: test.requests}
 			Serve(ctx, codec, handler)
 
