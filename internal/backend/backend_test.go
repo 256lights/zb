@@ -10,11 +10,15 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/storetest"
+	"zb.256lights.llc/pkg/internal/system"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log/testlog"
 	"zombiezen.com/go/nix"
@@ -27,7 +31,26 @@ func TestImport(t *testing.T) {
 		const fileContent = "Hello, World!\n"
 		exportBuffer := new(bytes.Buffer)
 		exporter := zbstore.NewExporter(exportBuffer)
-		storePath, err := storetest.ExportFlatFile(exporter, dir, "hello.txt", []byte(fileContent), nix.SHA256)
+		storePath1, ca1, err := storetest.ExportFlatFile(exporter, dir, "hello.txt", []byte(fileContent), nix.SHA256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		drv := &zbstore.Derivation{
+			Dir:          dir,
+			Name:         "a",
+			System:       system.Current().String(),
+			Builder:      "true",
+			InputSources: *sets.NewSorted(storePath1),
+			Outputs: map[string]*zbstore.DerivationOutputType{
+				zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+			},
+		}
+		drvName := drv.Name + zbstore.DerivationExt
+		drvData, err := drv.MarshalText()
+		if err != nil {
+			t.Fatal(err)
+		}
+		storePath2, ca2, err := storetest.ExportText(exporter, dir, drvName, drvData, drv.References().ToSet(""))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -51,21 +74,66 @@ func TestImport(t *testing.T) {
 		// Exports don't send a response, so this introduces a sync point.
 		var exists bool
 		err = jsonrpc.Do(ctx, client, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
-			Path: string(storePath),
+			Path: string(storePath1),
 		})
 		if err != nil {
 			t.Error(err)
 		}
 		if !exists {
-			t.Errorf("store reports exists=false for %s", storePath)
+			t.Errorf("store reports exists=false for %s", storePath1)
+		}
+		err = jsonrpc.Do(ctx, client, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
+			Path: string(storePath2),
+		})
+		if err != nil {
+			t.Error(err)
+		}
+		if !exists {
+			t.Errorf("store reports exists=false for %s", storePath2)
 		}
 
-		// Verify that store object exists on disk.
-		realFilePath := filepath.Join(realStoreDir, storePath.Base())
+		// Call info method.
+		var info zbstore.InfoResponse
+		err = jsonrpc.Do(ctx, client, zbstore.InfoMethod, &info, &zbstore.InfoRequest{
+			Path: storePath1,
+		})
+		if err != nil {
+			t.Error(err)
+		} else {
+			want := wantFileObjectInfo(info.Info, []byte(fileContent), ca1, nil)
+			if diff := cmp.Diff(want, info.Info); diff != "" {
+				t.Errorf("%s info (-want +got):\n%s", storePath1, diff)
+			}
+		}
+		err = jsonrpc.Do(ctx, client, zbstore.InfoMethod, &info, &zbstore.InfoRequest{
+			Path: storePath2,
+		})
+		if err != nil {
+			t.Error(err)
+		} else {
+			want := wantFileObjectInfo(info.Info, []byte(drvData), ca2, drv.References().ToSet(storePath2))
+			if diff := cmp.Diff(want, info.Info); diff != "" {
+				t.Errorf("%s info (-want +got):\n%s", storePath2, diff)
+			}
+		}
+
+		// Verify that store objects exist on disk.
+		realFilePath := filepath.Join(realStoreDir, storePath1.Base())
 		if got, err := os.ReadFile(realFilePath); err != nil {
 			t.Error(err)
 		} else if string(got) != fileContent {
-			t.Errorf("%s content = %q; want %q", storePath, got, fileContent)
+			t.Errorf("%s content = %q; want %q", storePath1, got, fileContent)
+		}
+		if info, err := os.Lstat(realFilePath); err != nil {
+			t.Error(err)
+		} else if got := info.Mode(); got&0o111 != 0 {
+			t.Errorf("mode = %v; want non-executable", got)
+		}
+		realFilePath = filepath.Join(realStoreDir, storePath2.Base())
+		if got, err := os.ReadFile(realFilePath); err != nil {
+			t.Error(err)
+		} else if !bytes.Equal(got, drvData) {
+			t.Errorf("%s content = %q; want %q", storePath2, got, fileContent)
 		}
 		if info, err := os.Lstat(realFilePath); err != nil {
 			t.Error(err)
@@ -146,6 +214,39 @@ func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir strin
 	})
 
 	return client
+}
+
+// wantObjectInfo builds the expected [*zbstore.ObjectInfo]
+// for the given data, content address, and references.
+// It uses got.NARHash to determine the hashing algorithm to check against.
+func wantObjectInfo(got *zbstore.ObjectInfo, narData []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) *zbstore.ObjectInfo {
+	info := &zbstore.ObjectInfo{
+		NARSize:    int64(len(narData)),
+		References: slices.Collect(refs.Values()),
+		CA:         ca,
+	}
+	if info.References == nil {
+		// Should not be null.
+		info.References = []zbstore.Path{}
+	}
+
+	ht := got.NARHash.Type()
+	if ht == 0 {
+		ht = nix.SHA256
+	}
+	h := nix.NewHasher(ht)
+	h.Write(narData)
+	info.NARHash = h.SumHash()
+
+	return info
+}
+
+func wantFileObjectInfo(got *zbstore.ObjectInfo, fileData []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) *zbstore.ObjectInfo {
+	buf := new(bytes.Buffer)
+	if err := storetest.SingleFileNAR(buf, fileData); err != nil {
+		panic(err)
+	}
+	return wantObjectInfo(got, buf.Bytes(), ca, refs)
 }
 
 func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstore.Codec, release func(), err error) {

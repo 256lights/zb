@@ -342,6 +342,7 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 			NARHash:     r.hasher.SumHash(),
 			Compression: zbstore.NoCompression,
 			CA:          ca,
+			References:  trailer.References,
 		})
 	}()
 	if err != nil {

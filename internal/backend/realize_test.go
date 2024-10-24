@@ -42,7 +42,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExporter(exportBuffer)
-	inputFilePath, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 		},
 	}
 	drvContent.Builder, drvContent.Args = catcatBuilder()
-	drvPath, err := storetest.ExportDerivation(exporter, drvContent)
+	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestRealizeReuse(t *testing.T) {
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExporter(exportBuffer)
-	inputFilePath, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestRealizeReuse(t *testing.T) {
 		},
 	}
 	drvContent.Builder, drvContent.Args = catcatBuilder()
-	drvPath, err := storetest.ExportDerivation(exporter, drvContent)
+	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestRealizeMultiStep(t *testing.T) {
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExporter(exportBuffer)
-	inputFilePath, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestRealizeMultiStep(t *testing.T) {
 		},
 	}
 	drv1Content.Builder, drv1Content.Args = catcatBuilder()
-	drv1Path, err := storetest.ExportDerivation(exporter, drv1Content)
+	drv1Path, _, err := storetest.ExportDerivation(exporter, drv1Content)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestRealizeMultiStep(t *testing.T) {
 		},
 	}
 	drv2Content.Builder, drv2Content.Args = catcatBuilder()
-	drv2Path, err := storetest.ExportDerivation(exporter, drv2Content)
+	drv2Path, _, err := storetest.ExportDerivation(exporter, drv2Content)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExporter(exportBuffer)
-	inputFilePath, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 		},
 	}
 	drv1Content.Builder, drv1Content.Args = catcatBuilder()
-	drv1Path, err := storetest.ExportDerivation(exporter, drv1Content)
+	drv1Path, _, err := storetest.ExportDerivation(exporter, drv1Content)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 			`echo "$in" > "$out"`,
 		}
 	}
-	drv2Path, err := storetest.ExportDerivation(exporter, drv2Content)
+	drv2Path, _, err := storetest.ExportDerivation(exporter, drv2Content)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,6 +380,31 @@ func TestRealizeReferenceToDep(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkSingleFileOutput(t, wantOutputPath, wantOutputContent, got)
+
+	var info zbstore.InfoResponse
+	err = jsonrpc.Do(ctx, client, zbstore.InfoMethod, &info, &zbstore.InfoRequest{
+		Path: wantOutputPath,
+	})
+	if err != nil {
+		t.Error(err)
+	} else {
+		buf := new(bytes.Buffer)
+		if err := storetest.SingleFileNAR(buf, wantOutputContent); err != nil {
+			t.Fatal(err)
+		}
+		narData := buf.Bytes()
+		ca, _, err := zbstore.SourceSHA256ContentAddress("", bytes.NewReader(narData))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := wantObjectInfo(info.Info, narData, ca, sets.NewSorted(
+			drv1OutputPath,
+		))
+		if diff := cmp.Diff(want, info.Info); diff != "" {
+			t.Errorf("info (-want +got):\n%s", diff)
+		}
+	}
 }
 
 func TestRealizeFixed(t *testing.T) {
@@ -418,7 +443,7 @@ func TestRealizeFixed(t *testing.T) {
 			`echo 'Hello, World!' > $out`,
 		}
 	}
-	drv1Path, err := storetest.ExportDerivation(exporter, drv1Content)
+	drv1Path, _, err := storetest.ExportDerivation(exporter, drv1Content)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +467,7 @@ func TestRealizeFixed(t *testing.T) {
 		drv2Content.Builder = shPath
 		drv2Content.Args = []string{"-c", "exit 1"}
 	}
-	drv2Path, err := storetest.ExportDerivation(exporter, drv2Content)
+	drv2Path, _, err := storetest.ExportDerivation(exporter, drv2Content)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +539,7 @@ func TestRealizeFailure(t *testing.T) {
 		drvContent.Builder = shPath
 		drvContent.Args = []string{"-c", "echo > $out ; exit 1"}
 	}
-	drvPath, err := storetest.ExportDerivation(exporter, drvContent)
+	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +620,7 @@ func TestRealizeFetchURL(t *testing.T) {
 			zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(wantOutputCA),
 		},
 	}
-	drvPath, err := storetest.ExportDerivation(exporter, drvContent)
+	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
 	if err != nil {
 		t.Fatal(err)
 	}

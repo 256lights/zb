@@ -17,23 +17,23 @@ import (
 )
 
 // ExportFlatFile writes a fixed-hash flat file to the exporter with the given content.
-func ExportFlatFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, ht nix.HashType) (zbstore.Path, error) {
+func ExportFlatFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, ht nix.HashType) (zbstore.Path, zbstore.ContentAddress, error) {
 	h := nix.NewHasher(ht)
 	h.Write(data)
 	ca := nix.FlatFileContentAddress(h.SumHash())
 	p, err := exportFile(exp, dir, name, data, ca, nil)
 	if err != nil {
 		if p == "" {
-			return "", err
+			return "", ca, err
 		}
-		return p, fmt.Errorf("export flat file %s: %v", p, err)
+		return p, ca, fmt.Errorf("export flat file %s: %v", p, err)
 	}
-	return p, nil
+	return p, ca, nil
 }
 
 // ExportText writes a text file (e.g. a ".drv" file)
 // to the exporter with the given content.
-func ExportText(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, refs *sets.Sorted[zbstore.Path]) (zbstore.Path, error) {
+func ExportText(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, refs *sets.Sorted[zbstore.Path]) (zbstore.Path, zbstore.ContentAddress, error) {
 	h := nix.NewHasher(nix.SHA256)
 	h.Write(data)
 	ca := nix.TextContentAddress(h.SumHash())
@@ -43,19 +43,19 @@ func ExportText(exp *zbstore.Exporter, dir zbstore.Directory, name string, data 
 	p, err := exportFile(exp, dir, name, data, ca, &trimmedRefs.Others)
 	if err != nil {
 		if p == "" {
-			return "", err
+			return "", ca, err
 		}
-		return p, fmt.Errorf("export text %s: %v", p, err)
+		return p, ca, fmt.Errorf("export text %s: %v", p, err)
 	}
-	return p, nil
+	return p, ca, nil
 }
 
 // ExportDerivation writes a ".drv" file to the exporter.
-func ExportDerivation(exp *zbstore.Exporter, drv *zbstore.Derivation) (zbstore.Path, error) {
+func ExportDerivation(exp *zbstore.Exporter, drv *zbstore.Derivation) (zbstore.Path, zbstore.ContentAddress, error) {
 	name := drv.Name + zbstore.DerivationExt
 	data, err := drv.MarshalText()
 	if err != nil {
-		return "", fmt.Errorf("export derivation %s: %v", name, err)
+		return "", zbstore.ContentAddress{}, fmt.Errorf("export derivation %s: %v", name, err)
 	}
 	h := nix.NewHasher(nix.SHA256)
 	h.Write(data)
@@ -64,11 +64,11 @@ func ExportDerivation(exp *zbstore.Exporter, drv *zbstore.Derivation) (zbstore.P
 	p, err := exportFile(exp, drv.Dir, name, data, ca, refs)
 	if err != nil {
 		if p == "" {
-			return "", fmt.Errorf("export derivation %s: %v", name, err)
+			return "", ca, fmt.Errorf("export derivation %s: %v", name, err)
 		}
-		return p, fmt.Errorf("export derivation %s: %v", p, err)
+		return p, ca, fmt.Errorf("export derivation %s: %v", p, err)
 	}
-	return p, nil
+	return p, ca, nil
 }
 
 func exportFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) (zbstore.Path, error) {
@@ -92,24 +92,24 @@ func exportFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data 
 }
 
 // ExportSourceFile writes a file with the given content to the exporter.
-func ExportSourceFile(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name string, data []byte, refs zbstore.References) (zbstore.Path, error) {
+func ExportSourceFile(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name string, data []byte, refs zbstore.References) (zbstore.Path, zbstore.ContentAddress, error) {
 	narBuffer := new(bytes.Buffer)
 	if err := SingleFileNAR(narBuffer, data); err != nil {
-		return "", err
+		return "", zbstore.ContentAddress{}, err
 	}
 	return exportSource(exp, dir, tempDigest, name, narBuffer.Bytes(), refs)
 }
 
 // ExportSourceDir writes the given filesystem to the exporter.
-func ExportSourceDir(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name string, fsys fs.FS, refs zbstore.References) (zbstore.Path, error) {
+func ExportSourceDir(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name string, fsys fs.FS, refs zbstore.References) (zbstore.Path, zbstore.ContentAddress, error) {
 	narBuffer := new(bytes.Buffer)
 	if err := new(nar.Dumper).Dump(narBuffer, fsys, "."); err != nil {
-		return "", err
+		return "", zbstore.ContentAddress{}, err
 	}
 	return exportSource(exp, dir, tempDigest, name, narBuffer.Bytes(), refs)
 }
 
-func exportSource(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name string, narBytes []byte, refs zbstore.References) (zbstore.Path, error) {
+func exportSource(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name string, narBytes []byte, refs zbstore.References) (zbstore.Path, zbstore.ContentAddress, error) {
 	if !refs.Self {
 		tempDigest = ""
 	}
@@ -117,24 +117,24 @@ func exportSource(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name
 
 	ca, offsets, err := zbstore.SourceSHA256ContentAddress(tempDigest, bytes.NewReader(narBytes))
 	if err != nil {
-		return "", err
+		return "", zbstore.ContentAddress{}, err
 	}
 	p, err := zbstore.FixedCAOutputPath(dir, name, ca, refs)
 	if err != nil {
-		return "", err
+		return "", ca, err
 	}
 
 	// Rewrite NAR in-place.
 	newDigest := p.Digest()
 	if tempDigest != "" && len(tempDigest) != len(newDigest) {
-		return p, fmt.Errorf("export source %s: temporary digest %q is wrong size (expected %d)", p, tempDigest, len(newDigest))
+		return p, ca, fmt.Errorf("export source %s: temporary digest %q is wrong size (expected %d)", p, tempDigest, len(newDigest))
 	}
 	for _, off := range offsets {
 		copy(narBytes[off:int(off)+len(newDigest)], newDigest)
 	}
 
 	if _, err := exp.Write(narBytes); err != nil {
-		return p, fmt.Errorf("export source %s: %v", p, err)
+		return p, ca, fmt.Errorf("export source %s: %v", p, err)
 	}
 	err = exp.Trailer(&zbstore.ExportTrailer{
 		StorePath:      p,
@@ -142,9 +142,9 @@ func exportSource(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name
 		References:     *refs.ToSet(p),
 	})
 	if err != nil {
-		return p, fmt.Errorf("export source %s: %v", p, err)
+		return p, ca, fmt.Errorf("export source %s: %v", p, err)
 	}
-	return p, nil
+	return p, ca, nil
 }
 
 // SingleFileNAR writes a single non-executable file NAR to the given writer
