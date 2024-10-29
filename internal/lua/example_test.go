@@ -1,4 +1,4 @@
-// Copyright 2023 Ross Light
+// Copyright 2023 Roxy Light
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of
 // this software and associated documentation files (the “Software”), to deal in
@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"log"
 
-	"zombiezen.com/go/zb/internal/lua"
+	"zb.256lights.llc/pkg/internal/lua"
 )
 
 func Example() {

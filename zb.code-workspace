@@ -30,7 +30,8 @@
 		},
 		"Lua.workspace.ignoreDir": [
 			".vscode",
-			"/prelude.lua",
+			"/internal/frontend/prelude.lua",
+			"/internal/lua/testdata/*.lua",
 		]
 	}
 }

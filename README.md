@@ -1,14 +1,22 @@
-# zombiezen build (zb) tool
+# zb
 
-zb is an experiment in hermetic, reproducible build systems.
-It is a prototype and should not be used for production purposes.
+zb
+(pronounced "zee bee" or "zeeb")
+is an experiment in hermetic, reproducible build systems.
+It has not stabilized and should not be used for production purposes.
 
 zb is based on the ideas in [The purely functional software deployment model by Eelco Dolstra][dolstra_purely_2006]
 and [Build systems à la carte][mokhov_build_2018],
 as well as the author's experience in working with build systems.
-The build model is the same as in [Nix](https://nixos.org/),
+The build model is mostly the same as in [Nix](https://nixos.org/),
 but build targets are configured in [Lua](https://www.lua.org/)
 instead of a domain-specific language.
+
+For more motivation on the development of zb,
+see the early blog posts:
+
+- [zb: A Build System Prototype](https://www.zombiezen.com/blog/2024/06/zb-build-system-prototype/)
+- [zb: An Early-Stage Build System](https://www.zombiezen.com/blog/2024/09/zb-early-stage-build-system/)
 
 [dolstra_purely_2006]: https://edolstra.github.io/pubs/phd-thesis.pdf
 [mokhov_build_2018]: https://doi.org/10.1145/3236774
@@ -39,11 +47,36 @@ Other examples:
 
 ## Getting Started
 
-1. [Install Nix](https://nixos.org/download/) (used as a temporary build backend, see Caveats below)
-2. `go build ./cmd/zb`
-3. `./zb build --file demo/hello.lua`
+Prerequisites:
+
+- Knowledge of using the command-line for your OS (e.g. Terminal.app, Command Prompt, etc.)
+- [Go](https://go.dev/dl/) 1.23.2 or later.
+
+### Linux or macOS
+
+1. `sudo mkdir /zb && sudo chown $(id -u):$(id -g) /zb`
+2. Clone this repository to your computer and `cd` into it.
+3. `go build ./cmd/zb`
+4. Start the build server (only on startup): `./zb serve --sandbox=0 &`
+5. Run a build: `./zb build --file demo/hello.lua`
 
 You can use `./zb --help` to get more information on commands.
+
+### Windows
+
+Must be running Windows 10 or later,
+since zb depends on Windows support for Unix sockets.
+
+1. Install [MinGW-w64](https://www.mingw-w64.org/).
+   If you're using the [Chocolatey package manager](https://community.chocolatey.org/),
+   you can run `choco install mingw`.
+2. Create a `C:\zb` directory.
+3. Clone this repository to your computer and `cd` into it.
+4. `go build .\cmd\zb`
+5. Start the build server in one terminal: `.\zb.exe serve`
+6. Run a build in another terminal: `.\zb.exe build --file demo/hello_windows.lua`
+
+### Next Steps
 
 zb uses a slightly modified version of Lua 5.4.
 The primary difference is that strings
@@ -67,41 +100,8 @@ From there, the following libraries are available:
 - Establish a [source bootstrap](https://bootstrappable.org/benefits.html)
   that is equivalent to the [nixpkgs standard environment](https://nixos.org/manual/nixpkgs/unstable/#chap-stdenv).
   ([Partially implemented](demo/bootstrap.lua)
-  by following the [live-bootstrap](https://github.com/fosslinux/live-bootstrap/) steps.)
-- Permit optional interoperability with the nixpkgs ecosystem.
-  (Not implemented yet: [#2](https://github.com/zombiezen/zb/issues/2))
-
-## Caveats
-
-The following is a list of shortcuts taken for the zb prototype.
-
-- zb requires Nix to be installed.
-  zb acts as a frontend over `nix-store --realise` to actually run the builds,
-  but this dependency could be removed in the future.
-- zb was written in Go for speed of development.
-  This makes self-hosting more complex,
-  but there's nothing preventing a more production-ready implementation in C/C++.
-- Files and derivations are imported into the Nix store immediately instead of as-needed.
-  This makes evaluation slow.
-  A better implementation would check whether the files' `stat` information
-  has changed since the last import attempt
-  (like in [Avery Pennarun's redo][pennarun_mtime_2018]).
-  Another improvement would be to implement paths as a lazy type
-  that only causes a store import when the `__tostring` metamethod is called.
-- The Lua `next` and `pairs` functions should sort keys to be deterministic.
-- Need to stabilize the Lua standard library that's available.
-  `string.format` specifically would be good,
-  but would require some fancy work to support the "context" dependency feature.
-- The [stage0 demo](demo/stage0-posix/x86_64-linux.lua) is not entirely hermetic,
-  since it uses the host's `/bin/sh`.
-  Hypothetically, the demo could use the included kaem shell
-  if kaem could support `$out` expansion.
-- The `derivation` built-in does not support the `outputs` parameter
-  to declare multiple outputs.
-- In the `demo` directory, most all derivations are in a single file.
-  A more full standard library would [split up files](https://github.com/zombiezen/zb/issues/4).
-
-[pennarun_mtime_2018]: https://apenwarr.ca/log/20181113
+  by following the [live-bootstrap](https://github.com/fosslinux/live-bootstrap/) steps.
+  See [#30](https://github.com/256lights/zb/issues/30) for ongoing work.)
 
 ## License
 

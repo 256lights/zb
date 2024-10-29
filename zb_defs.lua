@@ -1,4 +1,4 @@
--- Copyright 2024 Ross Light
+-- Copyright 2024 The zb Authors
 -- SPDX-License-Identifier: MIT
 
 ---@meta
