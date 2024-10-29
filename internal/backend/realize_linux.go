@@ -25,7 +25,15 @@ import (
 
 func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
 	inputs := make(sets.Set[zbstore.Path])
-	inputs.AddSeq(invocation.derivation.InputSources.Values())
+	for inputPath := range invocation.derivation.InputSources.Values() {
+		err := invocation.closure(inputPath, func(path zbstore.Path) bool {
+			inputs.Add(path)
+			return true
+		})
+		if err != nil {
+			return err
+		}
+	}
 	for input := range invocation.derivation.InputDerivationOutputs() {
 		inputPath, ok := invocation.lookup(input)
 		if !ok {
