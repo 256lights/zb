@@ -102,10 +102,11 @@ src_configure() {
     mkdir build
     cd build
 
-    for dir in libiberty libcpp libdecnumber gcc libgcc libstdc++-v3; do
+    for dir in libiberty libdecnumber gcc libgcc; do
+        echo "||| Configure for $dir"
         mkdir $dir
         cd $dir
-        CXXCPP="$(command -v cpp)" ../../$dir/configure \
+        ../../$dir/configure \
             --prefix="${PREFIX}" \
             --libdir="${LIBDIR}" \
             --build=i386-unknown-linux-musl \
@@ -115,7 +116,7 @@ src_configure() {
             --program-transform-name= \
             --enable-languages=c,c++ \
             --disable-sjlj-exceptions \
-            --with-system-zlib || ( cat config.log ; false )
+            --with-system-zlib
         cd ..
     done
     cd ..
@@ -123,7 +124,7 @@ src_configure() {
 
 src_compile() {
     ln -s . build/build-i386-unknown-linux-musl
-    for dir in libiberty libcpp libdecnumber gcc; do
+    for dir in libiberty libdecnumber gcc; do
         # We have makeinfo now but it is not happy with gcc .info files, so skip it
         make "${MAKEJOBS}" -C build/$dir LIBGCC2_INCLUDES=-I"${PREFIX}/include" \
             STMP_FIXINC= GMPLIBS="-lmpc -lmpfr -lgmp" MAKEINFO=true
@@ -133,6 +134,43 @@ src_compile() {
     make "${MAKEJOBS}" -C build/libgcc PATH="${PATH}:../gcc" CC=../gcc/xgcc \
         host_subdir=build CFLAGS="-I../gcc/include -I/${PREFIX}/include"
 
+    # libcpp: Run configure
+    mkdir build/libcpp
+    cd build/libcpp
+    PATH="${PATH}:${PWD}/build/gcc" ../../libcpp/configure \
+        --prefix="${PREFIX}" \
+        --libdir="${LIBDIR}" \
+        --build=i386-unknown-linux-musl \
+        --target=i386-unknown-linux-musl \
+        --host=i386-unknown-linux-musl \
+        --disable-shared \
+        --program-transform-name= \
+        --enable-languages=c,c++ \
+        --disable-sjlj-exceptions \
+        --with-system-zlib
+    cd ../..
+
+    # libcpp: Make
+    make "${MAKEJOBS}" -C build/libcpp LIBGCC2_INCLUDES=-I"${PREFIX}/include" \
+        STMP_FIXINC= GMPLIBS="-lmpc -lmpfr -lgmp" MAKEINFO=true
+
+    # libstdc++: Run configure
+    mkdir build/libstdc++-v3
+    cd build/libstdc++-v3
+    PATH="${PATH}:${PWD}/build/gcc" ../../libstdc++-v3/configure \
+        --prefix="${PREFIX}" \
+        --libdir="${LIBDIR}" \
+        --build=i386-unknown-linux-musl \
+        --target=i386-unknown-linux-musl \
+        --host=i386-unknown-linux-musl \
+        --disable-shared \
+        --program-transform-name= \
+        --enable-languages=c,c++ \
+        --disable-sjlj-exceptions \
+        --with-system-zlib
+    cd ../..
+
+    # libstdc++: Make
     make "${MAKEJOBS}" -C build/libstdc++-v3 PATH="${PATH}:${PWD}/build/gcc" \
         CXXFLAGS="-I${PWD}/build/gcc/include -I ${PREFIX}/include"
 }

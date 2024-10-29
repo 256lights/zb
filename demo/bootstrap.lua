@@ -4157,7 +4157,7 @@ boot.gcc["4.7.4"] = bashStep {
 
   tarballs = {
     fetchGNU {
-      path = "gcc-4.7.4/gcc-4.7.4.tar.bz2";
+      path = "gcc/gcc-4.7.4/gcc-4.7.4.tar.bz2";
       hash = "sha256:92e61c6dc3a0a449e62d72a38185fda550168a86702dea07125ebd3ec3996282";
     },
   };
