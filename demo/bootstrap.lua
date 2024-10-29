@@ -157,7 +157,7 @@ do
   local pname <const> = "mes"
   local version <const> = mes_version
   local nyacc_tarball <const> = fetchurl {
-    url = "https://archive.org/download/live-bootstrap-sources/nyacc-1.00.2-lb1.tar.gz";
+    url = "https://github.com/Googulator/nyacc/releases/download/V1.00.2-lb1/nyacc-1.00.2-lb1.tar.gz";
     hash = "sha256:708c943f89c972910e9544ee077771acbd0a2c0fc6d33496fe158264ddb65327";
   }
   local step <const> = stepPath(pname, version)
@@ -2334,7 +2334,7 @@ boot.findutils = bashStep {
       hash = "sha256:813cd9405aceec5cfecbe96400d01e90ddad7b512d3034487176ce5258ab0f78";
     },
     fetchurl {
-      url = "https://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-8e128e.tar.gz";
+      url = "https://files.bootstrapping.world/gnulib-8e128e.tar.gz";
       hash = "sha256:0cfbf866bc39c31f25fa0e56af1e56c5e5c92fc1e5d51242ebafef7ea211f3d5";
     },
   };
@@ -2685,7 +2685,7 @@ boot.libtool["2.4.7"] = bashStep {
       hash = "sha256:4f7f217f057ce655ff22559ad221a0fd8ef84ad1fc5fcb6990cecc333aa1635d";
     },
     fetchurl {
-      url = "http://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-a521820.tar.gz";
+      url = "https://files.bootstrapping.world/gnulib-a521820.tar.gz";
       hash = "sha256:719b399fe09a8f6ca14ba8c4a9a60ce9f93f4892effb50961ef3d8cd1a33ff65";
     },
   };
@@ -2736,7 +2736,7 @@ boot.tar["1.34"] = bashStep {
       hash = "sha256:63bebd26879c5e1eea4352f0d03c991f966aeb3ddeb3c7445c902568d5411d28";
     },
     fetchurl {
-      url = "http://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-30820c.tar.gz";
+      url = "https://files.bootstrapping.world/gnulib-30820c.tar.gz";
       hash = "sha256:df807e694deea2dcba0c43af318394f3e3fcd52658c3b71b61dad0ce0c0cfb77";
     },
   };
@@ -2783,11 +2783,11 @@ boot.coreutils["9.4"] = bashStep {
 
   tarballs = {
     fetchurl {
-      url = "http://git.savannah.gnu.org/cgit/coreutils.git/snapshot/coreutils-9.4.tar.xz";
+      url = "https://files.bootstrapping.world/coreutils-9.4.tar.xz";
       hash = "sha256:8fb56810310253300b3d6f84e68dc97eb2d74e1f4f78e05776831d9d82e4f2d7";
     },
     fetchurl {
-      url = "http://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-bb5bb43.tar.gz";
+      url = "https://files.bootstrapping.world/gnulib-bb5bb43.tar.gz";
       hash = "sha256:b8aa1ac1b18c67f081486069e6a7a5564f20431c2313a94c20a46dcfb904be2a";
     },
     fetchurl {
@@ -3289,7 +3289,7 @@ boot.bison["2.3"] = bashStep {
       hash = "sha256:b10d7e9e354be72aee4e4911cf19dd27b5c527d4e7200857365b5fcdeea0dffb";
     },
     fetchurl {
-      url = "http://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-b28236b.tar.gz";
+      url = "https://files.bootstrapping.world/gnulib-b28236b.tar.gz";
       hash = "sha256:0190f28cb155fedd22bf8558c3e8705eed9eacfb7ae29e7508d025a68eb90899";
     },
   };
@@ -3345,7 +3345,7 @@ boot.bison["3.4.2"] = bashStep {
       hash = "sha256:27d05534699735dc69e86add5b808d6cb35900ad3fd63fa82e3eb644336abfa0";
     },
     fetchurl {
-      url = "http://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-672663a.tar.gz";
+      url = "https://files.bootstrapping.world/gnulib-672663a.tar.gz";
       hash = "sha256:8cced51f89a950472473856f86e88f5daf97a2347756125ccdc8ee907deec570";
     },
   };
@@ -3982,7 +3982,7 @@ boot.patch["2.7.6"] = bashStep {
       hash = "sha256:ac610bda97abe0d9f6b7c963255a11dcb196c25e337c61f94e4778d632f1d8fd";
     },
     fetchurl {
-      url = "https://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-e017871.tar.gz";
+      url = "https://files.bootstrapping.world/gnulib-e017871.tar.gz";
       hash = "sha256:a285dc300c3d9c25cc06e38827ef40f6073ec3b9b0fcb5bba433f943be92d8d4";
     },
   };
@@ -4038,7 +4038,7 @@ boot.gettext = bashStep {
       hash = "sha256:d20fcbb537e02dcf1383197ba05bd0734ef7bf5db06bdb241eb69b7d16b73192";
     },
     fetchurl {
-      url = "https://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-7daa86f.tar.gz";
+      url = "https://files.bootstrapping.world/gnulib-7daa86f.tar.gz";
       hash = "sha256:2d911c2f2ed97b347d6d360b742abdc98aa626d4f8f847ee682c7cde12e90871";
     },
   };
@@ -4095,7 +4095,7 @@ boot.texinfo = bashStep {
       hash = "sha256:988403c1542d15ad044600b909997ba3079b10e03224c61188117f3676b02caa";
     },
     fetchurl {
-      url = "https://git.savannah.gnu.org/cgit/gnulib.git/snapshot/gnulib-b81ec69.tar.gz";
+      url = "https://files.bootstrapping.world/gnulib-b81ec69.tar.gz";
       hash = "sha256:1aeea67b7b3883ebcf2b90bc01f4182d7de073a052dabd3749f20c5aa4ad3e27";
     },
   };
