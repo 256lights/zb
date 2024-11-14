@@ -17,6 +17,7 @@
           packages = [
             pkgs.delve
             pkgs.go_1_23
+            pkgs.gotools
             (pkgs.gopls.override {
               buildGoModule = pkgs.buildGo123Module;
             })
