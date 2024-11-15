@@ -1,11 +1,13 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-package luasyntax
+package luacode
 
 import (
 	"math"
 	"strconv"
+
+	"zb.256lights.llc/pkg/internal/lualex"
 )
 
 type valueType byte
@@ -153,7 +155,7 @@ func (v Value) String() string {
 		s, _ := v.Unquoted()
 		return s
 	case valueTypeString:
-		return Quote(v.s)
+		return lualex.Quote(v.s)
 	default:
 		return "<invalid value>"
 	}

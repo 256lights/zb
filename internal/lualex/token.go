@@ -3,7 +3,7 @@
 
 //go:generate stringer -type=TokenKind -linecomment
 
-package luasyntax
+package lualex
 
 import "fmt"
 

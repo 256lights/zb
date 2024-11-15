@@ -1,7 +1,11 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-package luasyntax
+// Package lualex provides a scanner to split a byte stream
+// into [Lua lexical elements].
+//
+// [Lua lexical elements]: https://www.lua.org/manual/5.4/manual.html#3.1
+package lualex
 
 import (
 	"errors"
