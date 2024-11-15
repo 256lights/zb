@@ -7,7 +7,7 @@ package luasyntax
 type Instruction uint32
 
 func ABCInstruction(op OpCode, a, b, c uint8, k bool) Instruction {
-	if op.OpMode() != OpModeABC {
+	if op.OpMode() != OpModeABC || op.UsesSignedC() {
 		panic("ABCInstruction with invalid OpCode")
 	}
 	var kflag Instruction
@@ -21,13 +21,37 @@ func ABCInstruction(op OpCode, a, b, c uint8, k bool) Instruction {
 		Instruction(c)<<24
 }
 
+func ABsCInstruction(op OpCode, a, b uint8, c int16, k bool) Instruction {
+	if op.OpMode() != OpModeABC || !op.UsesSignedC() {
+		panic("ABsCInstruction with invalid OpCode")
+	}
+	if !fitsSignedC(int64(c)) {
+		panic("C argument out of range")
+	}
+	var kflag Instruction
+	if k {
+		kflag = 1 << 15
+	}
+	return Instruction(op) |
+		Instruction(a)<<7 |
+		kflag |
+		Instruction(b)<<16 |
+		Instruction(c+offsetC)<<24
+}
+
 func ABxInstruction(op OpCode, a uint8, bx int32) Instruction {
 	switch op.OpMode() {
 	case OpModeABx:
+		if bx < 0 || bx > maxArgBx {
+			panic("Bx argument out of range")
+		}
 		return Instruction(op) |
 			Instruction(a)<<7 |
 			Instruction(bx)<<15
 	case OpModeAsBx:
+		if !fitsSignedBx(int64(bx)) {
+			panic("Bx argument out of range")
+		}
 		return Instruction(op) |
 			Instruction(a)<<7 |
 			Instruction(bx+offsetBx)<<15
@@ -82,7 +106,11 @@ func (i Instruction) ArgAx() uint32 {
 	}
 }
 
-const offsetBx = (1<<17 - 1) >> 1
+const (
+	sizeBx   = 17
+	maxArgBx = 1<<sizeBx - 1
+	offsetBx = (1<<sizeBx - 1) >> 1
+)
 
 func (i Instruction) ArgBx() int32 {
 	switch i.OpCode().OpMode() {
@@ -95,29 +123,53 @@ func (i Instruction) ArgBx() int32 {
 	}
 }
 
-const offsetC = (1<<8 - 1) >> 1
+// fitsSignedBx reports whether i can be stored in a signed Bx argument.
+func fitsSignedBx(i int64) bool {
+	return -offsetBx <= i && i <= maxArgBx-offsetBx
+}
 
 func (i Instruction) ArgC() uint8 {
-	switch i.OpCode().OpMode() {
-	case OpModeABC:
-		return uint8(i >> 24)
-	default:
+	if code := i.OpCode(); code.OpMode() != OpModeABC || code.UsesSignedC() {
 		return 0
 	}
+	return uint8(i >> 24)
+}
+
+const (
+	sizeC   = 8
+	maxArgC = 1<<sizeC - 1
+	offsetC = maxArgC >> 1
+)
+
+func (i Instruction) SignedArgC() int16 {
+	if !i.OpCode().UsesSignedC() {
+		return 0
+	}
+	return int16(i>>24&0xff) - offsetC
+}
+
+// fitsSignedC reports whether i can be stored in a signed C argument.
+func fitsSignedC(i int64) bool {
+	return -offsetC <= i && i <= maxArgC-offsetC
 }
 
 func (i Instruction) K() bool {
 	return i.OpCode().OpMode() == OpModeABC && i&(1<<15) != 0
 }
 
-const offsetJ = (1<<25 - 1) >> 1
+const (
+	maxJArg = 1<<25 - 1
+	offsetJ = maxJArg >> 1
+
+	noJump = -1
+)
 
 func (i Instruction) J() int32 {
 	switch i.OpCode().OpMode() {
 	case OpModeJ:
 		return int32(i>>7) - offsetJ
 	default:
-		return 0
+		return noJump
 	}
 }
 
@@ -157,6 +209,11 @@ func (op OpCode) OpMode() OpMode {
 
 func (op OpCode) SetsA() bool {
 	return op.props()&(1<<3) != 0
+}
+
+// UsesSignedC reports whether the instruction has a signed C argument.
+func (op OpCode) UsesSignedC() bool {
+	return op == OpAddI || op == OpShrI || op == OpShlI
 }
 
 // IsTest reports whether the instruction is a test.

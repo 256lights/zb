@@ -10,14 +10,19 @@ import (
 
 // Prototype represents a parsed function.
 type Prototype struct {
+	// NumParams is the number of fixed (named) parameters.
 	NumParams uint8
 	IsVararg  bool
+	// MaxStackSize is the number of registers needed by this function.
+	MaxStackSize uint8
 
 	Constants []Value
 	Code      []Instruction
 	Functions []*Prototype
 	Upvalues  []UpvalueDescriptor
-	Source    Source
+
+	LineInfo LineInfo
+	Source   Source
 }
 
 func (f *Prototype) addConstant(k Value) int {
@@ -108,4 +113,48 @@ func (source Source) String() string {
 		line = line[:stringSize-len(truncSignifier)]
 	}
 	return prefix + line + truncSignifier + suffix
+}
+
+const maxInstructionsWithoutAbsLineInfo = 128
+
+const (
+	// lineInfoRelativeLimit is the limit for values in the rel slice
+	// of [LineInfo].
+	lineInfoRelativeLimit = 1 << 7
+
+	// absMarker is the mark for entries in the rel slice of [LineInfo]
+	// that have absolute information in the abs slice.
+	absMarker int8 = -lineInfoRelativeLimit
+)
+
+type LineInfo struct {
+	rel []int8
+	abs []absLineInfo
+}
+
+type absLineInfo struct {
+	pc   int
+	line int
+}
+
+// maxRegisters is the maximum number of registers in a Lua function.
+const maxRegisters = 255
+
+type registerIndex uint8
+
+// noRegister is a sentinel for an invalid register.
+const noRegister registerIndex = maxRegisters
+
+func (ridx registerIndex) isValid() bool {
+	return ridx < maxRegisters
+}
+
+// maxUpvalues is the maximum number of upvalues in a closure.
+// Value must fit in a VM register.
+const maxUpvalues = 255
+
+type upvalueIndex uint8
+
+func (vidx upvalueIndex) isValid() bool {
+	return vidx < maxUpvalues
 }
