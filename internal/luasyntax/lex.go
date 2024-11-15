@@ -4,9 +4,11 @@
 package luasyntax
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 )
 
 // A Scanner parses Lua tokens from a byte stream.
@@ -649,6 +651,91 @@ func (s *Scanner) unreadByte() error {
 	return nil
 }
 
+// Quote returns a double-quoted Lua string literal representing s.
+func Quote(s string) string {
+	sb := new(strings.Builder)
+	sb.Grow(len(s) + 2)
+	sb.WriteByte('"')
+	for {
+		c, size := utf8.DecodeRuneInString(s)
+		switch {
+		case size == 0:
+			sb.WriteByte('"')
+			return sb.String()
+		case c == utf8.RuneError && size == 1:
+			sb.WriteString(`\x`)
+			for _, digit := range toHexDigits(s[0]) {
+				sb.WriteByte(digit)
+			}
+		case c == '\\' || c == '"':
+			sb.WriteByte('\\')
+			sb.WriteRune(c)
+		case isPrint(c):
+			sb.WriteRune(c)
+		case c == '\a':
+			sb.WriteString(`\a`)
+		case c == '\b':
+			sb.WriteString(`\b`)
+		case c == '\f':
+			sb.WriteString(`\f`)
+		case c == '\n':
+			sb.WriteString(`\n`)
+		case c == '\r':
+			sb.WriteString(`\r`)
+		case c == '\t':
+			sb.WriteString(`\t`)
+		case c == '\v':
+			sb.WriteString(`\v`)
+		default:
+			sb.WriteString(`\u{`)
+			fmt.Fprintf(sb, "%x", c)
+			sb.WriteString(`}`)
+		}
+		s = s[size:]
+	}
+}
+
+// Unquote interprets s as a single-quoted, double-quoted, or bracket-delimited Lua string literal,
+// returning the string value that s quotes.
+func Unquote(s string) (string, error) {
+	if len(s) < 2 {
+		return "", errUnquoteSyntax
+	}
+	sr := strings.NewReader(s)
+	var unquoted string
+	switch s[0] {
+	case '\'', '"':
+		sr.ReadByte()
+		scanner := NewScanner(sr)
+		var err error
+		unquoted, err = scanner.shortLiteralString(s[0])
+		if err != nil {
+			return "", errUnquoteSyntax
+		}
+	case '[':
+		scanner := NewScanner(sr)
+		level, err := scanner.longOpenBracket()
+		if err != nil {
+			return "", errUnquoteSyntax
+		}
+		sb := new(strings.Builder)
+		err = scanner.findClosingLongBracket(sb, level)
+		if err != nil {
+			return "", errUnquoteSyntax
+		}
+		unquoted = sb.String()
+	default:
+		return "", errUnquoteSyntax
+	}
+
+	if sr.Len() > 0 {
+		return "", errUnquoteSyntax
+	}
+	return unquoted, nil
+}
+
+var errUnquoteSyntax = errors.New("invalid syntax")
+
 // isSpace reports whether the given byte represents a space in Lua source code.
 // According to the [reference],
 // "[i]n source code, Lua recognizes as spaces the standard ASCII whitespace characters
@@ -669,6 +756,25 @@ func isDigit(c byte) bool {
 
 func isHexDigit(c byte) bool {
 	return isDigit(c) || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
+}
+
+func toHexDigits(x byte) [2]byte {
+	var result [2]byte
+	if hi := x >> 4; hi < 0xa {
+		result[0] = hi + '0'
+	} else {
+		result[0] = hi - 0xa + 'a'
+	}
+	if lo := x & 0xf; lo < 0xa {
+		result[1] = lo + '0'
+	} else {
+		result[1] = lo - 0xa + 'a'
+	}
+	return result
+}
+
+func isPrint(c rune) bool {
+	return 0x20 <= c && c < 0x7f
 }
 
 func isExponentDelim(c byte, isHex bool) bool {

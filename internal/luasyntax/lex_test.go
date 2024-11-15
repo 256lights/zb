@@ -316,3 +316,20 @@ func TestScanner(t *testing.T) {
 		}
 	}
 }
+
+func FuzzQuote(f *testing.F) {
+	f.Add("")
+	f.Add("abc")
+	f.Add("Hello, 世界")
+	f.Add("abc\nxyz")
+	f.Add("abc\x00xyz")
+
+	f.Fuzz(func(t *testing.T, s string) {
+		luaString := Quote(s)
+		got, err := Unquote(luaString)
+		if got != s || err != nil {
+			t.Errorf("Unquote(Quote(%q)) = %q, %v; want %q, <nil> (Quote(...) = %q)",
+				s, got, err, s, luaString)
+		}
+	})
+}
