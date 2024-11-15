@@ -16,6 +16,21 @@ type Token struct {
 	Value string
 }
 
+// String formats the token as it would appear in Lua source.
+// String returns "<eof>" for [ErrorToken].
+func (tok Token) String() string {
+	switch tok.Kind {
+	case ErrorToken:
+		return "<eof>"
+	case StringToken:
+		return Quote(tok.Value)
+	case IdentifierToken, NumeralToken:
+		return tok.Value
+	default:
+		return tok.Kind.String()
+	}
+}
+
 // Position represents a position in a textual source file.
 type Position struct {
 	// Line is the 1-based line number.
