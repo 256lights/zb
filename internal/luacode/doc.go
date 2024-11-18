@@ -4,6 +4,7 @@
 
 /*
 Package luacode provides a Lua parser that produces virtual machine code.
+See [Parse] for more details.
 
 # Provenance
 

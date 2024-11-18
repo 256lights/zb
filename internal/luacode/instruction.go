@@ -2,42 +2,26 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
+//go:generate stringer -type=OpCode -linecomment -output=instruction_string.go
+
 package luacode
 
 // Instruction is a single virtual machine instruction.
 type Instruction uint32
 
 func ABCInstruction(op OpCode, a, b, c uint8, k bool) Instruction {
-	if op.OpMode() != OpModeABC || op.UsesSignedC() {
+	if op.OpMode() != OpModeABC {
 		panic("ABCInstruction with invalid OpCode")
 	}
 	var kflag Instruction
 	if k {
-		kflag = 1 << 15
+		kflag = 1 << posK
 	}
 	return Instruction(op) |
-		Instruction(a)<<7 |
+		Instruction(a)<<posA |
 		kflag |
-		Instruction(b)<<16 |
-		Instruction(c)<<24
-}
-
-func ABsCInstruction(op OpCode, a, b uint8, c int16, k bool) Instruction {
-	if op.OpMode() != OpModeABC || !op.UsesSignedC() {
-		panic("ABsCInstruction with invalid OpCode")
-	}
-	if !fitsSignedC(int64(c)) {
-		panic("C argument out of range")
-	}
-	var kflag Instruction
-	if k {
-		kflag = 1 << 15
-	}
-	return Instruction(op) |
-		Instruction(a)<<7 |
-		kflag |
-		Instruction(b)<<16 |
-		Instruction(c+offsetC)<<24
+		Instruction(b)<<posB |
+		Instruction(c)<<posC
 }
 
 func ABxInstruction(op OpCode, a uint8, bx int32) Instruction {
@@ -47,61 +31,94 @@ func ABxInstruction(op OpCode, a uint8, bx int32) Instruction {
 			panic("Bx argument out of range")
 		}
 		return Instruction(op) |
-			Instruction(a)<<7 |
-			Instruction(bx)<<15
+			Instruction(a)<<posA |
+			Instruction(bx)<<posBx
 	case OpModeAsBx:
 		if !fitsSignedBx(int64(bx)) {
 			panic("Bx argument out of range")
 		}
 		return Instruction(op) |
-			Instruction(a)<<7 |
-			Instruction(bx+offsetBx)<<15
+			Instruction(a)<<posA |
+			Instruction(bx+offsetBx)<<posBx
 	default:
 		panic("ABxInstruction with invalid OpCode")
 	}
 }
 
-func AxInstruction(op OpCode, ax uint32) Instruction {
-	if op.OpMode() != OpModeAx {
-		panic("AxInstruction with invalid OpCode")
+// ExtraArgument returns an [OpExtraArg] [Instruction].
+func ExtraArgument(ax uint32) Instruction {
+	if ax > maxArgAx {
+		panic("ExtraArgument argument out of range")
 	}
-	return Instruction(op) | Instruction(ax)<<7
+	return Instruction(OpExtraArg) | Instruction(ax)<<posAx
 }
 
 func JInstruction(op OpCode, j int32) Instruction {
 	if op.OpMode() != OpModeJ {
 		panic("JInstruction with invalid OpCode")
 	}
-	return Instruction(op) | Instruction(j+offsetJ)<<7
+	return Instruction(op) | Instruction(j+offsetJ)<<posJ
 }
+
+const sizeOpCode = 7
 
 // OpCode returns the instruction's type.
 func (i Instruction) OpCode() OpCode {
-	return OpCode(i & 0x7f)
+	return OpCode(i & (1<<sizeOpCode - 1))
 }
+
+const (
+	sizeA   = 8
+	maxArgA = 1<<sizeA - 1
+	posA    = sizeOpCode
+)
 
 func (i Instruction) ArgA() uint8 {
 	switch i.OpCode().OpMode() {
 	case OpModeABC, OpModeABx, OpModeAsBx:
-		return uint8(i >> 7)
+		return uint8(i >> posA)
 	default:
 		return 0
 	}
 }
+
+// WithArgA returns a copy of i
+// with its A argument changed to the given value.
+func (i Instruction) WithArgA(a uint8) (_ Instruction, ok bool) {
+	switch i.OpCode().OpMode() {
+	case OpModeABC, OpModeABx, OpModeAsBx:
+		const mask = maxArgA << posA
+		return i&^mask | (Instruction(a) << posA), true
+	default:
+		return i, false
+	}
+}
+
+const (
+	sizeB   = 8
+	maxArgB = 1<<sizeB - 1
+	posB    = posK + sizeK
+)
 
 func (i Instruction) ArgB() uint8 {
 	switch i.OpCode().OpMode() {
 	case OpModeABC:
-		return uint8(i >> 16)
+		return uint8(i >> posB)
 	default:
 		return 0
 	}
 }
 
+const (
+	sizeAx   = 25
+	maxArgAx = 1<<sizeAx - 1
+	posAx    = sizeOpCode
+)
+
 func (i Instruction) ArgAx() uint32 {
 	switch i.OpCode().OpMode() {
 	case OpModeAx:
-		return uint32(i >> 7)
+		return uint32(i >> posAx)
 	default:
 		return 0
 	}
@@ -110,15 +127,16 @@ func (i Instruction) ArgAx() uint32 {
 const (
 	sizeBx   = 17
 	maxArgBx = 1<<sizeBx - 1
-	offsetBx = (1<<sizeBx - 1) >> 1
+	posBx    = posA + sizeA
+	offsetBx = maxArgBx >> 1
 )
 
 func (i Instruction) ArgBx() int32 {
 	switch i.OpCode().OpMode() {
 	case OpModeABx:
-		return int32(i >> 15)
+		return int32(i >> posBx)
 	case OpModeAsBx:
-		return int32(i>>15) - offsetBx
+		return int32(i>>posBx) - offsetBx
 	default:
 		return 0
 	}
@@ -129,37 +147,75 @@ func fitsSignedBx(i int64) bool {
 	return -offsetBx <= i && i <= maxArgBx-offsetBx
 }
 
-func (i Instruction) ArgC() uint8 {
-	if code := i.OpCode(); code.OpMode() != OpModeABC || code.UsesSignedC() {
-		return 0
-	}
-	return uint8(i >> 24)
-}
-
 const (
 	sizeC   = 8
 	maxArgC = 1<<sizeC - 1
 	offsetC = maxArgC >> 1
+	posC    = posB + sizeB
 )
 
-func (i Instruction) SignedArgC() int16 {
-	if !i.OpCode().UsesSignedC() {
+func (i Instruction) ArgC() uint8 {
+	if code := i.OpCode(); code.OpMode() != OpModeABC {
 		return 0
 	}
-	return int16(i>>24&0xff) - offsetC
+	return uint8(i >> posC)
 }
 
-// fitsSignedC reports whether i can be stored in a signed C argument.
-func fitsSignedC(i int64) bool {
+// WithArgC returns a copy of i
+// with its C argument changed to the given value.
+func (i Instruction) WithArgC(c uint8) (_ Instruction, ok bool) {
+	if i.OpCode().OpMode() != OpModeABC {
+		return i, false
+	}
+	const mask = maxArgC << posC
+	return i&^mask | (Instruction(c) << posC), true
+}
+
+// SignedArg converts an [ABCInstruction] argument
+// into a signed integer.
+func SignedArg(arg uint8) int16 {
+	return int16(arg) - offsetC
+}
+
+// ToSignedArg converts an integer into a signed [ABCInstruction] argument.
+// ok is true if and only if the integer is within the range.
+func ToSignedArg(i int64) (_ uint8, ok bool) {
+	if !fitsSignedArg(i) {
+		return 0, false
+	}
+	return uint8(i + offsetC), true
+}
+
+func fitsSignedArg(i int64) bool {
 	return -offsetC <= i && i <= maxArgC-offsetC
 }
 
+const (
+	sizeK = 1
+	posK  = posA + sizeA
+)
+
 func (i Instruction) K() bool {
-	return i.OpCode().OpMode() == OpModeABC && i&(1<<15) != 0
+	return i.OpCode().OpMode() == OpModeABC && i&posK != 0
+}
+
+// WithK returns a copy of i
+// with its K argument changed to the given value.
+func (i Instruction) WithK(k bool) (_ Instruction, ok bool) {
+	if i.OpCode().OpMode() != OpModeABC {
+		return i, false
+	}
+	const mask = 1 << posK
+	if k {
+		return i | mask, true
+	} else {
+		return i &^ mask, true
+	}
 }
 
 const (
 	maxJArg = 1<<25 - 1
+	posJ    = sizeOpCode
 	offsetJ = maxJArg >> 1
 
 	noJump = -1
@@ -212,11 +268,6 @@ func (op OpCode) SetsA() bool {
 	return op.props()&(1<<3) != 0
 }
 
-// UsesSignedC reports whether the instruction has a signed C argument.
-func (op OpCode) UsesSignedC() bool {
-	return op == OpAddI || op == OpShrI || op == OpShlI
-}
-
 // IsTest reports whether the instruction is a test.
 // In a valid program, the next instruction will be a jump.
 func (op OpCode) IsTest() bool {
@@ -242,114 +293,197 @@ func (op OpCode) IsMetamethod() bool {
 
 // Defined [OpCode] values.
 const (
-	OpMove       OpCode = iota // A B R[A] := R[B]
-	OpLoadI                    // A sBx R[A] := sBx
-	OpLoadF                    // A sBx R[A] := (lua_Number)sBx
-	OpLoadK                    // A Bx R[A] := K[Bx]
-	OpLoadKX                   // A R[A] := K[extra arg]
-	OpLoadFalse                // A R[A] := false
-	OpLFalseSkip               // A R[A] := false; pc++ (
-	OpLoadTrue                 // A R[A] := true
-	OpLoadNil                  // A B R[A], R[A+1], ..., R[A+B] := nil
-	OpGetUpval                 // A B R[A] := UpValue[B]
-	OpSetUpval                 // A B UpValue[B] := R[A]
+	// A B R[A] := R[B]
+	OpMove OpCode = iota // MOVE
+	// A sBx R[A] := sBx
+	OpLoadI // LOADI
+	// A sBx R[A] := (lua_Number)sBx
+	OpLoadF // LOADF
+	// A Bx R[A] := K[Bx]
+	OpLoadK // LOADK
+	// A R[A] := K[extra arg]
+	OpLoadKX // LOADKX
+	// A R[A] := false
+	OpLoadFalse // LOADFALSE
+	// A R[A] := false; pc++ (
+	OpLFalseSkip // LFALSESKIP
+	// A R[A] := true
+	OpLoadTrue // LOADTRUE
+	// A B R[A], R[A+1], ..., R[A+B] := nil
+	OpLoadNil // LOADNIL
+	// A B R[A] := UpValue[B]
+	OpGetUpval // GETUPVAL
+	// A B UpValue[B] := R[A]
+	OpSetUpval // SETUPVAL
 
-	OpGetTabUp // A B C R[A] := UpValue[B][K[C]:string]
-	OpGetTable // A B C R[A] := R[B][R[C]]
-	OpGetI     // A B C R[A] := R[B][C]
-	OpGetField // A B C R[A] := R[B][K[C]:string]
+	// A B C R[A] := UpValue[B][K[C]:string]
+	OpGetTabUp // GETTABUP
+	// A B C R[A] := R[B][R[C]]
+	OpGetTable // GETTABLE
+	// A B C R[A] := R[B][C]
+	OpGetI // GETI
+	// A B C R[A] := R[B][K[C]:string]
+	OpGetField // GETFIELD
 
-	OpSetTabUp // A B C UpValue[A][K[B]:string] := RK(C)
-	OpSetTable // A B C R[A][R[B]] := RK(C)
-	OpSetI     // A B C R[A][B] := RK(C)
-	OpSetField // A B C R[A][K[B]:string] := RK(C)
+	// A B C UpValue[A][K[B]:string] := RK(C)
+	OpSetTabUp // SETTABUP
+	// A B C R[A][R[B]] := RK(C)
+	OpSetTable // SETTABLE
+	// A B C R[A][B] := RK(C)
+	OpSetI // SETI
+	// A B C R[A][K[B]:string] := RK(C)
+	OpSetField // SETFIELD
 
-	OpNewTable // A B C k R[A] := {}
+	// A B C k R[A] := {}
+	OpNewTable // NEWTABLE
 
-	OpSelf // A B C R[A+1] := R[B]; R[A] := R[B][RK(C):string]
+	// A B C R[A+1] := R[B]; R[A] := R[B][RK(C):string]
+	OpSelf // SELF
 
-	OpAddI // A B sC R[A] := R[B] + sC
+	// A B sC R[A] := R[B] + sC
+	OpAddI // ADDI
 
-	OpAddK  // A B C R[A] := R[B] + K[C]:number
-	OpSubK  // A B C R[A] := R[B] - K[C]:number
-	OpMulK  // A B C R[A] := R[B]
-	OpModK  // A B C R[A] := R[B] % K[C]:number
-	OpPowK  // A B C R[A] := R[B] ^ K[C]:number
-	OpDivK  // A B C R[A] := R[B] / K[C]:number
-	OpIDivK // A B C R[A] := R[B] // K[C]:number
+	// A B C R[A] := R[B] + K[C]:number
+	OpAddK // ADDK
+	// A B C R[A] := R[B] - K[C]:number
+	OpSubK // SUBK
+	// A B C R[A] := R[B]
+	OpMulK // MULK
+	// A B C R[A] := R[B] % K[C]:number
+	OpModK // MODK
+	// A B C R[A] := R[B] ^ K[C]:number
+	OpPowK // POWK
+	// A B C R[A] := R[B] / K[C]:number
+	OpDivK // DIVK
+	// A B C R[A] := R[B] // K[C]:number
+	OpIDivK // IDIVK
 
-	OpBAndK // A B C R[A] := R[B] & K[C]:integer
-	OpBOrK  // A B C R[A] := R[B] | K[C]:integer
-	OpBXorK // A B C R[A] := R[B] ~ K[C]:integer
+	// A B C R[A] := R[B] & K[C]:integer
+	OpBAndK // BANDK
+	// A B C R[A] := R[B] | K[C]:integer
+	OpBOrK // BORK
+	// A B C R[A] := R[B] ~ K[C]:integer
+	OpBXorK // BXORK
 
-	OpShrI // A B sC R[A] := R[B] >> sC
-	OpShlI // A B sC R[A] := sC << R[B]
+	// A B sC R[A] := R[B] >> sC
+	OpShrI // SHRI
+	// A B sC R[A] := sC << R[B]
+	OpShlI // SHLI
 
-	OpAdd  // A B C R[A] := R[B] + R[C]
-	OpSub  // A B C R[A] := R[B] - R[C]
-	OpMul  // A B C R[A] := R[B]
-	OpMod  // A B C R[A] := R[B] % R[C]
-	OpPow  // A B C R[A] := R[B] ^ R[C]
-	OpDiv  // A B C R[A] := R[B] / R[C]
-	OpIDiv // A B C R[A] := R[B] // R[C]
+	// A B C R[A] := R[B] + R[C]
+	OpAdd // ADD
+	// A B C R[A] := R[B] - R[C]
+	OpSub // SUB
+	// A B C R[A] := R[B]
+	OpMul // MUL
+	// A B C R[A] := R[B] % R[C]
+	OpMod // MOD
+	// A B C R[A] := R[B] ^ R[C]
+	OpPow // POW
+	// A B C R[A] := R[B] / R[C]
+	OpDiv // DIV
+	// A B C R[A] := R[B] // R[C]
+	OpIDiv // IDIV
 
-	OpBAnd // A B C R[A] := R[B] & R[C]
-	OpBOr  // A B C R[A] := R[B] | R[C]
-	OpBXor // A B C R[A] := R[B] ~ R[C]
-	OpShl  // A B C R[A] := R[B] << R[C]
-	OpShr  // A B C R[A] := R[B] >> R[C]
+	// A B C R[A] := R[B] & R[C]
+	OpBAnd // BAND
+	// A B C R[A] := R[B] | R[C]
+	OpBOr // BOR
+	// A B C R[A] := R[B] ~ R[C]
+	OpBXor // BXOR
+	// A B C R[A] := R[B] << R[C]
+	OpShl // SHL
+	// A B C R[A] := R[B] >> R[C]
+	OpShr // SHR
 
-	OpMMBin  // A B C call C metamethod over R[A] and R[B] (
-	OpMMBinI // A sB C k call C metamethod over R[A] and sB
-	OpMMBinK // A B C k  call C metamethod over R[A] and K[B]
+	// A B C call C metamethod over R[A] and R[B] (
+	OpMMBin // MMBIN
+	// A sB C k call C metamethod over R[A] and sB
+	OpMMBinI // MMBINI
+	// A B C k  call C metamethod over R[A] and K[B]
+	OpMMBinK // MMBINK
 
-	OpUnM  // A B R[A] := -R[B]
-	OpBNot // A B R[A] := ~R[B]
-	OpNot  // A B R[A] := not R[B]
-	OpLen  // A B R[A] := #R[B] (length operator)
+	// A B R[A] := -R[B]
+	OpUnM // UNM
+	// A B R[A] := ~R[B]
+	OpBNot // BNOT
+	// A B R[A] := not R[B]
+	OpNot // NOT
+	// A B R[A] := #R[B] (length operator)
+	OpLen // LEN
 
-	OpConcat // A B R[A] := R[A].. ... ..R[A + B - 1]
+	// A B R[A] := R[A].. ... ..R[A + B - 1]
+	OpConcat // CONCAT
 
-	OpClose // A close all upvalues >= R[A]
-	OpTBC   // A mark variable A "to be closed"
-	OpJmp   // sJ pc += sJ
-	OpEq    // A B k if ((R[A] == R[B]) ~= k) then pc++
-	OpLT    // A B k if ((R[A] <  R[B]) ~= k) then pc++
-	OpLE    // A B k if ((R[A] <= R[B]) ~= k) then pc++
+	// A close all upvalues >= R[A]
+	OpClose // CLOSE
+	// A mark variable A "to be closed"
+	OpTBC // TBC
+	// sJ pc += sJ
+	OpJmp // JMP
+	// A B k if ((R[A] == R[B]) ~= k) then pc++
+	OpEq // EQ
+	// A B k if ((R[A] <  R[B]) ~= k) then pc++
+	OpLT // LT
+	// A B k if ((R[A] <= R[B]) ~= k) then pc++
+	OpLE // LE
 
-	OpEqK // A B k if ((R[A] == K[B]) ~= k) then pc++
-	OpEqI // A sB k if ((R[A] == sB) ~= k) then pc++
-	OpLTI // A sB k if ((R[A] < sB) ~= k) then pc++
-	OpLEI // A sB k if ((R[A] <= sB) ~= k) then pc++
-	OpGTI // A sB k if ((R[A] > sB) ~= k) then pc++
-	OpGEI // A sB k if ((R[A] >= sB) ~= k) then pc++
+	// A B k if ((R[A] == K[B]) ~= k) then pc++
+	OpEqK // EQK
+	// A sB k if ((R[A] == sB) ~= k) then pc++
+	OpEqI // EQI
+	// A sB k if ((R[A] < sB) ~= k) then pc++
+	OpLTI // LTI
+	// A sB k if ((R[A] <= sB) ~= k) then pc++
+	OpLEI // LEI
+	// A sB k if ((R[A] > sB) ~= k) then pc++
+	OpGTI // GTI
+	// A sB k if ((R[A] >= sB) ~= k) then pc++
+	OpGEI // GEI
 
-	OpTest    // A k if (not R[A] == k) then pc++
-	OpTestSet // A B k if (not R[B] == k) then pc++ else R[A] := R[B] (
+	// A k if (not R[A] == k) then pc++
+	OpTest // TEST
+	// A B k if (not R[B] == k) then pc++ else R[A] := R[B] (
+	OpTestSet // TESTSET
 
-	OpCall     // A B C R[A], ... ,R[A+C-2] := R[A](R[A+1], ... ,R[A+B-1])
-	OpTailCall // A B C k return R[A](R[A+1], ... ,R[A+B-1])
+	// A B C R[A], ... ,R[A+C-2] := R[A](R[A+1], ... ,R[A+B-1])
+	OpCall // CALL
+	// A B C k return R[A](R[A+1], ... ,R[A+B-1])
+	OpTailCall // TAILCALL
 
-	OpReturn  // A B C k return R[A], ... ,R[A+B-2] (see note)
-	OpReturn0 //  return
-	OpReturn1 // A return R[A]
+	// A B C k return R[A], ... ,R[A+B-2] (see note)
+	OpReturn // RETURN
+	//  return
+	OpReturn0 // RETURN0
+	// A return R[A]
+	OpReturn1 // RETURN1
 
-	OpForLoop // A Bx update counters; if loop continues then pc-=Bx;
-	OpForPrep // A Bx <check values and prepare counters>; if not to run then pc+=Bx+1;
+	// A Bx update counters; if loop continues then pc-=Bx;
+	OpForLoop // FORLOOP
+	// A Bx <check values and prepare counters>; if not to run then pc+=Bx+1;
+	OpForPrep // FORPREP
 
-	OpTForPrep // A Bx create upvalue for R[A + 3]; pc+=Bx
-	OpTForCall // A C R[A+4], ... ,R[A+3+C] := R[A](R[A+1], R[A+2]);
-	OpTForLoop // A Bx if R[A+2] ~= nil then { R[A]=R[A+2]; pc -= Bx }
+	// A Bx create upvalue for R[A + 3]; pc+=Bx
+	OpTForPrep // TFORPREP
+	// A C R[A+4], ... ,R[A+3+C] := R[A](R[A+1], R[A+2]);
+	OpTForCall // TFORCALL
+	// A Bx if R[A+2] ~= nil then { R[A]=R[A+2]; pc -= Bx }
+	OpTForLoop // TFORLOOP
 
-	OpSetList // A B C k R[A][C+i] := R[A+i], 1 <= i <= B
+	// A B C k R[A][C+i] := R[A+i], 1 <= i <= B
+	OpSetList // SETLIST
 
-	OpClosure // A Bx R[A] := closure(KPROTO[Bx])
+	// A Bx R[A] := closure(KPROTO[Bx])
+	OpClosure // CLOSURE
 
-	OpVararg // A C R[A], R[A+1], ..., R[A+C-2] = vararg
+	// A C R[A], R[A+1], ..., R[A+C-2] = vararg
+	OpVararg // VARARG
 
-	OpVarargPrep //A (adjust vararg parameters)
+	//A (adjust vararg parameters)
+	OpVarargPrep // VARARGPREP
 
-	OpExtraArg // Ax extra (larger) argument for previous opcode
+	// Ax extra (larger) argument for previous opcode
+	OpExtraArg // EXTRAARG
 
 	numOpCodes = iota
 )

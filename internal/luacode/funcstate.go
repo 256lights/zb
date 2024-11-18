@@ -50,6 +50,46 @@ type blockControl struct {
 	insideTBC bool
 }
 
+// finish perfoms a final peephole optimization pass over the code of a function.
+func (fs *funcState) finish() error {
+	for i, instruction := range fs.f.Code {
+		if i > 0 && fs.f.Code[i-1].IsOutTop() != instruction.IsInTop() {
+			return fmt.Errorf("internal error: instruction %d: %v follows %v",
+				i, instruction.OpCode(), fs.f.Code[i-1].OpCode())
+		}
+
+		switch instruction.OpCode() {
+		case OpReturn0, OpReturn1:
+			if !(fs.needClose || fs.f.IsVararg) {
+				break
+			}
+			// TODO(now): WithOpCode(OpReturn)
+			fallthrough
+		case OpReturn, OpTailCall:
+			if fs.needClose {
+				instruction, _ = instruction.WithK(true)
+			}
+			if fs.f.IsVararg {
+				instruction, _ = instruction.WithArgC(fs.f.NumParams + 1)
+			}
+			fs.f.Code[i] = instruction
+		case OpJmp:
+			target := i
+			for count := 0; count < 100; count++ {
+				curr := fs.f.Code[target]
+				if curr.OpCode() != OpJmp {
+					break
+				}
+				target += int(curr.J()) + 1
+			}
+			if err := fs.fixJump(i, target); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (fs *funcState) removeLastInstruction() {
 	fs.removeLastLineInfo()
 	fs.f.Code = fs.f.Code[:len(fs.f.Code)-1]
@@ -117,6 +157,16 @@ func (fs *funcState) fixLineInfo(line int) {
 	fs.saveLineInfo(line)
 }
 
+// reserveRegister reserves a register in the stack and returns it.
+func (fs *funcState) reserveRegister() (registerIndex, error) {
+	if err := fs.checkStack(1); err != nil {
+		return noRegister, err
+	}
+	reg := fs.firstFreeRegister
+	fs.firstFreeRegister++
+	return reg, nil
+}
+
 // reserveRegisters reserves n additional registers in the stack.
 func (fs *funcState) reserveRegisters(n int) error {
 	if err := fs.checkStack(n); err != nil {
@@ -167,6 +217,10 @@ func (fs *funcState) concatJumpList(l1, l2 int) (int, error) {
 // (and put their values in reg),
 // other tests jump to dtarget.
 func (fs *funcState) patchList(list, vtarget int, reg registerIndex, dtarget int) error {
+	if vtarget > len(fs.f.Code) || dtarget > len(fs.f.Code) {
+		return errors.New("patchList target cannot be a forward address")
+	}
+
 	for list != noJump {
 		next, hasNext := fs.jumpDestination(list)
 
@@ -243,6 +297,20 @@ func (fs *funcState) fixJump(pc int, dest int) error {
 		return fmt.Errorf("fixJump called on %v", op)
 	}
 	*jmp = JInstruction(op, int32(offset))
+	return nil
+}
+
+func (fs *funcState) negateCondition(pc int) error {
+	i := fs.findJumpControl(pc)
+	op := i.OpCode()
+	if !op.IsTest() || op == OpTestSet || op == OpTest {
+		return fmt.Errorf("instruction at %d is not a comparison (got %v)", pc, op)
+	}
+	var ok bool
+	*i, ok = i.WithK(!i.K())
+	if !ok {
+		return fmt.Errorf("instruction at %d (%v) does not have K argument", pc, op)
+	}
 	return nil
 }
 
