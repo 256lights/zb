@@ -5,8 +5,20 @@
 package luacode
 
 import (
+	"encoding/binary"
+	"fmt"
+	"math"
 	"slices"
 	"strings"
+)
+
+const (
+	signature           = "\x1bLua"
+	luacVersion byte    = 5*16 + 4
+	luacFormat  byte    = 0
+	luacData            = "\x19\x93\r\n\x1a\n"
+	luacInt     int64   = 0x5678
+	luacNum     float64 = 370.5
 )
 
 // Prototype represents a parsed function.
@@ -22,8 +34,48 @@ type Prototype struct {
 	Functions []*Prototype
 	Upvalues  []UpvalueDescriptor
 
-	LineInfo LineInfo
-	Source   Source
+	// Debug information:
+
+	Source          Source
+	LocalVariables  []LocalVariable
+	LineInfo        LineInfo
+	LineDefined     int
+	LastLineDefined int
+}
+
+// StripDebug returns a copy of a [Prototype]
+// with the debug information removed.
+func (f *Prototype) StripDebug() *Prototype {
+	f2 := new(Prototype)
+	*f2 = *f
+	f2.Source = ""
+	f2.LineInfo = LineInfo{}
+	f2.LocalVariables = nil
+
+	if len(f.Upvalues) > 0 {
+		f2.Upvalues = slices.Clone(f.Upvalues)
+		for i := range f2.Upvalues {
+			f2.Upvalues[i].Name = ""
+		}
+	}
+
+	if len(f.Functions) > 0 {
+		f2.Functions = make([]*Prototype, len(f.Functions))
+		for i, p := range f.Functions {
+			f2.Functions[i] = p.StripDebug()
+		}
+	}
+
+	return f2
+}
+
+func (f *Prototype) hasUpvalueNames() bool {
+	for _, upval := range f.Upvalues {
+		if upval.Name != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *Prototype) addConstant(k Value) int {
@@ -32,6 +84,152 @@ func (f *Prototype) addConstant(k Value) int {
 	}
 	f.Constants = append(f.Constants, k)
 	return len(f.Constants) - 1
+}
+
+// MarshalBinary marshals the function as a precompiled chunk
+// in the same format as [luac].
+//
+// [luac]: https://www.lua.org/manual/5.4/luac.html
+func (f *Prototype) MarshalBinary() ([]byte, error) {
+	var buf []byte
+
+	buf = append(buf, signature...)
+	buf = append(buf, luacVersion, luacFormat)
+	buf = append(buf, luacData...)
+	// Size of [Instruction], [int64], and [float64] in bytes.
+	buf = append(buf, 4, 8, 8)
+	buf = binary.NativeEndian.AppendUint64(buf, uint64(luacInt))
+	buf = binary.NativeEndian.AppendUint64(buf, math.Float64bits(luacNum))
+
+	if len(f.Upvalues) > 0xff {
+		return nil, fmt.Errorf("dump lua chunk: too many upvalues (%d)", len(f.Upvalues))
+	}
+	buf = append(buf, byte(len(f.Upvalues)))
+
+	return dumpFunction(buf, f, "")
+}
+
+func dumpFunction(buf []byte, f *Prototype, parentSource Source) ([]byte, error) {
+	if f.Source == "" || f.Source == parentSource {
+		buf = dumpInt(buf, 0)
+	} else {
+		buf = dumpString(buf, string(f.Source))
+	}
+	buf = dumpInt(buf, f.LineDefined)
+	buf = dumpInt(buf, f.LastLineDefined)
+	buf = append(buf, f.NumParams)
+	buf = dumpBool(buf, f.IsVararg)
+	buf = append(buf, f.MaxStackSize)
+
+	// Code
+	buf = dumpInt(buf, len(f.Code))
+	for _, code := range f.Code {
+		buf = binary.NativeEndian.AppendUint32(buf, uint32(code))
+	}
+
+	// Constants
+	buf = dumpInt(buf, len(f.Constants))
+	for i, value := range f.Constants {
+		switch {
+		case value.IsNil():
+			buf = append(buf, 0x00)
+		case value.IsInteger():
+			i, _ := value.Int64(OnlyIntegral)
+			buf = append(buf, 0x03)
+			buf = binary.NativeEndian.AppendUint64(buf, uint64(i))
+		case value.IsNumber():
+			f, _ := value.Float64()
+			buf = append(buf, 0x13)
+			buf = binary.NativeEndian.AppendUint64(buf, math.Float64bits(f))
+		case value.IsString():
+			if value.isShortString() {
+				buf = append(buf, 0x04)
+			} else {
+				buf = append(buf, 0x14)
+			}
+			s, _ := value.Unquoted()
+			buf = dumpString(buf, s)
+		default:
+			b, isBool := value.Bool()
+			if !isBool {
+				return nil, fmt.Errorf("dump lua chunk: Constants[%d] cannot be represented", i)
+			}
+			if b {
+				buf = append(buf, 0x01)
+			} else {
+				buf = append(buf, 0x11)
+			}
+		}
+	}
+
+	// Upvalues
+	buf = dumpInt(buf, len(f.Upvalues))
+	for _, upval := range f.Upvalues {
+		buf = dumpBool(buf, upval.InStack)
+		buf = append(buf, upval.Index)
+		buf = append(buf, byte(upval.Kind))
+	}
+
+	// Protos
+	buf = dumpInt(buf, len(f.Functions))
+	for _, p := range f.Functions {
+		var err error
+		buf, err = dumpFunction(buf, p, f.Source)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Debug information
+	buf = dumpLineInfo(buf, f.LineInfo)
+	buf = dumpInt(buf, len(f.LocalVariables))
+	for _, v := range f.LocalVariables {
+		buf = dumpString(buf, v.Name)
+		buf = dumpInt(buf, v.StartPC)
+		buf = dumpInt(buf, v.EndPC)
+	}
+	if !f.hasUpvalueNames() {
+		buf = dumpInt(buf, 0)
+	} else {
+		buf = dumpInt(buf, len(f.Upvalues))
+		for _, upval := range f.Upvalues {
+			buf = dumpString(buf, upval.Name)
+		}
+	}
+
+	return buf, nil
+}
+
+func dumpString(buf []byte, s string) []byte {
+	buf = dumpInt(buf, len(s)+1)
+	buf = append(buf, s...)
+	buf = append(buf, 0)
+	return buf
+}
+
+// dumpInt appends an integer to the byte slice
+// in big-endian with a variable-length encoding,
+// with the most significant bit indicating the end of the integer.
+func dumpInt(buf []byte, size int) []byte {
+	start := len(buf)
+	for {
+		buf = append(buf, uint8(size&0x7f))
+		size >>= 7
+		if size != 0 {
+			break
+		}
+	}
+	slices.Reverse(buf[start:])
+	buf[len(buf)-1] |= 0x80
+	return buf
+}
+
+func dumpBool(buf []byte, b bool) []byte {
+	if b {
+		return append(buf, 1)
+	} else {
+		return append(buf, 0)
+	}
 }
 
 type UpvalueDescriptor struct {
@@ -44,11 +242,23 @@ type UpvalueDescriptor struct {
 type VariableKind uint8
 
 const (
-	RegularVariable VariableKind = iota
-	Constant
-	ToClose
-	CompileTimeConstant
+	RegularVariable     VariableKind = 0
+	Constant            VariableKind = 1
+	ToClose             VariableKind = 2
+	CompileTimeConstant VariableKind = 3
 )
+
+// LocalVariable is a description of a local variable in [Prototype]
+// used for debug information.
+type LocalVariable struct {
+	Name string
+	// StartPC is the first instruction in the [Prototype.Code] slice
+	// where the variable is active.
+	StartPC int
+	// EndPC is the first instruction in the [Prototype.Code] slice
+	// where the variable is dead.
+	EndPC int
+}
 
 // Source is a description of a chunk that created a [Prototype].
 // If a source starts with a '@',
@@ -136,6 +346,19 @@ type LineInfo struct {
 type absLineInfo struct {
 	pc   int
 	line int
+}
+
+func dumpLineInfo(buf []byte, info LineInfo) []byte {
+	buf = dumpInt(buf, len(info.rel))
+	for _, i := range info.rel {
+		buf = append(buf, byte(i))
+	}
+	buf = dumpInt(buf, len(info.abs))
+	for _, a := range info.abs {
+		buf = dumpInt(buf, a.pc)
+		buf = dumpInt(buf, a.line)
+	}
+	return buf
 }
 
 // maxRegisters is the maximum number of registers in a Lua function.
