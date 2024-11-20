@@ -14,7 +14,9 @@ specifically borrowing from:
   - lcode.c
   - lparser.c
   - lopcodes.h
-  - lproto.h (for Proto)
+  - lobject.h (for Proto)
+  - ldump.c
+  - lundump.c
 
 Ideally, this package should continue to resemble upstream
 so that improvements in Lua can be easily ported over.

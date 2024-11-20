@@ -6,7 +6,9 @@ package luacode
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"strings"
@@ -17,7 +19,7 @@ const (
 	luacVersion byte    = 5*16 + 4
 	luacFormat  byte    = 0
 	luacData            = "\x19\x93\r\n\x1a\n"
-	luacInt     int64   = 0x5678
+	luacInt             = 0x5678
 	luacNum     float64 = 370.5
 )
 
@@ -87,9 +89,9 @@ func (f *Prototype) addConstant(k Value) int {
 }
 
 // MarshalBinary marshals the function as a precompiled chunk
-// in the same format as [luac].
+// in the same format as [luac 5.4].
 //
-// [luac]: https://www.lua.org/manual/5.4/luac.html
+// [luac 5.4]: https://www.lua.org/manual/5.4/luac.html
 func (f *Prototype) MarshalBinary() ([]byte, error) {
 	var buf []byte
 
@@ -98,7 +100,7 @@ func (f *Prototype) MarshalBinary() ([]byte, error) {
 	buf = append(buf, luacData...)
 	// Size of [Instruction], [int64], and [float64] in bytes.
 	buf = append(buf, 4, 8, 8)
-	buf = binary.NativeEndian.AppendUint64(buf, uint64(luacInt))
+	buf = binary.NativeEndian.AppendUint64(buf, luacInt)
 	buf = binary.NativeEndian.AppendUint64(buf, math.Float64bits(luacNum))
 
 	if len(f.Upvalues) > 0xff {
@@ -111,41 +113,41 @@ func (f *Prototype) MarshalBinary() ([]byte, error) {
 
 func dumpFunction(buf []byte, f *Prototype, parentSource Source) ([]byte, error) {
 	if f.Source == "" || f.Source == parentSource {
-		buf = dumpInt(buf, 0)
+		buf = dumpVarint(buf, 0)
 	} else {
 		buf = dumpString(buf, string(f.Source))
 	}
-	buf = dumpInt(buf, f.LineDefined)
-	buf = dumpInt(buf, f.LastLineDefined)
+	buf = dumpVarint(buf, f.LineDefined)
+	buf = dumpVarint(buf, f.LastLineDefined)
 	buf = append(buf, f.NumParams)
 	buf = dumpBool(buf, f.IsVararg)
 	buf = append(buf, f.MaxStackSize)
 
 	// Code
-	buf = dumpInt(buf, len(f.Code))
+	buf = dumpVarint(buf, len(f.Code))
 	for _, code := range f.Code {
 		buf = binary.NativeEndian.AppendUint32(buf, uint32(code))
 	}
 
 	// Constants
-	buf = dumpInt(buf, len(f.Constants))
+	buf = dumpVarint(buf, len(f.Constants))
 	for i, value := range f.Constants {
 		switch {
 		case value.IsNil():
-			buf = append(buf, 0x00)
+			buf = append(buf, valueDumpTypeNil)
 		case value.IsInteger():
 			i, _ := value.Int64(OnlyIntegral)
-			buf = append(buf, 0x03)
+			buf = append(buf, valueDumpTypeInt)
 			buf = binary.NativeEndian.AppendUint64(buf, uint64(i))
 		case value.IsNumber():
 			f, _ := value.Float64()
-			buf = append(buf, 0x13)
+			buf = append(buf, valueDumpTypeFloat)
 			buf = binary.NativeEndian.AppendUint64(buf, math.Float64bits(f))
 		case value.IsString():
 			if value.isShortString() {
-				buf = append(buf, 0x04)
+				buf = append(buf, valueDumpTypeShortString)
 			} else {
-				buf = append(buf, 0x14)
+				buf = append(buf, valueDumpTypeLongString)
 			}
 			s, _ := value.Unquoted()
 			buf = dumpString(buf, s)
@@ -155,15 +157,15 @@ func dumpFunction(buf []byte, f *Prototype, parentSource Source) ([]byte, error)
 				return nil, fmt.Errorf("dump lua chunk: Constants[%d] cannot be represented", i)
 			}
 			if b {
-				buf = append(buf, 0x01)
+				buf = append(buf, valueDumpTypeTrue)
 			} else {
-				buf = append(buf, 0x11)
+				buf = append(buf, valueDumpTypeFalse)
 			}
 		}
 	}
 
 	// Upvalues
-	buf = dumpInt(buf, len(f.Upvalues))
+	buf = dumpVarint(buf, len(f.Upvalues))
 	for _, upval := range f.Upvalues {
 		buf = dumpBool(buf, upval.InStack)
 		buf = append(buf, upval.Index)
@@ -171,7 +173,7 @@ func dumpFunction(buf []byte, f *Prototype, parentSource Source) ([]byte, error)
 	}
 
 	// Protos
-	buf = dumpInt(buf, len(f.Functions))
+	buf = dumpVarint(buf, len(f.Functions))
 	for _, p := range f.Functions {
 		var err error
 		buf, err = dumpFunction(buf, p, f.Source)
@@ -182,16 +184,16 @@ func dumpFunction(buf []byte, f *Prototype, parentSource Source) ([]byte, error)
 
 	// Debug information
 	buf = dumpLineInfo(buf, f.LineInfo)
-	buf = dumpInt(buf, len(f.LocalVariables))
+	buf = dumpVarint(buf, len(f.LocalVariables))
 	for _, v := range f.LocalVariables {
 		buf = dumpString(buf, v.Name)
-		buf = dumpInt(buf, v.StartPC)
-		buf = dumpInt(buf, v.EndPC)
+		buf = dumpVarint(buf, v.StartPC)
+		buf = dumpVarint(buf, v.EndPC)
 	}
 	if !f.hasUpvalueNames() {
-		buf = dumpInt(buf, 0)
+		buf = dumpVarint(buf, 0)
 	} else {
-		buf = dumpInt(buf, len(f.Upvalues))
+		buf = dumpVarint(buf, len(f.Upvalues))
 		for _, upval := range f.Upvalues {
 			buf = dumpString(buf, upval.Name)
 		}
@@ -201,16 +203,16 @@ func dumpFunction(buf []byte, f *Prototype, parentSource Source) ([]byte, error)
 }
 
 func dumpString(buf []byte, s string) []byte {
-	buf = dumpInt(buf, len(s)+1)
+	buf = dumpVarint(buf, len(s)+1)
 	buf = append(buf, s...)
 	buf = append(buf, 0)
 	return buf
 }
 
-// dumpInt appends an integer to the byte slice
+// dumpVarint appends an integer to the byte slice
 // in big-endian with a variable-length encoding,
 // with the most significant bit indicating the end of the integer.
-func dumpInt(buf []byte, size int) []byte {
+func dumpVarint(buf []byte, size int) []byte {
 	start := len(buf)
 	for {
 		buf = append(buf, uint8(size&0x7f))
@@ -232,6 +234,32 @@ func dumpBool(buf []byte, b bool) []byte {
 	}
 }
 
+// UnmarshalBinary unmarshals a precompiled chunk like those produced by [luac].
+// UnmarshalBinary supports chunks from different architectures,
+// but the chunk must be produced by Lua 5.4.
+//
+// [luac]: https://www.lua.org/manual/5.4/luac.html
+func (f *Prototype) UnmarshalBinary(data []byte) error {
+	r, err := newChunkReader(data)
+	if err != nil {
+		return fmt.Errorf("load lua chunk: %v", err)
+	}
+	mainUpvalueCount, ok := r.readByte()
+	if !ok {
+		return fmt.Errorf("load lua chunk: %v", io.ErrUnexpectedEOF)
+	}
+	if err := loadFunction(f, r, ""); err != nil {
+		return fmt.Errorf("load lua chunk: %v", err)
+	}
+	if _, hasMore := r.readByte(); hasMore {
+		return errors.New("load lua chunk: trailing data")
+	}
+	if int(mainUpvalueCount) != len(f.Upvalues) {
+		return fmt.Errorf("load lua chunk: header upvalue count (%d) != prototype upvalue count (%d)", mainUpvalueCount, len(f.Upvalues))
+	}
+	return nil
+}
+
 type UpvalueDescriptor struct {
 	Name    string
 	InStack bool
@@ -247,6 +275,13 @@ const (
 	ToClose             VariableKind = 2
 	CompileTimeConstant VariableKind = 3
 )
+
+func (kind VariableKind) isValid() bool {
+	return kind == RegularVariable ||
+		kind == Constant ||
+		kind == ToClose ||
+		kind == CompileTimeConstant
+}
 
 // LocalVariable is a description of a local variable in [Prototype]
 // used for debug information.
@@ -349,14 +384,14 @@ type absLineInfo struct {
 }
 
 func dumpLineInfo(buf []byte, info LineInfo) []byte {
-	buf = dumpInt(buf, len(info.rel))
+	buf = dumpVarint(buf, len(info.rel))
 	for _, i := range info.rel {
 		buf = append(buf, byte(i))
 	}
-	buf = dumpInt(buf, len(info.abs))
+	buf = dumpVarint(buf, len(info.abs))
 	for _, a := range info.abs {
-		buf = dumpInt(buf, a.pc)
-		buf = dumpInt(buf, a.line)
+		buf = dumpVarint(buf, a.pc)
+		buf = dumpVarint(buf, a.line)
 	}
 	return buf
 }
