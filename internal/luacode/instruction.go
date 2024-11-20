@@ -2,9 +2,11 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-//go:generate stringer -type=OpCode -linecomment -output=instruction_string.go
+//go:generate stringer -type=OpCode,OpMode -linecomment -output=instruction_string.go
 
 package luacode
+
+import "fmt"
 
 // Instruction is a single virtual machine instruction.
 type Instruction uint32
@@ -242,6 +244,31 @@ func (i Instruction) IsInTop() bool {
 func (i Instruction) IsOutTop() bool {
 	op := i.OpCode()
 	return op.SetsTopForNext() && i.ArgC() == 0 || op == OpTailCall
+}
+
+// String decodes the instruction
+// and formats it in a manner similar to [luac] -l.
+//
+// [luac]: https://www.lua.org/manual/5.4/luac.html
+func (i Instruction) String() string {
+	switch op := i.OpCode(); op.OpMode() {
+	case OpModeABC:
+		k := 0
+		if i.K() {
+			k = 1
+		}
+		return fmt.Sprintf("%-9s %#02x %#02x %#02x %d", op, i.ArgA(), i.ArgB(), i.ArgC(), k)
+	case OpModeABx:
+		return fmt.Sprintf("%-9s %#02x %#04x", op, i.ArgA(), i.ArgBx())
+	case OpModeAsBx:
+		return fmt.Sprintf("%-9s %#02x %d", op, i.ArgA(), i.ArgBx())
+	case OpModeAx:
+		return fmt.Sprintf("%-9s %#07x", op, i.ArgAx())
+	case OpModeJ:
+		return fmt.Sprintf("%-9s %+d", op, i.J())
+	default:
+		return fmt.Sprintf("Instruction(%#08x)", uint32(i))
+	}
 }
 
 // OpCode is an enumeration of [Instruction] types.
