@@ -63,7 +63,13 @@ func (fs *funcState) finish() error {
 			if !(fs.needClose || fs.f.IsVararg) {
 				break
 			}
-			// TODO(now): WithOpCode(OpReturn)
+			instruction = ABCInstruction(
+				OpReturn,
+				instruction.ArgA(),
+				instruction.ArgB(),
+				instruction.ArgC(),
+				instruction.K(),
+			)
 			fallthrough
 		case OpReturn, OpTailCall:
 			if fs.needClose {

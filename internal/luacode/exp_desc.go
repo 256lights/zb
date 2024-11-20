@@ -126,6 +126,12 @@ func newRelocExpDesc(pc int) expDesc {
 	return e
 }
 
+func newVarargExpDesc(pc int) expDesc {
+	e := newExpDesc(expKindVararg)
+	e.bits = uint64(pc)
+	return e
+}
+
 func constToExp(v Value) expDesc {
 	if v.IsNil() {
 		return newExpDesc(expKindNil)
@@ -422,4 +428,8 @@ func (k expKind) isVar() bool {
 
 func (k expKind) isIndexed() bool {
 	return expKindIndexed <= k && k <= expKindIndexStr
+}
+
+func (k expKind) hasMultipleReturns() bool {
+	return k == expKindCall || k == expKindVararg
 }

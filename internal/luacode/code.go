@@ -51,7 +51,12 @@ func (p *parser) codeJump(fs *funcState) int {
 }
 
 // codeReturn appends a return instruction to fs.f.Code.
-func (p *parser) codeReturn(fs *funcState, first registerIndex, nret uint8) {
+// codeReturn panics if nret is out of range.
+func (p *parser) codeReturn(fs *funcState, first registerIndex, nret int) {
+	b := nret + 1
+	if !(0 <= b && b <= maxArgB) {
+		panic("number of returns out of range")
+	}
 	op := OpReturn
 	switch nret {
 	case 0:
@@ -59,7 +64,7 @@ func (p *parser) codeReturn(fs *funcState, first registerIndex, nret uint8) {
 	case 1:
 		op = OpReturn1
 	}
-	p.code(fs, ABCInstruction(op, uint8(first), nret+1, 0, false))
+	p.code(fs, ABCInstruction(op, uint8(first), uint8(b), 0, false))
 }
 
 // codeInt appends a "load constant" instruction to fs.f.Code
@@ -886,7 +891,7 @@ func (p *parser) exp2anyreg(fs *funcState, e expDesc) (expDesc, registerIndex, e
 			// Result is already in a register.
 			return e, e.register(), nil
 		}
-		if int(e.register()) >= p.numVariablesInStack(fs) {
+		if e.register() >= p.numVariablesInStack(fs) {
 			// The register is not a local: put the final result in it.
 			e, err := p.exp2reg(fs, e, e.register())
 			if err != nil {
@@ -1070,10 +1075,16 @@ func (p *parser) dischargeVars(fs *funcState, e expDesc) expDesc {
 	return e
 }
 
+const multiReturn = -1
+
 // setReturns fixes an expression to return the given number of results.
 // If e is not a multi-ret expression (i.e. a function call or vararg),
 // setReturns returns an error.
-func (p *parser) setReturns(fs *funcState, e expDesc, nResults uint8) error {
+func (p *parser) setReturns(fs *funcState, e expDesc, nResults int) error {
+	c := nResults + 1
+	if !(0 <= c && c <= maxArgC) {
+		return fmt.Errorf("internal error: number of results (%d) out of range for setReturns", nResults)
+	}
 	switch e.kind {
 	case expKindCall:
 		i := fs.f.Code[e.pc()]
@@ -1081,7 +1092,7 @@ func (p *parser) setReturns(fs *funcState, e expDesc, nResults uint8) error {
 			i.OpCode(),
 			i.ArgA(),
 			i.ArgB(),
-			uint8(nResults+1),
+			uint8(c),
 			i.K(),
 		)
 	case expKindVararg:
@@ -1090,7 +1101,7 @@ func (p *parser) setReturns(fs *funcState, e expDesc, nResults uint8) error {
 			i.OpCode(),
 			uint8(fs.firstFreeRegister),
 			i.ArgB(),
-			uint8(nResults+1),
+			uint8(c),
 			i.K(),
 		)
 		if err := fs.reserveRegisters(1); err != nil {
@@ -1147,7 +1158,7 @@ func (p *parser) freeExps(fs *funcState, e1, e2 expDesc) {
 }
 
 func (p *parser) freeReg(fs *funcState, reg registerIndex) {
-	if int(reg) >= p.numVariablesInStack(fs) {
+	if reg >= p.numVariablesInStack(fs) {
 		fs.firstFreeRegister--
 		if reg != fs.firstFreeRegister {
 			panic("freereg should be called on fs.firstFreeRegister+1")
@@ -1183,7 +1194,7 @@ func (p *parser) constToValue(e expDesc) (_ Value, ok bool) {
 	if e.kind != expKindK {
 		return Value{}, false
 	}
-	return p.activeVars[e.constIndex()].k, true
+	return p.activeVariables[e.constIndex()].k, true
 }
 
 // setTableSize returns a sequence of instructions for [OpSetTable].
