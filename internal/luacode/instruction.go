@@ -198,7 +198,7 @@ const (
 )
 
 func (i Instruction) K() bool {
-	return i.OpCode().OpMode() == OpModeABC && i&posK != 0
+	return i.OpCode().OpMode() == OpModeABC && i&(1<<posK) != 0
 }
 
 // WithK returns a copy of i
