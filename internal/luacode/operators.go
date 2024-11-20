@@ -234,7 +234,7 @@ const (
 
 func (op unaryOperator) toOpCode() (_ OpCode, ok bool) {
 	if op <= unaryOperatorNone || op > numUnaryOperators {
-		return numOpCodes, false
+		return maxOpCode + 1, false
 	}
 	return OpUnM + OpCode(op-unaryOperatorMinus), true
 }
@@ -305,7 +305,7 @@ func (op binaryOperator) toOpCode(base OpCode) (_ OpCode, ok bool) {
 	case base == OpLTI && binaryOperatorGT <= op && op <= binaryOperatorGE:
 		return OpGTI + OpCode(op-binaryOperatorGT), true
 	default:
-		return numOpCodes, false
+		return maxOpCode + 1, false
 	}
 }
 

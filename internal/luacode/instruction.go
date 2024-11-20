@@ -276,7 +276,7 @@ type OpCode uint8
 
 // IsValid reports whether the opcode is one of the known instructions.
 func (op OpCode) IsValid() bool {
-	return op < numOpCodes
+	return op <= maxOpCode
 }
 
 func (op OpCode) props() byte {
@@ -321,201 +321,201 @@ func (op OpCode) IsMetamethod() bool {
 // Defined [OpCode] values.
 const (
 	// A B R[A] := R[B]
-	OpMove OpCode = iota // MOVE
+	OpMove OpCode = 0 // MOVE
 	// A sBx R[A] := sBx
-	OpLoadI // LOADI
+	OpLoadI OpCode = 1 // LOADI
 	// A sBx R[A] := (lua_Number)sBx
-	OpLoadF // LOADF
+	OpLoadF OpCode = 2 // LOADF
 	// A Bx R[A] := K[Bx]
-	OpLoadK // LOADK
+	OpLoadK OpCode = 3 // LOADK
 	// A R[A] := K[extra arg]
-	OpLoadKX // LOADKX
+	OpLoadKX OpCode = 4 // LOADKX
 	// A R[A] := false
-	OpLoadFalse // LOADFALSE
+	OpLoadFalse OpCode = 5 // LOADFALSE
 	// A R[A] := false; pc++ (
-	OpLFalseSkip // LFALSESKIP
+	OpLFalseSkip OpCode = 6 // LFALSESKIP
 	// A R[A] := true
-	OpLoadTrue // LOADTRUE
+	OpLoadTrue OpCode = 7 // LOADTRUE
 	// A B R[A], R[A+1], ..., R[A+B] := nil
-	OpLoadNil // LOADNIL
+	OpLoadNil OpCode = 8 // LOADNIL
 	// A B R[A] := UpValue[B]
-	OpGetUpval // GETUPVAL
+	OpGetUpval OpCode = 9 // GETUPVAL
 	// A B UpValue[B] := R[A]
-	OpSetUpval // SETUPVAL
+	OpSetUpval OpCode = 10 // SETUPVAL
 
 	// A B C R[A] := UpValue[B][K[C]:string]
-	OpGetTabUp // GETTABUP
+	OpGetTabUp OpCode = 11 // GETTABUP
 	// A B C R[A] := R[B][R[C]]
-	OpGetTable // GETTABLE
+	OpGetTable OpCode = 12 // GETTABLE
 	// A B C R[A] := R[B][C]
-	OpGetI // GETI
+	OpGetI OpCode = 13 // GETI
 	// A B C R[A] := R[B][K[C]:string]
-	OpGetField // GETFIELD
+	OpGetField OpCode = 14 // GETFIELD
 
 	// A B C UpValue[A][K[B]:string] := RK(C)
-	OpSetTabUp // SETTABUP
+	OpSetTabUp OpCode = 15 // SETTABUP
 	// A B C R[A][R[B]] := RK(C)
-	OpSetTable // SETTABLE
+	OpSetTable OpCode = 16 // SETTABLE
 	// A B C R[A][B] := RK(C)
-	OpSetI // SETI
+	OpSetI OpCode = 17 // SETI
 	// A B C R[A][K[B]:string] := RK(C)
-	OpSetField // SETFIELD
+	OpSetField OpCode = 18 // SETFIELD
 
 	// A B C k R[A] := {}
-	OpNewTable // NEWTABLE
+	OpNewTable OpCode = 19 // NEWTABLE
 
 	// A B C R[A+1] := R[B]; R[A] := R[B][RK(C):string]
-	OpSelf // SELF
+	OpSelf OpCode = 20 // SELF
 
 	// A B sC R[A] := R[B] + sC
-	OpAddI // ADDI
+	OpAddI OpCode = 21 // ADDI
 
 	// A B C R[A] := R[B] + K[C]:number
-	OpAddK // ADDK
+	OpAddK OpCode = 22 // ADDK
 	// A B C R[A] := R[B] - K[C]:number
-	OpSubK // SUBK
+	OpSubK OpCode = 23 // SUBK
 	// A B C R[A] := R[B]
-	OpMulK // MULK
+	OpMulK OpCode = 24 // MULK
 	// A B C R[A] := R[B] % K[C]:number
-	OpModK // MODK
+	OpModK OpCode = 25 // MODK
 	// A B C R[A] := R[B] ^ K[C]:number
-	OpPowK // POWK
+	OpPowK OpCode = 26 // POWK
 	// A B C R[A] := R[B] / K[C]:number
-	OpDivK // DIVK
+	OpDivK OpCode = 27 // DIVK
 	// A B C R[A] := R[B] // K[C]:number
-	OpIDivK // IDIVK
+	OpIDivK OpCode = 28 // IDIVK
 
 	// A B C R[A] := R[B] & K[C]:integer
-	OpBAndK // BANDK
+	OpBAndK OpCode = 29 // BANDK
 	// A B C R[A] := R[B] | K[C]:integer
-	OpBOrK // BORK
+	OpBOrK OpCode = 30 // BORK
 	// A B C R[A] := R[B] ~ K[C]:integer
-	OpBXorK // BXORK
+	OpBXorK OpCode = 31 // BXORK
 
 	// A B sC R[A] := R[B] >> sC
-	OpShrI // SHRI
+	OpShrI OpCode = 32 // SHRI
 	// A B sC R[A] := sC << R[B]
-	OpShlI // SHLI
+	OpShlI OpCode = 33 // SHLI
 
 	// A B C R[A] := R[B] + R[C]
-	OpAdd // ADD
+	OpAdd OpCode = 34 // ADD
 	// A B C R[A] := R[B] - R[C]
-	OpSub // SUB
+	OpSub OpCode = 35 // SUB
 	// A B C R[A] := R[B]
-	OpMul // MUL
+	OpMul OpCode = 36 // MUL
 	// A B C R[A] := R[B] % R[C]
-	OpMod // MOD
+	OpMod OpCode = 37 // MOD
 	// A B C R[A] := R[B] ^ R[C]
-	OpPow // POW
+	OpPow OpCode = 38 // POW
 	// A B C R[A] := R[B] / R[C]
-	OpDiv // DIV
+	OpDiv OpCode = 39 // DIV
 	// A B C R[A] := R[B] // R[C]
-	OpIDiv // IDIV
+	OpIDiv OpCode = 40 // IDIV
 
 	// A B C R[A] := R[B] & R[C]
-	OpBAnd // BAND
+	OpBAnd OpCode = 41 // BAND
 	// A B C R[A] := R[B] | R[C]
-	OpBOr // BOR
+	OpBOr OpCode = 42 // BOR
 	// A B C R[A] := R[B] ~ R[C]
-	OpBXor // BXOR
+	OpBXor OpCode = 43 // BXOR
 	// A B C R[A] := R[B] << R[C]
-	OpShl // SHL
+	OpShl OpCode = 44 // SHL
 	// A B C R[A] := R[B] >> R[C]
-	OpShr // SHR
+	OpShr OpCode = 45 // SHR
 
 	// A B C call C metamethod over R[A] and R[B] (
-	OpMMBin // MMBIN
+	OpMMBin OpCode = 46 // MMBIN
 	// A sB C k call C metamethod over R[A] and sB
-	OpMMBinI // MMBINI
+	OpMMBinI OpCode = 47 // MMBINI
 	// A B C k  call C metamethod over R[A] and K[B]
-	OpMMBinK // MMBINK
+	OpMMBinK OpCode = 48 // MMBINK
 
 	// A B R[A] := -R[B]
-	OpUnM // UNM
+	OpUnM OpCode = 49 // UNM
 	// A B R[A] := ~R[B]
-	OpBNot // BNOT
+	OpBNot OpCode = 50 // BNOT
 	// A B R[A] := not R[B]
-	OpNot // NOT
+	OpNot OpCode = 51 // NOT
 	// A B R[A] := #R[B] (length operator)
-	OpLen // LEN
+	OpLen OpCode = 52 // LEN
 
 	// A B R[A] := R[A].. ... ..R[A + B - 1]
-	OpConcat // CONCAT
+	OpConcat OpCode = 53 // CONCAT
 
 	// A close all upvalues >= R[A]
-	OpClose // CLOSE
+	OpClose OpCode = 54 // CLOSE
 	// A mark variable A "to be closed"
-	OpTBC // TBC
+	OpTBC OpCode = 55 // TBC
 	// sJ pc += sJ
-	OpJmp // JMP
+	OpJmp OpCode = 56 // JMP
 	// A B k if ((R[A] == R[B]) ~= k) then pc++
-	OpEq // EQ
+	OpEq OpCode = 57 // EQ
 	// A B k if ((R[A] <  R[B]) ~= k) then pc++
-	OpLT // LT
+	OpLT OpCode = 58 // LT
 	// A B k if ((R[A] <= R[B]) ~= k) then pc++
-	OpLE // LE
+	OpLE OpCode = 59 // LE
 
 	// A B k if ((R[A] == K[B]) ~= k) then pc++
-	OpEqK // EQK
+	OpEqK OpCode = 60 // EQK
 	// A sB k if ((R[A] == sB) ~= k) then pc++
-	OpEqI // EQI
+	OpEqI OpCode = 61 // EQI
 	// A sB k if ((R[A] < sB) ~= k) then pc++
-	OpLTI // LTI
+	OpLTI OpCode = 62 // LTI
 	// A sB k if ((R[A] <= sB) ~= k) then pc++
-	OpLEI // LEI
+	OpLEI OpCode = 63 // LEI
 	// A sB k if ((R[A] > sB) ~= k) then pc++
-	OpGTI // GTI
+	OpGTI OpCode = 64 // GTI
 	// A sB k if ((R[A] >= sB) ~= k) then pc++
-	OpGEI // GEI
+	OpGEI OpCode = 65 // GEI
 
 	// A k if (not R[A] == k) then pc++
-	OpTest // TEST
+	OpTest OpCode = 66 // TEST
 	// A B k if (not R[B] == k) then pc++ else R[A] := R[B] (
-	OpTestSet // TESTSET
+	OpTestSet OpCode = 67 // TESTSET
 
 	// A B C R[A], ... ,R[A+C-2] := R[A](R[A+1], ... ,R[A+B-1])
-	OpCall // CALL
+	OpCall OpCode = 68 // CALL
 	// A B C k return R[A](R[A+1], ... ,R[A+B-1])
-	OpTailCall // TAILCALL
+	OpTailCall OpCode = 69 // TAILCALL
 
 	// A B C k return R[A], ... ,R[A+B-2] (see note)
-	OpReturn // RETURN
+	OpReturn OpCode = 70 // RETURN
 	//  return
-	OpReturn0 // RETURN0
+	OpReturn0 OpCode = 71 // RETURN0
 	// A return R[A]
-	OpReturn1 // RETURN1
+	OpReturn1 OpCode = 72 // RETURN1
 
 	// A Bx update counters; if loop continues then pc-=Bx;
-	OpForLoop // FORLOOP
+	OpForLoop OpCode = 73 // FORLOOP
 	// A Bx <check values and prepare counters>; if not to run then pc+=Bx+1;
-	OpForPrep // FORPREP
+	OpForPrep OpCode = 74 // FORPREP
 
 	// A Bx create upvalue for R[A + 3]; pc+=Bx
-	OpTForPrep // TFORPREP
+	OpTForPrep OpCode = 75 // TFORPREP
 	// A C R[A+4], ... ,R[A+3+C] := R[A](R[A+1], R[A+2]);
-	OpTForCall // TFORCALL
+	OpTForCall OpCode = 76 // TFORCALL
 	// A Bx if R[A+2] ~= nil then { R[A]=R[A+2]; pc -= Bx }
-	OpTForLoop // TFORLOOP
+	OpTForLoop OpCode = 77 // TFORLOOP
 
 	// A B C k R[A][C+i] := R[A+i], 1 <= i <= B
-	OpSetList // SETLIST
+	OpSetList OpCode = 78 // SETLIST
 
 	// A Bx R[A] := closure(KPROTO[Bx])
-	OpClosure // CLOSURE
+	OpClosure OpCode = 79 // CLOSURE
 
 	// A C R[A], R[A+1], ..., R[A+C-2] = vararg
-	OpVararg // VARARG
+	OpVararg OpCode = 80 // VARARG
 
 	//A (adjust vararg parameters)
-	OpVarargPrep // VARARGPREP
+	OpVarargPrep OpCode = 81 // VARARGPREP
 
 	// Ax extra (larger) argument for previous opcode
-	OpExtraArg // EXTRAARG
+	OpExtraArg OpCode = 82 // EXTRAARG
 
-	numOpCodes = iota
+	maxOpCode = OpExtraArg
 )
 
-var opProps = [numOpCodes]byte{
+var opProps = [...]byte{
 	OpMove:       0b00001000 | byte(OpModeABC),
 	OpLoadI:      0b00001000 | byte(OpModeAsBx),
 	OpLoadF:      0b00001000 | byte(OpModeAsBx),
