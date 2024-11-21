@@ -126,6 +126,12 @@ func newRelocExpDesc(pc int) expDesc {
 	return e
 }
 
+func newCallExpDesc(pc int) expDesc {
+	e := newExpDesc(expKindCall)
+	e.bits = uint64(pc)
+	return e
+}
+
 func newVarargExpDesc(pc int) expDesc {
 	e := newExpDesc(expKindVararg)
 	e.bits = uint64(pc)

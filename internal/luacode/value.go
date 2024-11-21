@@ -174,6 +174,28 @@ func (v Value) String() string {
 	}
 }
 
+// Equal returns whether two values are equivalent according to [Lua equality].
+//
+// [Lua equality]: https://lua.org/manual/5.4/manual.html#3.4.4
+func (v Value) Equal(v2 Value) bool {
+	switch v.t {
+	case valueTypeNil, valueTypeFalse, valueTypeTrue:
+		return v.t == v2.t
+	case valueTypeFloat:
+		f1, _ := v.Float64()
+		f2, ok := v2.Float64()
+		return ok && f1 == f2
+	case valueTypeInteger:
+		i1, _ := v.Int64(OnlyIntegral)
+		i2, ok := v2.Int64(OnlyIntegral)
+		return ok && i1 == i2
+	case valueTypeString:
+		return v2.IsString() && v.s == v2.s
+	default:
+		return false
+	}
+}
+
 // FloatToIntegerMode is an enumeration of rounding modes for [FloatToInteger].
 type FloatToIntegerMode int
 

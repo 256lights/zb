@@ -17,6 +17,10 @@ import (
 
 const envName = "_ENV"
 
+const depthLimit = 200
+
+var errDepthExceeded = errors.New("recursion depth exceeded")
+
 // minStackSize is the initial stack size for any function.
 // Registers zero and one are always valid.
 const minStackSize = 2
@@ -66,6 +70,8 @@ type parser struct {
 	err  error
 	// lastLine is the line number of the previous token.
 	lastLine int
+
+	depth int
 
 	activeVariables []variableDescription
 	pendingGotos    []labelDescription
@@ -194,9 +200,111 @@ func (p *parser) statement(fs *funcState) error {
 		p.next()
 		return p.retStat(fs)
 	default:
-		// functioncall | assignment
-		return errors.New("TODO(now)")
+		return p.exprStatement(fs)
 	}
+}
+
+// exprStatement parses a statement that begins with an expression
+// (i.e. a function call or an assignment).
+func (p *parser) exprStatement(fs *funcState) error {
+	v, err := p.prefixExp(fs)
+	if err != nil {
+		return err
+	}
+	switch p.curr.Kind {
+	case lualex.AssignToken, lualex.CommaToken:
+		return p.assignment(fs, lhsAssign{v: v}, 1)
+	default:
+		// Function call.
+		if v.kind != expKindCall {
+			return syntaxError(fs.Source, p.curr, "syntax error")
+		}
+		i := &fs.Code[v.pc()]
+		var ok bool
+		*i, ok = i.WithArgC(1)
+		if !ok {
+			return fmt.Errorf("internal error: call expression references %v instruction", i.OpCode())
+		}
+		return nil
+	}
+}
+
+type lhsAssign struct {
+	prev *lhsAssign
+	v    expDesc
+}
+
+func (p *parser) assignment(fs *funcState, lhs lhsAssign, numVariables int) error {
+	// TODO(now): Check things.
+	switch p.curr.Kind {
+	case lualex.CommaToken:
+		v, err := p.prefixExp(fs)
+		if err != nil {
+			return err
+		}
+		if !v.kind.isIndexed() {
+			// TODO(now): Check conflict
+		}
+		nv := lhsAssign{prev: &lhs, v: v}
+		p.depth++
+		if p.depth > depthLimit {
+			return errDepthExceeded
+		}
+		err = p.assignment(fs, nv, numVariables+1)
+		p.depth--
+		if err != nil {
+			return err
+		}
+	case lualex.AssignToken:
+		p.next()
+		numExpressions, last, err := p.expList(fs)
+		if err != nil {
+			return err
+		}
+		if numExpressions == numVariables {
+			last = p.setOneReturn(fs, last) // close last expression
+			return p.codeStoreVar(fs, lhs.v, last)
+		}
+		if err := p.adjustAssignment(fs, numVariables, numExpressions, last); err != nil {
+			return err
+		}
+	default:
+		return syntaxError(fs.Source, p.curr, "'=' expected")
+	}
+
+	return p.codeStoreVar(fs, lhs.v, newNonRelocExpDesc(fs.firstFreeRegister-1))
+}
+
+func (p *parser) adjustAssignment(fs *funcState, numVariables, numExpressions int, last expDesc) error {
+	needed := numVariables - numExpressions
+	if last.kind.hasMultipleReturns() {
+		extra := max(needed+1, 0)
+		if err := p.setReturns(fs, last, extra); err != nil {
+			return err
+		}
+	} else {
+		if last.kind != expKindVoid {
+			// Close last expression.
+			var err error
+			last, _, err = p.exp2nextReg(fs, last)
+			if err != nil {
+				return err
+			}
+		}
+		if needed > 0 {
+			// Missing values; fill with nils.
+			p.codeNil(fs, fs.firstFreeRegister, uint8(needed))
+		}
+	}
+	if needed > 0 {
+		if err := fs.reserveRegisters(needed); err != nil {
+			return err
+		}
+	} else {
+		// Remove extra values (this is a subtraction).
+		fs.firstFreeRegister += registerIndex(needed)
+	}
+	return nil
 }
 
 func (p *parser) setVarArg(fs *funcState, numParams uint8) {
@@ -280,6 +388,250 @@ func (p *parser) exp(fs *funcState) (expDesc, error) {
 	return p.simpleExp(fs)
 }
 
+// prefixExp parses a prefixexp production.
+//
+//	prefixexp ::= var | functioncall | ‘(’ exp ‘)’
+//	functioncall ::=  prefixexp args | prefixexp ‘:’ Name args
+//	var ::=  Name | prefixexp ‘[’ exp ‘]’ | prefixexp ‘.’ Name
+func (p *parser) prefixExp(fs *funcState) (expDesc, error) {
+	var v expDesc
+	switch p.curr.Kind {
+	case lualex.LParenToken:
+		pos := p.curr.Position
+		p.next()
+		var err error
+		v, err = p.exp(fs)
+		if err != nil {
+			return voidExpDesc(), err
+		}
+		if err := p.checkMatch(fs, pos, lualex.LParenToken, lualex.RParenToken); err != nil {
+			return voidExpDesc(), err
+		}
+		v = p.dischargeVars(fs, v)
+	case lualex.IdentifierToken:
+		var err error
+		v, err = p.singleVar(fs)
+		if err != nil {
+			return voidExpDesc(), err
+		}
+	default:
+		return voidExpDesc(), syntaxError(fs.Source, p.curr, "unexpected symbol")
+	}
+
+	for {
+		switch p.curr.Kind {
+		case lualex.DotToken:
+			var err error
+			v, err = p.fieldSelector(fs, v)
+			if err != nil {
+				return voidExpDesc(), err
+			}
+		case lualex.LBracketToken:
+			pos := p.curr.Position
+			var err error
+			v, err = p.exp2anyregup(fs, v)
+			if err != nil {
+				return voidExpDesc(), err
+			}
+			p.next()
+			k, err := p.exp(fs)
+			if err != nil {
+				return voidExpDesc(), err
+			}
+			k, err = p.expToValue(fs, k)
+			if err != nil {
+				return voidExpDesc(), err
+			}
+			if err := p.checkMatch(fs, pos, lualex.LBracketToken, lualex.RBracketToken); err != nil {
+				return voidExpDesc(), err
+			}
+			v, err = p.codeIndexed(fs, v, k)
+			if err != nil {
+				return voidExpDesc(), err
+			}
+		case lualex.ColonToken:
+			p.next()
+			key, err := p.name(fs)
+			if err != nil {
+				return voidExpDesc(), err
+			}
+			v, err = p.codeSelf(fs, v, codeString(key))
+			if err != nil {
+				return voidExpDesc(), err
+			}
+			v, err = p.functionArguments(fs, v)
+			if err != nil {
+				return voidExpDesc(), err
+			}
+		case lualex.LParenToken, lualex.StringToken, lualex.LBraceToken:
+			var err error
+			v, _, err = p.exp2nextReg(fs, v)
+			if err != nil {
+				return voidExpDesc(), err
+			}
+			v, err = p.functionArguments(fs, v)
+			if err != nil {
+				return voidExpDesc(), err
+			}
+		default:
+			return v, nil
+		}
+	}
+}
+
+// fieldSelector parses a production of:
+//
+//	'.' NAME | ':' NAME
+func (p *parser) fieldSelector(fs *funcState, v expDesc) (expDesc, error) {
+	v, err := p.exp2anyregup(fs, v)
+	if err != nil {
+		return voidExpDesc(), err
+	}
+	p.next() // Skip the dot or colon.
+	key, err := p.name(fs)
+	if err != nil {
+		return voidExpDesc(), err
+	}
+	return p.codeIndexed(fs, v, codeString(key))
+}
+
+func (p *parser) functionArguments(fs *funcState, f expDesc) (expDesc, error) {
+	pos := p.curr.Position
+	var args expDesc
+	switch p.curr.Kind {
+	case lualex.LParenToken:
+		p.next()
+		if p.curr.Kind == lualex.RParenToken {
+			// Empty argument list.
+			args = voidExpDesc()
+		} else {
+			var err error
+			_, args, err = p.expList(fs)
+			if err != nil {
+				return voidExpDesc(), err
+			}
+			if args.kind.hasMultipleReturns() {
+				if err := p.setReturns(fs, args, multiReturn); err != nil {
+					return voidExpDesc(), err
+				}
+			}
+		}
+		if err := p.checkMatch(fs, pos, lualex.LParenToken, lualex.RParenToken); err != nil {
+			return voidExpDesc(), err
+		}
+	case lualex.LBraceToken:
+		return p.constructor(fs)
+	case lualex.StringToken:
+		args = codeString(p.curr.Value)
+		p.next()
+	default:
+		return voidExpDesc(), syntaxError(fs.Source, p.curr, "function arguments expected")
+	}
+
+	baseRegister := f.register()
+	var numParams int
+	if args.kind.hasMultipleReturns() {
+		numParams = multiReturn
+	} else {
+		if args.kind == expKindVoid {
+			// Close last argument.
+			p.exp2nextReg(fs, args)
+		}
+		numParams = int(fs.firstFreeRegister) - (int(baseRegister) + 1)
+	}
+	pc := p.code(fs, ABCInstruction(OpCall, uint8(baseRegister), uint8(numParams+1), 2, false))
+	fs.fixLineInfo(pos.Line)
+	// Call removes function and arguments and leaves one result
+	// (unless changed later).
+	fs.firstFreeRegister = baseRegister + 1
+
+	return newCallExpDesc(pc), nil
+}
+
+func (p *parser) constructor(fs *funcState) (expDesc, error) {
+	return voidExpDesc(), errors.New("TODO(soon)")
+}
+
+// singleVar parses an identifier and resolves it as a variable.
+func (p *parser) singleVar(fs *funcState) (expDesc, error) {
+	varname, err := p.name(fs)
+	if err != nil {
+		return voidExpDesc(), err
+	}
+	// Find local variable.
+	if v, err := p.resolveName(fs, varname, true); err != nil || v.kind != expKindVoid {
+		return v, err
+	}
+	// Global name: rewrite into _ENV access.
+	v, err := p.resolveName(fs, envName, true)
+	if err != nil {
+		return voidExpDesc(), err
+	}
+	if v.kind == expKindVoid {
+		return voidExpDesc(), fmt.Errorf("internal error: %s does not exist", envName)
+	}
+	v, err = p.exp2anyregup(fs, v)
+	if err != nil {
+		return voidExpDesc(), err
+	}
+	k := codeString(varname)
+	return p.codeIndexed(fs, v, k)
+}
+
+// resolveName finds the variable with the given name.
+// If it is an upvalue, add this upvalue into all intermediate functions.
+// If the name could not be found, then the returned expression's kind is [expDescVoid].
+func (p *parser) resolveName(fs *funcState, name string, base bool) (expDesc, error) {
+	if fs == nil {
+		return voidExpDesc(), nil
+	}
+
+	if v, ok := p.searchVariable(fs, name); ok {
+		if v.kind == expKindLocal && !base {
+			// Local will be used as an upvalue.
+			fs.markUpval(v.localIndex(0))
+		}
+		return v, nil
+	}
+	// Not found as local at current level; try upvalues.
+	if i, ok := fs.searchUpvalue(name); ok {
+		return newUpvalExpDesc(i), nil
+	}
+
+	// Not found? Try upper levels.
+	v, err := p.resolveName(fs.prev, name, false)
+	if err != nil {
+		return voidExpDesc(), err
+	}
+	switch v.kind {
+	case expKindLocal:
+		if len(fs.Upvalues) >= maxUpvalues {
+			return voidExpDesc(), fmt.Errorf("too many upvalues")
+		}
+		up := UpvalueDescriptor{
+			Name:    name,
+			Kind:    p.localVariableDescription(fs.prev, v.localIndex(0)).kind,
+			Index:   uint8(v.register()),
+			InStack: true,
+		}
+		fs.Upvalues = append(fs.Upvalues, up)
+		return newUpvalExpDesc(upvalueIndex(len(fs.Upvalues) - 1)), nil
+	case expKindUpval:
+		if len(fs.Upvalues) >= maxUpvalues {
+			return voidExpDesc(), fmt.Errorf("too many upvalues")
+		}
+		up := UpvalueDescriptor{
+			Name:  name,
+			Kind:  fs.prev.Upvalues[v.upvalueIndex()].Kind,
+			Index: uint8(v.upvalueIndex()),
+		}
+		fs.Upvalues = append(fs.Upvalues, up)
+		return newUpvalExpDesc(upvalueIndex(len(fs.Upvalues) - 1)), nil
+	default:
+		return v, nil
+	}
+}
+
 func (p *parser) simpleExp(fs *funcState) (expDesc, error) {
 	switch p.curr.Kind {
 	case lualex.NumeralToken:
@@ -320,8 +672,12 @@ func (p *parser) simpleExp(fs *funcState) (expDesc, error) {
 		p.next()
 		pc := p.code(fs, ABCInstruction(OpVararg, 0, 0, 1, false))
 		return newVarargExpDesc(pc), nil
+	case lualex.LBraceToken:
+		return p.constructor(fs)
+	case lualex.FunctionToken:
+		return voidExpDesc(), errors.New("TODO(soon): function")
 	default:
-		return voidExpDesc(), errors.New("TODO(now): constructor, function, suffixedexp")
+		return p.prefixExp(fs)
 	}
 }
 
@@ -348,10 +704,18 @@ func (p *parser) checkMatch(fs *funcState, start lualex.Position, open, close lu
 	return syntaxError(fs.Source, p.curr, msg)
 }
 
-// newVar returns a new expression representing the vidx'th variable.
-func (p *parser) newVar(fs *funcState, vidx uint16) expDesc {
-	ridx := p.localVariableDescription(fs, int(vidx)).ridx
-	return newLocalExpDesc(ridx, vidx)
+// searchVariable looks for an active variable with the given name in the function.
+func (p *parser) searchVariable(fs *funcState, n string) (_ expDesc, found bool) {
+	for i := int(fs.numActiveVariables) - 1; i >= 0; i-- {
+		vd := p.localVariableDescription(fs, i)
+		if vd.name == n {
+			if vd.kind == CompileTimeConstant {
+				return newConstLocalExpDesc(fs.firstLocal + i), true
+			}
+			return newLocalExpDesc(vd.ridx, uint16(i)), true
+		}
+	}
+	return voidExpDesc(), false
 }
 
 // removeVariables closes the scope for all variables up to the given level.

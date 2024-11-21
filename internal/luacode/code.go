@@ -154,26 +154,28 @@ func (p *parser) codeStoreVar(fs *funcState, v, expr expDesc) error {
 // codeSelf appends an [OpSelf] instruction to fs.Code.
 // This has the effect of converting expression e into "e:key(e,".
 // Both e and key are invalid after a call to codeSelf.
-func (p *parser) codeSelf(fs *funcState, e, key expDesc) error {
+// codeSelf returns a [expKindNonReloc] of the register containing the function.
+// e will be placed at the next register.
+func (p *parser) codeSelf(fs *funcState, e, key expDesc) (expDesc, error) {
 	e, ereg, err := p.exp2anyreg(fs, e)
 	if err != nil {
-		return err
+		return voidExpDesc(), err
 	}
 	p.freeExp(fs, e)
 
 	// Reserve registers for function and self produced by OpSelf.
 	baseRegister := fs.firstFreeRegister
 	if err := fs.reserveRegisters(2); err != nil {
-		return err
+		return voidExpDesc(), err
 	}
 
 	key, err = p.codeABRK(fs, OpSelf, uint8(baseRegister), uint8(ereg), key)
 	if err != nil {
-		return err
+		return voidExpDesc(), err
 	}
 	p.freeExp(fs, key)
 
-	return nil
+	return newNonRelocExpDesc(baseRegister), nil
 }
 
 // codeGoIfTrue appends instructions to go through if e is true, jump otherwise.
