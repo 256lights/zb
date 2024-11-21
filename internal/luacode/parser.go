@@ -57,7 +57,7 @@ func Parse(name Source, r io.ByteScanner) (*Prototype, error) {
 		return nil, err
 	}
 
-	return fs.f, nil
+	return fs.Prototype, nil
 }
 
 type parser struct {
@@ -81,8 +81,8 @@ func (p *parser) next() {
 
 func (p *parser) openFunction(prev *funcState, f *Prototype) (*funcState, *blockControl) {
 	fs := &funcState{
-		prev: prev,
-		f:    f,
+		prev:      prev,
+		Prototype: f,
 
 		previousLine: f.LineDefined,
 		firstLocal:   len(p.activeVariables),
@@ -153,7 +153,7 @@ func (p *parser) leaveBlock(fs *funcState) error {
 		} else {
 			msg = fmt.Sprintf("no visible label '%s' for <goto> at %v", gt.name, gt.position)
 		}
-		return syntaxError(fs.f.Source, lualex.Token{}, msg)
+		return syntaxError(fs.Source, lualex.Token{}, msg)
 	}
 	return nil
 }
@@ -200,7 +200,7 @@ func (p *parser) statement(fs *funcState) error {
 }
 
 func (p *parser) setVarArg(fs *funcState, numParams uint8) {
-	fs.f.IsVararg = true
+	fs.IsVararg = true
 	p.code(fs, ABCInstruction(OpVarargPrep, numParams, 0, 0, false))
 }
 
@@ -223,11 +223,11 @@ func (p *parser) retStat(fs *funcState) error {
 			}
 			if lastExpr.kind == expKindCall && nret == 1 && !fs.blocks.insideTBC {
 				// Tail call.
-				i := fs.f.Code[lastExpr.pc()]
+				i := fs.Code[lastExpr.pc()]
 				if registerIndex(i.ArgA()) != p.numVariablesInStack(fs) {
 					return fmt.Errorf("internal error: call-to-tailcall patching failed")
 				}
-				fs.f.Code[lastExpr.pc()] = ABCInstruction(OpTailCall, i.ArgA(), i.ArgB(), i.ArgC(), i.K())
+				fs.Code[lastExpr.pc()] = ABCInstruction(OpTailCall, i.ArgA(), i.ArgB(), i.ArgC(), i.K())
 			}
 			nret = multiReturn
 		case nret == 1:
@@ -314,7 +314,7 @@ func (p *parser) simpleExp(fs *funcState) (expDesc, error) {
 		p.next()
 		return newExpDesc(expKindFalse), nil
 	case lualex.VarargToken:
-		if !fs.f.IsVararg {
+		if !fs.IsVararg {
 			return voidExpDesc(), errors.New("cannot use '...' outside a vararg function")
 		}
 		p.next()
@@ -327,7 +327,7 @@ func (p *parser) simpleExp(fs *funcState) (expDesc, error) {
 
 func (p *parser) name(fs *funcState) (string, error) {
 	if p.curr.Kind != lualex.IdentifierToken {
-		return "", syntaxError(fs.f.Source, p.curr, "name expected")
+		return "", syntaxError(fs.Source, p.curr, "name expected")
 	}
 	v := p.curr.Value
 	p.next()
@@ -345,7 +345,7 @@ func (p *parser) checkMatch(fs *funcState, start lualex.Position, open, close lu
 	} else {
 		msg = fmt.Sprintf("'%v' expected (to close '%v' at %v)", close, open, start)
 	}
-	return syntaxError(fs.f.Source, p.curr, msg)
+	return syntaxError(fs.Source, p.curr, msg)
 }
 
 // newVar returns a new expression representing the vidx'th variable.
@@ -360,7 +360,7 @@ func (p *parser) removeVariables(fs *funcState, toLevel int) {
 	for int(fs.numActiveVariables) > toLevel {
 		fs.numActiveVariables--
 		if v := p.localDebugInfo(fs, int(fs.numActiveVariables)); v != nil {
-			v.EndPC = len(fs.f.Code)
+			v.EndPC = len(fs.Code)
 		}
 	}
 }
@@ -372,7 +372,7 @@ func (p *parser) localDebugInfo(fs *funcState, vidx int) *LocalVariable {
 		// Constants don't have debug information.
 		return nil
 	}
-	return &fs.f.LocalVariables[vd.pidx]
+	return &fs.LocalVariables[vd.pidx]
 }
 
 // registerLevel converts a compiler index level to its corresponding register.
@@ -480,10 +480,10 @@ func (p *parser) solveGoto(fs *funcState, g int, lb *labelDescription) error {
 		// It entered a scope.
 		varName := p.localVariableDescription(fs, int(gt.numActiveVariables)).name
 		msg := fmt.Sprintf("<goto %s> at line %d jumps into the scope of local '%s'", gt.name, gt.position.Line, varName)
-		return syntaxError(fs.f.Source, lualex.Token{}, msg)
+		return syntaxError(fs.Source, lualex.Token{}, msg)
 	}
 	if err := fs.patchList(gt.pc, lb.pc, noRegister, lb.pc); err != nil {
-		return syntaxError(fs.f.Source, p.curr, err.Error())
+		return syntaxError(fs.Source, p.curr, err.Error())
 	}
 	p.pendingGotos = slices.Delete(p.pendingGotos, g, g+1)
 	return nil

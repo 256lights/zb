@@ -9,8 +9,11 @@ import (
 	"fmt"
 )
 
+// funcState is the mutable state associated with a [Prototype]
+// while it is being constructed.
 type funcState struct {
-	f *Prototype
+	*Prototype
+
 	// prev is the enclosing function.
 	prev *funcState
 	// blocks is the chain of current blocks.
@@ -52,15 +55,15 @@ type blockControl struct {
 
 // finish perfoms a final peephole optimization pass over the code of a function.
 func (fs *funcState) finish() error {
-	for i, instruction := range fs.f.Code {
-		if i > 0 && fs.f.Code[i-1].IsOutTop() != instruction.IsInTop() {
+	for i, instruction := range fs.Code {
+		if i > 0 && fs.Code[i-1].IsOutTop() != instruction.IsInTop() {
 			return fmt.Errorf("internal error: instruction %d: %v follows %v",
-				i, instruction.OpCode(), fs.f.Code[i-1].OpCode())
+				i, instruction.OpCode(), fs.Code[i-1].OpCode())
 		}
 
 		switch instruction.OpCode() {
 		case OpReturn0, OpReturn1:
-			if !(fs.needClose || fs.f.IsVararg) {
+			if !(fs.needClose || fs.IsVararg) {
 				break
 			}
 			instruction = ABCInstruction(
@@ -75,14 +78,14 @@ func (fs *funcState) finish() error {
 			if fs.needClose {
 				instruction, _ = instruction.WithK(true)
 			}
-			if fs.f.IsVararg {
-				instruction, _ = instruction.WithArgC(fs.f.NumParams + 1)
+			if fs.IsVararg {
+				instruction, _ = instruction.WithArgC(fs.NumParams + 1)
 			}
-			fs.f.Code[i] = instruction
+			fs.Code[i] = instruction
 		case OpJmp:
 			target := i
 			for count := 0; count < 100; count++ {
-				curr := fs.f.Code[target]
+				curr := fs.Code[target]
 				if curr.OpCode() != OpJmp {
 					break
 				}
@@ -98,7 +101,7 @@ func (fs *funcState) finish() error {
 
 func (fs *funcState) removeLastInstruction() {
 	fs.removeLastLineInfo()
-	fs.f.Code = fs.f.Code[:len(fs.f.Code)-1]
+	fs.Code = fs.Code[:len(fs.Code)-1]
 }
 
 // label marks the next instruction to be added as a jump target
@@ -106,7 +109,7 @@ func (fs *funcState) removeLastInstruction() {
 // not in the same basic block)
 // and returns its index.
 func (fs *funcState) label() int {
-	pc := len(fs.f.Code)
+	pc := len(fs.Code)
 	fs.lastTarget = pc
 	return pc
 }
@@ -126,10 +129,10 @@ func (fs *funcState) saveLineInfo(line int) {
 		absDelta = -delta
 	}
 
-	pc := len(fs.f.Code) - 1 // last instruction coded
+	pc := len(fs.Code) - 1 // last instruction coded
 
 	if absDelta >= deltaLimit || fs.instructionsSinceLastAbsLineInfo >= maxInstructionsWithoutAbsLineInfo {
-		fs.f.LineInfo.abs = append(fs.f.LineInfo.abs, absLineInfo{
+		fs.LineInfo.abs = append(fs.LineInfo.abs, absLineInfo{
 			pc:   pc,
 			line: line,
 		})
@@ -139,13 +142,13 @@ func (fs *funcState) saveLineInfo(line int) {
 		fs.instructionsSinceLastAbsLineInfo++
 	}
 
-	fs.f.LineInfo.rel = append(fs.f.LineInfo.rel, int8(delta))
+	fs.LineInfo.rel = append(fs.LineInfo.rel, int8(delta))
 	fs.previousLine = line
 }
 
 // removeLastLineInfo remove line information from the last instruction.
 func (fs *funcState) removeLastLineInfo() {
-	lineInfo := &fs.f.LineInfo
+	lineInfo := &fs.LineInfo
 
 	if lastDelta := lineInfo.rel[len(lineInfo.rel)-1]; lastDelta == absMarker {
 		lineInfo.abs = lineInfo.abs[:len(lineInfo.abs)-1]
@@ -186,13 +189,13 @@ func (fs *funcState) reserveRegisters(n int) error {
 // The high watermark will be recorded in the [Prototype] as MaxStackSize.
 func (fs *funcState) checkStack(n int) error {
 	newStack := int(fs.firstFreeRegister) + n
-	if newStack <= int(fs.f.MaxStackSize) {
+	if newStack <= int(fs.MaxStackSize) {
 		return nil
 	}
 	if newStack > maxRegisters {
 		return errors.New("function or expression needs too many registers")
 	}
-	fs.f.MaxStackSize = uint8(newStack)
+	fs.MaxStackSize = uint8(newStack)
 	return nil
 }
 
@@ -223,7 +226,7 @@ func (fs *funcState) concatJumpList(l1, l2 int) (int, error) {
 // (and put their values in reg),
 // other tests jump to dtarget.
 func (fs *funcState) patchList(list, vtarget int, reg registerIndex, dtarget int) error {
-	if vtarget > len(fs.f.Code) || dtarget > len(fs.f.Code) {
+	if vtarget > len(fs.Code) || dtarget > len(fs.Code) {
 		return errors.New("patchList target cannot be a forward address")
 	}
 
@@ -270,7 +273,7 @@ func (fs *funcState) patchTestRegister(node int, reg registerIndex) bool {
 
 // jumpDestination returns the destination address of a jump instruction.
 func (fs *funcState) jumpDestination(pc int) (newPC int, ok bool) {
-	offset := fs.f.Code[pc].J()
+	offset := fs.Code[pc].J()
 	if offset == noJump {
 		// A cyclic jump represents end of list.
 		return noJump, false
@@ -282,15 +285,15 @@ func (fs *funcState) jumpDestination(pc int) (newPC int, ok bool) {
 // (i.e. a jump's condition),
 // or the jump itself if it is unconditional.
 func (fs *funcState) findJumpControl(pc int) *Instruction {
-	if pc < 1 || !fs.f.Code[pc-1].OpCode().IsTest() {
-		return &fs.f.Code[pc]
+	if pc < 1 || !fs.Code[pc-1].OpCode().IsTest() {
+		return &fs.Code[pc]
 	}
-	return &fs.f.Code[pc-1]
+	return &fs.Code[pc-1]
 }
 
 // fixJump changes the jump instruction at pc to jump to the given destination.
 func (fs *funcState) fixJump(pc int, dest int) error {
-	jmp := &fs.f.Code[pc]
+	jmp := &fs.Code[pc]
 	offset := dest - (pc + 1)
 	if dest == noJump {
 		return errors.New("invalid jump destination")
@@ -326,14 +329,14 @@ func (fs *funcState) negateCondition(pc int) error {
 // and the previous one,
 // returns nil (to avoid wrong optimizations).
 func (fs *funcState) previousInstruction() *Instruction {
-	if len(fs.f.Code) == 0 || fs.lastTarget <= len(fs.f.Code) {
+	if len(fs.Code) == 0 || fs.lastTarget <= len(fs.Code) {
 		return nil
 	}
-	return &fs.f.Code[len(fs.f.Code)-1]
+	return &fs.Code[len(fs.Code)-1]
 }
 
 func (fs *funcState) searchUpvalue(name string) (upvalueIndex, bool) {
-	upvals := fs.f.Upvalues
+	upvals := fs.Upvalues
 	upvals = upvals[:min(len(upvals), maxUpvalues)]
 	for i := range upvals {
 		if upvals[i].Name == name {

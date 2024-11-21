@@ -10,14 +10,14 @@ import (
 	"math"
 )
 
-// code appends the given instruction to fs.f.Code and returns its address.
+// code appends the given instruction to fs.Code and returns its address.
 func (p *parser) code(fs *funcState, i Instruction) int {
-	fs.f.Code = append(fs.f.Code, i)
+	fs.Code = append(fs.Code, i)
 	fs.saveLineInfo(p.lastLine)
-	return len(fs.f.Code) - 1
+	return len(fs.Code) - 1
 }
 
-// codeNil appends an [OpLoadNil] instruction to fs.f.Code.
+// codeNil appends an [OpLoadNil] instruction to fs.Code.
 func (p *parser) codeNil(fs *funcState, from registerIndex, n uint8) {
 	if previous := fs.previousInstruction(); previous != nil && previous.OpCode() == OpLoadNil {
 		// Peephole optimization:
@@ -44,13 +44,13 @@ func (p *parser) codeNil(fs *funcState, from registerIndex, n uint8) {
 	p.code(fs, ABCInstruction(OpLoadNil, uint8(from), n-1, 0, false))
 }
 
-// codeJump appends a jump instruction to fs.f.Code and returns its index.
+// codeJump appends a jump instruction to fs.Code and returns its index.
 // The destination can be fixed later with [funcState.fixJump].
 func (p *parser) codeJump(fs *funcState) int {
 	return p.code(fs, JInstruction(OpJmp, noJump))
 }
 
-// codeReturn appends a return instruction to fs.f.Code.
+// codeReturn appends a return instruction to fs.Code.
 // codeReturn panics if nret is out of range.
 func (p *parser) codeReturn(fs *funcState, first registerIndex, nret int) {
 	b := nret + 1
@@ -67,11 +67,11 @@ func (p *parser) codeReturn(fs *funcState, first registerIndex, nret int) {
 	p.code(fs, ABCInstruction(op, uint8(first), uint8(b), 0, false))
 }
 
-// codeInt appends a "load constant" instruction to fs.f.Code
+// codeInt appends a "load constant" instruction to fs.Code
 // that loads the given integer.
 func (p *parser) codeInt(fs *funcState, reg registerIndex, i int64) {
 	if !fitsSignedBx(i) {
-		k := fs.f.addConstant(IntegerValue(i))
+		k := fs.addConstant(IntegerValue(i))
 		p.codeConstant(fs, reg, k)
 		return
 	}
@@ -79,7 +79,7 @@ func (p *parser) codeInt(fs *funcState, reg registerIndex, i int64) {
 	p.code(fs, ABxInstruction(OpLoadI, uint8(reg), int32(i)))
 }
 
-// codeFloat appends a "load constant" instruction to fs.f.Code
+// codeFloat appends a "load constant" instruction to fs.Code
 // that loads the given floating-point number.
 func (p *parser) codeFloat(fs *funcState, reg registerIndex, f float64) {
 	if i := int64(f); float64(i) == f && fitsSignedBx(i) {
@@ -87,11 +87,11 @@ func (p *parser) codeFloat(fs *funcState, reg registerIndex, f float64) {
 		return
 	}
 
-	k := fs.f.addConstant(FloatValue(f))
+	k := fs.addConstant(FloatValue(f))
 	p.codeConstant(fs, reg, k)
 }
 
-// codeConstant appends a "load constant" instruction to fs.f.Code.
+// codeConstant appends a "load constant" instruction to fs.Code.
 // The instruction will load the k'th constant from the [Prototype] Constants table.
 func (p *parser) codeConstant(fs *funcState, reg registerIndex, k int) int {
 	if k > maxArgBx {
@@ -151,7 +151,7 @@ func (p *parser) codeStoreVar(fs *funcState, v, expr expDesc) error {
 	return nil
 }
 
-// codeSelf appends an [OpSelf] instruction to fs.f.Code.
+// codeSelf appends an [OpSelf] instruction to fs.Code.
 // This has the effect of converting expression e into "e:key(e,".
 // Both e and key are invalid after a call to codeSelf.
 func (p *parser) codeSelf(fs *funcState, e, key expDesc) error {
@@ -247,7 +247,7 @@ func (p *parser) codeGoIfFalse(fs *funcState, e expDesc) (expDesc, error) {
 // and returns the jump position.
 func (p *parser) jumpOnCond(fs *funcState, e expDesc, cond bool) (int, error) {
 	if e.kind == expKindReloc {
-		if ie := fs.f.Code[e.pc()]; ie.OpCode() == OpNot {
+		if ie := fs.Code[e.pc()]; ie.OpCode() == OpNot {
 			// Remove previous OpNot.
 			fs.removeLastInstruction()
 			p.code(fs, ABCInstruction(OpTest, ie.ArgB(), 0, 0, !cond))
@@ -299,7 +299,7 @@ func (p *parser) codeNot(fs *funcState, e expDesc) (expDesc, error) {
 	return e, nil
 }
 
-// codeIndexed appends instructions to fs.f.Code for the expression "t[k]".
+// codeIndexed appends instructions to fs.Code for the expression "t[k]".
 // If t is not in a register or upvalue, codeIndexed returns an error.
 func (p *parser) codeIndexed(fs *funcState, t, k expDesc) (expDesc, error) {
 	if t.hasJumps() {
@@ -312,7 +312,7 @@ func (p *parser) codeIndexed(fs *funcState, t, k expDesc) (expDesc, error) {
 	isKstr := k.kind == expKindK &&
 		!k.hasJumps() &&
 		k.constIndex() <= maxArgB &&
-		fs.f.Constants[k.constIndex()].isShortString()
+		fs.Constants[k.constIndex()].isShortString()
 	if t.kind == expKindUpval && !isKstr {
 		// [OpGetTabUp] can only index short strings.
 		// Copy the table from an upvalue to a register.
@@ -344,7 +344,7 @@ func (p *parser) codeIndexed(fs *funcState, t, k expDesc) (expDesc, error) {
 }
 
 // codePrefix appends the code to apply a prefix operator to an expression
-// to fs.f.Code.
+// to fs.Code.
 func (p *parser) codePrefix(fs *funcState, operator unaryOperator, e expDesc, line int) (expDesc, error) {
 	e = p.dischargeVars(fs, e)
 	switch operator {
@@ -366,7 +366,7 @@ func (p *parser) codePrefix(fs *funcState, operator unaryOperator, e expDesc, li
 }
 
 // codeUnaryExpValue appends the code for any unary expresion except "not"
-// to fs.f.Code.
+// to fs.Code.
 func (p *parser) codeUnaryExpValue(fs *funcState, op OpCode, e expDesc, line int) (expDesc, error) {
 	e, r, err := p.exp2anyreg(fs, e)
 	if err != nil {
@@ -555,7 +555,7 @@ func (p *parser) codeArithmetic(fs *funcState, operator binaryOperator, e1, e2 e
 
 // codeBinaryExpNoConstants appends the instructions
 // for a binary expression without constant operands
-// to fs.f.Code.
+// to fs.Code.
 func (p *parser) codeBinaryExpNoConstants(fs *funcState, operator binaryOperator, e1, e2 expDesc, flip bool, line int) (expDesc, error) {
 	if flip {
 		// Back to original order.
@@ -627,7 +627,7 @@ func (p *parser) finishBinaryExpValue(fs *funcState, e1, e2 expDesc, op OpCode, 
 
 // finishBinaryExpNegated attempts to append the instructions
 // for a binary expression with the right-side operand negated
-// to fs.f.Code.
+// to fs.Code.
 // If the attempt fails, then finishBinaryExpNegated returns a [voidExpDesc] with a nil error.
 func (p *parser) finishBinaryExpNegated(fs *funcState, e1, e2 expDesc, op OpCode, line int, event TagMethod) (expDesc, error) {
 	i2, ok := e2.intConstant()
@@ -648,7 +648,7 @@ func (p *parser) finishBinaryExpNegated(fs *funcState, e1, e2 expDesc, op OpCode
 		return voidExpDesc(), err
 	}
 	// The metamethod must observe the original value.
-	i := &fs.f.Code[len(fs.f.Code)-1]
+	i := &fs.Code[len(fs.Code)-1]
 	if i.OpCode() != mmop {
 		panic("expected finishBinaryExpValue to end with metamethod instruction")
 	}
@@ -656,7 +656,7 @@ func (p *parser) finishBinaryExpNegated(fs *funcState, e1, e2 expDesc, op OpCode
 	return result, nil
 }
 
-// codeConcat appends the instructions for "(e1 .. e2)" to fs.f.Code.
+// codeConcat appends the instructions for "(e1 .. e2)" to fs.Code.
 // e2 is not valid after codeConcat returns.
 // If e1 does not reference a register, codeConcat will panic.
 func (p *parser) codeConcat(fs *funcState, e1, e2 expDesc, line int) {
@@ -732,7 +732,7 @@ func (p *parser) codeOrder(fs *funcState, operator binaryOperator, e1, e2 expDes
 	return newJumpExpDesc(pc), nil
 }
 
-// codeEq appends code for equality comparisons ("==" or "~=") to fs.f.Code.
+// codeEq appends code for equality comparisons ("==" or "~=") to fs.Code.
 // e1 must have already turned into an R/K by [*parser.codeInfix].
 func (p *parser) codeEq(fs *funcState, operator binaryOperator, e1, e2 expDesc) (expDesc, error) {
 	switch e1.kind {
@@ -863,7 +863,7 @@ func (p *parser) expToK(fs *funcState, e expDesc) (_ expDesc, idx uint8, ok bool
 		return e, uint8(noRegister), false
 	}
 	// TODO(maybe): Can this waste a constant table entry?
-	k := fs.f.addConstant(v)
+	k := fs.addConstant(v)
 	if k > maxIndexRK {
 		return e, uint8(noRegister), false
 	}
@@ -1022,11 +1022,11 @@ func (p *parser) dischargeToRegister(fs *funcState, e expDesc, reg registerIndex
 		i, _ := e.intConstant()
 		p.codeInt(fs, reg, i)
 	case expKindReloc:
-		newInstruction, ok := fs.f.Code[e.pc()].WithArgA(uint8(reg))
+		newInstruction, ok := fs.Code[e.pc()].WithArgA(uint8(reg))
 		if !ok {
 			panic("reloc points to an instruction without A argument")
 		}
-		fs.f.Code[e.pc()] = newInstruction
+		fs.Code[e.pc()] = newInstruction
 	case expKindNonReloc:
 		if ereg := e.register(); reg != ereg {
 			p.code(fs, ABCInstruction(OpMove, uint8(reg), uint8(ereg), 0, false))
@@ -1044,7 +1044,7 @@ func (p *parser) dischargeToRegister(fs *funcState, e expDesc, reg registerIndex
 func (p *parser) dischargeVars(fs *funcState, e expDesc) expDesc {
 	switch e.kind {
 	case expKindConst:
-		return constToExp(fs.f.Constants[e.constIndex()]).withJumpLists(e)
+		return constToExp(fs.Constants[e.constIndex()]).withJumpLists(e)
 	case expKindLocal:
 		// Already in register? Becomes a non-relocatable value.
 		return newNonRelocExpDesc(e.register()).withJumpLists(e)
@@ -1087,8 +1087,8 @@ func (p *parser) setReturns(fs *funcState, e expDesc, nResults int) error {
 	}
 	switch e.kind {
 	case expKindCall:
-		i := fs.f.Code[e.pc()]
-		fs.f.Code[e.pc()] = ABCInstruction(
+		i := fs.Code[e.pc()]
+		fs.Code[e.pc()] = ABCInstruction(
 			i.OpCode(),
 			i.ArgA(),
 			i.ArgB(),
@@ -1096,8 +1096,8 @@ func (p *parser) setReturns(fs *funcState, e expDesc, nResults int) error {
 			i.K(),
 		)
 	case expKindVararg:
-		i := fs.f.Code[e.pc()]
-		fs.f.Code[e.pc()] = ABCInstruction(
+		i := fs.Code[e.pc()]
+		fs.Code[e.pc()] = ABCInstruction(
 			i.OpCode(),
 			uint8(fs.firstFreeRegister),
 			i.ArgB(),
@@ -1126,12 +1126,12 @@ func (p *parser) setReturns(fs *funcState, e expDesc, nResults int) error {
 func (p *parser) setOneReturn(fs *funcState, e expDesc) expDesc {
 	switch e.kind {
 	case expKindCall:
-		i := fs.f.Code[e.pc()]
+		i := fs.Code[e.pc()]
 		return newNonRelocExpDesc(registerIndex(i.ArgA())).withJumpLists(e)
 	case expKindVararg:
 		pc := e.pc()
-		i := fs.f.Code[pc]
-		fs.f.Code[pc] = ABCInstruction(i.OpCode(), i.ArgA(), i.ArgB(), 2, i.K())
+		i := fs.Code[pc]
+		fs.Code[pc] = ABCInstruction(i.OpCode(), i.ArgA(), i.ArgB(), 2, i.K())
 		return newRelocExpDesc(pc).withJumpLists(e)
 	default:
 		return e
@@ -1186,7 +1186,7 @@ func (p *parser) stringToConstantTable(fs *funcState, e expDesc) expDesc {
 	if !ok {
 		panic("stringToConstant must be called on expKindKStr")
 	}
-	k := fs.f.addConstant(StringValue(s))
+	k := fs.addConstant(StringValue(s))
 	return newConstExpDesc(k).withJumpLists(e)
 }
 
