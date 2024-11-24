@@ -224,10 +224,17 @@ func (p *parser) block(fs *funcState) error {
 //
 // Equivalent to `statement` in upstream Lua.
 func (p *parser) statement(fs *funcState) error {
+	p.depth++
+	if p.depth > depthLimit {
+		return errDepthExceeded
+	}
+	defer func() {
+		p.depth--
+	}()
+
 	switch p.curr.Kind {
 	case lualex.SemiToken:
 		p.next()
-		return nil
 	case lualex.DoToken:
 		start := p.curr.Position
 		p.next()
@@ -237,13 +244,30 @@ func (p *parser) statement(fs *funcState) error {
 		if err := p.checkMatch(fs, start, lualex.DoToken, lualex.EndToken); err != nil {
 			return err
 		}
-		return nil
 	case lualex.ReturnToken:
 		p.next()
-		return p.returnStatement(fs)
+		if err := p.returnStatement(fs); err != nil {
+			return err
+		}
 	default:
-		return p.exprStatement(fs)
+		if err := p.exprStatement(fs); err != nil {
+			return err
+		}
 	}
+
+	// Free any temporary registers used in the statement.
+	numVariablesInStack := p.numVariablesInStack(fs)
+	if fs.firstFreeRegister > registerIndex(fs.MaxStackSize) {
+		return fmt.Errorf("internal error: after statement: first free register (%d) is greater than high watermark (%d)",
+			fs.firstFreeRegister, fs.MaxStackSize)
+	}
+	if fs.firstFreeRegister < numVariablesInStack {
+		return fmt.Errorf("internal error: after statement: first free register (%d) is less than variable stack (%d)",
+			fs.firstFreeRegister, numVariablesInStack)
+	}
+	fs.firstFreeRegister = numVariablesInStack
+
+	return nil
 }
 
 // exprStatement parses a statement that begins with an expression
