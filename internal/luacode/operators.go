@@ -65,6 +65,8 @@ var (
 // If the operator is unary, p1 is used and p2 is ignored.
 // Arithmetic may return an error that wraps one of
 // [ErrDivideByZero], [ErrNotNumber], or [ErrNotInteger].
+//
+// Equivalent to `luaO_rawarith` in upstream Lua.
 func Arithmetic(op ArithmeticOperator, p1, p2 Value) (Value, error) {
 	if op.IsUnary() {
 		p2 = IntegerValue(0)

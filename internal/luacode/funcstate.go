@@ -11,6 +11,8 @@ import (
 
 // funcState is the mutable state associated with a [Prototype]
 // while it is being constructed.
+//
+// Equivalent to `FuncState` in upstream Lua.
 type funcState struct {
 	*Prototype
 
@@ -21,7 +23,7 @@ type funcState struct {
 
 	// lastTarget is the last returned value from [funcState.label].
 	lastTarget int
-	// previousLine is the last line number saved in f.LineInfo.
+	// previousLine is the last line number saved in Prototype.LineInfo.
 	previousLine int
 	// firstLocal is the index of the first local variable
 	// in [parser].activeVars.
@@ -40,6 +42,9 @@ type funcState struct {
 	needClose bool
 }
 
+// blockControl is a linked list of active blocks.
+//
+// Equivalent to `BlockCnt` in upstream Lua.
 type blockControl struct {
 	prev       *blockControl
 	firstLabel int
@@ -54,6 +59,8 @@ type blockControl struct {
 }
 
 // finish perfoms a final peephole optimization pass over the code of a function.
+//
+// Equivalent to `luaK_finish` in upstream Lua.
 func (fs *funcState) finish() error {
 	for i, instruction := range fs.Code {
 		if i > 0 && fs.Code[i-1].IsOutTop() != instruction.IsInTop() {
@@ -99,6 +106,10 @@ func (fs *funcState) finish() error {
 	return nil
 }
 
+// removeLastInstruction removes the last instruction created
+// and updates the line information.
+//
+// Equivalent to `removelastinstruction` in upstream Lua.
 func (fs *funcState) removeLastInstruction() {
 	fs.removeLastLineInfo()
 	fs.Code = fs.Code[:len(fs.Code)-1]
@@ -108,6 +119,8 @@ func (fs *funcState) removeLastInstruction() {
 // (to avoid wrong optimizations with consecutive instructions
 // not in the same basic block)
 // and returns its index.
+//
+// Equivalent to `luaK_getlabel` in upstream Lua.
 func (fs *funcState) label() int {
 	pc := len(fs.Code)
 	fs.lastTarget = pc
@@ -121,6 +134,8 @@ func (fs *funcState) label() int {
 // (in that case, the special value 'ABSLINEINFO' in 'lineinfo'
 // signals the existence of this absolute information.)
 // Otherwise, store the difference from last line in 'lineinfo'.
+//
+// Equivalent to `savelineinfo` in upstream Lua.
 func (fs *funcState) saveLineInfo(line int) {
 	const deltaLimit = 1 << 7
 	delta := line - fs.previousLine
@@ -147,6 +162,8 @@ func (fs *funcState) saveLineInfo(line int) {
 }
 
 // removeLastLineInfo remove line information from the last instruction.
+//
+// Equivalent to `removeLastLineInfo` in upstream Lua.
 func (fs *funcState) removeLastLineInfo() {
 	lineInfo := &fs.LineInfo
 
@@ -161,6 +178,8 @@ func (fs *funcState) removeLastLineInfo() {
 }
 
 // fixLineInfo changes the line information associated with the last instruction.
+//
+// Equivalent to `luaK_fixline` in upstream Lua.
 func (fs *funcState) fixLineInfo(line int) {
 	fs.removeLastLineInfo()
 	fs.saveLineInfo(line)
@@ -177,6 +196,8 @@ func (fs *funcState) reserveRegister() (registerIndex, error) {
 }
 
 // reserveRegisters reserves n additional registers in the stack.
+//
+// Equivalent to `luaK_reserveregs` in upstream Lua.
 func (fs *funcState) reserveRegisters(n int) error {
 	if err := fs.checkStack(n); err != nil {
 		return err
@@ -187,6 +208,8 @@ func (fs *funcState) reserveRegisters(n int) error {
 
 // checkStack determines whether is sufficient room to add n more registers.
 // The high watermark will be recorded in the [Prototype] as MaxStackSize.
+//
+// Equivalent to `luaK_checkstack` in upstream Lua.
 func (fs *funcState) checkStack(n int) error {
 	newStack := int(fs.firstFreeRegister) + n
 	if newStack <= int(fs.MaxStackSize) {
@@ -200,6 +223,8 @@ func (fs *funcState) checkStack(n int) error {
 }
 
 // concatJumpList concatenates l2 to jump-list l1.
+//
+// Equivalent to `luaK_concat` in upstream Lua.
 func (fs *funcState) concatJumpList(l1, l2 int) (int, error) {
 	switch {
 	case l2 == noJump:
@@ -225,6 +250,8 @@ func (fs *funcState) concatJumpList(l1, l2 int) (int, error) {
 // Tests producing values jump to vtarget
 // (and put their values in reg),
 // other tests jump to dtarget.
+//
+// Equivalent to `patchlistaux` in upstream Lua.
 func (fs *funcState) patchList(list, vtarget int, reg registerIndex, dtarget int) error {
 	if vtarget > len(fs.Code) || dtarget > len(fs.Code) {
 		return errors.New("patchList target cannot be a forward address")
@@ -258,6 +285,8 @@ func (fs *funcState) patchList(list, vtarget int, reg registerIndex, dtarget int
 // (produces no register value).
 // patchTestRegister returns false and no-ops if and only if
 // the instruction in position 'node' is not an [OpTestSet].
+//
+// Equivalent to `patchtestreg` in upstream Lua.
 func (fs *funcState) patchTestRegister(node int, reg registerIndex) bool {
 	i := fs.findJumpControl(node)
 	if i.OpCode() != OpTestSet {
@@ -272,6 +301,8 @@ func (fs *funcState) patchTestRegister(node int, reg registerIndex) bool {
 }
 
 // jumpDestination returns the destination address of a jump instruction.
+//
+// Equivalent to `getjump` in upstream Lua.
 func (fs *funcState) jumpDestination(pc int) (newPC int, ok bool) {
 	offset := fs.Code[pc].J()
 	if offset == noJump {
@@ -284,6 +315,8 @@ func (fs *funcState) jumpDestination(pc int) (newPC int, ok bool) {
 // findJumpControl returns a pointer to the instruction "controlling" a given jump
 // (i.e. a jump's condition),
 // or the jump itself if it is unconditional.
+//
+// Equivalent to `getjumpcontrol` in upstream Lua.
 func (fs *funcState) findJumpControl(pc int) *Instruction {
 	if pc < 1 || !fs.Code[pc-1].OpCode().IsTest() {
 		return &fs.Code[pc]
@@ -292,6 +325,8 @@ func (fs *funcState) findJumpControl(pc int) *Instruction {
 }
 
 // fixJump changes the jump instruction at pc to jump to the given destination.
+//
+// Equivalent to `fixjump` in upstream Lua.
 func (fs *funcState) fixJump(pc int, dest int) error {
 	jmp := &fs.Code[pc]
 	offset := dest - (pc + 1)
@@ -309,6 +344,9 @@ func (fs *funcState) fixJump(pc int, dest int) error {
 	return nil
 }
 
+// negateCondition inverts a comparison instruction.
+//
+// Equivalent to `negatecondition` in upstream Lua.
 func (fs *funcState) negateCondition(pc int) error {
 	i := fs.findJumpControl(pc)
 	op := i.OpCode()
@@ -328,6 +366,8 @@ func (fs *funcState) negateCondition(pc int) error {
 // If there may be a jump target between the current instruction
 // and the previous one,
 // returns nil (to avoid wrong optimizations).
+//
+// Equivalent to `previousinstruction` in upstream Lua.
 func (fs *funcState) previousInstruction() *Instruction {
 	if len(fs.Code) == 0 || fs.lastTarget <= len(fs.Code) {
 		return nil
@@ -335,7 +375,10 @@ func (fs *funcState) previousInstruction() *Instruction {
 	return &fs.Code[len(fs.Code)-1]
 }
 
-func (fs *funcState) searchUpvalue(name string) (upvalueIndex, bool) {
+// searchUpvalue returns the index of the upvalue with the given name.
+//
+// Equivalent to `searchupvalue` in upstream Lua.
+func (fs *funcState) searchUpvalue(name string) (i upvalueIndex, found bool) {
 	upvals := fs.Upvalues
 	upvals = upvals[:min(len(upvals), maxUpvalues)]
 	for i := range upvals {
@@ -346,9 +389,11 @@ func (fs *funcState) searchUpvalue(name string) (upvalueIndex, bool) {
 	return 0, false
 }
 
-// markUpval marks the block where the variable at the given level was defined
+// markUpvalue marks the block where the variable at the given level was defined
 // (to emit close instructions later).
-func (fs *funcState) markUpval(level int) {
+//
+// Equivalent to `markupval` in upstream Lua.
+func (fs *funcState) markUpvalue(level int) {
 	bl := fs.blocks
 	for int(bl.numActiveVariables) > level {
 		bl = bl.prev

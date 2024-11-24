@@ -15,8 +15,14 @@ import (
 	"zb.256lights.llc/pkg/internal/lualex"
 )
 
+// envName is the name of the implicit first upvalue of every main chunk.
+//
+// Equivalent to `LUA_ENV` in upstream Lua.
 const envName = "_ENV"
 
+// depthLimit is the maximum recursion depth for syntax constructs.
+//
+// Equivalent to `LUAI_MAXCCALLS` in upstream Lua.
 const depthLimit = 200
 
 var errDepthExceeded = errors.New("recursion depth exceeded")
@@ -45,7 +51,7 @@ func Parse(name Source, r io.ByteScanner) (*Prototype, error) {
 		},
 	})
 	// Main function is always declared vararg.
-	p.setVarArg(fs, 0)
+	p.setVariadic(fs, 0)
 
 	p.next()
 	if err := p.block(fs); err != nil {
@@ -64,6 +70,10 @@ func Parse(name Source, r io.ByteScanner) (*Prototype, error) {
 	return fs.Prototype, nil
 }
 
+// parser is the in-progress state of a [Parse] call.
+//
+// Somewhat equivalent to `LexState` in upstream Lua,
+// but actual lexical analysis is split out.
 type parser struct {
 	ls   *lualex.Scanner
 	curr lualex.Token
@@ -78,6 +88,9 @@ type parser struct {
 	labels          []labelDescription
 }
 
+// next advances the parser to the next token.
+//
+// Equivalent to `luaX_next` in upstream Lua.
 func (p *parser) next() {
 	if p.err == nil {
 		p.lastLine = max(p.curr.Position.Line, 1)
@@ -85,6 +98,10 @@ func (p *parser) next() {
 	}
 }
 
+// openFunction creates a new [funcState] and [blockControl]
+// for the given function and its parent function.
+//
+// Equivalent to `open_func` in upstream Lua.
 func (p *parser) openFunction(prev *funcState, f *Prototype) (*funcState, *blockControl) {
 	fs := &funcState{
 		prev:      prev,
@@ -98,7 +115,9 @@ func (p *parser) openFunction(prev *funcState, f *Prototype) (*funcState, *block
 	return fs, bl
 }
 
-// enterBlock creates a new blockControl.
+// enterBlock creates a new [blockControl].
+//
+// Equivalent to `enterblock` in upstream Lua.
 func (p *parser) enterBlock(fs *funcState, isLoop bool) *blockControl {
 	bl := &blockControl{
 		isLoop:             isLoop,
@@ -113,6 +132,9 @@ func (p *parser) enterBlock(fs *funcState, isLoop bool) *blockControl {
 	return bl
 }
 
+// closeFunction finalizes a [funcState] so that its [Prototype] is usable.
+//
+// Equivalent to `open_func` in upstream Lua.
 func (p *parser) closeFunction(fs *funcState) error {
 	p.codeReturn(fs, p.numVariablesInStack(fs), 0)
 	if err := p.leaveBlock(fs); err != nil {
@@ -125,6 +147,9 @@ func (p *parser) closeFunction(fs *funcState) error {
 	return nil
 }
 
+// leaveBlock finalizes a [blockControl].
+//
+// Equivalent to `leaveblock` in upstream Lua.
 func (p *parser) leaveBlock(fs *funcState) error {
 	bl := fs.blocks
 	// Get the level outside the block.
@@ -165,6 +190,8 @@ func (p *parser) leaveBlock(fs *funcState) error {
 }
 
 // moveGotosOut adjusts pending gotos to outer level of a block.
+//
+// Equivalent to `movegotosout` in upstream Lua.
 func (p *parser) moveGotosOut(fs *funcState, bl *blockControl) {
 	for i := bl.firstGoto; i < len(p.pendingGotos); i++ {
 		gt := &p.pendingGotos[i]
@@ -179,6 +206,8 @@ func (p *parser) moveGotosOut(fs *funcState, bl *blockControl) {
 // block parses a block production.
 //
 //	block ::= {stat} [retstat]
+//
+// Equivalent to `statlist` in upstream Lua.
 func (p *parser) block(fs *funcState) error {
 	for !isBlockFollow(p.curr.Kind) && p.curr.Kind != lualex.UntilToken {
 		if p.curr.Kind == lualex.ReturnToken {
@@ -191,6 +220,9 @@ func (p *parser) block(fs *funcState) error {
 	return nil
 }
 
+// statement parses a statement.
+//
+// Equivalent to `statement` in upstream Lua.
 func (p *parser) statement(fs *funcState) error {
 	switch p.curr.Kind {
 	case lualex.SemiToken:
@@ -198,7 +230,7 @@ func (p *parser) statement(fs *funcState) error {
 		return nil
 	case lualex.ReturnToken:
 		p.next()
-		return p.retStat(fs)
+		return p.returnStatement(fs)
 	default:
 		return p.exprStatement(fs)
 	}
@@ -206,8 +238,10 @@ func (p *parser) statement(fs *funcState) error {
 
 // exprStatement parses a statement that begins with an expression
 // (i.e. a function call or an assignment).
+//
+// Equivalent to `exprstat` in upstream Lua.
 func (p *parser) exprStatement(fs *funcState) error {
-	v, err := p.prefixExp(fs)
+	v, err := p.prefixExpression(fs)
 	if err != nil {
 		return err
 	}
@@ -216,7 +250,7 @@ func (p *parser) exprStatement(fs *funcState) error {
 		return p.assignment(fs, lhsAssign{v: v}, 1)
 	default:
 		// Function call.
-		if v.kind != expKindCall {
+		if v.kind != expressionKindCall {
 			return syntaxError(fs.Source, p.curr, "syntax error")
 		}
 		i := &fs.Code[v.pc()]
@@ -231,14 +265,20 @@ func (p *parser) exprStatement(fs *funcState) error {
 
 type lhsAssign struct {
 	prev *lhsAssign
-	v    expDesc
+	v    expressionDescriptor
 }
 
+// assignment parses an assignment production after its first variable.
+//
+//	stat ::= varlist '=' explist | /* ... */
+//	varlist ::= var {‘,’ var}
+//
+// Equivalent to `restassign` in upstream Lua.
 func (p *parser) assignment(fs *funcState, lhs lhsAssign, numVariables int) error {
 	// TODO(now): Check things.
 	switch p.curr.Kind {
 	case lualex.CommaToken:
-		v, err := p.prefixExp(fs)
+		v, err := p.prefixExpression(fs)
 		if err != nil {
 			return err
 		}
@@ -257,7 +297,7 @@ func (p *parser) assignment(fs *funcState, lhs lhsAssign, numVariables int) erro
 		}
 	case lualex.AssignToken:
 		p.next()
-		numExpressions, last, err := p.expList(fs)
+		numExpressions, last, err := p.expressionList(fs)
 		if err != nil {
 			return err
 		}
@@ -272,10 +312,15 @@ func (p *parser) assignment(fs *funcState, lhs lhsAssign, numVariables int) erro
 		return syntaxError(fs.Source, p.curr, "'=' expected")
 	}
 
-	return p.codeStoreVar(fs, lhs.v, newNonRelocExpDesc(fs.firstFreeRegister-1))
+	return p.codeStoreVar(fs, lhs.v, nonRelocatableExpression(fs.firstFreeRegister-1))
 }
 
-func (p *parser) adjustAssignment(fs *funcState, numVariables, numExpressions int, last expDesc) error {
+// adjustAssignment adjusts the number of results from an expression list
+// with the given number of expressions
+// to yield results for given number of variables.
+//
+// Equivalent to `adjust_assign` in upstream Lua.
+func (p *parser) adjustAssignment(fs *funcState, numVariables, numExpressions int, last expressionDescriptor) error {
 	needed := numVariables - numExpressions
 	if last.kind.hasMultipleReturns() {
 		extra := max(needed+1, 0)
@@ -283,10 +328,10 @@ func (p *parser) adjustAssignment(fs *funcState, numVariables, numExpressions in
 			return err
 		}
 	} else {
-		if last.kind != expKindVoid {
+		if last.kind != expressionKindVoid {
 			// Close last expression.
 			var err error
-			last, _, err = p.exp2nextReg(fs, last)
+			last, _, err = p.toNextRegister(fs, last)
 			if err != nil {
 				return err
 			}
@@ -307,20 +352,27 @@ func (p *parser) adjustAssignment(fs *funcState, numVariables, numExpressions in
 	return nil
 }
 
-func (p *parser) setVarArg(fs *funcState, numParams uint8) {
+// setVariadic marks the function as variadic.
+//
+// Equivalent to `setvararg` in upstream Lua.
+func (p *parser) setVariadic(fs *funcState, numParams uint8) {
 	fs.IsVararg = true
 	p.code(fs, ABCInstruction(OpVarargPrep, numParams, 0, 0, false))
 }
 
-// retStat parses a return statement.
+// returnStatement parses a return statement.
 // The caller must have consumed the [lualex.ReturnToken].
-func (p *parser) retStat(fs *funcState) error {
+//
+//	retstat ::= return [explist] [‘;’]
+//
+// Equivalent to `retstat` in upstream Lua.
+func (p *parser) returnStatement(fs *funcState) error {
 	first := p.numVariablesInStack(fs)
 	nret := 0
 	if !isBlockFollow(p.curr.Kind) && p.curr.Kind != lualex.UntilToken && p.curr.Kind != lualex.SemiToken {
-		var lastExpr expDesc
+		var lastExpr expressionDescriptor
 		var err error
-		nret, lastExpr, err = p.expList(fs)
+		nret, lastExpr, err = p.expressionList(fs)
 		if err != nil {
 			return err
 		}
@@ -329,7 +381,7 @@ func (p *parser) retStat(fs *funcState) error {
 			if err := p.setReturns(fs, lastExpr, multiReturn); err != nil {
 				return err
 			}
-			if lastExpr.kind == expKindCall && nret == 1 && !fs.blocks.insideTBC {
+			if lastExpr.kind == expressionKindCall && nret == 1 && !fs.blocks.insideTBC {
 				// Tail call.
 				i := fs.Code[lastExpr.pc()]
 				if registerIndex(i.ArgA()) != p.numVariablesInStack(fs) {
@@ -340,12 +392,12 @@ func (p *parser) retStat(fs *funcState) error {
 			nret = multiReturn
 		case nret == 1:
 			// Can use original slot.
-			if _, first, err = p.exp2anyreg(fs, lastExpr); err != nil {
+			if _, first, err = p.toAnyRegister(fs, lastExpr); err != nil {
 				return err
 			}
 		default:
 			// Values must go to the top of the stack.
-			if _, _, err := p.exp2nextReg(fs, lastExpr); err != nil {
+			if _, _, err := p.toNextRegister(fs, lastExpr); err != nil {
 				return err
 			}
 			if got := int(fs.firstFreeRegister) - int(first); got != nret {
@@ -363,59 +415,65 @@ func (p *parser) retStat(fs *funcState) error {
 	return nil
 }
 
-// expList parses one or more comma-separated expressions.
-func (p *parser) expList(fs *funcState) (n int, last expDesc, err error) {
+// expressionList parses one or more comma-separated expressions.
+//
+// Equivalent to `explist` in upstream Lua.
+func (p *parser) expressionList(fs *funcState) (n int, last expressionDescriptor, err error) {
 	n = 1
-	last, err = p.exp(fs)
+	last, err = p.expression(fs)
 	if err != nil {
-		return n, voidExpDesc(), err
+		return n, voidExpression(), err
 	}
 	for ; p.curr.Kind == lualex.CommaToken; n++ {
 		p.next()
-		if _, _, err := p.exp2nextReg(fs, last); err != nil {
-			return n, voidExpDesc(), err
+		if _, _, err := p.toNextRegister(fs, last); err != nil {
+			return n, voidExpression(), err
 		}
-		last, err = p.exp(fs)
+		last, err = p.expression(fs)
 		if err != nil {
-			return n, voidExpDesc(), err
+			return n, voidExpression(), err
 		}
 	}
 	return n, last, nil
 }
 
-// exp parses an expression.
-func (p *parser) exp(fs *funcState) (expDesc, error) {
-	return p.simpleExp(fs)
+// expression parses an expression.
+//
+// Equivalent to `expr` in upstream Lua.
+func (p *parser) expression(fs *funcState) (expressionDescriptor, error) {
+	return p.simpleExpression(fs)
 }
 
-// prefixExp parses a prefixexp production.
+// prefixExpression parses a prefixexp production.
 //
 //	prefixexp ::= var | functioncall | ‘(’ exp ‘)’
 //	functioncall ::=  prefixexp args | prefixexp ‘:’ Name args
 //	var ::=  Name | prefixexp ‘[’ exp ‘]’ | prefixexp ‘.’ Name
-func (p *parser) prefixExp(fs *funcState) (expDesc, error) {
-	var v expDesc
+//
+// Equivalent to `suffixedexp` in upstream Lua.
+func (p *parser) prefixExpression(fs *funcState) (expressionDescriptor, error) {
+	var v expressionDescriptor
 	switch p.curr.Kind {
 	case lualex.LParenToken:
 		pos := p.curr.Position
 		p.next()
 		var err error
-		v, err = p.exp(fs)
+		v, err = p.expression(fs)
 		if err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 		if err := p.checkMatch(fs, pos, lualex.LParenToken, lualex.RParenToken); err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 		v = p.dischargeVars(fs, v)
 	case lualex.IdentifierToken:
 		var err error
-		v, err = p.singleVar(fs)
+		v, err = p.singleVariable(fs)
 		if err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 	default:
-		return voidExpDesc(), syntaxError(fs.Source, p.curr, "unexpected symbol")
+		return voidExpression(), syntaxError(fs.Source, p.curr, "unexpected symbol")
 	}
 
 	for {
@@ -424,54 +482,54 @@ func (p *parser) prefixExp(fs *funcState) (expDesc, error) {
 			var err error
 			v, err = p.fieldSelector(fs, v)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
 		case lualex.LBracketToken:
 			pos := p.curr.Position
 			var err error
-			v, err = p.exp2anyregup(fs, v)
+			v, err = p.toAnyRegisterOrUpvalue(fs, v)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
 			p.next()
-			k, err := p.exp(fs)
+			k, err := p.expression(fs)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
-			k, err = p.expToValue(fs, k)
+			k, err = p.toValue(fs, k)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
 			if err := p.checkMatch(fs, pos, lualex.LBracketToken, lualex.RBracketToken); err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
 			v, err = p.codeIndexed(fs, v, k)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
 		case lualex.ColonToken:
 			p.next()
 			key, err := p.name(fs)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
 			v, err = p.codeSelf(fs, v, codeString(key))
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
 			v, err = p.functionArguments(fs, v)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
 		case lualex.LParenToken, lualex.StringToken, lualex.LBraceToken:
 			var err error
-			v, _, err = p.exp2nextReg(fs, v)
+			v, _, err = p.toNextRegister(fs, v)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
 			v, err = p.functionArguments(fs, v)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
 		default:
 			return v, nil
@@ -482,42 +540,49 @@ func (p *parser) prefixExp(fs *funcState) (expDesc, error) {
 // fieldSelector parses a production of:
 //
 //	'.' NAME | ':' NAME
-func (p *parser) fieldSelector(fs *funcState, v expDesc) (expDesc, error) {
-	v, err := p.exp2anyregup(fs, v)
+//
+// Equivalent to `fieldsel` in upstream Lua.
+func (p *parser) fieldSelector(fs *funcState, v expressionDescriptor) (expressionDescriptor, error) {
+	v, err := p.toAnyRegisterOrUpvalue(fs, v)
 	if err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
 	p.next() // Skip the dot or colon.
 	key, err := p.name(fs)
 	if err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
 	return p.codeIndexed(fs, v, codeString(key))
 }
 
-func (p *parser) functionArguments(fs *funcState, f expDesc) (expDesc, error) {
+// functionArguments parses an args production.
+//
+//	args ::=  ‘(’ [explist] ‘)’ | tableconstructor | LiteralString
+//
+// Equivalent to `funcargs` in upstream Lua.
+func (p *parser) functionArguments(fs *funcState, f expressionDescriptor) (expressionDescriptor, error) {
 	pos := p.curr.Position
-	var args expDesc
+	var args expressionDescriptor
 	switch p.curr.Kind {
 	case lualex.LParenToken:
 		p.next()
 		if p.curr.Kind == lualex.RParenToken {
 			// Empty argument list.
-			args = voidExpDesc()
+			args = voidExpression()
 		} else {
 			var err error
-			_, args, err = p.expList(fs)
+			_, args, err = p.expressionList(fs)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
 			if args.kind.hasMultipleReturns() {
 				if err := p.setReturns(fs, args, multiReturn); err != nil {
-					return voidExpDesc(), err
+					return voidExpression(), err
 				}
 			}
 		}
 		if err := p.checkMatch(fs, pos, lualex.LParenToken, lualex.RParenToken); err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 	case lualex.LBraceToken:
 		return p.constructor(fs)
@@ -525,7 +590,7 @@ func (p *parser) functionArguments(fs *funcState, f expDesc) (expDesc, error) {
 		args = codeString(p.curr.Value)
 		p.next()
 	default:
-		return voidExpDesc(), syntaxError(fs.Source, p.curr, "function arguments expected")
+		return voidExpression(), syntaxError(fs.Source, p.curr, "function arguments expected")
 	}
 
 	baseRegister := f.register()
@@ -533,9 +598,9 @@ func (p *parser) functionArguments(fs *funcState, f expDesc) (expDesc, error) {
 	if args.kind.hasMultipleReturns() {
 		numParams = multiReturn
 	} else {
-		if args.kind == expKindVoid {
+		if args.kind == expressionKindVoid {
 			// Close last argument.
-			p.exp2nextReg(fs, args)
+			p.toNextRegister(fs, args)
 		}
 		numParams = int(fs.firstFreeRegister) - (int(baseRegister) + 1)
 	}
@@ -545,34 +610,42 @@ func (p *parser) functionArguments(fs *funcState, f expDesc) (expDesc, error) {
 	// (unless changed later).
 	fs.firstFreeRegister = baseRegister + 1
 
-	return newCallExpDesc(pc), nil
+	return callExpression(pc), nil
 }
 
-func (p *parser) constructor(fs *funcState) (expDesc, error) {
-	return voidExpDesc(), errors.New("TODO(soon)")
+// constructor parses a "tableconstructor" production.
+//
+//	tableconstructor ::= ‘{’ [fieldlist] ‘}’
+//	fieldlist ::= field {fieldsep field} [fieldsep]
+//
+// Equivalent to `constructor` in upstream Lua.
+func (p *parser) constructor(fs *funcState) (expressionDescriptor, error) {
+	return voidExpression(), errors.New("TODO(soon)")
 }
 
-// singleVar parses an identifier and resolves it as a variable.
-func (p *parser) singleVar(fs *funcState) (expDesc, error) {
+// singleVariable parses an identifier and resolves it as a variable.
+//
+// Equivalent to `singlevar` in upstream Lua.
+func (p *parser) singleVariable(fs *funcState) (expressionDescriptor, error) {
 	varname, err := p.name(fs)
 	if err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
 	// Find local variable.
-	if v, err := p.resolveName(fs, varname, true); err != nil || v.kind != expKindVoid {
+	if v, err := p.resolveName(fs, varname, true); err != nil || v.kind != expressionKindVoid {
 		return v, err
 	}
 	// Global name: rewrite into _ENV access.
 	v, err := p.resolveName(fs, envName, true)
 	if err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
-	if v.kind == expKindVoid {
-		return voidExpDesc(), fmt.Errorf("internal error: %s does not exist", envName)
+	if v.kind == expressionKindVoid {
+		return voidExpression(), fmt.Errorf("internal error: %s does not exist", envName)
 	}
-	v, err = p.exp2anyregup(fs, v)
+	v, err = p.toAnyRegisterOrUpvalue(fs, v)
 	if err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
 	k := codeString(varname)
 	return p.codeIndexed(fs, v, k)
@@ -581,32 +654,34 @@ func (p *parser) singleVar(fs *funcState) (expDesc, error) {
 // resolveName finds the variable with the given name.
 // If it is an upvalue, add this upvalue into all intermediate functions.
 // If the name could not be found, then the returned expression's kind is [expDescVoid].
-func (p *parser) resolveName(fs *funcState, name string, base bool) (expDesc, error) {
+//
+// Equivalent to `singlevaraux` in upstream Lua.
+func (p *parser) resolveName(fs *funcState, name string, base bool) (expressionDescriptor, error) {
 	if fs == nil {
-		return voidExpDesc(), nil
+		return voidExpression(), nil
 	}
 
 	if v, ok := p.searchVariable(fs, name); ok {
-		if v.kind == expKindLocal && !base {
+		if v.kind == expressionKindLocal && !base {
 			// Local will be used as an upvalue.
-			fs.markUpval(v.localIndex(0))
+			fs.markUpvalue(v.localIndex(0))
 		}
 		return v, nil
 	}
 	// Not found as local at current level; try upvalues.
 	if i, ok := fs.searchUpvalue(name); ok {
-		return newUpvalExpDesc(i), nil
+		return upvalueExpression(i), nil
 	}
 
 	// Not found? Try upper levels.
 	v, err := p.resolveName(fs.prev, name, false)
 	if err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
 	switch v.kind {
-	case expKindLocal:
+	case expressionKindLocal:
 		if len(fs.Upvalues) >= maxUpvalues {
-			return voidExpDesc(), fmt.Errorf("too many upvalues")
+			return voidExpression(), fmt.Errorf("too many upvalues")
 		}
 		up := UpvalueDescriptor{
 			Name:    name,
@@ -615,10 +690,10 @@ func (p *parser) resolveName(fs *funcState, name string, base bool) (expDesc, er
 			InStack: true,
 		}
 		fs.Upvalues = append(fs.Upvalues, up)
-		return newUpvalExpDesc(upvalueIndex(len(fs.Upvalues) - 1)), nil
-	case expKindUpval:
+		return upvalueExpression(upvalueIndex(len(fs.Upvalues) - 1)), nil
+	case expressionKindUpvalue:
 		if len(fs.Upvalues) >= maxUpvalues {
-			return voidExpDesc(), fmt.Errorf("too many upvalues")
+			return voidExpression(), fmt.Errorf("too many upvalues")
 		}
 		up := UpvalueDescriptor{
 			Name:  name,
@@ -626,29 +701,32 @@ func (p *parser) resolveName(fs *funcState, name string, base bool) (expDesc, er
 			Index: uint8(v.upvalueIndex()),
 		}
 		fs.Upvalues = append(fs.Upvalues, up)
-		return newUpvalExpDesc(upvalueIndex(len(fs.Upvalues) - 1)), nil
+		return upvalueExpression(upvalueIndex(len(fs.Upvalues) - 1)), nil
 	default:
 		return v, nil
 	}
 }
 
-func (p *parser) simpleExp(fs *funcState) (expDesc, error) {
+// simpleExpression parses an expression without operators.
+//
+// Equivalent to `simpleexp` in upstream Lua.
+func (p *parser) simpleExpression(fs *funcState) (expressionDescriptor, error) {
 	switch p.curr.Kind {
 	case lualex.NumeralToken:
 		// TODO(soon): Get the actual algorithm.
-		var e expDesc
+		var e expressionDescriptor
 		if strings.Contains(p.curr.Value, ".") {
 			f, err := strconv.ParseFloat(p.curr.Value, 64)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
-			e = newFloatConstExpDesc(f)
+			e = floatConstantExpression(f)
 		} else {
 			i, err := strconv.ParseInt(p.curr.Value, 0, 64)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
-			e = newIntConstExpDesc(i)
+			e = intConstantExpression(i)
 		}
 		p.next()
 		return e, nil
@@ -658,29 +736,34 @@ func (p *parser) simpleExp(fs *funcState) (expDesc, error) {
 		return e, nil
 	case lualex.NilToken:
 		p.next()
-		return newExpDesc(expKindNil), nil
+		return newExpressionDescriptor(expressionKindNil), nil
 	case lualex.TrueToken:
 		p.next()
-		return newExpDesc(expKindTrue), nil
+		return newExpressionDescriptor(expressionKindTrue), nil
 	case lualex.FalseToken:
 		p.next()
-		return newExpDesc(expKindFalse), nil
+		return newExpressionDescriptor(expressionKindFalse), nil
 	case lualex.VarargToken:
 		if !fs.IsVararg {
-			return voidExpDesc(), errors.New("cannot use '...' outside a vararg function")
+			return voidExpression(), errors.New("cannot use '...' outside a vararg function")
 		}
 		p.next()
 		pc := p.code(fs, ABCInstruction(OpVararg, 0, 0, 1, false))
-		return newVarargExpDesc(pc), nil
+		return varargExpression(pc), nil
 	case lualex.LBraceToken:
 		return p.constructor(fs)
 	case lualex.FunctionToken:
-		return voidExpDesc(), errors.New("TODO(soon): function")
+		return voidExpression(), errors.New("TODO(soon): function")
 	default:
-		return p.prefixExp(fs)
+		return p.prefixExpression(fs)
 	}
 }
 
+// name verifies that the current token is an identifier
+// then advances to the next token
+// and returns the identifier value.
+//
+// Equivalent to `str_checkname` in upstream Lua.
 func (p *parser) name(fs *funcState) (string, error) {
 	if p.curr.Kind != lualex.IdentifierToken {
 		return "", syntaxError(fs.Source, p.curr, "name expected")
@@ -690,6 +773,12 @@ func (p *parser) name(fs *funcState) (string, error) {
 	return v, nil
 }
 
+// checkMatch verifies that the current token is the closing token
+// and advances past it.
+// If the current token is not the closing token,
+// then checkMatch returns an error.
+//
+// Equivalent to `check_match` in upstream Lua.
 func (p *parser) checkMatch(fs *funcState, start lualex.Position, open, close lualex.TokenKind) error {
 	if p.curr.Kind == close {
 		p.next()
@@ -705,20 +794,24 @@ func (p *parser) checkMatch(fs *funcState, start lualex.Position, open, close lu
 }
 
 // searchVariable looks for an active variable with the given name in the function.
-func (p *parser) searchVariable(fs *funcState, n string) (_ expDesc, found bool) {
+//
+// Equivalent to `searchvar` in upstream Lua.
+func (p *parser) searchVariable(fs *funcState, n string) (_ expressionDescriptor, found bool) {
 	for i := int(fs.numActiveVariables) - 1; i >= 0; i-- {
 		vd := p.localVariableDescription(fs, i)
 		if vd.name == n {
 			if vd.kind == CompileTimeConstant {
-				return newConstLocalExpDesc(fs.firstLocal + i), true
+				return constLocalExpression(fs.firstLocal + i), true
 			}
-			return newLocalExpDesc(vd.ridx, uint16(i)), true
+			return localExpression(vd.ridx, uint16(i)), true
 		}
 	}
-	return voidExpDesc(), false
+	return voidExpression(), false
 }
 
 // removeVariables closes the scope for all variables up to the given level.
+//
+// Equivalent to `removevars` in upstream Lua.
 func (p *parser) removeVariables(fs *funcState, toLevel int) {
 	p.activeVariables = p.activeVariables[:len(p.activeVariables)-(int(fs.numActiveVariables)-toLevel)]
 	for int(fs.numActiveVariables) > toLevel {
@@ -730,6 +823,8 @@ func (p *parser) removeVariables(fs *funcState, toLevel int) {
 }
 
 // localDebugInfo returns the debug information for current variable vidx.
+//
+// Equivalent to `localdebuginfo` in upstream Lua.
 func (p *parser) localDebugInfo(fs *funcState, vidx int) *LocalVariable {
 	vd := p.localVariableDescription(fs, vidx)
 	if vd.kind == CompileTimeConstant {
@@ -743,6 +838,8 @@ func (p *parser) localDebugInfo(fs *funcState, vidx int) *LocalVariable {
 // It searches for the highest variable below that level
 // that is in a register
 // and uses its register index ('ridx') plus one.
+//
+// Equivalent to `reglevel` in upstream Lua.
 func (p *parser) registerLevel(fs *funcState, nvar int) registerIndex {
 	for nvar > 0 {
 		nvar--
@@ -756,6 +853,8 @@ func (p *parser) registerLevel(fs *funcState, nvar int) registerIndex {
 
 // numVariablesInStack returns the number of variables in the register stack
 // for the given function.
+//
+// Equivalent to `luaY_nvarstack` in upstream Lua.
 func (p *parser) numVariablesInStack(fs *funcState) registerIndex {
 	return p.registerLevel(fs, int(fs.numActiveVariables))
 }
@@ -772,6 +871,10 @@ type variableDescription struct {
 	k Value
 }
 
+// localVariableDescription describes the i'th local variable
+// in the given function.
+//
+// Equivalent to `getlocalvardesc` in upstream Lua.
 func (p *parser) localVariableDescription(fs *funcState, i int) *variableDescription {
 	return &p.activeVariables[fs.firstLocal+i]
 }
@@ -794,6 +897,8 @@ type labelDescription struct {
 // Solves all pending gotos to this new label
 // and adds a close instruction if necessary.
 // createLabel returns true if and only if it added a close instruction.
+//
+// Equivalent to `createlabel` in upstream Lua.
 func (p *parser) createLabel(fs *funcState, name string, line int, last bool) (addedClose bool, err error) {
 	n := fs.numActiveVariables
 	if last {
@@ -820,6 +925,8 @@ func (p *parser) createLabel(fs *funcState, name string, line int, last bool) (a
 // it checks whether new label lb matches any pending gotos in the current block
 // and solves them.
 // Return true if any of the gotos need to close upvalues.
+//
+// Equivalent to `solvegotos` in upstream Lua.
 func (p *parser) solveGotos(fs *funcState, lb *labelDescription) (needsClose bool, err error) {
 	for i := fs.blocks.firstGoto; i < len(p.pendingGotos); {
 		if p.pendingGotos[i].name != lb.name {
@@ -838,6 +945,8 @@ func (p *parser) solveGotos(fs *funcState, lb *labelDescription) (needsClose boo
 // solveGoto solves the pending goto at index g to given label
 // and removes it from the list of pending gotos.
 // If the pending goto jumps into the scope of some variable, solveGoto returns an error.
+//
+// Equivalent to `solvegoto` in upstream Lua.
 func (p *parser) solveGoto(fs *funcState, g int, lb *labelDescription) error {
 	gt := &p.pendingGotos[g]
 	if gt.numActiveVariables < lb.numActiveVariables {
@@ -853,6 +962,9 @@ func (p *parser) solveGoto(fs *funcState, g int, lb *labelDescription) error {
 	return nil
 }
 
+// syntaxError creates an error with the given parser context.
+//
+// Equivalent to `lexerror`/`luaX_syntaxerror` in upstream Lua.
 func syntaxError(source Source, token lualex.Token, msg string) error {
 	sb := new(strings.Builder)
 	if source == "" {
@@ -874,6 +986,9 @@ func syntaxError(source Source, token lualex.Token, msg string) error {
 }
 
 // isBlockFollow reports whether a token terminates a block.
+//
+// Mostly equivalent to `block_follow` in upstream Lua,
+// but punts the withuntil parameter behavior to the caller.
 func isBlockFollow(k lualex.TokenKind) bool {
 	return k == lualex.ElseToken ||
 		k == lualex.ElseifToken ||

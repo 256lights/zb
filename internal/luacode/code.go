@@ -11,6 +11,8 @@ import (
 )
 
 // code appends the given instruction to fs.Code and returns its address.
+//
+// Equivalent to `luaK_code` in upstream Lua.
 func (p *parser) code(fs *funcState, i Instruction) int {
 	fs.Code = append(fs.Code, i)
 	fs.saveLineInfo(p.lastLine)
@@ -18,6 +20,8 @@ func (p *parser) code(fs *funcState, i Instruction) int {
 }
 
 // codeNil appends an [OpLoadNil] instruction to fs.Code.
+//
+// Equivalent to `luaK_nil` in upstream Lua.
 func (p *parser) codeNil(fs *funcState, from registerIndex, n uint8) {
 	if previous := fs.previousInstruction(); previous != nil && previous.OpCode() == OpLoadNil {
 		// Peephole optimization:
@@ -46,12 +50,16 @@ func (p *parser) codeNil(fs *funcState, from registerIndex, n uint8) {
 
 // codeJump appends a jump instruction to fs.Code and returns its index.
 // The destination can be fixed later with [funcState.fixJump].
+//
+// Equivalent to `luaK_jump` in upstream Lua.
 func (p *parser) codeJump(fs *funcState) int {
 	return p.code(fs, JInstruction(OpJmp, noJump))
 }
 
 // codeReturn appends a return instruction to fs.Code.
 // codeReturn panics if nret is out of range.
+//
+// Equivalent to `luaK_ret` in upstream Lua.
 func (p *parser) codeReturn(fs *funcState, first registerIndex, nret int) {
 	b := nret + 1
 	if !(0 <= b && b <= maxArgB) {
@@ -69,6 +77,8 @@ func (p *parser) codeReturn(fs *funcState, first registerIndex, nret int) {
 
 // codeInt appends a "load constant" instruction to fs.Code
 // that loads the given integer.
+//
+// Equivalent to `luaK_int` in upstream Lua.
 func (p *parser) codeInt(fs *funcState, reg registerIndex, i int64) {
 	if !fitsSignedBx(i) {
 		k := fs.addConstant(IntegerValue(i))
@@ -81,6 +91,8 @@ func (p *parser) codeInt(fs *funcState, reg registerIndex, i int64) {
 
 // codeFloat appends a "load constant" instruction to fs.Code
 // that loads the given floating-point number.
+//
+// Equivalent to `luaK_float` in upstream Lua.
 func (p *parser) codeFloat(fs *funcState, reg registerIndex, f float64) {
 	if i := int64(f); float64(i) == f && fitsSignedBx(i) {
 		p.code(fs, ABxInstruction(OpLoadF, uint8(reg), int32(i)))
@@ -93,6 +105,8 @@ func (p *parser) codeFloat(fs *funcState, reg registerIndex, f float64) {
 
 // codeConstant appends a "load constant" instruction to fs.Code.
 // The instruction will load the k'th constant from the [Prototype] Constants table.
+//
+// Equivalent to `luaK_codek` in upstream Lua.
 func (p *parser) codeConstant(fs *funcState, reg registerIndex, k int) int {
 	if k > maxArgBx {
 		pc := p.code(fs, ABxInstruction(OpLoadKX, uint8(reg), 0))
@@ -104,90 +118,96 @@ func (p *parser) codeConstant(fs *funcState, reg registerIndex, k int) int {
 
 // codeStoreVar appends instructions to store the result of expr into variable v.
 // expr is no longer valid after a call to codeStoreVar.
-func (p *parser) codeStoreVar(fs *funcState, v, expr expDesc) error {
+//
+// Equivalent to `luaK_storevar` in upstream Lua.
+func (p *parser) codeStoreVar(fs *funcState, v, expr expressionDescriptor) error {
 	switch v.kind {
-	case expKindLocal:
-		p.freeExp(fs, expr)
-		_, err := p.exp2reg(fs, expr, v.register())
+	case expressionKindLocal:
+		p.freeExpression(fs, expr)
+		_, err := p.toRegister(fs, expr, v.register())
 		return err
-	case expKindUpval:
+	case expressionKindUpvalue:
 		var e registerIndex
 		var err error
-		expr, e, err = p.exp2anyreg(fs, expr)
+		expr, e, err = p.toAnyRegister(fs, expr)
 		if err != nil {
 			return err
 		}
 		p.code(fs, ABCInstruction(OpSetUpval, uint8(e), uint8(v.upvalueIndex()), 0, false))
-	case expKindIndexUp:
+	case expressionKindIndexUpvalue:
 		var err error
-		expr, err = p.codeABRK(fs, OpSetTabUp, uint8(v.tableUpvalue()), uint8(v.constIndex()), expr)
+		expr, err = p.codeABRK(fs, OpSetTabUp, uint8(v.tableUpvalue()), uint8(v.constantIndex()), expr)
 		if err != nil {
 			return err
 		}
-	case expKindIndexI:
+	case expressionKindIndexInt:
 		var err error
 		expr, err = p.codeABRK(fs, OpSetI, uint8(v.tableRegister()), uint8(v.indexInt()), expr)
 		if err != nil {
 			return err
 		}
-	case expKindIndexStr:
+	case expressionKindIndexString:
 		var err error
-		expr, err = p.codeABRK(fs, OpSetField, uint8(v.tableRegister()), uint8(v.constIndex()), expr)
+		expr, err = p.codeABRK(fs, OpSetField, uint8(v.tableRegister()), uint8(v.constantIndex()), expr)
 		if err != nil {
 			return err
 		}
-	case expKindIndexed:
+	case expressionKindIndexed:
 		var err error
 		expr, err = p.codeABRK(fs, OpSetTable, uint8(v.tableRegister()), uint8(v.indexRegister()), expr)
 		if err != nil {
 			return err
 		}
 	default:
-		p.freeExp(fs, expr)
+		p.freeExpression(fs, expr)
 		return fmt.Errorf("invalid variable kind to store (%v)", v.kind)
 	}
 
-	p.freeExp(fs, expr)
+	p.freeExpression(fs, expr)
 	return nil
 }
 
 // codeSelf appends an [OpSelf] instruction to fs.Code.
 // This has the effect of converting expression e into "e:key(e,".
 // Both e and key are invalid after a call to codeSelf.
-// codeSelf returns a [expKindNonReloc] of the register containing the function.
+// codeSelf returns a [expressionKindNonRelocatable] of the register containing the function.
 // e will be placed at the next register.
-func (p *parser) codeSelf(fs *funcState, e, key expDesc) (expDesc, error) {
-	e, ereg, err := p.exp2anyreg(fs, e)
+//
+// Equivalent to `luaK_self` in upstream Lua.
+func (p *parser) codeSelf(fs *funcState, e, key expressionDescriptor) (expressionDescriptor, error) {
+	e, ereg, err := p.toAnyRegister(fs, e)
 	if err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
-	p.freeExp(fs, e)
+	p.freeExpression(fs, e)
 
 	// Reserve registers for function and self produced by OpSelf.
 	baseRegister := fs.firstFreeRegister
 	if err := fs.reserveRegisters(2); err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
 
 	key, err = p.codeABRK(fs, OpSelf, uint8(baseRegister), uint8(ereg), key)
 	if err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
-	p.freeExp(fs, key)
+	p.freeExpression(fs, key)
 
-	return newNonRelocExpDesc(baseRegister), nil
+	return nonRelocatableExpression(baseRegister), nil
 }
 
 // codeGoIfTrue appends instructions to go through if e is true, jump otherwise.
-func (p *parser) codeGoIfTrue(fs *funcState, e expDesc) (expDesc, error) {
+//
+// Equivalent to `luaK_goiftrue` in upstream Lua.
+func (p *parser) codeGoIfTrue(fs *funcState, e expressionDescriptor) (expressionDescriptor, error) {
 	e = p.dischargeVars(fs, e)
 	var pc int
 	switch e.kind {
-	case expKindJmp:
+	case expressionKindJump:
 		if err := fs.negateCondition(e.pc()); err != nil {
 			return e, err
 		}
-	case expKindK, expKindKFlt, expKindKInt, expKindKStr, expKindTrue:
+	case expressionKindConstant, expressionKindFloatConstant, expressionKindIntConstant, expressionKindStringConstant, expressionKindTrue:
 		// Always true; do nothing.
 		pc = noJump
 	default:
@@ -213,13 +233,15 @@ func (p *parser) codeGoIfTrue(fs *funcState, e expDesc) (expDesc, error) {
 }
 
 // codeGoIfFalse appends instructions to go through if e is false, jump otherwise.
-func (p *parser) codeGoIfFalse(fs *funcState, e expDesc) (expDesc, error) {
+//
+// Equivalent to `luaK_goiffalse` in upstream Lua.
+func (p *parser) codeGoIfFalse(fs *funcState, e expressionDescriptor) (expressionDescriptor, error) {
 	e = p.dischargeVars(fs, e)
 	var pc int
 	switch e.kind {
-	case expKindJmp:
+	case expressionKindJump:
 		pc = e.pc()
-	case expKindNil, expKindFalse:
+	case expressionKindNil, expressionKindFalse:
 		// Always false; do nothing.
 		pc = noJump
 	default:
@@ -247,8 +269,10 @@ func (p *parser) codeGoIfFalse(fs *funcState, e expDesc) (expDesc, error) {
 // jumpOnCond appends an instruction to jump if e is cond
 // (that is, if cond is true, code will jump if e is true)
 // and returns the jump position.
-func (p *parser) jumpOnCond(fs *funcState, e expDesc, cond bool) (int, error) {
-	if e.kind == expKindReloc {
+//
+// Equivalent to `jumponcond` in upstream Lua.
+func (p *parser) jumpOnCond(fs *funcState, e expressionDescriptor, cond bool) (int, error) {
+	if e.kind == expressionKindRelocatable {
 		if ie := fs.Code[e.pc()]; ie.OpCode() == OpNot {
 			// Remove previous OpNot.
 			fs.removeLastInstruction()
@@ -261,30 +285,32 @@ func (p *parser) jumpOnCond(fs *funcState, e expDesc, cond bool) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	p.freeExp(fs, e)
+	p.freeExpression(fs, e)
 	p.code(fs, ABCInstruction(OpTestSet, uint8(noRegister), uint8(e.register()), 0, cond))
 	return p.codeJump(fs), nil
 }
 
 // codeNot codes "not e", doing constant folding.
-func (p *parser) codeNot(fs *funcState, e expDesc) (expDesc, error) {
+//
+// Equivalent to `codenot` in upstream Lua.
+func (p *parser) codeNot(fs *funcState, e expressionDescriptor) (expressionDescriptor, error) {
 	switch e.kind {
-	case expKindNil, expKindFalse:
-		e.kind = expKindTrue
-	case expKindK, expKindKFlt, expKindKInt, expKindKStr, expKindTrue:
-		e.kind = expKindFalse
-	case expKindJmp:
+	case expressionKindNil, expressionKindFalse:
+		e.kind = expressionKindTrue
+	case expressionKindConstant, expressionKindFloatConstant, expressionKindIntConstant, expressionKindStringConstant, expressionKindTrue:
+		e.kind = expressionKindFalse
+	case expressionKindJump:
 		if err := fs.negateCondition(e.pc()); err != nil {
 			return e, err
 		}
-	case expKindReloc, expKindNonReloc:
+	case expressionKindRelocatable, expressionKindNonRelocatable:
 		var err error
 		e, err = p.dischargeToAnyRegister(fs, e)
 		if err != nil {
 			return e, err
 		}
 		pc := p.code(fs, ABCInstruction(OpNot, 0, uint8(e.register()), 0, false))
-		e = newRelocExpDesc(pc).withJumpLists(e)
+		e = relocatableExpression(pc).withJumpLists(e)
 	default:
 		return e, fmt.Errorf("internal error: codeNot: unhandled expression (%v)", e.kind)
 	}
@@ -303,55 +329,59 @@ func (p *parser) codeNot(fs *funcState, e expDesc) (expDesc, error) {
 
 // codeIndexed appends instructions to fs.Code for the expression "t[k]".
 // If t is not in a register or upvalue, codeIndexed returns an error.
-func (p *parser) codeIndexed(fs *funcState, t, k expDesc) (expDesc, error) {
+//
+// Equivalent to `luaK_indexed` in upstream Lua.
+func (p *parser) codeIndexed(fs *funcState, t, k expressionDescriptor) (expressionDescriptor, error) {
 	if t.hasJumps() {
-		return voidExpDesc(), errors.New("internal error: codeIndexed: table expression has jumps")
+		return voidExpression(), errors.New("internal error: codeIndexed: table expression has jumps")
 	}
 
-	if k.kind == expKindKStr {
+	if k.kind == expressionKindStringConstant {
 		k = p.stringToConstantTable(fs, k)
 	}
-	isKstr := k.kind == expKindK &&
+	isKstr := k.kind == expressionKindConstant &&
 		!k.hasJumps() &&
-		k.constIndex() <= maxArgB &&
-		fs.Constants[k.constIndex()].isShortString()
-	if t.kind == expKindUpval && !isKstr {
+		k.constantIndex() <= maxArgB &&
+		fs.Constants[k.constantIndex()].isShortString()
+	if t.kind == expressionKindUpvalue && !isKstr {
 		// [OpGetTabUp] can only index short strings.
 		// Copy the table from an upvalue to a register.
 		var err error
-		t, _, err = p.exp2anyreg(fs, t)
+		t, _, err = p.toAnyRegister(fs, t)
 		if err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 	}
 
 	switch t.kind {
-	case expKindUpval:
-		return newIndexUpExpDesc(t.upvalueIndex(), uint16(k.constIndex())), nil
-	case expKindLocal, expKindNonReloc:
+	case expressionKindUpvalue:
+		return indexedUpvalueExpression(t.upvalueIndex(), uint16(k.constantIndex())), nil
+	case expressionKindLocal, expressionKindNonRelocatable:
 		if isKstr {
-			return newIndexStrExpDesc(t.register(), uint16(k.constIndex())), nil
+			return indexStringExpression(t.register(), uint16(k.constantIndex())), nil
 		} else if i, isInt := k.intConstant(); isInt && !k.hasJumps() && 0 <= i && i <= maxArgC {
-			return newIndexIExpDesc(t.register(), uint16(i)), nil
+			return indexIntExpression(t.register(), uint16(i)), nil
 		} else {
-			_, reg, err := p.exp2anyreg(fs, k)
+			_, reg, err := p.toAnyRegister(fs, k)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
-			return newIndexedExpDesc(t.register(), reg), nil
+			return indexedExpression(t.register(), reg), nil
 		}
 	default:
-		return voidExpDesc(), fmt.Errorf("internal error: codeIndexed: unhandled table kind %v", t.kind)
+		return voidExpression(), fmt.Errorf("internal error: codeIndexed: unhandled table kind %v", t.kind)
 	}
 }
 
 // codePrefix appends the code to apply a prefix operator to an expression
 // to fs.Code.
-func (p *parser) codePrefix(fs *funcState, operator unaryOperator, e expDesc, line int) (expDesc, error) {
+//
+// Equivalent to `luaK_prefix` in upstream Lua.
+func (p *parser) codePrefix(fs *funcState, operator unaryOperator, e expressionDescriptor, line int) (expressionDescriptor, error) {
 	e = p.dischargeVars(fs, e)
 	switch operator {
 	case unaryOperatorMinus, unaryOperatorBNot:
-		fakeRHS := newIntConstExpDesc(0)
+		fakeRHS := intConstantExpression(0)
 		aop, _ := operator.toArithmetic()
 		if e, folded := p.foldConstants(aop, e, fakeRHS); folded {
 			return e, nil
@@ -363,27 +393,31 @@ func (p *parser) codePrefix(fs *funcState, operator unaryOperator, e expDesc, li
 	case unaryOperatorNot:
 		return p.codeNot(fs, e)
 	default:
-		return voidExpDesc(), fmt.Errorf("internal error: codePrefix: unhandled operator %v", operator)
+		return voidExpression(), fmt.Errorf("internal error: codePrefix: unhandled operator %v", operator)
 	}
 }
 
 // codeUnaryExpValue appends the code for any unary expresion except "not"
 // to fs.Code.
-func (p *parser) codeUnaryExpValue(fs *funcState, op OpCode, e expDesc, line int) (expDesc, error) {
-	e, r, err := p.exp2anyreg(fs, e)
+//
+// Equivalent to `codeunexpval` in upstream Lua.
+func (p *parser) codeUnaryExpValue(fs *funcState, op OpCode, e expressionDescriptor, line int) (expressionDescriptor, error) {
+	e, r, err := p.toAnyRegister(fs, e)
 	if err != nil {
 		return e, err
 	}
-	p.freeExp(fs, e)
+	p.freeExpression(fs, e)
 	pc := p.code(fs, ABCInstruction(op, 0, uint8(r), 0, false))
 	fs.fixLineInfo(line)
-	return newRelocExpDesc(pc).withJumpLists(e), nil
+	return relocatableExpression(pc).withJumpLists(e), nil
 }
 
 // codeInfix processes the first operand of a binary expression
 // before reading the second operand.
 // The caller should call [*parser.codePostfix] after reading the second operand.
-func (p *parser) codeInfix(fs *funcState, operator binaryOperator, v expDesc) (expDesc, error) {
+//
+// Equivalent to `luaK_infix` in upstream Lua.
+func (p *parser) codeInfix(fs *funcState, operator binaryOperator, v expressionDescriptor) (expressionDescriptor, error) {
 	v = p.dischargeVars(fs, v)
 	switch operator {
 	case binaryOperatorAnd:
@@ -392,7 +426,7 @@ func (p *parser) codeInfix(fs *funcState, operator binaryOperator, v expDesc) (e
 		return p.codeGoIfFalse(fs, v)
 	case binaryOperatorConcat:
 		var err error
-		v, _, err = p.exp2nextReg(fs, v)
+		v, _, err = p.toNextRegister(fs, v)
 		return v, err
 	case binaryOperatorAdd, binaryOperatorSub,
 		binaryOperatorMul, binaryOperatorDiv, binaryOperatorIDiv, binaryOperatorMod,
@@ -404,7 +438,7 @@ func (p *parser) codeInfix(fs *funcState, operator binaryOperator, v expDesc) (e
 			return v, nil
 		}
 		var err error
-		v, _, err = p.exp2anyreg(fs, v)
+		v, _, err = p.toAnyRegister(fs, v)
 		return v, err
 	case binaryOperatorEq, binaryOperatorNE:
 		if v.isNumeral() {
@@ -412,7 +446,7 @@ func (p *parser) codeInfix(fs *funcState, operator binaryOperator, v expDesc) (e
 			return v, nil
 		}
 		var err error
-		v, _, _, err = p.expToRK(fs, v)
+		v, _, _, err = p.toRK(fs, v)
 		return v, err
 	case binaryOperatorLT, binaryOperatorLE, binaryOperatorGT, binaryOperatorGE:
 		if _, _, isSigned := v.toSignedArg(); isSigned {
@@ -420,7 +454,7 @@ func (p *parser) codeInfix(fs *funcState, operator binaryOperator, v expDesc) (e
 			return v, nil
 		}
 		var err error
-		v, _, err = p.exp2anyreg(fs, v)
+		v, _, err = p.toAnyRegister(fs, v)
 		return v, err
 	default:
 		return v, fmt.Errorf("internal error: codeInfix: unhandled operator %v", operator)
@@ -430,7 +464,9 @@ func (p *parser) codeInfix(fs *funcState, operator binaryOperator, v expDesc) (e
 // codePostfix finalizes the code for a binary operation
 // after reading the second operand.
 // This must have been preceded by a call to [*parser.codeInfix].
-func (p *parser) codePostfix(fs *funcState, operator binaryOperator, e1, e2 expDesc, line int) (expDesc, error) {
+//
+// Equivalent to `luaK_posfix` in upstream Lua.
+func (p *parser) codePostfix(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor, line int) (expressionDescriptor, error) {
 	e2 = p.dischargeVars(fs, e2)
 	if operator, ok := operator.toArithmetic(); ok {
 		if result, folded := p.foldConstants(operator, e1, e2); folded {
@@ -441,29 +477,29 @@ func (p *parser) codePostfix(fs *funcState, operator binaryOperator, e1, e2 expD
 	switch operator {
 	case binaryOperatorAnd:
 		if e1.t != noJump {
-			return voidExpDesc(), errors.New("internal error: codePostfix: list should have been closed by codeInfix")
+			return voidExpression(), errors.New("internal error: codePostfix: list should have been closed by codeInfix")
 		}
 		var err error
 		e2.f, err = fs.concatJumpList(e2.f, e1.f)
 		if err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 		return e2, nil
 	case binaryOperatorOr:
 		if e1.t != noJump {
-			return voidExpDesc(), errors.New("internal error: codePostfix: list should have been closed by codeInfix")
+			return voidExpression(), errors.New("internal error: codePostfix: list should have been closed by codeInfix")
 		}
 		var err error
 		e2.t, err = fs.concatJumpList(e2.t, e1.t)
 		if err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 		return e2, nil
 	case binaryOperatorConcat:
 		var err error
-		e2, _, err = p.exp2nextReg(fs, e2)
+		e2, _, err = p.toNextRegister(fs, e2)
 		if err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 		p.codeConcat(fs, e1, e2, line)
 		return e1, nil
@@ -472,9 +508,9 @@ func (p *parser) codePostfix(fs *funcState, operator binaryOperator, e1, e2 expD
 	case binaryOperatorSub:
 		result, err := p.finishBinaryExpNegated(fs, e1, e2, OpAddI, line, TagMethodSub)
 		if err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
-		if result.kind != expKindVoid {
+		if result.kind != expressionKindVoid {
 			return result, nil
 		}
 		fallthrough
@@ -488,8 +524,8 @@ func (p *parser) codePostfix(fs *funcState, operator binaryOperator, e1, e2 expD
 			return p.codeBinaryExpImmediate(fs, OpShlI, e2, e1, true, line, TagMethodSHL)
 		}
 		if result, err := p.finishBinaryExpNegated(fs, e1, e2, OpShrI, line, TagMethodSHL); err != nil {
-			return voidExpDesc(), err
-		} else if result.kind != expKindVoid {
+			return voidExpression(), err
+		} else if result.kind != expressionKindVoid {
 			return result, nil
 		}
 		return p.codeBinaryExp(fs, operator, e1, e2, line)
@@ -510,18 +546,19 @@ func (p *parser) codePostfix(fs *funcState, operator binaryOperator, e1, e2 expD
 	case binaryOperatorLT, binaryOperatorLE:
 		return p.codeOrder(fs, operator, e1, e2)
 	default:
-		return voidExpDesc(), fmt.Errorf("internal error: codePostfix: unhandled operator %v", operator)
+		return voidExpression(), fmt.Errorf("internal error: codePostfix: unhandled operator %v", operator)
 	}
-}
-
-// codeSetTableSize
-func (p *parser) codeSetTableSize(fs *funcState, pc int, ra registerIndex, aSize, hSize int) {
-
 }
 
 // TODO(now): codeSetList
 
-func (p *parser) codeCommutative(fs *funcState, operator binaryOperator, e1, e2 expDesc, line int) (expDesc, error) {
+// codeCommutative appends instructions for non-bitwise commutative operators (i.e. "+" and "*")
+// to fs.Code.
+//
+// Equivalent to `codecommutative` in upstream Lua.
+func (p *parser) codeCommutative(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor, line int) (expressionDescriptor, error) {
+	// If first operand is a numeric constant,
+	// change order of operands to try to use an immediate or K operator.
 	flip := e1.isNumeral()
 	if flip {
 		e1, e2 = e2, e1
@@ -533,22 +570,32 @@ func (p *parser) codeCommutative(fs *funcState, operator binaryOperator, e1, e2 
 	return p.codeArithmetic(fs, operator, e1, e2, flip, line)
 }
 
-func (p *parser) codeBitwise(fs *funcState, operator binaryOperator, e1, e2 expDesc, line int) (expDesc, error) {
-	flip := e1.kind == expKindKInt
+// codeBitwise appends instructions for bitwise operators
+//
+// Equivalent to `codebitwise` in upstream Lua.
+func (p *parser) codeBitwise(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor, line int) (expressionDescriptor, error) {
+	// All operations are commutative,
+	// so if first operand is a numeric constant,
+	// change order of operands to try to use an immediate or K operator.
+	flip := e1.kind == expressionKindIntConstant
 	if flip {
 		e1, e2 = e2, e1
 	}
-	if e2.kind == expKindKInt {
-		if e2, _, ok := p.expToK(fs, e2); ok {
+	if e2.kind == expressionKindIntConstant {
+		if e2, _, ok := p.toConstantTable(fs, e2); ok {
 			return p.codeBinaryExpConstant(fs, operator, e1, e2, flip, line)
 		}
 	}
 	return p.codeBinaryExpNoConstants(fs, operator, e1, e2, flip, line)
 }
 
-func (p *parser) codeArithmetic(fs *funcState, operator binaryOperator, e1, e2 expDesc, flip bool, line int) (expDesc, error) {
+// codeArithmetic appends instructions for an arithmetic binary operator
+// to fs.Code.
+//
+// Equivalent to `codearith` in upstream Lua.
+func (p *parser) codeArithmetic(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor, flip bool, line int) (expressionDescriptor, error) {
 	if e2.isNumeral() {
-		if e2, _, ok := p.expToK(fs, e2); ok {
+		if e2, _, ok := p.toConstantTable(fs, e2); ok {
 			return p.codeBinaryExpConstant(fs, operator, e1, e2, flip, line)
 		}
 	}
@@ -558,7 +605,9 @@ func (p *parser) codeArithmetic(fs *funcState, operator binaryOperator, e1, e2 e
 // codeBinaryExpNoConstants appends the instructions
 // for a binary expression without constant operands
 // to fs.Code.
-func (p *parser) codeBinaryExpNoConstants(fs *funcState, operator binaryOperator, e1, e2 expDesc, flip bool, line int) (expDesc, error) {
+//
+// Equivalent to `codebinNoK` in upstream Lua.
+func (p *parser) codeBinaryExpNoConstants(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor, flip bool, line int) (expressionDescriptor, error) {
 	if flip {
 		// Back to original order.
 		e1, e2 = e2, e1
@@ -566,88 +615,111 @@ func (p *parser) codeBinaryExpNoConstants(fs *funcState, operator binaryOperator
 	return p.codeBinaryExp(fs, operator, e1, e2, line)
 }
 
-func (p *parser) codeBinaryExp(fs *funcState, operator binaryOperator, e1, e2 expDesc, line int) (expDesc, error) {
+// codeBinaryExp appends the instructions
+// for a binary expression that "produces values" over two registers
+// to fs.Code.
+//
+// Equivalent to `codebinexpval` in upstream Lua.
+func (p *parser) codeBinaryExp(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor, line int) (expressionDescriptor, error) {
 	op, ok := operator.toOpCode(OpAdd)
 	if !ok {
-		return voidExpDesc(), fmt.Errorf("internal error: codeBinaryExp: %v does not translate cleanly to OpCode", operator)
+		return voidExpression(), fmt.Errorf("internal error: codeBinaryExp: %v does not translate cleanly to OpCode", operator)
 	}
 	event, ok := operator.tagMethod()
 	if !ok {
-		return voidExpDesc(), fmt.Errorf("internal error: codeBinaryExp: %v does not have a TagMethod", operator)
+		return voidExpression(), fmt.Errorf("internal error: codeBinaryExp: %v does not have a TagMethod", operator)
 	}
-	if !e1.kind.isCompileTimeConstant() && e1.kind != expKindNonReloc && e1.kind != expKindReloc {
-		return voidExpDesc(), fmt.Errorf("internal error: codeBinaryExp: left-side operand must be a constant or in a register")
+	if !e1.kind.isCompileTimeConstant() && e1.kind != expressionKindNonRelocatable && e1.kind != expressionKindRelocatable {
+		return voidExpression(), fmt.Errorf("internal error: codeBinaryExp: left-side operand must be a constant or in a register")
 	}
 
-	e2, v2, err := p.exp2anyreg(fs, e2)
+	e2, v2, err := p.toAnyRegister(fs, e2)
 	if err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
 	return p.finishBinaryExpValue(fs, e1, e2, op, uint8(v2), false, line, OpMMBin, event)
 }
 
-func (p *parser) codeBinaryExpImmediate(fs *funcState, op OpCode, e1, e2 expDesc, flip bool, line int, event TagMethod) (expDesc, error) {
+// codeBinaryExpImmediate appends the instructions
+// for a binary expression with immediate operands
+// to fs.Code.
+//
+// Equivalent to `codebini` in upstream Lua.
+func (p *parser) codeBinaryExpImmediate(fs *funcState, op OpCode, e1, e2 expressionDescriptor, flip bool, line int, event TagMethod) (expressionDescriptor, error) {
 	i, ok := e2.intConstant()
 	if !ok {
-		return voidExpDesc(), fmt.Errorf("internal error: codeBinaryExpImmediate: right-side operand must be an immediate integer")
+		return voidExpression(), fmt.Errorf("internal error: codeBinaryExpImmediate: right-side operand must be an immediate integer")
 	}
 	v2, ok := ToSignedArg(i)
 	if !ok {
-		return voidExpDesc(), fmt.Errorf("internal error: codeBinaryExpImmediate: right-side operand (%d) out of range", i)
+		return voidExpression(), fmt.Errorf("internal error: codeBinaryExpImmediate: right-side operand (%d) out of range", i)
 	}
 	return p.finishBinaryExpValue(fs, e1, e2, op, v2, flip, line, OpMMBinI, event)
 }
 
-func (p *parser) codeBinaryExpConstant(fs *funcState, operator binaryOperator, e1, e2 expDesc, flip bool, line int) (expDesc, error) {
+// codeBinaryExpConstant appends the instructions
+// for a binary expression with an operand
+// that refers to a constant in the [Prototype] Constants table
+// to fs.Code.
+//
+// Equivalent to `codebinK` in upstream Lua.
+func (p *parser) codeBinaryExpConstant(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor, flip bool, line int) (expressionDescriptor, error) {
 	event, ok := operator.tagMethod()
 	if !ok {
-		return voidExpDesc(), fmt.Errorf("internal error: codeBinaryExpConstant: operator %v does not have a metamethod", operator)
+		return voidExpression(), fmt.Errorf("internal error: codeBinaryExpConstant: operator %v does not have a metamethod", operator)
 	}
-	if e2.kind != expKindK {
-		return voidExpDesc(), fmt.Errorf("internal error: codeBinaryExpConstant: right-side operand must be a reference to the Constants table")
+	if e2.kind != expressionKindConstant {
+		return voidExpression(), fmt.Errorf("internal error: codeBinaryExpConstant: right-side operand must be a reference to the Constants table")
 	}
-	v2 := e2.constIndex()
+	v2 := e2.constantIndex()
 	op, ok := operator.toOpCode(OpAddK)
 	if !ok {
-		return voidExpDesc(), fmt.Errorf("internal error: codeBinaryExpConstant: %v does not translate cleanly to OpCode", operator)
+		return voidExpression(), fmt.Errorf("internal error: codeBinaryExpConstant: %v does not translate cleanly to OpCode", operator)
 	}
 	return p.finishBinaryExpValue(fs, e1, e2, op, uint8(v2), flip, line, OpMMBinK, event)
 }
 
-func (p *parser) finishBinaryExpValue(fs *funcState, e1, e2 expDesc, op OpCode, v2 uint8, flip bool, line int, mmop OpCode, event TagMethod) (expDesc, error) {
-	e1, v1, err := p.exp2anyreg(fs, e1)
+// finishBinaryExpValue appends the instructions
+// for binary expressions that "produce values"
+// (everything but logical operators 'and'/'or' and comparison operators).
+//
+// Equivalent to `finishbinexpval` in upstream Lua.
+func (p *parser) finishBinaryExpValue(fs *funcState, e1, e2 expressionDescriptor, op OpCode, v2 uint8, flip bool, line int, mmop OpCode, event TagMethod) (expressionDescriptor, error) {
+	e1, v1, err := p.toAnyRegister(fs, e1)
 	if err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
 	pc := p.code(fs, ABCInstruction(op, 0, uint8(v1), v2, false))
-	p.freeExps(fs, e1, e2)
+	p.freeExpressions(fs, e1, e2)
 	fs.fixLineInfo(line)
 	p.code(fs, ABCInstruction(mmop, uint8(v1), v2, uint8(event), flip))
 	fs.fixLineInfo(line)
-	return newRelocExpDesc(pc).withJumpLists(e1), nil
+	return relocatableExpression(pc).withJumpLists(e1), nil
 }
 
 // finishBinaryExpNegated attempts to append the instructions
 // for a binary expression with the right-side operand negated
 // to fs.Code.
-// If the attempt fails, then finishBinaryExpNegated returns a [voidExpDesc] with a nil error.
-func (p *parser) finishBinaryExpNegated(fs *funcState, e1, e2 expDesc, op OpCode, line int, event TagMethod) (expDesc, error) {
+// If the attempt fails, then finishBinaryExpNegated returns a [voidExpressionDescriptor] with a nil error.
+//
+// Equivalent to `finishbinexpneg` in upstream Lua.
+func (p *parser) finishBinaryExpNegated(fs *funcState, e1, e2 expressionDescriptor, op OpCode, line int, event TagMethod) (expressionDescriptor, error) {
 	i2, ok := e2.intConstant()
 	if !ok || e2.hasJumps() {
-		return voidExpDesc(), nil
+		return voidExpression(), nil
 	}
 	v2, ok := ToSignedArg(i2)
 	if !ok {
-		return voidExpDesc(), nil
+		return voidExpression(), nil
 	}
 	negV2, ok := ToSignedArg(-i2)
 	if !ok {
-		return voidExpDesc(), nil
+		return voidExpression(), nil
 	}
 	const mmop = OpMMBinI
 	result, err := p.finishBinaryExpValue(fs, e1, e2, op, negV2, false, line, mmop, event)
 	if err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
 	// The metamethod must observe the original value.
 	i := &fs.Code[len(fs.Code)-1]
@@ -661,7 +733,9 @@ func (p *parser) finishBinaryExpNegated(fs *funcState, e1, e2 expDesc, op OpCode
 // codeConcat appends the instructions for "(e1 .. e2)" to fs.Code.
 // e2 is not valid after codeConcat returns.
 // If e1 does not reference a register, codeConcat will panic.
-func (p *parser) codeConcat(fs *funcState, e1, e2 expDesc, line int) {
+//
+// Equivalent to `codeconcat` in upstream Lua.
+func (p *parser) codeConcat(fs *funcState, e1, e2 expressionDescriptor, line int) {
 	r1 := e1.register()
 
 	// For "(e1 .. e2.1 .. e2.2)"
@@ -670,25 +744,28 @@ func (p *parser) codeConcat(fs *funcState, e1, e2 expDesc, line int) {
 	ie2 := fs.previousInstruction()
 	if ie2 != nil && ie2.OpCode() == OpConcat && r1+1 == registerIndex(ie2.ArgA()) {
 		n := ie2.ArgB() // Number of elements concatenated in e2.
-		p.freeExp(fs, e2)
+		p.freeExpression(fs, e2)
 		*ie2 = ABCInstruction(OpConcat, uint8(r1), n+1, ie2.ArgC(), ie2.K())
 		return
 	}
 
 	p.code(fs, ABCInstruction(OpConcat, uint8(r1), 2, 0, false))
-	p.freeExp(fs, e2)
+	p.freeExpression(fs, e2)
 	fs.fixLineInfo(line)
 }
 
-func (p *parser) codeOrder(fs *funcState, operator binaryOperator, e1, e2 expDesc) (expDesc, error) {
+// codeOrder appends the instructions for an order comparison to fs.Code.
+//
+// Equivalent to `codeorder` in upstream Lua.
+func (p *parser) codeOrder(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor) (expressionDescriptor, error) {
 	var op OpCode
 	var r1 registerIndex
 	var b, c uint8
 	if immediate, isFloat, ok := e2.toSignedArg(); ok {
 		var err error
-		e1, r1, err = p.exp2anyreg(fs, e1)
+		e1, r1, err = p.toAnyRegister(fs, e1)
 		if err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 		b = immediate
 		if isFloat {
@@ -697,9 +774,9 @@ func (p *parser) codeOrder(fs *funcState, operator binaryOperator, e1, e2 expDes
 		op, _ = operator.toOpCode(OpLTI)
 	} else if immediate, isFloat, ok = e1.toSignedArg(); ok {
 		var err error
-		e2, r1, err = p.exp2anyreg(fs, e2)
+		e2, r1, err = p.toAnyRegister(fs, e2)
 		if err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 		b = immediate
 		if isFloat {
@@ -711,45 +788,47 @@ func (p *parser) codeOrder(fs *funcState, operator binaryOperator, e1, e2 expDes
 		case binaryOperatorLE:
 			op = OpGEI
 		default:
-			return voidExpDesc(), fmt.Errorf("internal error: codeOrder: unhandled operator %v", operator)
+			return voidExpression(), fmt.Errorf("internal error: codeOrder: unhandled operator %v", operator)
 		}
 	} else {
 		var err error
-		e1, r1, err = p.exp2anyreg(fs, e1)
+		e1, r1, err = p.toAnyRegister(fs, e1)
 		if err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 		var r2 registerIndex
-		e2, r2, err = p.exp2anyreg(fs, e2)
+		e2, r2, err = p.toAnyRegister(fs, e2)
 		if err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 		b = uint8(r2)
 		op, _ = operator.toOpCode(OpLT)
 	}
 
-	p.freeExps(fs, e1, e2)
+	p.freeExpressions(fs, e1, e2)
 	p.code(fs, ABCInstruction(op, uint8(r1), b, c, true))
 	pc := p.codeJump(fs)
-	return newJumpExpDesc(pc), nil
+	return jumpExpression(pc), nil
 }
 
 // codeEq appends code for equality comparisons ("==" or "~=") to fs.Code.
 // e1 must have already turned into an R/K by [*parser.codeInfix].
-func (p *parser) codeEq(fs *funcState, operator binaryOperator, e1, e2 expDesc) (expDesc, error) {
+//
+// Equivalent to `codeeq` in upstream Lua.
+func (p *parser) codeEq(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor) (expressionDescriptor, error) {
 	switch e1.kind {
-	case expKindK, expKindKInt, expKindKFlt:
+	case expressionKindConstant, expressionKindIntConstant, expressionKindFloatConstant:
 		// Swap constant/immediate to right side.
 		e1, e2 = e2, e1
-	case expKindNonReloc:
+	case expressionKindNonRelocatable:
 		// Fine as-is.
 	default:
-		return voidExpDesc(), fmt.Errorf("internal error: codeEq: left-side operand should have turned into a register or a constant (found %v)", e1.kind)
+		return voidExpression(), fmt.Errorf("internal error: codeEq: left-side operand should have turned into a register or a constant (found %v)", e1.kind)
 	}
 
-	e1, r1, err := p.exp2anyreg(fs, e1)
+	e1, r1, err := p.toAnyRegister(fs, e1)
 	if err != nil {
-		return voidExpDesc(), err
+		return voidExpression(), err
 	}
 	var op OpCode
 	var b uint8
@@ -762,9 +841,9 @@ func (p *parser) codeEq(fs *funcState, operator binaryOperator, e1, e2 expDesc) 
 		}
 	} else {
 		var k bool
-		e2, b, k, err = p.expToRK(fs, e2)
+		e2, b, k, err = p.toRK(fs, e2)
 		if err != nil {
-			return voidExpDesc(), err
+			return voidExpression(), err
 		}
 		if k {
 			op = OpEqK
@@ -773,63 +852,73 @@ func (p *parser) codeEq(fs *funcState, operator binaryOperator, e1, e2 expDesc) 
 			// TODO(maybe): expToRK should have already converted to register.
 			// Is this necessary?
 			var r2 registerIndex
-			e2, r2, err = p.exp2anyreg(fs, e2)
+			e2, r2, err = p.toAnyRegister(fs, e2)
 			if err != nil {
-				return voidExpDesc(), err
+				return voidExpression(), err
 			}
 			b = uint8(r2)
 		}
 	}
 
-	p.freeExps(fs, e1, e2)
+	p.freeExpressions(fs, e1, e2)
 	p.code(fs, ABCInstruction(op, uint8(r1), b, c, operator == binaryOperatorEq))
 	pc := p.codeJump(fs)
-	return newJumpExpDesc(pc).withJumpLists(e1), nil
+	return jumpExpression(pc).withJumpLists(e1), nil
 }
 
 // foldConstants tries to statically evaluate an expression.
-func (p *parser) foldConstants(op ArithmeticOperator, e1, e2 expDesc) (expDesc, bool) {
+//
+// Equivalent to `constfolding` in upstream Lua.
+func (p *parser) foldConstants(op ArithmeticOperator, e1, e2 expressionDescriptor) (expressionDescriptor, bool) {
 	v1, ok := e1.toNumeral()
 	if !ok {
-		return voidExpDesc(), false
+		return voidExpression(), false
 	}
 	v2, ok := e2.toNumeral()
 	if !ok {
-		return voidExpDesc(), false
+		return voidExpression(), false
 	}
 
 	result, err := Arithmetic(op, v1, v2)
 	if err != nil {
-		return voidExpDesc(), false
+		return voidExpression(), false
 	}
 	if result.IsInteger() {
 		i, _ := result.Int64(OnlyIntegral)
-		return newIntConstExpDesc(i), true
+		return intConstantExpression(i), true
 	}
 	n, ok := result.Float64()
 	if !ok {
 		// Shouldn't occur, but coding defensively.
-		return voidExpDesc(), false
+		return voidExpression(), false
 	}
 	if math.IsNaN(n) || n == 0 {
 		// Don't fold numbers that have tricky equality properties.
-		return voidExpDesc(), false
+		return voidExpression(), false
 	}
-	return newFloatConstExpDesc(n), true
+	return floatConstantExpression(n), true
 }
 
-// expToValue ensures the final expression result
+// toValue ensures the final expression result
 // is either in a register or it is a constant.
-func (p *parser) expToValue(fs *funcState, e expDesc) (expDesc, error) {
+//
+// Equivalent to `luaK_exp2val` in upstream Lua.
+func (p *parser) toValue(fs *funcState, e expressionDescriptor) (expressionDescriptor, error) {
 	if e.hasJumps() {
-		e, _, err := p.exp2anyreg(fs, e)
+		e, _, err := p.toAnyRegister(fs, e)
 		return e, err
 	}
 	return p.dischargeVars(fs, e), nil
 }
 
-func (p *parser) codeABRK(fs *funcState, op OpCode, a, b uint8, e expDesc) (expDesc, error) {
-	e, c, k, err := p.expToRK(fs, e)
+// codeABRK converts the expression to a register or a constant
+// (see [*parser.toRK])
+// and uses it as the third (C) argument to an [ABCInstruction]
+// that is appended to fs.Code.
+//
+// Equivalent to `codeABRK` in upstream Lua.
+func (p *parser) codeABRK(fs *funcState, op OpCode, a, b uint8, e expressionDescriptor) (expressionDescriptor, error) {
+	e, c, k, err := p.toRK(fs, e)
 	if err != nil {
 		return e, err
 	}
@@ -841,22 +930,26 @@ func (p *parser) codeABRK(fs *funcState, op OpCode, a, b uint8, e expDesc) (expD
 // as either a register index or a Constants table index.
 const maxIndexRK = maxArgC
 
-// expToRK converts the expression to either [expKindK]
+// toRK converts the expression to either [expressionKindConstant]
 // with an index less than maxIndexRK
-// or [expKindNonReloc].
+// or [expressionKindNonRelocatable].
 // c is the register index or the constant index as an [Instruction] argument.
-// k is true if the resulting expression is [expKindK].
-func (p *parser) expToRK(fs *funcState, e expDesc) (_ expDesc, c uint8, k bool, err error) {
-	if e, c, ok := p.expToK(fs, e); ok {
+// k is true if the resulting expression is [expressionKindConstant].
+//
+// Equivalent to `exp2RK` in upstream Lua.
+func (p *parser) toRK(fs *funcState, e expressionDescriptor) (_ expressionDescriptor, c uint8, k bool, err error) {
+	if e, c, ok := p.toConstantTable(fs, e); ok {
 		return e, c, true, nil
 	}
-	e, reg, err := p.exp2anyreg(fs, e)
+	e, reg, err := p.toAnyRegister(fs, e)
 	return e, uint8(reg), false, err
 }
 
-// expToK attempts to make e an [expKindK]
+// toConstantTable attempts to make e an [expressionKindConstant]
 // with an index in the range of R/K indices.
-func (p *parser) expToK(fs *funcState, e expDesc) (_ expDesc, idx uint8, ok bool) {
+//
+// Equivalent to `luaK_exp2K` in upstream Lua.
+func (p *parser) toConstantTable(fs *funcState, e expressionDescriptor) (_ expressionDescriptor, idx uint8, ok bool) {
 	if e.hasJumps() {
 		return e, uint8(noRegister), false
 	}
@@ -869,33 +962,37 @@ func (p *parser) expToK(fs *funcState, e expDesc) (_ expDesc, idx uint8, ok bool
 	if k > maxIndexRK {
 		return e, uint8(noRegister), false
 	}
-	return newConstExpDesc(k), uint8(k), true
+	return constantTableExpression(k), uint8(k), true
 }
 
-// exp2anyregup ensures the final expression result
+// toAnyRegisterOrUpvalue ensures the final expression result
 // is either in a register or in an upvalue.
-func (p *parser) exp2anyregup(fs *funcState, e expDesc) (expDesc, error) {
-	if e.kind == expKindUpval && !e.hasJumps() {
+//
+// Equivalent to `luaK_exp2anyregup` in upstream Lua.
+func (p *parser) toAnyRegisterOrUpvalue(fs *funcState, e expressionDescriptor) (expressionDescriptor, error) {
+	if e.kind == expressionKindUpvalue && !e.hasJumps() {
 		return e, nil
 	}
-	e, _, err := p.exp2anyreg(fs, e)
+	e, _, err := p.toAnyRegister(fs, e)
 	return e, err
 }
 
-// exp2anyreg ensures the final expression result is in some (any) register
+// toAnyRegister ensures the final expression result is in some (any) register
 // and returns that register.
 //
-// On success, the result of exp2nextreg will always be [expKindNonReloc].
-func (p *parser) exp2anyreg(fs *funcState, e expDesc) (expDesc, registerIndex, error) {
+// On success, the result of exp2nextreg will always be [expressionKindNonRelocatable].
+//
+// Equivalent to `luaK_exp2anyreg` in upstream Lua.
+func (p *parser) toAnyRegister(fs *funcState, e expressionDescriptor) (expressionDescriptor, registerIndex, error) {
 	e = p.dischargeVars(fs, e)
-	if e.kind == expKindNonReloc {
+	if e.kind == expressionKindNonRelocatable {
 		if !e.hasJumps() {
 			// Result is already in a register.
 			return e, e.register(), nil
 		}
 		if e.register() >= p.numVariablesInStack(fs) {
 			// The register is not a local: put the final result in it.
-			e, err := p.exp2reg(fs, e, e.register())
+			e, err := p.toRegister(fs, e, e.register())
 			if err != nil {
 				return e, noRegister, err
 			}
@@ -906,24 +1003,26 @@ func (p *parser) exp2anyreg(fs *funcState, e expDesc) (expDesc, registerIndex, e
 		// Go through to the default case.
 	}
 	// Default: use next available register.
-	return p.exp2nextReg(fs, e)
+	return p.toNextRegister(fs, e)
 }
 
-// exp2nextReg ensures the final expression result is in the next available register.
+// toNextRegister ensures the final expression result is in the next available register.
 //
-// On success, the result of exp2nextreg will always be [expKindNonReloc].
-func (p *parser) exp2nextReg(fs *funcState, e expDesc) (expDesc, registerIndex, error) {
+// On success, the result of toNextRegister will always be [expressionKindNonRelocatable].
+//
+// Equivalent to `luaK_exp2nextreg` in upstream Lua.
+func (p *parser) toNextRegister(fs *funcState, e expressionDescriptor) (expressionDescriptor, registerIndex, error) {
 	e = p.dischargeVars(fs, e)
-	p.freeExp(fs, e)
+	p.freeExpression(fs, e)
 	reg, err := fs.reserveRegister()
 	if err != nil {
 		return e, noRegister, err
 	}
-	e, err = p.exp2reg(fs, e, reg)
+	e, err = p.toRegister(fs, e, reg)
 	return e, reg, err
 }
 
-// exp2reg ensures the final expression result
+// toRegister ensures the final expression result
 // (which includes results from its jump lists)
 // is in the given register.
 // If expression has jumps,
@@ -931,11 +1030,13 @@ func (p *parser) exp2nextReg(fs *funcState, e expDesc) (expDesc, registerIndex, 
 // or to "load" instructions
 // (for those tests that do not produce values).
 //
-// On success, the result of exp2reg will always be [expKindNonReloc].
-func (p *parser) exp2reg(fs *funcState, e expDesc, reg registerIndex) (expDesc, error) {
+// On success, the result of toRegister will always be [expressionKindNonRelocatable].
+//
+// Equivalent to `exp2reg` in upstream Lua.
+func (p *parser) toRegister(fs *funcState, e expressionDescriptor, reg registerIndex) (expressionDescriptor, error) {
 	e = p.dischargeToRegister(fs, e, reg)
 
-	if e.kind == expKindJmp {
+	if e.kind == expressionKindJump {
 		// Expression is a test, so put this jump in 't' list.
 		var err error
 		e.t, err = fs.concatJumpList(e.t, e.pc())
@@ -959,7 +1060,7 @@ func (p *parser) exp2reg(fs *funcState, e expDesc, reg registerIndex) (expDesc, 
 		positionLoadTrue := noJump
 		if needValue(e.t) || needValue(e.f) {
 			fj := noJump
-			if e.kind != expKindJmp {
+			if e.kind != expressionKindJump {
 				fj = p.codeJump(fs)
 			}
 			fs.label()
@@ -983,14 +1084,16 @@ func (p *parser) exp2reg(fs *funcState, e expDesc, reg registerIndex) (expDesc, 
 	}
 
 	// We've removed jumps, so no jump lists.
-	return newNonRelocExpDesc(reg), nil
+	return nonRelocatableExpression(reg), nil
 }
 
 // dischargeToAnyRegister ensures the expression value is in a register,
 // making e a non-relocatable expression.
 // (Expression still may have jump lists.)
-func (p *parser) dischargeToAnyRegister(fs *funcState, e expDesc) (expDesc, error) {
-	if e.kind == expKindNonReloc {
+//
+// Equivalent to `discharge2anyreg` in upstream Lua.
+func (p *parser) dischargeToAnyRegister(fs *funcState, e expressionDescriptor) (expressionDescriptor, error) {
+	if e.kind == expressionKindNonRelocatable {
 		return e, nil
 	}
 	reg, err := fs.reserveRegister()
@@ -1003,74 +1106,78 @@ func (p *parser) dischargeToAnyRegister(fs *funcState, e expDesc) (expDesc, erro
 // dischargeToRegister ensures expression value is in the given register,
 // making e a non-relocatable expression.
 // (Expression still may have jump lists.)
-func (p *parser) dischargeToRegister(fs *funcState, e expDesc, reg registerIndex) expDesc {
+//
+// Equivalent to `discharge2reg` in upstream Lua.
+func (p *parser) dischargeToRegister(fs *funcState, e expressionDescriptor, reg registerIndex) expressionDescriptor {
 	e = p.dischargeVars(fs, e)
 	switch e.kind {
-	case expKindNil:
+	case expressionKindNil:
 		p.codeNil(fs, reg, 1)
-	case expKindFalse:
+	case expressionKindFalse:
 		p.code(fs, ABCInstruction(OpLoadFalse, uint8(reg), 0, 0, false))
-	case expKindTrue:
+	case expressionKindTrue:
 		p.code(fs, ABCInstruction(OpLoadTrue, uint8(reg), 0, 0, false))
-	case expKindKStr:
+	case expressionKindStringConstant:
 		e = p.stringToConstantTable(fs, e)
 		fallthrough
-	case expKindK:
-		p.codeConstant(fs, reg, e.constIndex())
-	case expKindKFlt:
+	case expressionKindConstant:
+		p.codeConstant(fs, reg, e.constantIndex())
+	case expressionKindFloatConstant:
 		f, _ := e.floatConstant()
 		p.codeFloat(fs, reg, f)
-	case expKindKInt:
+	case expressionKindIntConstant:
 		i, _ := e.intConstant()
 		p.codeInt(fs, reg, i)
-	case expKindReloc:
+	case expressionKindRelocatable:
 		newInstruction, ok := fs.Code[e.pc()].WithArgA(uint8(reg))
 		if !ok {
 			panic("reloc points to an instruction without A argument")
 		}
 		fs.Code[e.pc()] = newInstruction
-	case expKindNonReloc:
+	case expressionKindNonRelocatable:
 		if ereg := e.register(); reg != ereg {
 			p.code(fs, ABCInstruction(OpMove, uint8(reg), uint8(ereg), 0, false))
 		}
-	case expKindJmp:
+	case expressionKindJump:
 		return e
 	default:
 		panic("unhandled expression kind")
 	}
-	return newNonRelocExpDesc(reg).withJumpLists(e)
+	return nonRelocatableExpression(reg).withJumpLists(e)
 }
 
 // dischargeVars ensures that the expression is not a variable (nor a <const>).
 // (Expression still may have jump lists.)
-func (p *parser) dischargeVars(fs *funcState, e expDesc) expDesc {
+//
+// Equivalent to `luaK_dischargevars` in upstream Lua.
+func (p *parser) dischargeVars(fs *funcState, e expressionDescriptor) expressionDescriptor {
 	switch e.kind {
-	case expKindConst:
-		return constToExp(fs.Constants[e.constIndex()]).withJumpLists(e)
-	case expKindLocal:
+	case expressionKindConstLocal:
+		return constantToExpression(fs.Constants[e.constantIndex()]).withJumpLists(e)
+	case expressionKindLocal:
 		// Already in register? Becomes a non-relocatable value.
-		return newNonRelocExpDesc(e.register()).withJumpLists(e)
-	case expKindUpval:
+		return nonRelocatableExpression(e.register()).withJumpLists(e)
+	case expressionKindUpvalue:
 		// Move value to some (pending) register.
 		addr := p.code(fs, ABCInstruction(OpGetUpval, 0, uint8(e.upvalueIndex()), 0, false))
-		return newRelocExpDesc(addr).withJumpLists(e)
-	case expKindIndexUp:
-		addr := p.code(fs, ABCInstruction(OpGetTabUp, 0, uint8(e.tableUpvalue()), uint8(e.constIndex()), false))
-		return newRelocExpDesc(addr).withJumpLists(e)
-	case expKindIndexI:
-		p.freeReg(fs, e.tableRegister())
+		return relocatableExpression(addr).withJumpLists(e)
+	case expressionKindIndexUpvalue:
+		addr := p.code(fs, ABCInstruction(OpGetTabUp, 0, uint8(e.tableUpvalue()), uint8(e.constantIndex()), false))
+		return relocatableExpression(addr).withJumpLists(e)
+	case expressionKindIndexInt:
+		p.freeRegister(fs, e.tableRegister())
 		addr := p.code(fs, ABCInstruction(OpGetI, 0, uint8(e.tableRegister()), uint8(e.indexInt()), false))
-		return newRelocExpDesc(addr).withJumpLists(e)
-	case expKindIndexStr:
-		p.freeReg(fs, e.tableRegister())
-		addr := p.code(fs, ABCInstruction(OpGetField, 0, uint8(e.tableRegister()), uint8(e.constIndex()), false))
-		return newRelocExpDesc(addr).withJumpLists(e)
-	case expKindIndexed:
-		p.freeRegs(fs, e.tableRegister(), e.indexRegister())
+		return relocatableExpression(addr).withJumpLists(e)
+	case expressionKindIndexString:
+		p.freeRegister(fs, e.tableRegister())
+		addr := p.code(fs, ABCInstruction(OpGetField, 0, uint8(e.tableRegister()), uint8(e.constantIndex()), false))
+		return relocatableExpression(addr).withJumpLists(e)
+	case expressionKindIndexed:
+		p.freeRegisters(fs, e.tableRegister(), e.indexRegister())
 		addr := p.code(fs, ABCInstruction(OpGetTable, 0, uint8(e.tableRegister()), uint8(e.indexRegister()), false))
-		return newRelocExpDesc(addr).withJumpLists(e)
+		return relocatableExpression(addr).withJumpLists(e)
 	}
-	if e.kind == expKindVararg || e.kind == expKindCall {
+	if e.kind == expressionKindVararg || e.kind == expressionKindCall {
 		return p.setOneReturn(fs, e)
 	}
 	// There is one value available (somewhere).
@@ -1082,13 +1189,15 @@ const multiReturn = -1
 // setReturns fixes an expression to return the given number of results.
 // If e is not a multi-ret expression (i.e. a function call or vararg),
 // setReturns returns an error.
-func (p *parser) setReturns(fs *funcState, e expDesc, nResults int) error {
+//
+// Equivalent to `luaK_setreturns` in upstream Lua.
+func (p *parser) setReturns(fs *funcState, e expressionDescriptor, nResults int) error {
 	c := nResults + 1
 	if !(0 <= c && c <= maxArgC) {
 		return fmt.Errorf("internal error: number of results (%d) out of range for setReturns", nResults)
 	}
 	switch e.kind {
-	case expKindCall:
+	case expressionKindCall:
 		i := fs.Code[e.pc()]
 		fs.Code[e.pc()] = ABCInstruction(
 			i.OpCode(),
@@ -1097,7 +1206,7 @@ func (p *parser) setReturns(fs *funcState, e expDesc, nResults int) error {
 			uint8(c),
 			i.K(),
 		)
-	case expKindVararg:
+	case expressionKindVararg:
 		i := fs.Code[e.pc()]
 		fs.Code[e.pc()] = ABCInstruction(
 			i.OpCode(),
@@ -1119,47 +1228,57 @@ func (p *parser) setReturns(fs *funcState, e expDesc, nResults int) error {
 // If expression is not a multi-ret expression
 // (i.e. a function call or vararg),
 // it already returns one result, so nothing needs to be done.
-// Function calls become [expKindNonReloc] expressions
+// Function calls become [expressionKindNonRelocatable] expressions
 // (as its result comes fixed in the base register of the call),
-// while vararg expressions become [expKindReloc]
+// while vararg expressions become [expressionKindRelocatable]
 // (as [OpVararg] puts its results where it wants).
 // (Calls are created returning one result,
 // so that does not need to be fixed.)
-func (p *parser) setOneReturn(fs *funcState, e expDesc) expDesc {
+//
+// Equivalent to `luaK_setoneret` in upstream Lua.
+func (p *parser) setOneReturn(fs *funcState, e expressionDescriptor) expressionDescriptor {
 	switch e.kind {
-	case expKindCall:
+	case expressionKindCall:
 		i := fs.Code[e.pc()]
-		return newNonRelocExpDesc(registerIndex(i.ArgA())).withJumpLists(e)
-	case expKindVararg:
+		return nonRelocatableExpression(registerIndex(i.ArgA())).withJumpLists(e)
+	case expressionKindVararg:
 		pc := e.pc()
 		i := fs.Code[pc]
 		fs.Code[pc] = ABCInstruction(i.OpCode(), i.ArgA(), i.ArgB(), 2, i.K())
-		return newRelocExpDesc(pc).withJumpLists(e)
+		return relocatableExpression(pc).withJumpLists(e)
 	default:
 		return e
 	}
 }
 
-// freeExp frees the register used (if any) by the given expression.
-func (p *parser) freeExp(fs *funcState, e expDesc) {
-	if e.kind == expKindNonReloc {
-		p.freeReg(fs, e.register())
+// freeExpression frees the register used (if any) by the given expression.
+//
+// Equivalent to `freeexp` in upstream Lua.
+func (p *parser) freeExpression(fs *funcState, e expressionDescriptor) {
+	if e.kind == expressionKindNonRelocatable {
+		p.freeRegister(fs, e.register())
 	}
 }
 
-// freeExps frees the registers used (if any) by the given expressions.
-func (p *parser) freeExps(fs *funcState, e1, e2 expDesc) {
+// freeExpressions frees the registers used (if any) by the given expressions.
+//
+// Equivalent to `freeExps` in upstream Lua.
+func (p *parser) freeExpressions(fs *funcState, e1, e2 expressionDescriptor) {
 	switch {
-	case e1.kind == expKindNonReloc && e2.kind == expKindNonReloc:
-		p.freeRegs(fs, e1.register(), e2.register())
-	case e1.kind == expKindNonReloc:
-		p.freeReg(fs, e1.register())
-	case e2.kind == expKindNonReloc:
-		p.freeReg(fs, e2.register())
+	case e1.kind == expressionKindNonRelocatable && e2.kind == expressionKindNonRelocatable:
+		p.freeRegisters(fs, e1.register(), e2.register())
+	case e1.kind == expressionKindNonRelocatable:
+		p.freeRegister(fs, e1.register())
+	case e2.kind == expressionKindNonRelocatable:
+		p.freeRegister(fs, e2.register())
 	}
 }
 
-func (p *parser) freeReg(fs *funcState, reg registerIndex) {
+// freeRegister frees the given register
+// if it is neither a constant index nor a local variable.
+//
+// Equivalent to `freereg` in upstream Lua.
+func (p *parser) freeRegister(fs *funcState, reg registerIndex) {
 	if reg >= p.numVariablesInStack(fs) {
 		fs.firstFreeRegister--
 		if reg != fs.firstFreeRegister {
@@ -1168,38 +1287,53 @@ func (p *parser) freeReg(fs *funcState, reg registerIndex) {
 	}
 }
 
-func (p *parser) freeRegs(fs *funcState, reg1, reg2 registerIndex) {
-	p.freeReg(fs, max(reg1, reg2))
-	p.freeReg(fs, min(reg1, reg2))
+// freeRegisters frees two registers.
+//
+// Equivalent to `freeregs` in upstream Lua.
+func (p *parser) freeRegisters(fs *funcState, reg1, reg2 registerIndex) {
+	p.freeRegister(fs, max(reg1, reg2))
+	p.freeRegister(fs, min(reg1, reg2))
 }
 
-func (p *parser) expToConst(e expDesc) (_ Value, ok bool) {
+// toConstant returns a constant expression's value.
+//
+// Equivalent to `luaK_exp2const` in upstream Lua.
+func (p *parser) toConstant(e expressionDescriptor) (_ Value, isConstant bool) {
 	if e.hasJumps() {
 		return Value{}, false
 	}
-	if e.kind == expKindConst {
-		return p.constToValue(e)
+	if e.kind == expressionKindConstLocal {
+		return p.constLocalValue(e)
 	}
 	return e.toValue()
 }
 
-func (p *parser) stringToConstantTable(fs *funcState, e expDesc) expDesc {
+// stringToConstantTable converts a string constant to a constant table expression.
+//
+// Equivalent to `str2K` in upstream Lua.
+func (p *parser) stringToConstantTable(fs *funcState, e expressionDescriptor) expressionDescriptor {
 	s, ok := e.stringConstant()
 	if !ok {
-		panic("stringToConstant must be called on expKindKStr")
+		panic("stringToConstant must be called on expressionKindStringConstant")
 	}
 	k := fs.addConstant(StringValue(s))
-	return newConstExpDesc(k).withJumpLists(e)
+	return constantTableExpression(k).withJumpLists(e)
 }
 
-func (p *parser) constToValue(e expDesc) (_ Value, ok bool) {
-	if e.kind != expKindK {
+// constLocalValue returns the value of a local constant expression,
+// if it resolves to a compile-time constant value.
+//
+// Equivalent to `const2val` in upstream Lua.
+func (p *parser) constLocalValue(e expressionDescriptor) (_ Value, ok bool) {
+	if e.kind != expressionKindConstLocal {
 		return Value{}, false
 	}
-	return p.activeVariables[e.constIndex()].k, true
+	return p.activeVariables[e.constLocalIndex()].k, true
 }
 
 // setTableSize returns a sequence of instructions for [OpSetTable].
+//
+// Equivalent to `luaK_settablesize` in upstream Lua.
 func setTableSize(ra registerIndex, arraySize, hashSize int) [2]Instruction {
 	var rb uint8
 	if hashSize != 0 {

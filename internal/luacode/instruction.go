@@ -11,6 +11,10 @@ import "fmt"
 // Instruction is a single virtual machine instruction.
 type Instruction uint32
 
+// ABCInstruction returns a new [OpModeABC] [Instruction]
+// with the given arguments.
+// ABCInstruction panics if the [OpCode] given
+// does not return [OpModeABC] from [OpCode.OpMode].
 func ABCInstruction(op OpCode, a, b, c uint8, k bool) Instruction {
 	if op.OpMode() != OpModeABC {
 		panic("ABCInstruction with invalid OpCode")
@@ -26,6 +30,10 @@ func ABCInstruction(op OpCode, a, b, c uint8, k bool) Instruction {
 		Instruction(c)<<posC
 }
 
+// ABxInstruction returns a new [OpModeABx] [Instruction]
+// with the given arguments.
+// ABxInstruction panics if the [OpCode] given
+// does not return [OpModeABx] from [OpCode.OpMode].
 func ABxInstruction(op OpCode, a uint8, bx int32) Instruction {
 	switch op.OpMode() {
 	case OpModeABx:
@@ -48,6 +56,7 @@ func ABxInstruction(op OpCode, a uint8, bx int32) Instruction {
 }
 
 // ExtraArgument returns an [OpExtraArg] [Instruction].
+// ExtraArgument panics if given an argument that is too large.
 func ExtraArgument(ax uint32) Instruction {
 	if ax > maxArgAx {
 		panic("ExtraArgument argument out of range")
@@ -55,6 +64,10 @@ func ExtraArgument(ax uint32) Instruction {
 	return Instruction(OpExtraArg) | Instruction(ax)<<posAx
 }
 
+// JInstruction returns a new [OpModeJ] (jump) [Instruction]
+// with the given offset relative to the end of the instruction.
+// JInstruction panics if the [OpCode] given
+// does not return [OpModeJ] from [OpCode.OpMode].
 func JInstruction(op OpCode, j int32) Instruction {
 	if op.OpMode() != OpModeJ {
 		panic("JInstruction with invalid OpCode")
@@ -75,6 +88,8 @@ const (
 	posA    = sizeOpCode
 )
 
+// ArgA returns the first (A) argument
+// of an [OpModeABC], [OpModeABx], or [OpModeAsBx] instruction.
 func (i Instruction) ArgA() uint8 {
 	switch i.OpCode().OpMode() {
 	case OpModeABC, OpModeABx, OpModeAsBx:
@@ -85,7 +100,8 @@ func (i Instruction) ArgA() uint8 {
 }
 
 // WithArgA returns a copy of i
-// with its A argument changed to the given value.
+// with its first (A) argument changed to the given value,
+// or i unchanged if i doesn't have an A instruction.
 func (i Instruction) WithArgA(a uint8) (_ Instruction, ok bool) {
 	switch i.OpCode().OpMode() {
 	case OpModeABC, OpModeABx, OpModeAsBx:
@@ -102,6 +118,7 @@ const (
 	posB    = posK + sizeK
 )
 
+// ArgB returns the second (B) argument of an [OpModeABC] instruction.
 func (i Instruction) ArgB() uint8 {
 	switch i.OpCode().OpMode() {
 	case OpModeABC:
@@ -117,6 +134,7 @@ const (
 	posAx    = sizeOpCode
 )
 
+// ArgAx returns the argument passed to [ExtraArgument].
 func (i Instruction) ArgAx() uint32 {
 	switch i.OpCode().OpMode() {
 	case OpModeAx:
@@ -133,6 +151,8 @@ const (
 	offsetBx = maxArgBx >> 1
 )
 
+// ArgBx returns the second (Bx) argument
+// of an [OpModeABC], [OpModeABx], or [OpModeAsBx] instruction.
 func (i Instruction) ArgBx() int32 {
 	switch i.OpCode().OpMode() {
 	case OpModeABx:
@@ -145,6 +165,8 @@ func (i Instruction) ArgBx() int32 {
 }
 
 // fitsSignedBx reports whether i can be stored in a signed Bx argument.
+//
+// Equivalent to `fitsBx` in upstream Lua.
 func fitsSignedBx(i int64) bool {
 	return -offsetBx <= i && i <= maxArgBx-offsetBx
 }
@@ -156,6 +178,7 @@ const (
 	posC    = posB + sizeB
 )
 
+// ArgC returns the third (C) argument of an [OpModeABC] instruction.
 func (i Instruction) ArgC() uint8 {
 	if code := i.OpCode(); code.OpMode() != OpModeABC {
 		return 0
@@ -164,7 +187,8 @@ func (i Instruction) ArgC() uint8 {
 }
 
 // WithArgC returns a copy of i
-// with its C argument changed to the given value.
+// with its third (C) argument changed to the given value,
+// or i unchanged if [OpCode.OpMode] is not [OpModeABC].
 func (i Instruction) WithArgC(c uint8) (_ Instruction, ok bool) {
 	if i.OpCode().OpMode() != OpModeABC {
 		return i, false
@@ -175,12 +199,17 @@ func (i Instruction) WithArgC(c uint8) (_ Instruction, ok bool) {
 
 // SignedArg converts an [ABCInstruction] argument
 // into a signed integer.
+//
+// Equivalent to `sC2int` in upstream Lua.
 func SignedArg(arg uint8) int16 {
 	return int16(arg) - offsetC
 }
 
 // ToSignedArg converts an integer into a signed [ABCInstruction] argument.
 // ok is true if and only if the integer is within the range.
+//
+// Equivalent to `int2sC` in upstream Lua
+// with an extra `fitsC` check.
 func ToSignedArg(i int64) (_ uint8, ok bool) {
 	if !fitsSignedArg(i) {
 		return 0, false
@@ -188,6 +217,10 @@ func ToSignedArg(i int64) (_ uint8, ok bool) {
 	return uint8(i + offsetC), true
 }
 
+// fitsSignedArg reports whether the integer
+// is within the range of a signed [ABCInstruction] argument.
+//
+// Equivalent to `fitsC` in upstream Lua.
 func fitsSignedArg(i int64) bool {
 	return -offsetC <= i && i <= maxArgC-offsetC
 }
@@ -197,12 +230,14 @@ const (
 	posK  = posA + sizeA
 )
 
+// K returns the k flag of an [OpModeABC] instruction.
 func (i Instruction) K() bool {
 	return i.OpCode().OpMode() == OpModeABC && i&(1<<posK) != 0
 }
 
 // WithK returns a copy of i
 // with its K argument changed to the given value.
+// or i unchanged if [OpCode.OpMode] is not [OpModeABC].
 func (i Instruction) WithK(k bool) (_ Instruction, ok bool) {
 	if i.OpCode().OpMode() != OpModeABC {
 		return i, false
@@ -223,6 +258,9 @@ const (
 	noJump = -1
 )
 
+// J returns the jump offset
+// (relative to the end of the instruction)
+// for a [OpModeJ] instruction.
 func (i Instruction) J() int32 {
 	switch i.OpCode().OpMode() {
 	case OpModeJ:
@@ -233,17 +271,21 @@ func (i Instruction) J() int32 {
 }
 
 // IsInTop reports whether the instruction uses the stack top
-// from the next instruction.
+// from the previous instruction.
+//
+// Equivalent to `isIT` in upstream Lua.
 func (i Instruction) IsInTop() bool {
 	op := i.OpCode()
-	return op.UsesTopFromPrevious() && i.ArgB() == 0
+	return op.isInTop() && i.ArgB() == 0
 }
 
 // IsOutTop reports whether the instruction sets the stack top
 // for the next instruction.
+//
+// Equivalent to `isOT` in upstream Lua.
 func (i Instruction) IsOutTop() bool {
 	op := i.OpCode()
-	return op.SetsTopForNext() && i.ArgC() == 0 || op == OpTailCall
+	return op.isOutTop() && i.ArgC() == 0 || op == OpTailCall
 }
 
 // String decodes the instruction
@@ -287,33 +329,47 @@ func (op OpCode) props() byte {
 }
 
 // OpMode returns the format of an [Instruction] that uses the opcode.
+//
+// Equivalent to `getOpMode` in upstream Lua.
 func (op OpCode) OpMode() OpMode {
 	return OpMode(op.props() & 7)
 }
 
+// SetsA reports whether an [Instruction] that uses the opcode
+// would change the value of the register given in [Instruction.ArgA].
+//
+// Equivalent to `testAMode` in upstream Lua.
 func (op OpCode) SetsA() bool {
 	return op.props()&(1<<3) != 0
 }
 
 // IsTest reports whether the instruction is a test.
 // In a valid program, the next instruction will be a jump.
+//
+// Equivalent to `testTMode` in upstream Lua.
 func (op OpCode) IsTest() bool {
 	return op.props()&(1<<4) != 0
 }
 
-// UsesTopFromPrevious reports whether the instruction uses the stack top
+// isInTop reports whether the instruction uses the stack top
 // set by the previous instruction (when B == 0).
-func (op OpCode) UsesTopFromPrevious() bool {
+//
+// Equivalent to `testITMode` in upstream Lua.
+func (op OpCode) isInTop() bool {
 	return op.props()&(1<<5) != 0
 }
 
-// SetsTopForNext reports whether the instruction sets the stack top
+// isOutTop reports whether the instruction sets the stack top
 // for the next instruction (when C == 0).
-func (op OpCode) SetsTopForNext() bool {
+//
+// Equivalent to `testOTMode` in upstream Lua.
+func (op OpCode) isOutTop() bool {
 	return op.props()&(1<<6) != 0
 }
 
 // IsMetamethod reports whether the instruction calls a metamethod.
+//
+// Equivalent to `testMMMode` in upstream Lua.
 func (op OpCode) IsMetamethod() bool {
 	return op.props()&(1<<7) != 0
 }
