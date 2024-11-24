@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+
+	"zb.256lights.llc/pkg/internal/lualex"
 )
 
 // ArithmeticOperator is the subset of Lua operators that operate on numbers.
@@ -234,6 +236,21 @@ const (
 	numUnaryOperators = iota - 1
 )
 
+func toUnaryOperator(tk lualex.TokenKind) (_ unaryOperator, ok bool) {
+	switch tk {
+	case lualex.SubToken:
+		return unaryOperatorMinus, true
+	case lualex.BitXorToken:
+		return unaryOperatorBNot, true
+	case lualex.NotToken:
+		return unaryOperatorNot, true
+	case lualex.LenToken:
+		return unaryOperatorLen, true
+	default:
+		return unaryOperatorNone, false
+	}
+}
+
 func (op unaryOperator) toOpCode() (_ OpCode, ok bool) {
 	if op <= unaryOperatorNone || op > numUnaryOperators {
 		return maxOpCode + 1, false
@@ -286,6 +303,60 @@ const (
 	numBinaryOperators = iota - 1
 )
 
+func toBinaryOperator(tk lualex.TokenKind) (_ binaryOperator, ok bool) {
+	switch tk {
+	case lualex.AddToken:
+		return binaryOperatorAdd, true
+	case lualex.SubToken:
+		return binaryOperatorSub, true
+	case lualex.MulToken:
+		return binaryOperatorMul, true
+	case lualex.ModToken:
+		return binaryOperatorMod, true
+	case lualex.PowToken:
+		return binaryOperatorPow, true
+	case lualex.DivToken:
+		return binaryOperatorDiv, true
+	case lualex.IntDivToken:
+		return binaryOperatorIDiv, true
+
+	case lualex.BitAndToken:
+		return binaryOperatorBAnd, true
+	case lualex.BitOrToken:
+		return binaryOperatorBOr, true
+	case lualex.BitXorToken:
+		return binaryOperatorBXor, true
+	case lualex.LShiftToken:
+		return binaryOperatorShiftL, true
+	case lualex.RShiftToken:
+		return binaryOperatorShiftR, true
+
+	case lualex.ConcatToken:
+		return binaryOperatorConcat, true
+
+	case lualex.EqualToken:
+		return binaryOperatorEq, true
+	case lualex.LessToken:
+		return binaryOperatorLT, true
+	case lualex.LessEqualToken:
+		return binaryOperatorLE, true
+	case lualex.NotEqualToken:
+		return binaryOperatorNE, true
+	case lualex.GreaterToken:
+		return binaryOperatorGT, true
+	case lualex.GreaterEqualToken:
+		return binaryOperatorGE, true
+
+	case lualex.AndToken:
+		return binaryOperatorAnd, true
+	case lualex.OrToken:
+		return binaryOperatorOr, true
+
+	default:
+		return binaryOperatorNone, false
+	}
+}
+
 func (op binaryOperator) isFoldable() bool {
 	return binaryOperatorNone < op && op <= binaryOperatorShiftR
 }
@@ -329,3 +400,35 @@ func (op binaryOperator) tagMethod() (_ TagMethod, ok bool) {
 		return 0, false
 	}
 }
+
+// operatorPrecedence is the precedence table for [binaryOperator].
+//
+// Equivalent to `priority` in upstream Lua.
+var operatorPrecedence = [...]struct {
+	left  uint8
+	right uint8
+}{
+	binaryOperatorAdd:    {10, 10},
+	binaryOperatorSub:    {10, 10},
+	binaryOperatorMul:    {11, 11},
+	binaryOperatorMod:    {11, 11},
+	binaryOperatorPow:    {14, 13}, // right associative
+	binaryOperatorDiv:    {11, 11},
+	binaryOperatorIDiv:   {11, 11},
+	binaryOperatorBAnd:   {6, 6},
+	binaryOperatorBOr:    {4, 4},
+	binaryOperatorBXor:   {5, 5},
+	binaryOperatorShiftL: {7, 7},
+	binaryOperatorShiftR: {7, 7},
+	binaryOperatorConcat: {9, 8}, // right associative
+	binaryOperatorEq:     {3, 3},
+	binaryOperatorLT:     {3, 3},
+	binaryOperatorLE:     {3, 3},
+	binaryOperatorNE:     {3, 3},
+	binaryOperatorGT:     {3, 3},
+	binaryOperatorGE:     {3, 3},
+	binaryOperatorAnd:    {2, 2},
+	binaryOperatorOr:     {1, 1},
+}
+
+const unaryPrecedence = 12

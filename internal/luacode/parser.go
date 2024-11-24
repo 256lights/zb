@@ -475,7 +475,69 @@ func (p *parser) expressionList(fs *funcState) (n int, last expressionDescriptor
 //
 // Equivalent to `expr` in upstream Lua.
 func (p *parser) expression(fs *funcState) (expressionDescriptor, error) {
-	return p.simpleExpression(fs)
+	e, _, err := p.subExpression(fs, 0)
+	return e, err
+}
+
+// subExpression parses expressions joined by binary operators
+// where the binary operator's precedence is higher than the given limit.
+// If the returned [binaryOperator] is not [binaryOperatorNone],
+// then it is the first operator encountered that is lower than or equal to the given limit.
+func (p *parser) subExpression(fs *funcState, limit int) (expressionDescriptor, binaryOperator, error) {
+	p.depth++
+	if p.depth > depthLimit {
+		return voidExpression(), binaryOperatorNone, errDepthExceeded
+	}
+	defer func() {
+		p.depth--
+	}()
+
+	var e expressionDescriptor
+	if uop, ok := toUnaryOperator(p.curr.Kind); ok {
+		line := p.curr.Position.Line
+		p.next()
+		var err error
+		e, _, err = p.subExpression(fs, unaryPrecedence)
+		if err != nil {
+			return voidExpression(), binaryOperatorNone, err
+		}
+		e, err = p.codePrefix(fs, uop, e, line)
+		if err != nil {
+			return voidExpression(), binaryOperatorNone, err
+		}
+	} else {
+		var err error
+		e, err = p.simpleExpression(fs)
+		if err != nil {
+			return voidExpression(), binaryOperatorNone, err
+		}
+	}
+
+	// Expand while operators have priorities higher than limit.
+	op, _ := toBinaryOperator(p.curr.Kind)
+	for op != binaryOperatorNone && int(operatorPrecedence[op].left) > limit {
+		line := p.curr.Position.Line
+		p.next()
+		var err error
+		e, err = p.codeInfix(fs, op, e)
+		if err != nil {
+			return voidExpression(), binaryOperatorNone, err
+		}
+		// Read sub-expression with higher priority.
+		var e2 expressionDescriptor
+		var nextOp binaryOperator
+		e2, nextOp, err = p.subExpression(fs, int(operatorPrecedence[op].right))
+		if err != nil {
+			return voidExpression(), binaryOperatorNone, err
+		}
+		e, err = p.codePostfix(fs, op, e, e2, line)
+		if err != nil {
+			return voidExpression(), binaryOperatorNone, err
+		}
+		op = nextOp
+	}
+
+	return e, op, nil
 }
 
 // prefixExpression parses a prefixexp production.
