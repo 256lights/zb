@@ -550,8 +550,6 @@ func (p *parser) codePostfix(fs *funcState, operator binaryOperator, e1, e2 expr
 	}
 }
 
-// TODO(now): codeSetList
-
 // codeCommutative appends instructions for non-bitwise commutative operators (i.e. "+" and "*")
 // to fs.Code.
 //
@@ -864,6 +862,35 @@ func (p *parser) codeEq(fs *funcState, operator binaryOperator, e1, e2 expressio
 	p.code(fs, ABCInstruction(op, uint8(r1), b, c, operator == binaryOperatorEq))
 	pc := p.codeJump(fs)
 	return jumpExpression(pc).withJumpLists(e1), nil
+}
+
+// fieldsPerFlush is the number of list items to accumulate
+// before an [OpSetList] [Instruction].
+const fieldsPerFlush = 50
+
+// codeSetList appends the instructions for an [OpSetList] instruction to fs.Code.
+// base is the register that keeps table;
+// numElements is the length of the table plus those to be stored now;
+// toStore is the number of values (in registers base + 1, ...)
+// to add to the table (or [multiReturn] to add up to stack top).
+func (p *parser) codeSetList(fs *funcState, base registerIndex, numElements int, toStore int) error {
+	switch {
+	case toStore == multiReturn:
+		toStore = 0
+	case toStore <= 0 || toStore >= fieldsPerFlush:
+		return fmt.Errorf("internal error: codeSetList: toStore out of range (%d)", toStore)
+	}
+	if numElements <= maxArgC {
+		p.code(fs, ABCInstruction(OpSetList, uint8(base), uint8(toStore), uint8(numElements), false))
+	} else {
+		extra := numElements / (maxArgC + 1)
+		numElements %= maxArgC + 1
+		p.code(fs, ABCInstruction(OpSetList, uint8(base), uint8(toStore), uint8(numElements), true))
+		p.code(fs, ExtraArgument(uint32(extra)))
+	}
+	// Free the registers used for list values.
+	fs.firstFreeRegister = base + 1
+	return nil
 }
 
 // foldConstants tries to statically evaluate an expression.
@@ -1333,11 +1360,12 @@ func (p *parser) constLocalValue(e expressionDescriptor) (_ Value, ok bool) {
 
 // setTableSize returns a sequence of instructions for [OpSetTable].
 //
-// Equivalent to `luaK_settablesize` in upstream Lua.
+// Mostly equivalent to `luaK_settablesize` in upstream Lua,
+// but returns the instructions in an array.
 func setTableSize(ra registerIndex, arraySize, hashSize int) [2]Instruction {
 	var rb uint8
 	if hashSize != 0 {
-		// TODO(now): ceillog2
+		rb = ceilLog2(uint(hashSize)) + 1
 	}
 	extra := uint32(arraySize / (maxArgC + 1))
 	rc := uint8(arraySize % (maxArgC + 1))
@@ -1345,4 +1373,27 @@ func setTableSize(ra registerIndex, arraySize, hashSize int) [2]Instruction {
 		ABCInstruction(OpNewTable, uint8(ra), rb, rc, extra > 0),
 		ExtraArgument(extra),
 	}
+}
+
+// ceilLog2 computes ceil(log2(x)).
+func ceilLog2(x uint) uint8 {
+	var l uint8
+	x--
+	for x >= 256 {
+		l += 8
+		x >>= 8
+	}
+	return l + log2Table[x]
+}
+
+// log2Table is a lookup table where log2Table[i] = ceil(log2(i - 1)).
+var log2Table = [...]uint8{
+	0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+	6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+	8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+	8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+	8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+	8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
 }
