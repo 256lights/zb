@@ -175,6 +175,8 @@ func (fs *funcState) removeLastLineInfo() {
 		fs.previousLine -= int(lastDelta)
 		fs.instructionsSinceLastAbsLineInfo--
 	}
+
+	lineInfo.rel = lineInfo.rel[:len(lineInfo.rel)-1]
 }
 
 // fixLineInfo changes the line information associated with the last instruction.
