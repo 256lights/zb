@@ -228,6 +228,16 @@ func (p *parser) statement(fs *funcState) error {
 	case lualex.SemiToken:
 		p.next()
 		return nil
+	case lualex.DoToken:
+		start := p.curr.Position
+		p.next()
+		if err := p.block(fs); err != nil {
+			return err
+		}
+		if err := p.checkMatch(fs, start, lualex.DoToken, lualex.EndToken); err != nil {
+			return err
+		}
+		return nil
 	case lualex.ReturnToken:
 		p.next()
 		return p.returnStatement(fs)
