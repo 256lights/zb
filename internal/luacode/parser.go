@@ -324,6 +324,10 @@ func (p *parser) statement(fs *funcState) error {
 		if err := p.checkMatch(fs, start, lualex.DoToken, lualex.EndToken); err != nil {
 			return err
 		}
+	case lualex.ForToken:
+		if err := p.forStatement(fs); err != nil {
+			return err
+		}
 	case lualex.RepeatToken:
 		if err := p.repeatStatement(fs); err != nil {
 			return err
@@ -600,6 +604,239 @@ func (p *parser) loopCondition(fs *funcState) (int, error) {
 		return noJump, err
 	}
 	return v.f, nil
+}
+
+// forStatement parses a "for" statement.
+//
+//	stmt ::= for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end |
+//	         for namelist in explist do block end | /* ... */
+//
+// Equivalent to `forstat` in upstream Lua.
+func (p *parser) forStatement(fs *funcState) error {
+	if p.curr.Kind != lualex.ForToken {
+		return syntaxError(fs.Source, p.curr, "'for' expected")
+	}
+	start := p.curr.Position
+	p.advance()
+
+	p.enterBlock(fs, true) // Scope for loop and control variables.
+	varName, err := p.name(fs)
+	if err != nil {
+		return err
+	}
+	switch p.curr.Kind {
+	case lualex.AssignToken:
+		if err := p.forNumberStatement(fs, varName, start); err != nil {
+			return err
+		}
+	case lualex.CommaToken, lualex.InToken:
+		if err := p.forListStatement(fs, varName); err != nil {
+			return err
+		}
+	default:
+		return syntaxError(fs.Source, p.curr, "'=' or 'in' expected")
+	}
+	if err := p.checkMatch(fs, start, lualex.ForToken, lualex.EndToken); err != nil {
+		return err
+	}
+	if err := p.leaveBlock(fs); err != nil {
+		return err
+	}
+	return nil
+}
+
+// forNumberStatement parses the following production:
+//
+//	‘=’ exp ‘,’ exp [‘,’ exp] do block
+//
+// Equivalent to `fornum` in upstream Lua.
+func (p *parser) forNumberStatement(fs *funcState, variableName string, start lualex.Position) error {
+	base := fs.firstFreeRegister
+	for range 3 {
+		if _, err := p.newLocalVariable(fs, "(for state)"); err != nil {
+			return err
+		}
+	}
+	if _, err := p.newLocalVariable(fs, variableName); err != nil {
+		return err
+	}
+
+	// Parse initial value.
+	if p.curr.Kind != lualex.AssignToken {
+		return syntaxError(fs.Source, p.curr, "'=' expected")
+	}
+	p.advance()
+	e, err := p.expression(fs)
+	if err != nil {
+		return err
+	}
+	if _, _, err := p.toNextRegister(fs, e); err != nil {
+		return err
+	}
+
+	// Parse limit.
+	if p.curr.Kind != lualex.CommaToken {
+		return syntaxError(fs.Source, p.curr, "',' expected")
+	}
+	p.advance()
+	e, err = p.expression(fs)
+	if err != nil {
+		return err
+	}
+	if _, _, err := p.toNextRegister(fs, e); err != nil {
+		return err
+	}
+
+	// Parse optional step.
+	if p.curr.Kind == lualex.CommaToken {
+		p.advance()
+		e, err := p.expression(fs)
+		if err != nil {
+			return err
+		}
+		if _, _, err := p.toNextRegister(fs, e); err != nil {
+			return err
+		}
+	} else {
+		// Default step = 1.
+		reg, err := fs.reserveRegister()
+		if err != nil {
+			return err
+		}
+		p.codeInt(fs, reg, 1)
+	}
+
+	// Control variables.
+	p.adjustLocalVariables(fs, 3)
+
+	return p.forBody(fs, base, start, 1, false)
+}
+
+// forListStatement parses a "for" statement of the following form:
+//
+//	namelist in explist do block
+//
+// Equivalent to `forlist` in upstream Lua.
+func (p *parser) forListStatement(fs *funcState, indexName string) error {
+	const numControlVariables = 4
+
+	numVariables := numControlVariables + 1
+	base := fs.firstFreeRegister
+	for range numControlVariables {
+		if _, err := p.newLocalVariable(fs, "(for state)"); err != nil {
+			return err
+		}
+	}
+
+	// Declared variables.
+	if _, err := p.newLocalVariable(fs, indexName); err != nil {
+		return err
+	}
+	for p.curr.Kind == lualex.CommaToken {
+		p.advance()
+		name, err := p.name(fs)
+		if err != nil {
+			return err
+		}
+		if _, err := p.newLocalVariable(fs, name); err != nil {
+			return err
+		}
+		numVariables++
+	}
+
+	if p.curr.Kind != lualex.InToken {
+		return syntaxError(fs.Source, p.curr, "'in' expected")
+	}
+	start := p.curr.Position
+	p.advance()
+
+	numExpressions, lastExpression, err := p.expressionList(fs)
+	if err != nil {
+		return err
+	}
+
+	// Control variables.
+	if err := p.adjustAssignment(fs, numControlVariables, numExpressions, lastExpression); err != nil {
+		return err
+	}
+	p.adjustLocalVariables(fs, numControlVariables)
+	// Last control variable must be closed.
+	fs.markToBeClosed()
+
+	// Ensure there is space to call the generator.
+	if err := fs.checkStack(numControlVariables - 1); err != nil {
+		return err
+	}
+
+	return p.forBody(fs, base, start, numVariables-numControlVariables, true)
+}
+
+// forBody parses the body of a "for" statement.
+//
+// Equivalent to `forbody` in upstream Lua.
+func (p *parser) forBody(fs *funcState, base registerIndex, start lualex.Position, numVariables int, isGeneric bool) error {
+	forPrep, forLoop := OpForPrep, OpForLoop
+	if isGeneric {
+		forPrep, forLoop = OpTForPrep, OpTForLoop
+	}
+
+	if p.curr.Kind != lualex.DoToken {
+		return syntaxError(fs.Source, p.curr, "'do' expected")
+	}
+	p.advance()
+	prep := p.code(fs, ABxInstruction(forPrep, uint8(base), 0))
+
+	p.enterBlock(fs, false) // Scope for declared variables.
+	p.adjustLocalVariables(fs, numVariables)
+	if err := fs.reserveRegisters(numVariables); err != nil {
+		return err
+	}
+	p.enterBlock(fs, false)
+	if err := p.block(fs); err != nil {
+		return err
+	}
+	if err := p.leaveBlock(fs); err != nil {
+		return err
+	}
+	// End of scope for declared variables.
+	if err := p.leaveBlock(fs); err != nil {
+		return err
+	}
+
+	if err := p.fixForBodyJump(fs, prep, fs.label(), false); err != nil {
+		return err
+	}
+	if isGeneric {
+		p.code(fs, ABCInstruction(OpTForCall, uint8(base), 0, uint8(numVariables), false))
+		fs.fixLineInfo(start.Line)
+	}
+	endFor := p.code(fs, ABxInstruction(forLoop, uint8(base), 0))
+	if err := p.fixForBodyJump(fs, endFor, prep+1, true); err != nil {
+		return err
+	}
+	fs.fixLineInfo(start.Line)
+
+	return nil
+}
+
+// fixForBodyJump sets the offset of the "for" loop instruction
+// (i.e. [OpForPrep], [OpForLoop], [OpTForPrep], or [OpTForLoop])
+// at the given program counter (pc)
+// to jump to the given destination.
+// back must be true if this is a backward jump.
+//
+// Equivalent to `fixforjump` in upstream Lua.
+func (p *parser) fixForBodyJump(fs *funcState, pc, dest int, back bool) error {
+	jmp := &fs.Code[pc]
+	offset := dest - (pc + 1)
+	if back {
+		offset = -offset
+	}
+	if offset > maxArgBx {
+		return syntaxError(fs.Source, p.curr, "control structure too long")
+	}
+	*jmp = ABxInstruction(jmp.OpCode(), jmp.ArgA(), int32(offset))
+	return nil
 }
 
 // functionStatement parses non-local function declarations.
