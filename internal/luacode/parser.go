@@ -1197,7 +1197,9 @@ type lhsAssign struct {
 //
 // Equivalent to `restassign` in upstream Lua.
 func (p *parser) assignment(fs *funcState, lhs lhsAssign, numVariables int) error {
-	// TODO(now): Check things.
+	if !lhs.v.kind.isVariable() {
+		return syntaxError(fs.Source, p.curr, "syntax error")
+	}
 	if err := p.checkWritable(fs, lhs.v); err != nil {
 		return err
 	}
@@ -1208,7 +1210,7 @@ func (p *parser) assignment(fs *funcState, lhs lhsAssign, numVariables int) erro
 			return err
 		}
 		if !v.kind.isIndexed() {
-			// TODO(now): Check conflict
+			p.resolveAssignmentConflicts(fs, &lhs, v)
 		}
 		nv := lhsAssign{prev: &lhs, v: v}
 		p.depth++
@@ -1238,6 +1240,42 @@ func (p *parser) assignment(fs *funcState, lhs lhsAssign, numVariables int) erro
 	}
 
 	return p.codeStoreVariable(fs, lhs.v, nonRelocatableExpression(fs.firstFreeRegister-1))
+}
+
+// resolveAssignmentConflicts checks whether, in an assignment to an upvalue/local variable,
+// the upvalue/local variable is being used in a previous assignment to a table.
+// If so, resolveAssignmentConflicts saves the original upvalue/local value in a safe place
+// and uses this safe copy in the previous assignment.
+//
+// Equivalent to `check_conflict` in upstream Lua.
+func (p *parser) resolveAssignmentConflicts(fs *funcState, lhs *lhsAssign, v expressionDescriptor) {
+	extra := fs.firstFreeRegister
+	conflict := false
+	for ; lhs != nil; lhs = lhs.prev {
+		switch {
+		case lhs.v.kind == expressionKindIndexUpvalue && v.kind == expressionKindUpvalue && lhs.v.tableUpvalue() == v.upvalueIndex():
+			// Table is the upvalue being assigned now.
+			conflict = true
+			lhs.v = indexStringExpression(extra, uint16(lhs.v.constantIndex())).withJumpLists(lhs.v)
+		case lhs.v.kind.isIndexed() && lhs.v.kind != expressionKindIndexUpvalue && v.kind == expressionKindLocal && lhs.v.tableRegister() == v.register():
+			// Table is the local being assigned now.
+			conflict = true
+			lhs.v, _ = lhs.v.withTableRegister(extra)
+		case lhs.v.kind == expressionKindIndexed && v.kind == expressionKindLocal && lhs.v.indexRegister() == v.register():
+			// Index is the local being assigned now.
+			conflict = true
+			lhs.v = indexedExpression(lhs.v.tableRegister(), extra)
+		}
+	}
+
+	if conflict {
+		// Copy upvalue/local value to a temporary in position "extra".
+		if v.kind == expressionKindLocal {
+			p.code(fs, ABCInstruction(OpMove, uint8(extra), uint8(v.register()), 0, false))
+		} else {
+			p.code(fs, ABCInstruction(OpGetUpval, uint8(extra), uint8(v.upvalueIndex()), 0, false))
+		}
+	}
 }
 
 // adjustAssignment adjusts the number of results from an expression list

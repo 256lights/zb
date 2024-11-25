@@ -347,6 +347,16 @@ func (e expressionDescriptor) tableRegister() registerIndex {
 	}
 }
 
+func (e expressionDescriptor) withTableRegister(r registerIndex) (_ expressionDescriptor, ok bool) {
+	switch e.kind {
+	case expressionKindIndexed, expressionKindIndexInt, expressionKindIndexString:
+		e.bits = e.bits&^(0xff<<16) | uint64(r)<<16
+		return e, true
+	default:
+		return e, false
+	}
+}
+
 // tableUpvalue returns the table's upvalue index of the [expressionKindIndexUpvalue] expression.
 func (e expressionDescriptor) tableUpvalue() upvalueIndex {
 	if e.kind != expressionKindIndexUpvalue {
