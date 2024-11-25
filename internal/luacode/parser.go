@@ -310,6 +310,10 @@ func (p *parser) statement(fs *funcState) error {
 		if err := p.ifStatement(fs); err != nil {
 			return err
 		}
+	case lualex.WhileToken:
+		if err := p.whileStatement(fs); err != nil {
+			return err
+		}
 	case lualex.DoToken:
 		start := p.curr.Position
 		p.advance()
@@ -457,6 +461,71 @@ func (p *parser) testThenBlock(fs *funcState, escapeList int) (newEscapeList int
 	}
 
 	return escapeList, nil
+}
+
+// whileStatement parses a "while" statement.
+//
+//	stmt ::= while exp do block end | /* ... */
+//
+// Equivalent to `whilestat` in upstream Lua.
+func (p *parser) whileStatement(fs *funcState) error {
+	start := p.curr.Position
+	p.advance()
+
+	whileInit := fs.label()
+	exitCondition, err := p.loopCondition(fs)
+	if err != nil {
+		return err
+	}
+	p.enterBlock(fs, true)
+	if p.curr.Kind != lualex.DoToken {
+		return syntaxError(fs.Source, p.curr, "'do' expected")
+	}
+	p.advance()
+
+	p.enterBlock(fs, false)
+	if err := p.block(fs); err != nil {
+		return err
+	}
+	if err := p.leaveBlock(fs); err != nil {
+		return err
+	}
+
+	if err := fs.patchList(p.codeJump(fs), whileInit, noRegister, whileInit); err != nil {
+		return err
+	}
+	if err := p.checkMatch(fs, start, lualex.WhileToken, lualex.EndToken); err != nil {
+		return err
+	}
+	if err := p.leaveBlock(fs); err != nil {
+		return err
+	}
+	// False conditions finish the loop.
+	if err := fs.patchToHere(exitCondition); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// loopCondition parses an expression for a loop condition
+// and returns its false jump list.
+//
+// Equivalent to `cond` in upstream Lua.
+func (p *parser) loopCondition(fs *funcState) (int, error) {
+	v, err := p.expression(fs)
+	if err != nil {
+		return noJump, err
+	}
+	if v.kind == expressionKindNil {
+		// Falses are all equal here.
+		v = constantToExpression(BoolValue(false)).withJumpLists(v)
+	}
+	v, err = p.codeGoIfTrue(fs, v)
+	if err != nil {
+		return noJump, err
+	}
+	return v.f, nil
 }
 
 // exprStatement parses a statement that begins with an expression
