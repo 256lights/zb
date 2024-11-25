@@ -118,6 +118,7 @@ func (p *parser) peek() lualex.Token {
 }
 
 // functionBody parses a "funcbody" production.
+// The closure value will be placed in the next available register.
 //
 //	funcbody ::= ‘(’ [parlist] ‘)’ block end
 //
@@ -330,7 +331,9 @@ func (p *parser) statement(fs *funcState) error {
 	case lualex.LocalToken:
 		p.advance()
 		if p.curr.Kind == lualex.FunctionToken {
-			return errors.New("TODO(soon): local function not implemented")
+			if err := p.localFunction(fs); err != nil {
+				return err
+			}
 		} else {
 			if err := p.localStatement(fs); err != nil {
 				return err
@@ -701,6 +704,42 @@ func (p *parser) localAttribute(fs *funcState) (VariableKind, error) {
 		msg := fmt.Sprintf("unknown attribute '%s'", attr)
 		return 0, syntaxError(fs.Source, lualex.Token{Position: p.curr.Position}, msg)
 	}
+}
+
+// localFunction parses a local function declaration.
+// The caller must have parsed the "local" token
+// (i.e. the current token must be the "function" keyword).
+//
+//	stmt ::= local function Name funcbody | /* ... */
+//
+// Mostly equivalent to `localfunc` in upstream Lua,
+// except localFunction parses the "function" keyword.
+func (p *parser) localFunction(fs *funcState) error {
+	start := p.curr.Position
+	if p.curr.Kind != lualex.FunctionToken {
+		return syntaxError(fs.Source, p.curr, "'function' expected")
+	}
+	p.advance()
+	name, err := p.name(fs)
+	if err != nil {
+		return err
+	}
+
+	// Begin scope for local variable.
+	// The local variable will reference the next available register,
+	// which will be filled in below.
+	fvar := fs.numActiveVariables
+	if _, err := p.newLocalVariable(fs, name); err != nil {
+		return err
+	}
+	p.adjustLocalVariables(fs, 1)
+	// Function will be placed in next register.
+	if _, err := p.functionBody(fs, false, start); err != nil {
+		return err
+	}
+	p.localDebugInfo(fs, int(fvar)).StartPC = len(fs.Code)
+
+	return nil
 }
 
 // exprStatement parses a statement that begins with an expression
