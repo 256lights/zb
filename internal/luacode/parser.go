@@ -323,6 +323,10 @@ func (p *parser) statement(fs *funcState) error {
 		if err := p.checkMatch(fs, start, lualex.DoToken, lualex.EndToken); err != nil {
 			return err
 		}
+	case lualex.RepeatToken:
+		if err := p.repeatStatement(fs); err != nil {
+			return err
+		}
 	case lualex.ReturnToken:
 		p.advance()
 		if err := p.returnStatement(fs); err != nil {
@@ -502,6 +506,60 @@ func (p *parser) whileStatement(fs *funcState) error {
 	}
 	// False conditions finish the loop.
 	if err := fs.patchToHere(exitCondition); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// repeatStatement parses a "repeat" statement.
+//
+//	stmt ::= repeat block until exp | /* ... */
+//
+// Equivalent to `repeatstat` in upstream Lua.
+func (p *parser) repeatStatement(fs *funcState) error {
+	start := p.curr.Position
+	p.advance()
+
+	repeatInit := fs.label()
+	p.enterBlock(fs, true) // loop block
+	scopeBlock := p.enterBlock(fs, false)
+	if err := p.block(fs); err != nil {
+		return err
+	}
+	if err := p.checkMatch(fs, start, lualex.RepeatToken, lualex.UntilToken); err != nil {
+		return err
+	}
+	exitCondition, err := p.loopCondition(fs)
+	if err != nil {
+		return err
+	}
+
+	// Finish scope.
+	if err := p.leaveBlock(fs); err != nil {
+		return err
+	}
+	if scopeBlock.upval {
+		exit := p.codeJump(fs)
+		// Normal exit must jump over fix.
+		if err := fs.patchToHere(exitCondition); err != nil {
+			return err
+		}
+		// Repetition must close upvalues.
+		p.code(fs, ABCInstruction(OpClose, uint8(p.registerLevel(fs, int(scopeBlock.numActiveVariables))), 0, 0, false))
+		// Repeat after closing upvalues.
+		exitCondition = p.codeJump(fs)
+		// Normal exit comes to here.
+		if err := fs.patchToHere(exit); err != nil {
+			return err
+		}
+	}
+
+	// Close the loop.
+	if err := fs.patchList(exitCondition, repeatInit, noRegister, repeatInit); err != nil {
+		return err
+	}
+	if err := p.leaveBlock(fs); err != nil {
 		return err
 	}
 
