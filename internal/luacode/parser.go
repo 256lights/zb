@@ -306,6 +306,10 @@ func (p *parser) statement(fs *funcState) error {
 	switch p.curr.Kind {
 	case lualex.SemiToken:
 		p.advance()
+	case lualex.IfToken:
+		if err := p.ifStatement(fs); err != nil {
+			return err
+		}
 	case lualex.DoToken:
 		start := p.curr.Position
 		p.advance()
@@ -339,6 +343,120 @@ func (p *parser) statement(fs *funcState) error {
 	fs.firstFreeRegister = numVariablesInStack
 
 	return nil
+}
+
+// ifStatement parses an "if" statement.
+//
+//	stmt ::= if exp then block {elseif exp then block} [else block] end | /* ... */
+//
+// Equivalent to `ifstat` in upstream Lua.
+func (p *parser) ifStatement(fs *funcState) error {
+	start := p.curr.Position
+
+	escapeList := noJump
+	var err error
+	escapeList, err = p.testThenBlock(fs, escapeList)
+	if err != nil {
+		return err
+	}
+	for p.curr.Kind == lualex.ElseifToken {
+		escapeList, err = p.testThenBlock(fs, escapeList)
+		if err != nil {
+			return err
+		}
+	}
+	if p.curr.Kind == lualex.ElseToken {
+		p.advance()
+		p.enterBlock(fs, false)
+		if err := p.block(fs); err != nil {
+			return err
+		}
+		if err := p.leaveBlock(fs); err != nil {
+			return err
+		}
+	}
+	if err := p.checkMatch(fs, start, lualex.IfToken, lualex.EndToken); err != nil {
+		return err
+	}
+	// Patch escape list to statement end.
+	if err := fs.patchToHere(escapeList); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// testThenBlock parses a single "if" or "elseif" clause.
+//
+// Equivalent to `test_then_block` in upstream Lua.
+func (p *parser) testThenBlock(fs *funcState, escapeList int) (newEscapeList int, err error) {
+	p.advance()
+	condition, err := p.expression(fs)
+	if err != nil {
+		return escapeList, err
+	}
+	if p.curr.Kind != lualex.ThenToken {
+		return escapeList, syntaxError(fs.Source, p.curr, "'then' expected")
+	}
+	p.advance()
+
+	var jf int
+	if p.curr.Kind == lualex.BreakToken {
+		// Special case for body that only contains "break".
+		start := p.curr.Position
+		var err error
+		condition, err = p.codeGoIfFalse(fs, condition)
+		if err != nil {
+			return escapeList, err
+		}
+		p.advance()
+		// Must enter block before goto.
+		p.enterBlock(fs, false)
+		p.pendingGotos = append(p.pendingGotos, labelDescription{
+			name:               "break",
+			position:           start,
+			numActiveVariables: fs.numActiveVariables,
+			pc:                 len(fs.Code),
+		})
+		for p.curr.Kind == lualex.SemiToken {
+			p.advance()
+		}
+		if isBlockFollow(p.curr.Kind) {
+			err := p.leaveBlock(fs)
+			return escapeList, err
+		}
+		// Must skip over "then" part if condition is false.
+		jf = p.codeJump(fs)
+	} else {
+		var err error
+		condition, err = p.codeGoIfTrue(fs, condition)
+		if err != nil {
+			return escapeList, err
+		}
+		p.enterBlock(fs, false)
+		jf = condition.f
+	}
+
+	if err := p.block(fs); err != nil {
+		return escapeList, err
+	}
+	if err := p.leaveBlock(fs); err != nil {
+		return escapeList, err
+	}
+	if k := p.curr.Kind; k == lualex.ElseToken || k == lualex.ElseifToken {
+		// Must jump over it.
+		var err error
+		escapeList, err = fs.concatJumpList(escapeList, p.codeJump(fs))
+		if err != nil {
+			return escapeList, err
+		}
+	}
+
+	if err := fs.patchToHere(jf); err != nil {
+		return escapeList, err
+	}
+
+	return escapeList, nil
 }
 
 // exprStatement parses a statement that begins with an expression

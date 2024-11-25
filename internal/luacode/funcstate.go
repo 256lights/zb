@@ -250,8 +250,9 @@ func (fs *funcState) concatJumpList(l1, l2 int) (int, error) {
 // patchList traverses a list of tests,
 // patching their destination address and registers.
 // Tests producing values jump to vtarget
-// (and put their values in reg),
+// (and put their values in the given register),
 // other tests jump to dtarget.
+// The register may be [noRegister] to elide storage of values.
 //
 // Equivalent to `patchlistaux` in upstream Lua.
 func (fs *funcState) patchList(list, vtarget int, reg registerIndex, dtarget int) error {
@@ -278,6 +279,15 @@ func (fs *funcState) patchList(list, vtarget int, reg registerIndex, dtarget int
 		list = next
 	}
 	return nil
+}
+
+// patchToHere calls [*funcState.patchList]
+// with the next instruction to be written as the target.
+//
+// Equivalent to `luaK_patchtohere` in upstream Lua.
+func (fs *funcState) patchToHere(list int) error {
+	here := fs.label()
+	return fs.patchList(list, here, noRegister, here)
 }
 
 // patchTestRegister patches the destination register for an [OpTestSet] instruction.

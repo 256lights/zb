@@ -204,7 +204,8 @@ func (p *parser) codeGoIfTrue(fs *funcState, e expressionDescriptor) (expression
 	var pc int
 	switch e.kind {
 	case expressionKindJump:
-		if err := fs.negateCondition(e.pc()); err != nil {
+		pc = e.pc()
+		if err := fs.negateCondition(pc); err != nil {
 			return e, err
 		}
 	case expressionKindConstant, expressionKindFloatConstant, expressionKindIntConstant, expressionKindStringConstant, expressionKindTrue:
@@ -224,8 +225,7 @@ func (p *parser) codeGoIfTrue(fs *funcState, e expressionDescriptor) (expression
 		return e, err
 	}
 	// True list jumps to here (to go through).
-	here := fs.label()
-	if err := fs.patchList(e.t, here, noRegister, here); err != nil {
+	if err := fs.patchToHere(e.t); err != nil {
 		return e, err
 	}
 	e.t = noJump
@@ -258,8 +258,7 @@ func (p *parser) codeGoIfFalse(fs *funcState, e expressionDescriptor) (expressio
 		return e, err
 	}
 	// False list jumps to here (to go through).
-	here := fs.label()
-	if err := fs.patchList(e.t, here, noRegister, here); err != nil {
+	if err := fs.patchToHere(e.f); err != nil {
 		return e, err
 	}
 	e.f = noJump
@@ -1095,8 +1094,7 @@ func (p *parser) toRegister(fs *funcState, e expressionDescriptor, reg registerI
 			fs.label()
 			positionLoadTrue = p.code(fs, ABCInstruction(OpLoadTrue, uint8(reg), 0, 0, false))
 			// Jump around these booleans if e is not a test.
-			here := fs.label()
-			if err := fs.patchList(fj, here, noRegister, here); err != nil {
+			if err := fs.patchToHere(fj); err != nil {
 				return e, err
 			}
 		}
