@@ -413,3 +413,12 @@ func (fs *funcState) markUpvalue(level int) {
 	bl.upval = true
 	fs.needClose = true
 }
+
+// markToBeClosed records that the current block has a to-be-closed variable.
+//
+// Equivalent to `marktobeclosed` in upstream Lua.
+func (fs *funcState) markToBeClosed() {
+	fs.blocks.upval = true
+	fs.blocks.insideTBC = true
+	fs.needClose = true
+}

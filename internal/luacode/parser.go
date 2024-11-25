@@ -255,7 +255,7 @@ func (p *parser) leaveBlock(fs *funcState) error {
 		} else {
 			msg = fmt.Sprintf("no visible label '%s' for <goto> at %v", gt.name, gt.position)
 		}
-		return syntaxError(fs.Source, lualex.Token{}, msg)
+		return syntaxError(fs.Source, lualex.Token{Position: p.curr.Position}, msg)
 	}
 	return nil
 }
@@ -326,6 +326,15 @@ func (p *parser) statement(fs *funcState) error {
 	case lualex.RepeatToken:
 		if err := p.repeatStatement(fs); err != nil {
 			return err
+		}
+	case lualex.LocalToken:
+		p.advance()
+		if p.curr.Kind == lualex.FunctionToken {
+			return errors.New("TODO(soon): local function not implemented")
+		} else {
+			if err := p.localStatement(fs); err != nil {
+				return err
+			}
 		}
 	case lualex.ReturnToken:
 		p.advance()
@@ -584,6 +593,114 @@ func (p *parser) loopCondition(fs *funcState) (int, error) {
 		return noJump, err
 	}
 	return v.f, nil
+}
+
+// localStatement parses local variable declarations.
+//
+//	stmt ::= local attnamelist [‘=’ explist] | /* ... */
+//	attnamelist ::=  Name attrib {‘,’ Name attrib}
+//
+// Equivalent to `localstat` in upstream Lua.
+func (p *parser) localStatement(fs *funcState) error {
+	numVariables := 0
+	var lastVarIndex int
+	toClose := -1
+	for {
+		name, err := p.name(fs)
+		if err != nil {
+			return err
+		}
+		lastVarIndex, err = p.newLocalVariable(fs, name)
+		if err != nil {
+			return err
+		}
+		kind, err := p.localAttribute(fs)
+		if err != nil {
+			return err
+		}
+		p.localVariableDescription(fs, lastVarIndex).kind = kind
+		if kind == ToClose {
+			if toClose != -1 {
+				const msg = "multiple to-be-closed variables in local list"
+				return syntaxError(fs.Source, lualex.Token{Position: p.curr.Position}, msg)
+			}
+			toClose = int(fs.numActiveVariables) + numVariables
+		}
+		numVariables++
+
+		if p.curr.Kind != lualex.CommaToken {
+			break
+		}
+		p.advance()
+	}
+
+	numExpressions := 0
+	lastExpression := voidExpression()
+	if p.curr.Kind == lualex.AssignToken {
+		p.advance()
+		var err error
+		numExpressions, lastExpression, err = p.expressionList(fs)
+		if err != nil {
+			return err
+		}
+	}
+
+	lastVar := p.localVariableDescription(fs, lastVarIndex)
+	var isLastConst bool
+	if numVariables == numExpressions && lastVar.kind == LocalConst {
+		if lastVar.k, isLastConst = p.toConstant(lastExpression); isLastConst {
+			lastVar.kind = CompileTimeConstant
+			// Don't start the scope for the last variable,
+			// but count it as an active variable.
+			p.adjustLocalVariables(fs, numVariables-1)
+			fs.numActiveVariables++
+		}
+	}
+	if !isLastConst {
+		if err := p.adjustAssignment(fs, numVariables, numExpressions, lastExpression); err != nil {
+			return err
+		}
+		p.adjustLocalVariables(fs, numVariables)
+	}
+
+	if toClose != -1 {
+		fs.markToBeClosed()
+		r := p.registerLevel(fs, toClose)
+		p.code(fs, ABCInstruction(OpTBC, uint8(r), 0, 0, false))
+	}
+
+	return nil
+}
+
+// localAttribute parses an "attrib" production.
+//
+//	attrib ::= [‘<’ Name ‘>’]
+//
+// Equivalent to `getlocalattribute` upstream.
+func (p *parser) localAttribute(fs *funcState) (VariableKind, error) {
+	if p.curr.Kind != lualex.LessToken {
+		return RegularVariable, nil
+	}
+	start := p.curr.Position
+	p.advance()
+
+	attr, err := p.name(fs)
+	if err != nil {
+		return 0, err
+	}
+	if err := p.checkMatch(fs, start, lualex.LessToken, lualex.GreaterToken); err != nil {
+		return 0, err
+	}
+
+	switch attr {
+	case "const":
+		return LocalConst, nil
+	case "close":
+		return ToClose, nil
+	default:
+		msg := fmt.Sprintf("unknown attribute '%s'", attr)
+		return 0, syntaxError(fs.Source, lualex.Token{Position: p.curr.Position}, msg)
+	}
 }
 
 // exprStatement parses a statement that begins with an expression
@@ -1612,7 +1729,7 @@ func (p *parser) solveGoto(fs *funcState, g int, lb *labelDescription) error {
 		// It entered a scope.
 		varName := p.localVariableDescription(fs, int(gt.numActiveVariables)).name
 		msg := fmt.Sprintf("<goto %s> at line %d jumps into the scope of local '%s'", gt.name, gt.position.Line, varName)
-		return syntaxError(fs.Source, lualex.Token{}, msg)
+		return syntaxError(fs.Source, lualex.Token{Position: p.curr.Position}, msg)
 	}
 	if err := fs.patchList(gt.pc, lb.pc, noRegister, lb.pc); err != nil {
 		return syntaxError(fs.Source, p.curr, err.Error())

@@ -271,14 +271,14 @@ type VariableKind uint8
 
 const (
 	RegularVariable     VariableKind = 0
-	Constant            VariableKind = 1
+	LocalConst          VariableKind = 1
 	ToClose             VariableKind = 2
 	CompileTimeConstant VariableKind = 3
 )
 
 func (kind VariableKind) isValid() bool {
 	return kind == RegularVariable ||
-		kind == Constant ||
+		kind == LocalConst ||
 		kind == ToClose ||
 		kind == CompileTimeConstant
 }
