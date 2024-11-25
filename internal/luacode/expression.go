@@ -328,7 +328,7 @@ func (e expressionDescriptor) upvalueIndex() upvalueIndex {
 	return upvalueIndex(e.bits)
 }
 
-// constLocalIndex returns the absolute index in the [parser] activeVars slice
+// constLocalIndex returns the absolute index in the [parser] activeVariables slice
 // for a [constLocalExpression].
 func (e expressionDescriptor) constLocalIndex() int {
 	if e.kind != expressionKindConstLocal {

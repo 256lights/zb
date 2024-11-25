@@ -1178,7 +1178,8 @@ func (p *parser) dischargeToRegister(fs *funcState, e expressionDescriptor, reg 
 func (p *parser) dischargeVars(fs *funcState, e expressionDescriptor) expressionDescriptor {
 	switch e.kind {
 	case expressionKindConstLocal:
-		return constantToExpression(fs.Constants[e.constantIndex()]).withJumpLists(e)
+		k := p.activeVariables[e.constLocalIndex()].k
+		return constantToExpression(k).withJumpLists(e)
 	case expressionKindLocal:
 		// Already in register? Becomes a non-relocatable value.
 		return nonRelocatableExpression(e.register()).withJumpLists(e)
@@ -1328,7 +1329,7 @@ func (p *parser) toConstant(e expressionDescriptor) (_ Value, isConstant bool) {
 		return Value{}, false
 	}
 	if e.kind == expressionKindConstLocal {
-		return p.constLocalValue(e)
+		return p.activeVariables[e.constLocalIndex()].k, true
 	}
 	return e.toValue()
 }
@@ -1343,17 +1344,6 @@ func (p *parser) stringToConstantTable(fs *funcState, e expressionDescriptor) ex
 	}
 	k := fs.addConstant(StringValue(s))
 	return constantTableExpression(k).withJumpLists(e)
-}
-
-// constLocalValue returns the value of a local constant expression,
-// if it resolves to a compile-time constant value.
-//
-// Equivalent to `const2val` in upstream Lua.
-func (p *parser) constLocalValue(e expressionDescriptor) (_ Value, ok bool) {
-	if e.kind != expressionKindConstLocal {
-		return Value{}, false
-	}
-	return p.activeVariables[e.constLocalIndex()].k, true
 }
 
 // newTableInstructions returns a sequence of instructions for [OpNewTable].
