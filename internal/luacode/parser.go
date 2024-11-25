@@ -328,6 +328,10 @@ func (p *parser) statement(fs *funcState) error {
 		if err := p.repeatStatement(fs); err != nil {
 			return err
 		}
+	case lualex.FunctionToken:
+		if err := p.functionStatement(fs); err != nil {
+			return err
+		}
 	case lualex.LocalToken:
 		p.advance()
 		if p.curr.Kind == lualex.FunctionToken {
@@ -598,6 +602,61 @@ func (p *parser) loopCondition(fs *funcState) (int, error) {
 	return v.f, nil
 }
 
+// functionStatement parses non-local function declarations.
+//
+//	stmt ::= function funcname funcbody | /* ... */
+//
+// Equivalent to `funcstat` in upstream Lua.
+func (p *parser) functionStatement(fs *funcState) error {
+	if p.curr.Kind != lualex.FunctionToken {
+		return syntaxError(fs.Source, p.curr, "'function' expected")
+	}
+	start := p.curr.Position
+	p.advance()
+	v, isMethod, err := p.functionName(fs)
+	if err != nil {
+		return err
+	}
+	b, err := p.functionBody(fs, isMethod, start)
+	if err != nil {
+		return err
+	}
+	if err := p.checkWritable(fs, v); err != nil {
+		return err
+	}
+	if err := p.codeStoreVariable(fs, v, b); err != nil {
+		return err
+	}
+	fs.fixLineInfo(start.Line)
+	return nil
+}
+
+// functionName parses the "funcname" production.
+//
+//	funcname ::= Name {‘.’ Name} [‘:’ Name]
+//
+// Equivalent to `funcname` in upstream Lua.
+func (p *parser) functionName(fs *funcState) (v expressionDescriptor, isMethod bool, err error) {
+	v, err = p.singleVariable(fs)
+	if err != nil {
+		return v, false, err
+	}
+	for p.curr.Kind == lualex.DotToken {
+		v, err = p.fieldSelector(fs, v)
+		if err != nil {
+			return v, false, err
+		}
+	}
+	if p.curr.Kind == lualex.ColonToken {
+		isMethod = true
+		v, err = p.fieldSelector(fs, v)
+		if err != nil {
+			return v, true, err
+		}
+	}
+	return v, isMethod, nil
+}
+
 // localStatement parses local variable declarations.
 //
 //	stmt ::= local attnamelist [‘=’ explist] | /* ... */
@@ -782,6 +841,9 @@ type lhsAssign struct {
 // Equivalent to `restassign` in upstream Lua.
 func (p *parser) assignment(fs *funcState, lhs lhsAssign, numVariables int) error {
 	// TODO(now): Check things.
+	if err := p.checkWritable(fs, lhs.v); err != nil {
+		return err
+	}
 	switch p.curr.Kind {
 	case lualex.CommaToken:
 		v, err := p.prefixExpression(fs)
@@ -1630,6 +1692,34 @@ func (p *parser) removeVariables(fs *funcState, toLevel int) {
 		}
 	}
 	p.activeVariables = p.activeVariables[:len(p.activeVariables)-(int(fs.numActiveVariables)-toLevel)]
+}
+
+// checkWritable returns an error if the variable described by e is read-only.
+//
+// Equivalent to `check_readonly` in upstream Lua.
+func (p *parser) checkWritable(fs *funcState, e expressionDescriptor) error {
+	var varName string
+	switch e.kind {
+	case expressionKindConstLocal:
+		varName = p.activeVariables[e.constLocalIndex()].name
+	case expressionKindLocal:
+		varDesc := p.localVariableDescription(fs, e.localIndex(0))
+		if varDesc.kind == RegularVariable {
+			return nil
+		}
+		varName = varDesc.name
+	case expressionKindUpvalue:
+		up := fs.Upvalues[e.upvalueIndex()]
+		if up.Kind == RegularVariable {
+			return nil
+		}
+		varName = up.Name
+	default:
+		return nil
+	}
+
+	msg := fmt.Sprintf("attempt to assign to const variable '%s'", varName)
+	return syntaxError(fs.Source, lualex.Token{Position: p.curr.Position}, msg)
 }
 
 // localDebugInfo returns the debug information for current variable vidx.
