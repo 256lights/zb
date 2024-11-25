@@ -232,7 +232,7 @@ func (p *parser) leaveBlock(fs *funcState) error {
 	if bl.isLoop {
 		// Has to fix pending breaks.
 		var err error
-		hasClose, err = p.createLabel(fs, "break", 0, false)
+		hasClose, err = p.createLabel(fs, breakLabel, lualex.Position{}, false)
 		if err != nil {
 			return err
 		}
@@ -251,7 +251,7 @@ func (p *parser) leaveBlock(fs *funcState) error {
 		// There are still pending gotos.
 		gt := p.pendingGotos[bl.firstGoto]
 		var msg string
-		if gt.name == "break" {
+		if gt.name == breakLabel {
 			msg = fmt.Sprintf("break outside loop at %v", gt.position)
 		} else {
 			msg = fmt.Sprintf("no visible label '%s' for <goto> at %v", gt.name, gt.position)
@@ -351,9 +351,21 @@ func (p *parser) statement(fs *funcState) error {
 				return err
 			}
 		}
+	case lualex.LabelToken:
+		if err := p.labelStatement(fs); err != nil {
+			return err
+		}
 	case lualex.ReturnToken:
 		p.advance()
 		if err := p.returnStatement(fs); err != nil {
+			return err
+		}
+	case lualex.BreakToken:
+		if err := p.breakStatement(fs); err != nil {
+			return err
+		}
+	case lualex.GotoToken:
+		if err := p.gotoStatement(fs); err != nil {
 			return err
 		}
 	default:
@@ -445,10 +457,10 @@ func (p *parser) testThenBlock(fs *funcState, escapeList int) (newEscapeList int
 		// Must enter block before goto.
 		p.enterBlock(fs, false)
 		p.pendingGotos = append(p.pendingGotos, labelDescription{
-			name:               "break",
+			name:               breakLabel,
 			position:           start,
+			pc:                 condition.t,
 			numActiveVariables: fs.numActiveVariables,
-			pc:                 len(fs.Code),
 		})
 		for p.curr.Kind == lualex.SemiToken {
 			p.advance()
@@ -1038,6 +1050,110 @@ func (p *parser) localFunction(fs *funcState) error {
 		return err
 	}
 	p.localDebugInfo(fs, int(fvar)).StartPC = len(fs.Code)
+
+	return nil
+}
+
+// gotoStatement parses a "goto" statement.
+//
+//	stmt ::= goto Name | /* ... */
+//
+// Equivalent to `gotostat` in upstream Lua.
+func (p *parser) gotoStatement(fs *funcState) error {
+	if p.curr.Kind != lualex.GotoToken {
+		return syntaxError(fs.Source, p.curr, "'goto' expected")
+	}
+	start := p.curr.Position
+	p.advance()
+	name, err := p.name(fs)
+	if err != nil {
+		return err
+	}
+
+	lb := p.findLabel(fs, name)
+	if lb == nil {
+		// Forward jump; will be resolved when the label is declared.
+		pc := p.codeJump(fs)
+		p.pendingGotos = append(p.pendingGotos, labelDescription{
+			name:               name,
+			position:           start,
+			pc:                 pc,
+			numActiveVariables: fs.numActiveVariables,
+		})
+		return nil
+	}
+
+	// Backward jump; will be resolved here.
+	labelLevel := p.registerLevel(fs, int(lb.numActiveVariables))
+	if p.numVariablesInStack(fs) > labelLevel {
+		// Leaving the scope of a variable.
+		p.code(fs, ABCInstruction(OpClose, uint8(labelLevel), 0, 0, false))
+	}
+	if err := fs.patchList(p.codeJump(fs), lb.pc, noRegister, lb.pc); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+const breakLabel = "break"
+
+// breakStatement parses a break statement.
+// Semantically equivalent to "goto break".
+func (p *parser) breakStatement(fs *funcState) error {
+	if p.curr.Kind != lualex.BreakToken {
+		return syntaxError(fs.Source, p.curr, "'break' expected")
+	}
+	position := p.curr.Position
+	p.advance()
+	pc := p.codeJump(fs)
+	p.pendingGotos = append(p.pendingGotos, labelDescription{
+		name:               breakLabel,
+		position:           position,
+		pc:                 pc,
+		numActiveVariables: fs.numActiveVariables,
+	})
+	return nil
+}
+
+// labelStatement parses a label.
+//
+//	label ::= ‘::’ Name ‘::’
+//
+// Roughly equivalent to `labelstat` in upstream Lua,
+// but this function parses the whole production
+// instead of just the final double-colon.
+func (p *parser) labelStatement(fs *funcState) error {
+	if p.curr.Kind != lualex.LabelToken {
+		return syntaxError(fs.Source, p.curr, "'::' expected")
+	}
+	start := p.curr.Position
+	p.advance()
+	name, err := p.name(fs)
+	if err != nil {
+		return err
+	}
+	if p.curr.Kind != lualex.LabelToken {
+		return syntaxError(fs.Source, p.curr, "'::' expected")
+	}
+	p.advance()
+
+	// Skip other no-op statements.
+	for p.curr.Kind == lualex.SemiToken || p.curr.Kind == lualex.LabelToken {
+		if err := p.statement(fs); err != nil {
+			return err
+		}
+	}
+
+	// Check for repeated labels.
+	if lb := p.findLabel(fs, name); lb != nil {
+		msg := fmt.Sprintf("label '%s' already defined on line %v", name, lb.position)
+		return syntaxError(fs.Source, lualex.Token{Position: p.curr.Position}, msg)
+	}
+
+	if _, err := p.createLabel(fs, name, start, isBlockFollow(p.curr.Kind)); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -2045,14 +2161,14 @@ type labelDescription struct {
 // createLabel returns true if and only if it added a close instruction.
 //
 // Equivalent to `createlabel` in upstream Lua.
-func (p *parser) createLabel(fs *funcState, name string, line int, last bool) (addedClose bool, err error) {
+func (p *parser) createLabel(fs *funcState, name string, position lualex.Position, last bool) (addedClose bool, err error) {
 	n := fs.numActiveVariables
 	if last {
 		n = fs.blocks.numActiveVariables
 	}
 	p.labels = append(p.labels, labelDescription{
 		name:               name,
-		position:           lualex.Position{Line: line},
+		position:           position,
 		numActiveVariables: n,
 		pc:                 fs.label(),
 	})
@@ -2065,6 +2181,21 @@ func (p *parser) createLabel(fs *funcState, name string, line int, last bool) (a
 	}
 	p.code(fs, ABCInstruction(OpClose, uint8(p.numVariablesInStack(fs)), 0, 0, false))
 	return true, nil
+}
+
+// findLabel returns the active label with the given name
+// or nil if no such label exists.
+//
+// Equivalent to `findlabel` in upstream Lua.
+func (p *parser) findLabel(fs *funcState, name string) *labelDescription {
+	labels := p.labels[fs.firstLabel:]
+	for i := range labels {
+		lb := &labels[i]
+		if lb.name == name {
+			return lb
+		}
+	}
+	return nil
 }
 
 // solveGotos solves forward jumps:
