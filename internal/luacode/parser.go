@@ -38,7 +38,7 @@ func Parse(name Source, r io.ByteScanner) (*Prototype, error) {
 		lastLine: 1,
 	}
 
-	fs, _ := p.openFunction(nil, &Prototype{
+	fs := p.openFunction(nil, &Prototype{
 		Source:       name,
 		MaxStackSize: minStackSize,
 		Upvalues: []UpvalueDescriptor{
@@ -117,11 +117,60 @@ func (p *parser) peek() lualex.Token {
 	return p.next
 }
 
+// functionBody parses a "funcbody" production.
+//
+//	funcbody ::= ‘(’ [parlist] ‘)’ block end
+//
+// Equivalent to `body` in upstream Lua.
+func (p *parser) functionBody(parent *funcState, isMethod bool, funcStart lualex.Position) (expressionDescriptor, error) {
+	fs := p.openFunction(parent, &Prototype{
+		Source:      parent.Source,
+		LineDefined: funcStart.Line,
+	})
+
+	paramStart := p.curr.Position
+	if p.curr.Kind != lualex.LParenToken {
+		return voidExpression(), syntaxError(fs.Source, p.curr, "'(' expected")
+	}
+	p.advance()
+	if isMethod {
+		if _, err := p.newLocalVariable(fs, "self"); err != nil {
+			return voidExpression(), err
+		}
+		p.adjustLocalVariables(fs, 1)
+	}
+	if err := p.parameterList(fs); err != nil {
+		return voidExpression(), err
+	}
+	if err := p.checkMatch(fs, paramStart, lualex.LParenToken, lualex.RParenToken); err != nil {
+		return voidExpression(), err
+	}
+
+	if err := p.block(fs); err != nil {
+		return voidExpression(), err
+	}
+	fs.LastLineDefined = p.curr.Position.Line
+
+	if err := p.checkMatch(fs, funcStart, lualex.FunctionToken, lualex.EndToken); err != nil {
+		return voidExpression(), err
+	}
+	pc := p.code(parent, ABxInstruction(OpClosure, 0, int32(len(parent.Functions)-1)))
+	closure, _, err := p.toNextRegister(parent, relocatableExpression(pc))
+	if err != nil {
+		return voidExpression(), err
+	}
+	if err := p.closeFunction(fs); err != nil {
+		return voidExpression(), err
+	}
+
+	return closure, nil
+}
+
 // openFunction creates a new [funcState] and [blockControl]
 // for the given function and its parent function.
 //
 // Equivalent to `open_func` in upstream Lua.
-func (p *parser) openFunction(prev *funcState, f *Prototype) (*funcState, *blockControl) {
+func (p *parser) openFunction(prev *funcState, f *Prototype) *funcState {
 	fs := &funcState{
 		prev:      prev,
 		Prototype: f,
@@ -130,8 +179,11 @@ func (p *parser) openFunction(prev *funcState, f *Prototype) (*funcState, *block
 		firstLocal:   len(p.activeVariables),
 		firstLabel:   len(p.labels),
 	}
-	bl := p.enterBlock(fs, false)
-	return fs, bl
+	if prev != nil {
+		prev.Functions = append(prev.Functions, f)
+	}
+	p.enterBlock(fs, false)
+	return fs
 }
 
 // enterBlock creates a new [blockControl].
@@ -402,6 +454,51 @@ func (p *parser) adjustAssignment(fs *funcState, numVariables, numExpressions in
 		// Remove extra values (this is a subtraction).
 		fs.firstFreeRegister += registerIndex(needed)
 	}
+	return nil
+}
+
+// parameterList parses a "parlist" production.
+//
+//	parlist ::= namelist [‘,’ ‘...’] | ‘...’
+//
+// Equivalent to `parlist` in upstream Lua.
+func (p *parser) parameterList(fs *funcState) error {
+	var n uint8
+	isVararg := false
+	if p.curr.Kind != lualex.RParenToken {
+	list:
+		for {
+			switch p.curr.Kind {
+			case lualex.IdentifierToken:
+				if _, err := p.newLocalVariable(fs, p.curr.Value); err != nil {
+					return err
+				}
+				p.advance()
+				n++
+			case lualex.VarargToken:
+				p.advance()
+				isVararg = true
+				break list
+			default:
+				return syntaxError(fs.Source, p.curr, "<name> or '...' expected")
+			}
+
+			if p.curr.Kind != lualex.CommaToken {
+				break list
+			}
+			p.advance()
+		}
+	}
+
+	p.adjustLocalVariables(fs, int(n))
+	fs.NumParams = n
+	if isVararg {
+		p.setVariadic(fs, n)
+	}
+	if err := fs.reserveRegisters(int(fs.numActiveVariables)); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -1027,7 +1124,9 @@ func (p *parser) simpleExpression(fs *funcState) (expressionDescriptor, error) {
 	case lualex.LBraceToken:
 		return p.constructor(fs)
 	case lualex.FunctionToken:
-		return voidExpression(), errors.New("TODO(soon): function")
+		start := p.curr.Position
+		p.advance()
+		return p.functionBody(fs, false, start)
 	default:
 		return p.prefixExpression(fs)
 	}
@@ -1067,6 +1166,42 @@ func (p *parser) checkMatch(fs *funcState, start lualex.Position, open, close lu
 	return syntaxError(fs.Source, p.curr, msg)
 }
 
+// newLocalVariable creates a new local variable with the given name
+// and returns its index in the function.
+//
+// Equivalent to `new_localvar` in upstream Lua.
+func (p *parser) newLocalVariable(fs *funcState, name string) (int, error) {
+	if len(p.activeVariables)+1-fs.firstLocal > maxVariables {
+		msg := fmt.Sprintf("too many local variables (limit is %d) in %s", maxVariables, functionLocation(fs))
+		return -1, syntaxError(fs.Source, p.curr, msg)
+	}
+	p.activeVariables = append(p.activeVariables, variableDescription{
+		name: name,
+		kind: RegularVariable,
+	})
+	return len(p.activeVariables) - 1 - fs.firstLocal, nil
+}
+
+// adjustLocalVariables starts the scope for the last n created variables.
+//
+// Equivalent to `adjustlocalvars` in upstream Lua.
+func (p *parser) adjustLocalVariables(fs *funcState, n int) {
+	registerLevel := p.numVariablesInStack(fs)
+	for range n {
+		vidx := int(fs.numActiveVariables)
+		fs.numActiveVariables++
+		v := p.localVariableDescription(fs, vidx)
+		v.ridx = registerLevel
+		registerLevel++
+
+		fs.LocalVariables = append(fs.LocalVariables, LocalVariable{
+			Name:    v.name,
+			StartPC: len(fs.Code),
+		})
+		v.pidx = uint16(len(fs.LocalVariables) - 1)
+	}
+}
+
 // searchVariable looks for an active variable with the given name in the function.
 //
 // Equivalent to `searchvar` in upstream Lua.
@@ -1087,13 +1222,13 @@ func (p *parser) searchVariable(fs *funcState, n string) (_ expressionDescriptor
 //
 // Equivalent to `removevars` in upstream Lua.
 func (p *parser) removeVariables(fs *funcState, toLevel int) {
-	p.activeVariables = p.activeVariables[:len(p.activeVariables)-(int(fs.numActiveVariables)-toLevel)]
 	for int(fs.numActiveVariables) > toLevel {
 		fs.numActiveVariables--
 		if v := p.localDebugInfo(fs, int(fs.numActiveVariables)); v != nil {
 			v.EndPC = len(fs.Code)
 		}
 	}
+	p.activeVariables = p.activeVariables[:len(p.activeVariables)-(int(fs.numActiveVariables)-toLevel)]
 }
 
 // localDebugInfo returns the debug information for current variable vidx.
@@ -1133,13 +1268,18 @@ func (p *parser) numVariablesInStack(fs *funcState) registerIndex {
 	return p.registerLevel(fs, int(fs.numActiveVariables))
 }
 
+// maxVariables is the maximum number of local variables per function.
+//
+// Equivalent to `MAXVARS` in upstream Lua.
+const maxVariables = 200
+
 // variableDescription is a description of an active local variable.
 type variableDescription struct {
 	name string
 	kind VariableKind
 	// ridx is the register holding the variable.
 	ridx registerIndex
-	// pidx is the index of the variable in the Prototype's LocalVars slice.
+	// pidx is the index of the variable in the Prototype's LocalVariables slice.
 	pidx uint16
 	// k is the constant value (if any).
 	k Value
@@ -1234,6 +1374,16 @@ func (p *parser) solveGoto(fs *funcState, g int, lb *labelDescription) error {
 	}
 	p.pendingGotos = slices.Delete(p.pendingGotos, g, g+1)
 	return nil
+}
+
+// functionLocation describes a function in a human-readable manner.
+//
+// Originally part of `errorlimit` in upstream Lua.
+func functionLocation(fs *funcState) string {
+	if fs.LineDefined == 0 {
+		return "main function"
+	}
+	return fmt.Sprintf("function at line %d", fs.LineDefined)
 }
 
 // syntaxError creates an error with the given parser context.

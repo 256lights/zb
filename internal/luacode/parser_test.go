@@ -62,3 +62,10 @@ func TestParse(t *testing.T) {
 		})
 	}
 }
+
+func TestMaxVariables(t *testing.T) {
+	const limit = 250
+	if maxVariables >= limit {
+		t.Errorf("maxVariables = %d; want <%d due to bytecode format", maxVariables, limit)
+	}
+}
