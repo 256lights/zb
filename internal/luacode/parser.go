@@ -318,7 +318,11 @@ func (p *parser) statement(fs *funcState) error {
 	case lualex.DoToken:
 		start := p.curr.Position
 		p.advance()
+		p.enterBlock(fs, false)
 		if err := p.block(fs); err != nil {
+			return err
+		}
+		if err := p.leaveBlock(fs); err != nil {
 			return err
 		}
 		if err := p.checkMatch(fs, start, lualex.DoToken, lualex.EndToken); err != nil {
