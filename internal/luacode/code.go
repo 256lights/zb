@@ -116,11 +116,11 @@ func (p *parser) codeConstant(fs *funcState, reg registerIndex, k int) int {
 	return p.code(fs, ABxInstruction(OpLoadK, uint8(reg), int32(k)))
 }
 
-// codeStoreVar appends instructions to store the result of expr into variable v.
-// expr is no longer valid after a call to codeStoreVar.
+// codeStoreVariable appends instructions to store the result of expr into variable v.
+// expr is no longer valid after a call to codeStoreVariable.
 //
 // Equivalent to `luaK_storevar` in upstream Lua.
-func (p *parser) codeStoreVar(fs *funcState, v, expr expressionDescriptor) error {
+func (p *parser) codeStoreVariable(fs *funcState, v, expr expressionDescriptor) error {
 	switch v.kind {
 	case expressionKindLocal:
 		p.freeExpression(fs, expr)
@@ -1358,11 +1358,11 @@ func (p *parser) constLocalValue(e expressionDescriptor) (_ Value, ok bool) {
 	return p.activeVariables[e.constLocalIndex()].k, true
 }
 
-// setTableSize returns a sequence of instructions for [OpSetTable].
+// newTableInstructions returns a sequence of instructions for [OpNewTable].
 //
 // Mostly equivalent to `luaK_settablesize` in upstream Lua,
 // but returns the instructions in an array.
-func setTableSize(ra registerIndex, arraySize, hashSize int) [2]Instruction {
+func newTableInstructions(ra registerIndex, arraySize, hashSize int) [2]Instruction {
 	var rb uint8
 	if hashSize != 0 {
 		rb = ceilLog2(uint(hashSize)) + 1

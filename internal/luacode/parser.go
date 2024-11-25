@@ -53,7 +53,7 @@ func Parse(name Source, r io.ByteScanner) (*Prototype, error) {
 	// Main function is always declared vararg.
 	p.setVariadic(fs, 0)
 
-	p.next()
+	p.advance()
 	if err := p.block(fs); err != nil {
 		return nil, err
 	}
@@ -78,6 +78,7 @@ type parser struct {
 	ls   *lualex.Scanner
 	curr lualex.Token
 	err  error
+	next lualex.Token
 	// lastLine is the line number of the previous token.
 	lastLine int
 
@@ -88,14 +89,32 @@ type parser struct {
 	labels          []labelDescription
 }
 
-// next advances the parser to the next token.
+// advance scans the next token.
 //
 // Equivalent to `luaX_next` in upstream Lua.
-func (p *parser) next() {
+func (p *parser) advance() {
+	if p.next.Kind != lualex.ErrorToken {
+		p.lastLine = max(p.curr.Position.Line, 1)
+		p.curr = p.next
+		p.next = lualex.Token{}
+		return
+	}
+
 	if p.err == nil {
 		p.lastLine = max(p.curr.Position.Line, 1)
 		p.curr, p.err = p.ls.Scan()
 	}
+}
+
+// peek returns the token after the current one
+// without advancing the parser.
+//
+// Equivalent to `luaX_lookahead` in upstream Lua.
+func (p *parser) peek() lualex.Token {
+	if p.next.Kind == lualex.ErrorToken {
+		p.next, p.err = p.ls.Scan()
+	}
+	return p.next
 }
 
 // openFunction creates a new [funcState] and [blockControl]
@@ -234,10 +253,10 @@ func (p *parser) statement(fs *funcState) error {
 
 	switch p.curr.Kind {
 	case lualex.SemiToken:
-		p.next()
+		p.advance()
 	case lualex.DoToken:
 		start := p.curr.Position
-		p.next()
+		p.advance()
 		if err := p.block(fs); err != nil {
 			return err
 		}
@@ -245,7 +264,7 @@ func (p *parser) statement(fs *funcState) error {
 			return err
 		}
 	case lualex.ReturnToken:
-		p.next()
+		p.advance()
 		if err := p.returnStatement(fs); err != nil {
 			return err
 		}
@@ -330,14 +349,14 @@ func (p *parser) assignment(fs *funcState, lhs lhsAssign, numVariables int) erro
 			return err
 		}
 	case lualex.AssignToken:
-		p.next()
+		p.advance()
 		numExpressions, last, err := p.expressionList(fs)
 		if err != nil {
 			return err
 		}
 		if numExpressions == numVariables {
 			last = p.setOneReturn(fs, last) // close last expression
-			return p.codeStoreVar(fs, lhs.v, last)
+			return p.codeStoreVariable(fs, lhs.v, last)
 		}
 		if err := p.adjustAssignment(fs, numVariables, numExpressions, last); err != nil {
 			return err
@@ -346,7 +365,7 @@ func (p *parser) assignment(fs *funcState, lhs lhsAssign, numVariables int) erro
 		return syntaxError(fs.Source, p.curr, "'=' expected")
 	}
 
-	return p.codeStoreVar(fs, lhs.v, nonRelocatableExpression(fs.firstFreeRegister-1))
+	return p.codeStoreVariable(fs, lhs.v, nonRelocatableExpression(fs.firstFreeRegister-1))
 }
 
 // adjustAssignment adjusts the number of results from an expression list
@@ -444,7 +463,7 @@ func (p *parser) returnStatement(fs *funcState) error {
 
 	// Skip optional semicolon.
 	if p.curr.Kind == lualex.SemiToken {
-		p.next()
+		p.advance()
 	}
 	return nil
 }
@@ -459,7 +478,7 @@ func (p *parser) expressionList(fs *funcState) (n int, last expressionDescriptor
 		return n, voidExpression(), err
 	}
 	for ; p.curr.Kind == lualex.CommaToken; n++ {
-		p.next()
+		p.advance()
 		if _, _, err := p.toNextRegister(fs, last); err != nil {
 			return n, voidExpression(), err
 		}
@@ -495,7 +514,7 @@ func (p *parser) subExpression(fs *funcState, limit int) (expressionDescriptor, 
 	var e expressionDescriptor
 	if uop, ok := toUnaryOperator(p.curr.Kind); ok {
 		line := p.curr.Position.Line
-		p.next()
+		p.advance()
 		var err error
 		e, _, err = p.subExpression(fs, unaryPrecedence)
 		if err != nil {
@@ -517,7 +536,7 @@ func (p *parser) subExpression(fs *funcState, limit int) (expressionDescriptor, 
 	op, _ := toBinaryOperator(p.curr.Kind)
 	for op != binaryOperatorNone && int(operatorPrecedence[op].left) > limit {
 		line := p.curr.Position.Line
-		p.next()
+		p.advance()
 		var err error
 		e, err = p.codeInfix(fs, op, e)
 		if err != nil {
@@ -552,7 +571,7 @@ func (p *parser) prefixExpression(fs *funcState) (expressionDescriptor, error) {
 	switch p.curr.Kind {
 	case lualex.LParenToken:
 		pos := p.curr.Position
-		p.next()
+		p.advance()
 		var err error
 		v, err = p.expression(fs)
 		if err != nil {
@@ -587,7 +606,7 @@ func (p *parser) prefixExpression(fs *funcState) (expressionDescriptor, error) {
 			if err != nil {
 				return voidExpression(), err
 			}
-			p.next()
+			p.advance()
 			k, err := p.expression(fs)
 			if err != nil {
 				return voidExpression(), err
@@ -604,7 +623,7 @@ func (p *parser) prefixExpression(fs *funcState) (expressionDescriptor, error) {
 				return voidExpression(), err
 			}
 		case lualex.ColonToken:
-			p.next()
+			p.advance()
 			key, err := p.name(fs)
 			if err != nil {
 				return voidExpression(), err
@@ -643,7 +662,7 @@ func (p *parser) fieldSelector(fs *funcState, v expressionDescriptor) (expressio
 	if err != nil {
 		return voidExpression(), err
 	}
-	p.next() // Skip the dot or colon.
+	p.advance() // Skip the dot or colon.
 	key, err := p.name(fs)
 	if err != nil {
 		return voidExpression(), err
@@ -661,7 +680,7 @@ func (p *parser) functionArguments(fs *funcState, f expressionDescriptor) (expre
 	var args expressionDescriptor
 	switch p.curr.Kind {
 	case lualex.LParenToken:
-		p.next()
+		p.advance()
 		if p.curr.Kind == lualex.RParenToken {
 			// Empty argument list.
 			args = voidExpression()
@@ -684,7 +703,7 @@ func (p *parser) functionArguments(fs *funcState, f expressionDescriptor) (expre
 		return p.constructor(fs)
 	case lualex.StringToken:
 		args = codeString(p.curr.Value)
-		p.next()
+		p.advance()
 	default:
 		return voidExpression(), syntaxError(fs.Source, p.curr, "function arguments expected")
 	}
@@ -694,7 +713,7 @@ func (p *parser) functionArguments(fs *funcState, f expressionDescriptor) (expre
 	if args.kind.hasMultipleReturns() {
 		numParams = multiReturn
 	} else {
-		if args.kind == expressionKindVoid {
+		if args.kind != expressionKindVoid {
 			// Close last argument.
 			p.toNextRegister(fs, args)
 		}
@@ -716,7 +735,166 @@ func (p *parser) functionArguments(fs *funcState, f expressionDescriptor) (expre
 //
 // Equivalent to `constructor` in upstream Lua.
 func (p *parser) constructor(fs *funcState) (expressionDescriptor, error) {
-	return voidExpression(), errors.New("TODO(soon)")
+	start := p.curr.Position
+	if p.curr.Kind != lualex.LBraceToken {
+		return voidExpression(), syntaxError(fs.Source, p.curr, "'{' expected")
+	}
+
+	// Add placeholder instructions for creating the table.
+	// We will fill in the instructions later with a call to [setTableSize].
+	pc := len(fs.Code)
+	for _, i := range newTableInstructions(0, 0, 0) {
+		p.code(fs, i)
+	}
+
+	tableRegister, err := fs.reserveRegister()
+	if err != nil {
+		return voidExpression(), err
+	}
+	tableExpression := nonRelocatableExpression(tableRegister)
+
+	lastListItem := voidExpression()
+	arraySize, hashSize, toStore := 0, 0, 0
+	p.advance()
+	if p.curr.Kind != lualex.RBraceToken {
+		for {
+			if lastListItem.kind != expressionKindVoid {
+				if _, _, err := p.toNextRegister(fs, lastListItem); err != nil {
+					return voidExpression(), err
+				}
+				lastListItem = voidExpression()
+
+				if toStore == fieldsPerFlush {
+					if err := p.codeSetList(fs, tableRegister, arraySize, toStore); err != nil {
+						return voidExpression(), err
+					}
+					arraySize += toStore
+					toStore = 0
+				}
+			}
+
+			switch p.curr.Kind {
+			case lualex.IdentifierToken:
+				// Can either be an expression or a record field.
+				if p.peek().Kind == lualex.AssignToken {
+					if err := p.recordField(fs, tableExpression); err != nil {
+						return voidExpression(), err
+					}
+					hashSize++
+				} else {
+					var err error
+					lastListItem, err = p.expression(fs)
+					if err != nil {
+						return voidExpression(), err
+					}
+					toStore++
+				}
+			case lualex.LBracketToken:
+				if err := p.recordField(fs, tableExpression); err != nil {
+					return voidExpression(), err
+				}
+				hashSize++
+			default:
+				var err error
+				lastListItem, err = p.expression(fs)
+				if err != nil {
+					return voidExpression(), err
+				}
+				toStore++
+			}
+
+			if p.curr.Kind != lualex.CommaToken && p.curr.Kind != lualex.SemiToken {
+				break
+			}
+			p.advance()
+		}
+	}
+	if err := p.checkMatch(fs, start, lualex.LBraceToken, lualex.RBraceToken); err != nil {
+		return voidExpression(), err
+	}
+
+	if toStore > 0 {
+		if lastListItem.kind.hasMultipleReturns() {
+			if err := p.setReturns(fs, lastListItem, multiReturn); err != nil {
+				return voidExpression(), err
+			}
+			if err := p.codeSetList(fs, tableRegister, arraySize, multiReturn); err != nil {
+				return voidExpression(), err
+			}
+			// Do not count last expression (unknown number of elements).
+			toStore--
+		} else if lastListItem.kind != expressionKindVoid {
+			if _, _, err := p.toNextRegister(fs, lastListItem); err != nil {
+				return voidExpression(), err
+			}
+			if err := p.codeSetList(fs, tableRegister, arraySize, toStore); err != nil {
+				return voidExpression(), err
+			}
+		}
+
+		arraySize += toStore
+		toStore = 0
+	}
+
+	// Go back and fill in the new table instructions.
+	ilist := newTableInstructions(tableRegister, arraySize, hashSize)
+	copy(fs.Code[pc:], ilist[:])
+
+	return tableExpression, nil
+}
+
+// recordField parses a field production.
+//
+//	field ::= ‘[’ exp ‘]’ ‘=’ exp | Name ‘=’ exp | exp
+//
+// Roughly equivalent to `recfield` in upstream Lua.
+func (p *parser) recordField(fs *funcState, table expressionDescriptor) error {
+	// Free temporary registers used.
+	defer func(original registerIndex) {
+		fs.firstFreeRegister = original
+	}(fs.firstFreeRegister)
+
+	var key expressionDescriptor
+	switch p.curr.Kind {
+	case lualex.IdentifierToken:
+		key = codeString(p.curr.Value)
+		p.advance()
+	case lualex.LBracketToken:
+		start := p.curr.Position
+		p.advance()
+		var err error
+		key, err = p.expression(fs)
+		if err != nil {
+			return err
+		}
+		key, err = p.toValue(fs, key)
+		if err != nil {
+			return err
+		}
+		if err := p.checkMatch(fs, start, lualex.LBracketToken, lualex.RBracketToken); err != nil {
+			return err
+		}
+	default:
+		return syntaxError(fs.Source, p.curr, "name or '[' expected")
+	}
+
+	if p.curr.Kind != lualex.AssignToken {
+		return syntaxError(fs.Source, p.curr, "'=' expected")
+	}
+	p.advance()
+
+	index, err := p.codeIndexed(fs, table, key)
+	if err != nil {
+		return err
+	}
+	value, err := p.expression(fs)
+	if err != nil {
+		return err
+	}
+	if err := p.codeStoreVariable(fs, index, value); err != nil {
+		return err
+	}
+	return nil
 }
 
 // singleVariable parses an identifier and resolves it as a variable.
@@ -824,26 +1002,26 @@ func (p *parser) simpleExpression(fs *funcState) (expressionDescriptor, error) {
 			}
 			e = intConstantExpression(i)
 		}
-		p.next()
+		p.advance()
 		return e, nil
 	case lualex.StringToken:
 		e := codeString(p.curr.Value)
-		p.next()
+		p.advance()
 		return e, nil
 	case lualex.NilToken:
-		p.next()
+		p.advance()
 		return newExpressionDescriptor(expressionKindNil), nil
 	case lualex.TrueToken:
-		p.next()
+		p.advance()
 		return newExpressionDescriptor(expressionKindTrue), nil
 	case lualex.FalseToken:
-		p.next()
+		p.advance()
 		return newExpressionDescriptor(expressionKindFalse), nil
 	case lualex.VarargToken:
 		if !fs.IsVararg {
 			return voidExpression(), errors.New("cannot use '...' outside a vararg function")
 		}
-		p.next()
+		p.advance()
 		pc := p.code(fs, ABCInstruction(OpVararg, 0, 0, 1, false))
 		return varargExpression(pc), nil
 	case lualex.LBraceToken:
@@ -865,7 +1043,7 @@ func (p *parser) name(fs *funcState) (string, error) {
 		return "", syntaxError(fs.Source, p.curr, "name expected")
 	}
 	v := p.curr.Value
-	p.next()
+	p.advance()
 	return v, nil
 }
 
@@ -877,7 +1055,7 @@ func (p *parser) name(fs *funcState) (string, error) {
 // Equivalent to `check_match` in upstream Lua.
 func (p *parser) checkMatch(fs *funcState, start lualex.Position, open, close lualex.TokenKind) error {
 	if p.curr.Kind == close {
-		p.next()
+		p.advance()
 		return nil
 	}
 	var msg string
