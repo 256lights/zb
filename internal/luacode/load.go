@@ -240,7 +240,7 @@ type chunkReader struct {
 
 func newChunkReader(s []byte) (*chunkReader, error) {
 	r := &chunkReader{s: s}
-	if !r.literal(signature) {
+	if !r.literal(Signature) {
 		return nil, errors.New("missing signature")
 	}
 	if version, ok := r.readByte(); !ok {

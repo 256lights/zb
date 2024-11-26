@@ -14,8 +14,11 @@ import (
 	"strings"
 )
 
+// Signature is the magic header for a binary (pre-compiled) Lua chunk.
+// Data with this prefix can be loaded in with [*Prototype.UnmarshalBinary].
+const Signature = "\x1bLua"
+
 const (
-	signature           = "\x1bLua"
 	luacVersion byte    = 5*16 + 4
 	luacFormat  byte    = 0
 	luacData            = "\x19\x93\r\n\x1a\n"
@@ -95,7 +98,7 @@ func (f *Prototype) addConstant(k Value) int {
 func (f *Prototype) MarshalBinary() ([]byte, error) {
 	var buf []byte
 
-	buf = append(buf, signature...)
+	buf = append(buf, Signature...)
 	buf = append(buf, luacVersion, luacFormat)
 	buf = append(buf, luacData...)
 	// Size of [Instruction], [int64], and [float64] in bytes.
