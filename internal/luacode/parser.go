@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strconv"
 	"strings"
 
 	"zb.256lights.llc/pkg/internal/lualex"
@@ -1942,20 +1941,13 @@ func (p *parser) resolveName(fs *funcState, name string, base bool) (expressionD
 func (p *parser) simpleExpression(fs *funcState) (expressionDescriptor, error) {
 	switch p.curr.Kind {
 	case lualex.NumeralToken:
-		// TODO(soon): Get the actual algorithm.
 		var e expressionDescriptor
-		if strings.Contains(p.curr.Value, ".") {
-			f, err := strconv.ParseFloat(p.curr.Value, 64)
-			if err != nil {
-				return voidExpression(), err
-			}
-			e = floatConstantExpression(f)
-		} else {
-			i, err := strconv.ParseInt(p.curr.Value, 0, 64)
-			if err != nil {
-				return voidExpression(), err
-			}
+		if i, err := lualex.ParseInt(p.curr.Value); err == nil {
 			e = intConstantExpression(i)
+		} else if f, err := lualex.ParseNumber(p.curr.Value); err != nil {
+			return voidExpression(), err
+		} else {
+			e = floatConstantExpression(f)
 		}
 		p.advance()
 		return e, nil
