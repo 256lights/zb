@@ -534,11 +534,26 @@ const (
 	// A B C k return R[A](R[A+1], ... ,R[A+B-1])
 	OpTailCall OpCode = 69 // TAILCALL
 
-	// A B C k return R[A], ... ,R[A+B-2] (see note)
+	// OpReturn instructs control flow to return to the function's caller.
+	//
+	//	A B C k return R[A], ... ,R[A+B-2]
+	//
+	// If (B == 0) then return up to 'top'.
+	// 'k' specifies that the function builds upvalues,
+	// which may need to be closed.
+	// C > 0 means the function is vararg,
+	// so that any effects of [OpVarargPrep] must be corrected before returning;
+	// in this case, (C - 1) is its number of fixed parameters.
 	OpReturn OpCode = 70 // RETURN
-	//  return
+	// OpReturn0 instructs control flow to return to the function's caller
+	// with zero results.
+	// This instruction cannot be used in a variadic function.
 	OpReturn0 OpCode = 71 // RETURN0
-	// A return R[A]
+	// OpReturn1 instructs control flow to return to the function's caller
+	// with a single result stored in R[A].
+	// This instruction cannot be used in a variadic function.
+	//
+	//	A return R[A]
 	OpReturn1 OpCode = 72 // RETURN1
 
 	// A Bx update counters; if loop continues then pc-=Bx;
@@ -562,7 +577,8 @@ const (
 	// A C R[A], R[A+1], ..., R[A+C-2] = vararg
 	OpVararg OpCode = 80 // VARARG
 
-	//A (adjust vararg parameters)
+	// OpVarargPrep instructs the first A arguments to remain in registers
+	// and the rest to be moved into storage for access with [OpVararg].
 	OpVarargPrep OpCode = 81 // VARARGPREP
 
 	// Ax extra (larger) argument for previous opcode

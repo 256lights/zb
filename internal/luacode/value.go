@@ -105,6 +105,11 @@ func (v Value) Bool() (_ bool, isBool bool) {
 	return v.t != valueTypeNil && v.t != valueTypeFalse, v.t.noVariant() == valueTypeBoolean
 }
 
+// IsBoolean reports whether the value is a boolean.
+func (v Value) IsBoolean() bool {
+	return v.t.noVariant() == valueTypeBoolean
+}
+
 // Float64 returns the value as a floating-point number
 // and reports whether the value is a number.
 // No coercion occurs.

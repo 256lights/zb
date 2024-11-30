@@ -1385,7 +1385,7 @@ func (p *parser) returnStatement(fs *funcState) error {
 		}
 		switch {
 		case lastExpr.kind.hasMultipleReturns():
-			if err := p.setReturns(fs, lastExpr, multiReturn); err != nil {
+			if err := p.setReturns(fs, lastExpr, MultiReturn); err != nil {
 				return err
 			}
 			if lastExpr.kind == expressionKindCall && nret == 1 && !fs.blocks.insideTBC {
@@ -1396,7 +1396,7 @@ func (p *parser) returnStatement(fs *funcState) error {
 				}
 				fs.Code[lastExpr.pc()] = ABCInstruction(OpTailCall, i.ArgA(), i.ArgB(), i.ArgC(), i.K())
 			}
-			nret = multiReturn
+			nret = MultiReturn
 		case nret == 1:
 			// Can use original slot.
 			if _, first, err = p.toAnyRegister(fs, lastExpr); err != nil {
@@ -1645,7 +1645,7 @@ func (p *parser) functionArguments(fs *funcState, f expressionDescriptor) (expre
 				return voidExpression(), err
 			}
 			if args.kind.hasMultipleReturns() {
-				if err := p.setReturns(fs, args, multiReturn); err != nil {
+				if err := p.setReturns(fs, args, MultiReturn); err != nil {
 					return voidExpression(), err
 				}
 			}
@@ -1665,7 +1665,7 @@ func (p *parser) functionArguments(fs *funcState, f expressionDescriptor) (expre
 	baseRegister := f.register()
 	var numParams int
 	if args.kind.hasMultipleReturns() {
-		numParams = multiReturn
+		numParams = MultiReturn
 	} else {
 		if args.kind != expressionKindVoid {
 			// Close last argument.
@@ -1769,10 +1769,10 @@ func (p *parser) constructor(fs *funcState) (expressionDescriptor, error) {
 
 	if toStore > 0 {
 		if lastListItem.kind.hasMultipleReturns() {
-			if err := p.setReturns(fs, lastListItem, multiReturn); err != nil {
+			if err := p.setReturns(fs, lastListItem, MultiReturn); err != nil {
 				return voidExpression(), err
 			}
-			if err := p.codeSetList(fs, tableRegister, arraySize, multiReturn); err != nil {
+			if err := p.codeSetList(fs, tableRegister, arraySize, MultiReturn); err != nil {
 				return voidExpression(), err
 			}
 			// Do not count last expression (unknown number of elements).

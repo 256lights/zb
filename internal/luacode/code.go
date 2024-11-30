@@ -874,7 +874,7 @@ const fieldsPerFlush = 50
 // to add to the table (or [multiReturn] to add up to stack top).
 func (p *parser) codeSetList(fs *funcState, base registerIndex, numElements int, toStore int) error {
 	switch {
-	case toStore == multiReturn:
+	case toStore == MultiReturn:
 		toStore = 0
 	case toStore <= 0 || toStore >= fieldsPerFlush:
 		return fmt.Errorf("internal error: codeSetList: toStore out of range (%d)", toStore)
@@ -1210,7 +1210,9 @@ func (p *parser) dischargeVars(fs *funcState, e expressionDescriptor) expression
 	return e
 }
 
-const multiReturn = -1
+// MultiReturn is the sentinel
+// that indicates that an arbitrary number of result values are accepted.
+const MultiReturn = -1
 
 // setReturns fixes an expression to return the given number of results.
 // If e is not a multi-ret expression (i.e. a function call or vararg),
