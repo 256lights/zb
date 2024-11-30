@@ -10,6 +10,15 @@ import (
 	"zb.256lights.llc/pkg/internal/luacode"
 )
 
+// callFrame represents an activation record of a Lua or Go function.
+//
+// The calling convention in this virtual machine
+// is to place the function followed by its arguments on the [State] value stack.
+// Registers are the N locations in the stack after the function,
+// where N is the MaxStackSize declared in the [luacode.Prototype].
+// Therefore, the first argument to a function will be in register 0.
+// If the first instruction of a Lua function is [luacode.OpVarargPrep],
+// then the extra arguments will be rotated before the function on the value stack.
 type callFrame struct {
 	// functionIndex is the index on State.stack where the function is located.
 	functionIndex int
@@ -23,41 +32,60 @@ type callFrame struct {
 	pc int
 }
 
+// framePointer returns the top of the value stack for the calling function.
+func (frame callFrame) framePointer() int {
+	return frame.functionIndex - frame.numExtraArguments
+}
+
 func (frame callFrame) registerStart() int {
 	return frame.functionIndex + 1
 }
 
 func (frame callFrame) extraArgumentsRange() (start, end int) {
-	end = frame.functionIndex
-	start = frame.functionIndex - frame.numExtraArguments
-	return
+	return frame.framePointer(), frame.functionIndex
 }
 
-func (l *State) loadFrame(frame *callFrame) (f luaFunction, registers []any, err error) {
+// loadLuaFrame obtains the top [callFrame] of the call stack,
+// reads the [luaFunction] from the value stack,
+// and returns a slice of the value stack to be used as the function's registers.
+// loadLuaFrame returns an error if the value stack is not large enough
+// for the function's local registers.
+func (l *State) loadLuaFrame() (frame *callFrame, f luaFunction, registers []any, err error) {
+	frame = l.frame()
 	v := l.stack[frame.functionIndex]
 	f, ok := v.(luaFunction)
 	if !ok {
-		return luaFunction{}, nil, fmt.Errorf("internal error: call frame function is a %T", v)
+		return frame, luaFunction{}, nil, fmt.Errorf("internal error: call frame function is a %T", v)
 	}
 	registerStart := frame.registerStart()
 	registerEnd := registerStart + int(f.proto.MaxStackSize)
 	if !l.grow(registerEnd) {
-		return f, nil, errStackOverflow
+		return frame, f, nil, errStackOverflow
 	}
 	registers = l.stack[registerStart:registerEnd]
-	return f, registers, nil
+	return frame, f, registers, nil
 }
 
 func (l *State) exec() error {
-	startFrame := len(l.callStack) - 1
-	frame := &l.callStack[startFrame]
-	f, registers, err := l.loadFrame(frame)
+	if len(l.callStack) == 0 {
+		panic("exec called on empty call stack")
+	}
+	callerDepth := len(l.callStack) - 1
+	defer func() {
+		clear(l.callStack[callerDepth:])
+		l.callStack = l.callStack[:callerDepth]
+	}()
+
+	frame, f, registers, err := l.loadLuaFrame()
+	callerValueTop := frame.framePointer()
 	if err != nil {
+		l.setTop(callerValueTop)
 		return err
 	}
 
-	for len(l.callStack) > startFrame {
+	for len(l.callStack) > callerDepth {
 		if frame.pc >= len(f.proto.Code) {
+			l.setTop(callerValueTop)
 			return fmt.Errorf("jumped out of bounds")
 		}
 		nextPC := frame.pc + 1
@@ -97,44 +125,58 @@ func (l *State) exec() error {
 				numResults = len(l.stack) - resultStackStart
 			}
 			if i.K() {
+				l.setTop(callerValueTop)
 				return errors.New("TODO(soon): close upvalues")
 			}
 
 			l.setTop(resultStackStart + numResults)
-			if c := i.ArgC(); c > 0 {
-				// Function is variadic.
-				// Restore function index to its original position.
-				numNamedParameters := int(c - 1)
-				frame.functionIndex -= frame.numExtraArguments + numNamedParameters + 1
-			}
-			frame = l.finishCall(numResults)
-			if len(l.callStack) <= startFrame {
+			l.finishCall(numResults)
+			if len(l.callStack) <= callerDepth {
 				return nil
 			}
-			f, registers, err = l.loadFrame(frame)
+			frame, f, registers, err = l.loadLuaFrame()
 			if err != nil {
+				l.setTop(callerValueTop)
 				return err
 			}
 		case luacode.OpReturn0:
-			frame = l.finishCall(0)
-			f, registers, err = l.loadFrame(frame)
+			l.finishCall(0)
+			frame, f, registers, err = l.loadLuaFrame()
 			if err != nil {
+				l.setTop(callerValueTop)
 				return err
 			}
 		case luacode.OpReturn1:
 			l.setTop(frame.registerStart() + int(i.ArgA()) + 1)
-			frame = l.finishCall(1)
-			f, registers, err = l.loadFrame(frame)
+			l.finishCall(1)
+			frame, f, registers, err = l.loadLuaFrame()
 			if err != nil {
+				l.setTop(callerValueTop)
 				return err
 			}
 		case luacode.OpVarargPrep:
-			if err := l.varargPrep(frame, int(i.ArgA()), int(f.proto.MaxStackSize)); err != nil {
-				return err
+			if frame.pc != 0 {
+				l.setTop(callerValueTop)
+				return fmt.Errorf("%v must be first instruction in function", luacode.OpVarargPrep)
 			}
-			f, registers, err = l.loadFrame(frame)
-			if err != nil {
-				return err
+			if frame.numExtraArguments != 0 {
+				l.setTop(callerValueTop)
+				return fmt.Errorf("cannot run %v multiple times", luacode.OpVarargPrep)
+			}
+			numArguments := len(l.stack) - frame.registerStart()
+			numFixedParameters := int(i.ArgA())
+			numExtraArguments := numArguments - numFixedParameters
+			if numExtraArguments > 0 {
+				rotate(l.stack[frame.functionIndex:], numExtraArguments)
+				frame.functionIndex += numExtraArguments
+				frame.numExtraArguments = numExtraArguments
+
+				// Reload frame to update register slice.
+				frame, f, registers, err = l.loadLuaFrame()
+				if err != nil {
+					l.setTop(callerValueTop)
+					return err
+				}
 			}
 		case luacode.OpExtraArg:
 			return fmt.Errorf("unexpected %v at pc %d", luacode.OpExtraArg, frame.pc)
@@ -148,28 +190,12 @@ func (l *State) exec() error {
 	return nil
 }
 
-func (l *State) varargPrep(frame *callFrame, numFixedParameters, maxStackSize int) error {
-	numArguments := len(l.stack) - (frame.functionIndex + 1)
-	numExtraArguments := numArguments - numFixedParameters
-	frame.numExtraArguments = numExtraArguments
-
-	if !l.grow(len(l.stack) + maxStackSize + 1) {
-		return errStackOverflow
-	}
-	l.stack = append(l.stack, l.stack[frame.functionIndex])
-	fixedArguments := l.stack[frame.functionIndex+1 : frame.functionIndex+1+numFixedParameters]
-	l.stack = append(l.stack, fixedArguments...)
-	clear(fixedArguments)
-	frame.functionIndex += numArguments + 1
-	return nil
-}
-
 // finishCall moves the top numResults stack values
 // to where the caller expects them.
-func (l *State) finishCall(numResults int) *callFrame {
+func (l *State) finishCall(numResults int) {
 	frame := l.frame()
 	results := l.stack[len(l.stack)-numResults:]
-	dest := l.stack[frame.functionIndex:cap(l.stack)]
+	dest := l.stack[frame.framePointer():cap(l.stack)]
 	numWantedResults := frame.numResults
 	if numWantedResults == MultipleReturns {
 		numWantedResults = numResults
@@ -181,10 +207,9 @@ func (l *State) finishCall(numResults int) *callFrame {
 	}
 	// Clear out any registers the function was using.
 	clear(dest[numWantedResults:])
-	l.setTop(frame.functionIndex + numWantedResults)
+	l.setTop(frame.framePointer() + numWantedResults)
 
 	l.popCallStack()
-	return &l.callStack[len(l.callStack)-1]
 }
 
 func decodeExtraArg(frame *callFrame, proto *luacode.Prototype) (uint32, error) {

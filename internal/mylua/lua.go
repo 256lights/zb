@@ -240,6 +240,11 @@ func (l *State) Rotate(idx, n int) {
 	rotate(l.stack[i:], n)
 }
 
+// rotate rotates the elements of a slice
+// n positions toward the end of the slice.
+// n may be negative.
+// If the absolute value of n is greater than len(s),
+// then rotate panics.
 func rotate[S ~[]E, E any](s S, n int) {
 	var m int
 	if n >= 0 {
@@ -610,17 +615,16 @@ func (l *State) PushClosure(n int, f Function) {
 // (the first result is pushed first),
 // so that after the call the last result is on the top of the stack.
 //
-// If there is any error, Call catches it,
-// pushes a single value on the stack (the error object),
-// and returns an error.
 // Call always removes the function and its arguments from the stack.
 //
 // If msgHandler is 0,
-// then the error object returned on the stack is exactly the original error object.
+// then errors are returned as a Go error value.
+// (This is in contrast to the C Lua implementation which pushes an error object on the stack.)
 // Otherwise, msgHandler is the stack index of a message handler.
 // (This index cannot be a pseudo-index.)
 // In case of runtime errors, this handler will be called with the error object
-// and its return value will be the object returned on the stack by Call.
+// and its return value will be returned on the stack by Call.
+// The return value's string value will be used as a Go error returned by Call.
 // Typically, the message handler is used to add more debug information to the error object,
 // such as a stack traceback.
 // Such information cannot be gathered after the return of Call,
@@ -633,23 +637,14 @@ func (l *State) Call(nArgs, nResults, msgHandler int) error {
 	if nResults != MultipleReturns && cap(l.stack)-len(l.stack) < nResults-nArgs {
 		return fmt.Errorf("results from function overflow current stack size")
 	}
-	var msgHandlerFunc function
 	if msgHandler != 0 {
-		v, _, err := l.valueByIndex(msgHandler)
-		if err != nil {
-			return err
-		}
-		var ok bool
-		msgHandlerFunc, ok = v.(function)
-		if !ok {
-			return fmt.Errorf("message handler is a %v", valueType(v))
-		}
+		return fmt.Errorf("TODO(someday): support message handlers")
 	}
 
-	return l.pcall(nArgs, nResults, msgHandlerFunc)
+	return l.pcall(nArgs, nResults)
 }
 
-func (l *State) pcall(nArgs, nResults int, msgHandler function) error {
+func (l *State) pcall(nArgs, nResults int) error {
 	functionIndex := len(l.stack) - nArgs - 1
 	l.callStack = append(l.callStack, callFrame{
 		functionIndex: functionIndex,
