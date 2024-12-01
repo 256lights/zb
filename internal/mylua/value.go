@@ -190,10 +190,15 @@ func toBoolean(v any) bool {
 type table struct {
 	id      uint64
 	entries []tableEntry
+	meta    *table
 }
 
-func newTable() *table {
-	return &table{id: nextID()}
+func newTable(capacity int) *table {
+	tab := &table{id: nextID()}
+	if capacity > 0 {
+		tab.entries = make([]tableEntry, 0, capacity)
+	}
+	return tab
 }
 
 // len returns a [border in the table].
@@ -201,6 +206,9 @@ func newTable() *table {
 //
 // [border in the table]: https://lua.org/manual/5.4/manual.html#3.4.7
 func (tab *table) len() int64 {
+	if tab == nil {
+		return 0
+	}
 	start, ok := findEntry(tab.entries, int64(1))
 	if !ok {
 		return 0
@@ -238,6 +246,9 @@ func (tab *table) len() int64 {
 }
 
 func (tab *table) get(key any) any {
+	if tab == nil {
+		return nil
+	}
 	i, found := findEntry(tab.entries, key)
 	if !found {
 		return nil
@@ -253,8 +264,8 @@ func (tab *table) set(key, value any) error {
 		if math.IsNaN(k) {
 			return errors.New("table index is NaN")
 		}
-		if start, ok := luacode.FloatToInteger(k, luacode.OnlyIntegral); ok {
-			key = start
+		if i, ok := luacode.FloatToInteger(k, luacode.OnlyIntegral); ok {
+			key = i
 		}
 	}
 
@@ -271,6 +282,27 @@ func (tab *table) set(key, value any) error {
 		})
 	}
 	return nil
+}
+
+// setExisting looks up a key in the table
+// and changes or removes the value for the key as appropriate
+// if the key was found and returns true.
+// Otherwise, if the key was not found,
+// then setExisting does nothing and returns false.
+func (tab *table) setExisting(key, value any) bool {
+	if tab == nil {
+		return false
+	}
+	i, found := findEntry(tab.entries, key)
+	if !found {
+		return false
+	}
+	if value == nil {
+		tab.entries = slices.Delete(tab.entries, i, i+1)
+	} else {
+		tab.entries[i].value = value
+	}
+	return true
 }
 
 type tableEntry struct {

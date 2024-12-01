@@ -83,14 +83,28 @@ func (l *State) exec() error {
 		return err
 	}
 
+	rkC := func(i luacode.Instruction) any {
+		if i.K() {
+			return importConstant(f.proto.Constants[i.ArgC()])
+		} else {
+			return registers[i.ArgC()]
+		}
+	}
+
 	for len(l.callStack) > callerDepth {
 		if frame.pc >= len(f.proto.Code) {
 			l.setTop(callerValueTop)
 			return fmt.Errorf("jumped out of bounds")
 		}
+		i := f.proto.Code[frame.pc]
+		if !i.IsInTop() {
+			// For instructions that don't read the stack top,
+			// use the end of the registers.
+			l.setTop(frame.registerStart() + int(f.proto.MaxStackSize))
+		}
 		nextPC := frame.pc + 1
 
-		switch i := f.proto.Code[frame.pc]; i.OpCode() {
+		switch i.OpCode() {
 		case luacode.OpMove:
 			registers[i.ArgA()] = registers[i.ArgB()]
 		case luacode.OpLoadI:
@@ -102,6 +116,7 @@ func (l *State) exec() error {
 		case luacode.OpLoadKX:
 			arg, err := decodeExtraArg(frame, f.proto)
 			if err != nil {
+				l.setTop(callerValueTop)
 				return err
 			}
 			registers[i.ArgA()] = importConstant(f.proto.Constants[arg])
@@ -118,6 +133,99 @@ func (l *State) exec() error {
 			registers[i.ArgA()] = f.upvalues[i.ArgB()]
 		case luacode.OpSetUpval:
 			f.upvalues[i.ArgB()] = registers[i.ArgA()]
+		case luacode.OpGetTabUp:
+			var err error
+			registers[i.ArgA()], err = l.index(f.upvalues[i.ArgB()], importConstant(f.proto.Constants[i.ArgC()]))
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+		case luacode.OpGetTable:
+			var err error
+			registers[i.ArgA()], err = l.index(registers[i.ArgB()], registers[i.ArgC()])
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+		case luacode.OpGetI:
+			var err error
+			registers[i.ArgA()], err = l.index(registers[i.ArgB()], int64(i.ArgC()))
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+		case luacode.OpGetField:
+			var err error
+			registers[i.ArgA()], err = l.index(registers[i.ArgB()], importConstant(f.proto.Constants[i.ArgC()]))
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+		case luacode.OpSetTabUp:
+			err := l.setIndex(
+				f.upvalues[i.ArgA()],
+				importConstant(f.proto.Constants[i.ArgB()]),
+				rkC(i),
+			)
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+		case luacode.OpSetTable:
+			err := l.setIndex(
+				registers[i.ArgA()],
+				registers[i.ArgB()],
+				rkC(i),
+			)
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+		case luacode.OpSetI:
+			err := l.setIndex(
+				registers[i.ArgA()],
+				int64(i.ArgB()),
+				rkC(i),
+			)
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+		case luacode.OpSetField:
+			err := l.setIndex(
+				registers[i.ArgA()],
+				importConstant(f.proto.Constants[i.ArgB()]),
+				rkC(i),
+			)
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+		case luacode.OpNewTable:
+			hashSizeLog2 := i.ArgB()
+			hashSize := 0
+			if hashSizeLog2 != 0 {
+				hashSize = 1 << (hashSizeLog2 - 1)
+			}
+			arraySize := int(i.ArgC())
+			if i.K() {
+				arg, err := decodeExtraArg(frame, f.proto)
+				if err != nil {
+					l.setTop(callerValueTop)
+					return err
+				}
+				arraySize += int(arg) * (1 << 8)
+			}
+			registers[i.ArgA()] = newTable(hashSize + arraySize)
+		case luacode.OpSelf:
+			rb := registers[i.ArgB()]
+			registers[int(i.ArgA())+1] = rb
+			var err error
+			registers[i.ArgA()], err = l.index(rb, rkC(i))
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
 		case luacode.OpReturn:
 			resultStackStart := frame.registerStart() + int(i.ArgA())
 			numResults := int(i.ArgB()) - 1

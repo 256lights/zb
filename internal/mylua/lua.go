@@ -24,6 +24,8 @@ const (
 
 const maxUpvalues = 256
 
+const maxMetaDepth = 200
+
 // MultipleReturns is the sentinel
 // that indicates that an arbitrary number of result values are accepted.
 const MultipleReturns = luacode.MultiReturn
@@ -66,10 +68,29 @@ func isPseudo(i int) bool {
 	return i <= RegistryIndex
 }
 
+// A State is a Lua execution environment.
+// The zero value is a ready-to-use environment
+// with an empty stack and and an empty global table.
+//
+// # Error Handling
+//
+// If the msgHandler argument to a [State] method is 0,
+// then errors are returned as a Go error value.
+// (This is in contrast to the C Lua implementation which pushes an error object onto the stack.)
+// Otherwise, msgHandler is the stack index of a message handler.
+// (This index cannot be a pseudo-index.)
+// In case of runtime errors, this handler will be called with the error object
+// and its return value will be returned on the stack by the [State] method being called.
+// The return value's string value will be used as a Go error returned by the [State] method.
+// Typically, the message handler is used to add more debug information to the error object,
+// such as a stack traceback.
+// Such information cannot be gathered after the return of a [State] method,
+// since by then the stack will have been unwound.
 type State struct {
-	stack     []any
-	registry  table
-	callStack []callFrame
+	stack          []any
+	registry       table
+	callStack      []callFrame
+	typeMetatables [9]*table
 }
 
 func (l *State) init() {
@@ -77,8 +98,8 @@ func (l *State) init() {
 		l.stack = slices.Grow(l.stack, minStack*2-len(l.stack))
 	}
 	if l.registry.id == 0 {
-		l.registry.id = nextID()
-		l.registry.set(RegistryIndexGlobals, newTable())
+		l.registry = *newTable(1)
+		l.registry.set(RegistryIndexGlobals, newTable(0))
 	}
 	if len(l.callStack) == 0 {
 		l.stack = append(l.stack, goFunction{
@@ -185,6 +206,9 @@ func (l *State) isAcceptableIndex(idx int) bool {
 // this result is equal to the number of elements in the stack;
 // in particular, 0 means an empty stack.
 func (l *State) Top() int {
+	if len(l.callStack) == 0 {
+		return 0
+	}
 	return len(l.stack) - l.frame().registerStart()
 }
 
@@ -515,6 +539,40 @@ func (l *State) ToString(idx int) (s string, ok bool) {
 	}
 }
 
+// StringContext returns any context values associated with the string at the given index.
+// If the Lua value is not a string, the function returns nil.
+func (l *State) StringContext(idx int) sets.Set[string] {
+	l.init()
+	v, _, err := l.valueByIndex(idx)
+	if err != nil {
+		return nil
+	}
+	if v, ok := v.(stringValue); ok {
+		return v.context.Clone()
+	}
+	return nil
+}
+
+// RawLen returns the raw "length" of the value at the given index:
+// for strings, this is the string length;
+// for tables, this is the result of the length operator ('#') with no metamethods;
+// For other values, RawLen returns 0.
+func (l *State) RawLen(idx int) uint64 {
+	l.init()
+	v, _, err := l.valueByIndex(idx)
+	if err != nil {
+		panic(err)
+	}
+	switch v := v.(type) {
+	case stringValue:
+		return uint64(len(v.s))
+	case *table:
+		return uint64(v.len())
+	default:
+		return 0
+	}
+}
+
 func (l *State) push(x any) {
 	if len(l.stack) == cap(l.stack) {
 		panic(errStackOverflow)
@@ -586,13 +644,411 @@ func (l *State) PushBoolean(b bool) {
 // and the string result of its Error() method will be used as the error object.
 type Function func(*State) (int, error)
 
+// PushClosure pushes a Go closure onto the stack.
+// n is how many upvalues this function will have,
+// popped off the top of the stack.
+// (When there are multiple upvalues, the first value is pushed first.)
+// If n is negative or greater than 256, then PushClosure panics.
 func (l *State) PushClosure(n int, f Function) {
 	l.init()
+	if n > maxUpvalues || n > l.Top() {
+		panic("too many upvalues")
+	}
+	upvalueStart := len(l.stack) - n
+	upvalues := slices.Clone(l.stack[upvalueStart:])
+	l.setTop(upvalueStart)
 	l.push(goFunction{
 		id:       nextID(),
 		cb:       f,
-		upvalues: make([]any, n),
+		upvalues: upvalues,
 	})
+}
+
+// Global pushes onto the stack the value of the global with the given name,
+// returning the type of that value.
+//
+// As in Lua, this function may trigger a metamethod on the globals table
+// for the "index" event.
+// If there is any error, Global catches it,
+// pushes nil or the error object (see Error Handling in [State]) onto the stack,
+// and returns an error with [TypeNil].
+func (l *State) Global(name string, msgHandler int) (Type, error) {
+	if msgHandler != 0 {
+		return TypeNil, fmt.Errorf("TODO(someday): support message handlers")
+	}
+	l.init()
+	v, err := l.index(l.registry.get(RegistryIndexGlobals), stringValue{s: name})
+	if err != nil {
+		l.push(nil)
+		return TypeNil, err
+	}
+	l.push(v)
+	return valueType(v), nil
+}
+
+// Table pushes onto the stack the value t[k],
+// where t is the value at the given index
+// and k is the value on the top of the stack.
+// Returns the type of the pushed value.
+//
+// This function pops the key from the stack,
+// pushing the resulting value in its place.
+//
+// As in Lua, this function may trigger a metamethod for the "index" event.
+// If there is any error, Table catches it,
+// pushes nil or the error object (see Error Handling in [State]) onto the stack,
+// and returns an error with [TypeNil].
+// Table always removes the key from the stack.
+func (l *State) Table(idx, msgHandler int) (Type, error) {
+	if msgHandler != 0 {
+		return TypeNil, fmt.Errorf("TODO(someday): support message handlers")
+	}
+	l.init()
+	if l.Top() == 0 {
+		return TypeNil, errors.New("empty stack")
+	}
+	t, _, err := l.valueByIndex(idx)
+	k := l.stack[len(l.stack)-1]
+	l.setTop(len(l.stack) - 1) // Always pop key.
+	if err != nil {
+		l.push(nil)
+		return TypeNil, err
+	}
+	v, err := l.index(t, k)
+	if err != nil {
+		l.push(nil)
+		return TypeNil, err
+	}
+	l.push(v)
+	return valueType(v), nil
+}
+
+// index gets the value from a table for the given key,
+// calling an __index metamethod if present.
+func (l *State) index(t, k any) (any, error) {
+	if t, ok := t.(*table); ok {
+		if v := t.get(k); v != nil {
+			return v, nil
+		}
+	}
+	for range maxMetaDepth {
+		tm := l.metatable(t).get(stringValue{s: luacode.TagMethodIndex.String()})
+		switch tm := tm.(type) {
+		case nil:
+			if _, isValueTable := t.(*table); !isValueTable {
+				return nil, fmt.Errorf("attempt to index a %s", l.typeName(t))
+			}
+			return nil, nil
+		case *table:
+			if v := tm.get(k); v != nil {
+				return v, nil
+			}
+		case luaFunction, goFunction:
+			if !l.grow(len(l.stack) + 3) {
+				return nil, errStackOverflow
+			}
+			l.stack = append(l.stack, tm, t, k)
+			isLua, err := l.prepareCall(2, 1)
+			if err != nil {
+				return nil, err
+			}
+			if isLua {
+				if err := l.exec(); err != nil {
+					return nil, err
+				}
+			}
+			v := l.stack[len(l.stack)-1]
+			l.setTop(len(l.stack) - 1)
+			return v, nil
+		}
+
+		t = tm
+	}
+
+	return nil, fmt.Errorf("'%v' chain too long; possible loop", luacode.TagMethodIndex)
+}
+
+// Field pushes onto the stack the value t[k],
+// where t is the value at the given index.
+// See [State.Table] for further information.
+func (l *State) Field(idx int, k string, msgHandler int) (Type, error) {
+	if msgHandler != 0 {
+		return TypeNil, fmt.Errorf("TODO(someday): support message handlers")
+	}
+	l.init()
+	t, _, err := l.valueByIndex(idx)
+	if err != nil {
+		l.push(nil)
+		return TypeNil, err
+	}
+	v, err := l.index(t, stringValue{s: k})
+	if err != nil {
+		l.push(nil)
+		return TypeNil, err
+	}
+	l.push(v)
+	return valueType(v), nil
+}
+
+// RawGet pushes onto the stack t[k],
+// where t is the value at the given index
+// and k is the value on the top of the stack.
+// This function pops the key from the stack,
+// pushing the resulting value in its place.
+//
+// RawGet does a raw access (i.e. without metamethods).
+// The value at idx must be a table.
+func (l *State) RawGet(idx int) Type {
+	l.init()
+	t, _, err := l.valueByIndex(idx)
+	if err != nil {
+		panic(err)
+	}
+	k, _, err := l.valueByIndex(-1)
+	if err != nil {
+		panic(err)
+	}
+	l.setTop(len(l.stack) - 1)
+
+	v := t.(*table).get(k)
+	l.push(v)
+	return valueType(v)
+}
+
+// RawIndex pushes onto the stack the value t[n],
+// where t is the table at the given index.
+// The access is raw, that is, it does not use the __index metavalue.
+// Returns the type of the pushed value.
+func (l *State) RawIndex(idx int, n int64) Type {
+	l.init()
+	t, _, err := l.valueByIndex(idx)
+	if err != nil {
+		panic(err)
+	}
+
+	v := t.(*table).get(n)
+	l.push(v)
+	return valueType(v)
+}
+
+// RawField pushes onto the stack t[k],
+// where t is the value at the given index.
+//
+// RawField does a raw access (i.e. without metamethods).
+// The value at idx must be a table.
+func (l *State) RawField(idx int, k string) Type {
+	l.init()
+	t, _, err := l.valueByIndex(idx)
+	if err != nil {
+		panic(err)
+	}
+
+	v := t.(*table).get(k)
+	l.push(v)
+	return valueType(v)
+}
+
+// CreateTable creates a new empty table and pushes it onto the stack.
+// nArr is a hint for how many elements the table will have as a sequence;
+// nRec is a hint for how many other elements the table will have.
+// Lua may use these hints to preallocate memory for the new table.
+func (l *State) CreateTable(nArr, nRec int) {
+	l.init()
+	l.push(newTable(nArr + nRec))
+}
+
+// Metatable reports whether the value at the given index has a metatable
+// and if so, pushes that metatable onto the stack.
+func (l *State) Metatable(idx int) bool {
+	l.init()
+	v, _, err := l.valueByIndex(idx)
+	if err != nil {
+		panic(err)
+	}
+	mt := l.metatable(v)
+	if mt == nil {
+		return false
+	}
+	l.push(mt)
+	return true
+}
+
+func (l *State) metatable(v any) *table {
+	switch v := v.(type) {
+	case *table:
+		return v.meta
+	default:
+		return l.typeMetatables[valueType(v)]
+	}
+}
+
+// SetGlobal pops a value from the stack
+// and sets it as the new value of the global with the given name.
+//
+// As in Lua, this function may trigger a metamethod on the globals table
+// for the "newindex" event.
+// If there is an error and msgHandler is not 0,
+// SetGlobal pushes the error onto the stack and returns an error.
+// (See Error Handling in [State].)
+// SetGlobal always removes the value from the stack.
+func (l *State) SetGlobal(name string, msgHandler int) error {
+	if msgHandler != 0 {
+		return fmt.Errorf("TODO(someday): support message handlers")
+	}
+	l.init()
+	if l.Top() == 0 {
+		return errors.New("stack empty")
+	}
+	v := l.stack[len(l.stack)-1]
+	l.setTop(len(l.stack) - 1)
+	if err := l.setIndex(l.registry.get(RegistryIndexGlobals), stringValue{s: name}, v); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SetTable does the equivalent to t[k] = v,
+// where t is the value at the given index,
+// v is the value on the top of the stack,
+// and k is the value just below the top.
+// This function pops both the key and the value from the stack.
+//
+// As in Lua, this function may trigger a metamethod for the "newindex" event.
+// If there is an error and msgHandler is not 0,
+// SetTable pushes the error onto the stack and returns an error.
+// (See Error Handling in [State].)
+// SetTable always removes the key and value from the stack.
+func (l *State) SetTable(idx, msgHandler int) error {
+	if msgHandler != 0 {
+		return fmt.Errorf("TODO(someday): support message handlers")
+	}
+	l.init()
+	if l.Top() < 2 {
+		return errors.New("stack underflow")
+	}
+	t, _, err := l.valueByIndex(idx)
+	k := l.stack[len(l.stack)-2]
+	v := l.stack[len(l.stack)-1]
+	l.setTop(len(l.stack) - 2) // Always pop key and value.
+	if err != nil {
+		return err
+	}
+	if err := l.setIndex(t, k, v); err != nil {
+		return err
+	}
+	return nil
+}
+
+// setIndex sets the value in a table for the given key,
+// calling a __newindex metamethod if appropriate.
+func (l *State) setIndex(t, k, v any) error {
+	// If there's an existing table entry, we don't search metatable.
+	if t, _ := t.(*table); t.setExisting(k, v) {
+		return nil
+	}
+
+	for range maxMetaDepth {
+		tm := l.metatable(t).get(stringValue{s: luacode.TagMethodNewIndex.String()})
+		switch tm := tm.(type) {
+		case nil:
+			tab, _ := t.(*table)
+			if tab == nil {
+				return fmt.Errorf("attempt to index a %s", l.typeName(t))
+			}
+			return tab.set(k, v)
+		case *table:
+			if tm.setExisting(k, v) {
+				return nil
+			}
+		case luaFunction, goFunction:
+			if !l.grow(len(l.stack) + 4) {
+				return errStackOverflow
+			}
+			l.stack = append(l.stack, tm, t, k, v)
+			isLua, err := l.prepareCall(3, 0)
+			if err != nil {
+				return err
+			}
+			if isLua {
+				if err := l.exec(); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+
+		t = tm
+	}
+
+	return fmt.Errorf("'%v' chain too long; possible loop", luacode.TagMethodNewIndex)
+}
+
+// SetField does the equivalent to t[k] = v,
+// where t is the value at the given index,
+// v is the value on the top of the stack,
+// and k is the given string.
+// This function pops the value from the stack.
+// See [State.SetTable] for more information.
+func (l *State) SetField(idx int, k string, msgHandler int) error {
+	if msgHandler != 0 {
+		return fmt.Errorf("TODO(someday): support message handlers")
+	}
+	l.init()
+	if l.Top() < 1 {
+		return errors.New("empty stack")
+	}
+	t, _, err := l.valueByIndex(idx)
+	v := l.stack[len(l.stack)-1]
+	l.setTop(len(l.stack) - 1) // Always pop value.
+	if err != nil {
+		return err
+	}
+	if err := l.setIndex(t, stringValue{s: k}, v); err != nil {
+		return err
+	}
+	return nil
+}
+
+// RawSet does the equivalent to t[k] = v,
+// where t is the value at the given index,
+// v is the value on the top of the stack,
+// and k is the value just below the top.
+// This function pops both the key and the value from the stack.
+func (l *State) RawSet(idx int) {
+	l.init()
+	if l.Top() < 2 {
+		panic("stack underflow")
+	}
+	t, _, err := l.valueByIndex(idx)
+	k := l.stack[len(l.stack)-2]
+	v := l.stack[len(l.stack)-1]
+	l.setTop(len(l.stack) - 2) // Always pop key and value.
+	if err != nil {
+		panic(err)
+	}
+	if err := t.(*table).set(k, v); err != nil {
+		panic(err)
+	}
+}
+
+// RawSetField does the equivalent to t[k] = v,
+// where t is the value at the given index
+// and v is the value on the top of the stack.
+// This function pops the value from the stack.
+func (l *State) RawSetField(idx int, k string) {
+	l.init()
+	if l.Top() < 1 {
+		panic("stack underflow")
+	}
+	t, _, err := l.valueByIndex(idx)
+	v := l.stack[len(l.stack)-1]
+	l.setTop(len(l.stack) - 1) // Always pop value.
+	if err != nil {
+		panic(err)
+	}
+	if err := t.(*table).set(stringValue{s: k}, v); err != nil {
+		panic(err)
+	}
 }
 
 // Call calls a function (or callable object) in protected mode.
@@ -616,19 +1072,9 @@ func (l *State) PushClosure(n int, f Function) {
 // so that after the call the last result is on the top of the stack.
 //
 // Call always removes the function and its arguments from the stack.
-//
-// If msgHandler is 0,
-// then errors are returned as a Go error value.
-// (This is in contrast to the C Lua implementation which pushes an error object on the stack.)
-// Otherwise, msgHandler is the stack index of a message handler.
-// (This index cannot be a pseudo-index.)
-// In case of runtime errors, this handler will be called with the error object
-// and its return value will be returned on the stack by Call.
-// The return value's string value will be used as a Go error returned by Call.
-// Typically, the message handler is used to add more debug information to the error object,
-// such as a stack traceback.
-// Such information cannot be gathered after the return of Call,
-// since by then the stack has unwound.
+// If an error occurs and msgHandler is not zero,
+// then Call will push an error object to the stack.
+// (See Error Handling in [State] for details.)
 func (l *State) Call(nArgs, nResults, msgHandler int) error {
 	l.init()
 	if l.Top() < nArgs+1 {
@@ -641,46 +1087,67 @@ func (l *State) Call(nArgs, nResults, msgHandler int) error {
 		return fmt.Errorf("TODO(someday): support message handlers")
 	}
 
-	return l.pcall(nArgs, nResults)
-}
-
-func (l *State) pcall(nArgs, nResults int) error {
-	functionIndex := len(l.stack) - nArgs - 1
-	l.callStack = append(l.callStack, callFrame{
-		functionIndex: functionIndex,
-		numResults:    nResults,
-	})
-	switch f := l.stack[functionIndex].(type) {
-	case luaFunction:
-		if !l.CheckStack(int(f.proto.MaxStackSize) - nArgs) {
-			l.popCallStack()
-			l.setTop(functionIndex - 1)
-			l.PushString(errStackOverflow.Error())
-			return errStackOverflow
-		}
-		return l.exec()
-	case goFunction:
-		if !l.CheckStack(minStack) {
-			l.popCallStack()
-			l.setTop(functionIndex - 1)
-			l.PushString(errStackOverflow.Error())
-			return errStackOverflow
-		}
-		n, err := f.cb(l)
-		if err != nil {
-			l.popCallStack()
-			l.setTop(functionIndex - 1)
-			l.PushString(err.Error())
-			return err
-		}
-		l.finishCall(n)
-		return nil
-	default:
-		l.popCallStack()
-		l.setTop(functionIndex - 1)
-		err := fmt.Errorf("function is a %v", valueType(f))
+	isLua, err := l.prepareCall(nArgs, nResults)
+	if err != nil {
 		return err
 	}
+	if isLua {
+		if err := l.exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (l *State) prepareCall(numArgs, numResults int) (isLua bool, err error) {
+	functionIndex := len(l.stack) - numArgs - 1
+	l.callStack = append(l.callStack, callFrame{
+		functionIndex: functionIndex,
+		numResults:    numResults,
+	})
+	for range maxMetaDepth {
+		switch f := l.stack[functionIndex].(type) {
+		case luaFunction:
+			if !l.grow(len(l.stack) + int(f.proto.MaxStackSize) - numArgs) {
+				l.popCallStack()
+				l.setTop(functionIndex - 1)
+				return true, errStackOverflow
+			}
+			return true, nil
+		case goFunction:
+			if !l.grow(len(l.stack) + minStack) {
+				l.popCallStack()
+				l.setTop(functionIndex - 1)
+				return false, errStackOverflow
+			}
+			n, err := f.cb(l)
+			if err != nil {
+				l.popCallStack()
+				l.setTop(functionIndex - 1)
+				return false, err
+			}
+			l.finishCall(n)
+			return false, nil
+		default:
+			tm := l.metatable(f).get(stringValue{s: luacode.TagMethodCall.String()})
+			if tm == nil {
+				l.popCallStack()
+				l.setTop(functionIndex - 1)
+				return false, fmt.Errorf("function is a %v", valueType(f))
+			}
+			if !l.grow(len(l.stack) + 1) {
+				l.popCallStack()
+				l.setTop(functionIndex - 1)
+				return false, errStackOverflow
+			}
+			// Move original function object into first argument position.
+			l.stack = slices.Insert(l.stack, functionIndex, tm)
+		}
+	}
+
+	l.popCallStack()
+	l.setTop(functionIndex - 1)
+	return false, fmt.Errorf("exceeded depth for %v", luacode.TagMethodCall)
 }
 
 func (l *State) popCallStack() {
@@ -754,6 +1221,16 @@ func (l *State) Load(r io.Reader, chunkName luacode.Source, mode string) (err er
 		upvalues: []any{l.registry.get(RegistryIndexGlobals)},
 	})
 	return nil
+}
+
+func (l *State) typeName(v any) string {
+	switch v := v.(type) {
+	case *table:
+		if s, ok := v.get(stringValue{s: "__name"}).(stringValue); ok {
+			return s.s
+		}
+	}
+	return valueType(v).String()
 }
 
 var errStackOverflow = errors.New("stack overflow")
