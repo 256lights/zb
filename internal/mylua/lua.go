@@ -1031,6 +1031,27 @@ func (l *State) RawSet(idx int) {
 	}
 }
 
+// RawSetIndex does the equivalent of t[n] = v,
+// where t is the table at the given index
+// and v is the value on the top of the stack.
+// This function pops the value from the stack.
+// The assignment is raw, that is, it does not use the __newindex metavalue.
+func (l *State) RawSetIndex(idx int, n int64) {
+	l.init()
+	if l.Top() < 1 {
+		panic("stack underflow")
+	}
+	t, _, err := l.valueByIndex(idx)
+	v := l.stack[len(l.stack)-1]
+	l.setTop(len(l.stack) - 1) // Always pop value.
+	if err != nil {
+		panic(err)
+	}
+	if err := t.(*table).set(n, v); err != nil {
+		panic(err)
+	}
+}
+
 // RawSetField does the equivalent to t[k] = v,
 // where t is the value at the given index
 // and v is the value on the top of the stack.
