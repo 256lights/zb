@@ -186,21 +186,6 @@ func (l *State) AbsIndex(idx int) int {
 	return i - l.frame().registerStart() + 1
 }
 
-func (l *State) isValidIndex(idx int) bool {
-	if isPseudo(idx) {
-		return true
-	}
-	if idx < 0 {
-		idx = -idx
-	}
-	return 1 <= idx && idx <= l.Top()
-}
-
-func (l *State) isAcceptableIndex(idx int) bool {
-	l.init()
-	return l.isValidIndex(idx) || l.Top() <= idx && idx <= cap(l.stack)
-}
-
 // Top returns the index of the top element in the stack.
 // Because indices start at 1,
 // this result is equal to the number of elements in the stack;
