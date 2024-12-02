@@ -323,40 +323,63 @@ type stringValue struct {
 type goFunction struct {
 	id       uint64
 	cb       Function
-	upvalues []any
+	upvalues []upvalue
 }
 
 func (f goFunction) functionID() uint64 {
 	return f.id
 }
 
-func (f goFunction) upvaluesSlice() []any {
+func (f goFunction) upvaluesSlice() []upvalue {
 	return f.upvalues
 }
 
 type luaFunction struct {
 	id       uint64
 	proto    *luacode.Prototype
-	upvalues []any
+	upvalues []upvalue
 }
 
 func (f luaFunction) functionID() uint64 {
 	return f.id
 }
 
-func (f luaFunction) upvaluesSlice() []any {
+func (f luaFunction) upvaluesSlice() []upvalue {
 	return f.upvalues
 }
 
 type function interface {
 	functionID() uint64
-	upvaluesSlice() []any
+	upvaluesSlice() []upvalue
 }
 
 var (
 	_ function = goFunction{}
 	_ function = luaFunction{}
 )
+
+type upvalue struct {
+	p          *any
+	stackIndex int
+}
+
+func stackUpvalue(i int) upvalue {
+	return upvalue{stackIndex: i}
+}
+
+func standaloneUpvalue(v any) upvalue {
+	return upvalue{
+		p:          &v,
+		stackIndex: -1,
+	}
+}
+
+func (l *State) resolveUpvalue(uv upvalue) *any {
+	if uv.p == nil {
+		return &l.stack[uv.stackIndex]
+	}
+	return uv.p
+}
 
 var globalIDs struct {
 	mu sync.Mutex

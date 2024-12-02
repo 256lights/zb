@@ -57,6 +57,9 @@ func (l *State) loadLuaFrame() (frame *callFrame, f luaFunction, registers []any
 	if !ok {
 		return frame, luaFunction{}, nil, fmt.Errorf("internal error: call frame function is a %T", v)
 	}
+	if err := l.checkUpvalues(f.upvalues); err != nil {
+		return frame, f, nil, err
+	}
 	registerStart := frame.registerStart()
 	registerEnd := registerStart + int(f.proto.MaxStackSize)
 	if !l.grow(registerEnd) {
@@ -64,6 +67,16 @@ func (l *State) loadLuaFrame() (frame *callFrame, f luaFunction, registers []any
 	}
 	registers = l.stack[registerStart:registerEnd]
 	return frame, f, registers, nil
+}
+
+func (l *State) checkUpvalues(upvalues []upvalue) error {
+	frame := l.frame()
+	for i, uv := range upvalues {
+		if uv.stackIndex >= frame.framePointer() {
+			return fmt.Errorf("internal error: function upvalue [%d] inside current frame", i)
+		}
+	}
+	return nil
 }
 
 func (l *State) exec() error {
@@ -124,7 +137,7 @@ func (l *State) exec() error {
 			registers[i.ArgA()] = false
 		case luacode.OpLFalseSkip:
 			registers[i.ArgA()] = false
-			nextPC = frame.pc + 2
+			nextPC++
 		case luacode.OpLoadTrue:
 			registers[i.ArgA()] = true
 		case luacode.OpLoadNil:
@@ -132,7 +145,8 @@ func (l *State) exec() error {
 		case luacode.OpGetUpval:
 			registers[i.ArgA()] = f.upvalues[i.ArgB()]
 		case luacode.OpSetUpval:
-			f.upvalues[i.ArgB()] = registers[i.ArgA()]
+			p := l.resolveUpvalue(f.upvalues[i.ArgB()])
+			*p = registers[i.ArgA()]
 		case luacode.OpGetTabUp:
 			var err error
 			registers[i.ArgA()], err = l.index(f.upvalues[i.ArgB()], importConstant(f.proto.Constants[i.ArgC()]))
@@ -226,6 +240,37 @@ func (l *State) exec() error {
 				l.setTop(callerValueTop)
 				return err
 			}
+		case luacode.OpJmp:
+			nextPC += int(i.J())
+		case luacode.OpTest:
+			cond := toBoolean(registers[i.ArgA()])
+			if cond != i.K() {
+				nextPC++
+			}
+		case luacode.OpTestSet:
+			rb := registers[i.ArgB()]
+			cond := toBoolean(rb)
+			if cond != i.K() {
+				nextPC++
+			} else {
+				registers[i.ArgA()] = rb
+			}
+		case luacode.OpCall:
+			numArguments := int(i.ArgB())
+			numResults := int(i.ArgC()) - 1
+			l.setTop(frame.registerStart() + int(i.ArgA()) + 1 + numArguments)
+			isLua, err := l.prepareCall(numArguments, numResults)
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+			if isLua {
+				frame, f, registers, err = l.loadLuaFrame()
+				if err != nil {
+					l.setTop(callerValueTop)
+					return err
+				}
+			}
 		case luacode.OpReturn:
 			resultStackStart := frame.registerStart() + int(i.ArgA())
 			numResults := int(i.ArgB()) - 1
@@ -262,6 +307,44 @@ func (l *State) exec() error {
 				l.setTop(callerValueTop)
 				return err
 			}
+		case luacode.OpSetList:
+			t := registers[i.ArgA()]
+			for idx := range i.ArgB() {
+				err := l.setIndex(t, int64(idx)+1, registers[i.ArgC()+idx+1])
+				if err != nil {
+					l.setTop(callerValueTop)
+					return err
+				}
+			}
+		case luacode.OpClosure:
+			p := f.proto.Functions[i.ArgBx()]
+			upvalues := make([]upvalue, len(p.Upvalues))
+			for i, uv := range p.Upvalues {
+				if uv.InStack {
+					upvalues[i] = stackUpvalue(frame.registerStart() + int(uv.Index))
+				} else {
+					upvalues[i] = f.upvalues[uv.Index]
+				}
+			}
+			registers[i.ArgA()] = luaFunction{
+				id:       nextID(),
+				proto:    p,
+				upvalues: upvalues,
+			}
+		case luacode.OpVararg:
+			numWanted := int(i.ArgC()) - 1
+			if numWanted == MultipleReturns {
+				numWanted = frame.numExtraArguments
+			}
+			a := frame.registerStart() + int(i.ArgA())
+			if !l.grow(a + numWanted) {
+				l.setTop(callerValueTop)
+				return errStackOverflow
+			}
+			l.setTop(a + numWanted)
+			varargStart, varargEnd := frame.extraArgumentsRange()
+			n := copy(l.stack[a:], l.stack[varargStart:varargEnd])
+			clear(l.stack[a+n:])
 		case luacode.OpVarargPrep:
 			if frame.pc != 0 {
 				l.setTop(callerValueTop)

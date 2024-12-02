@@ -499,7 +499,7 @@ func (l *State) ToString(idx int) (s string, ok bool) {
 		if i > len(upvalues) {
 			return "", false
 		}
-		p = &upvalues[i-1]
+		p = l.resolveUpvalue(upvalues[i-1])
 	case isPseudo(idx):
 		return "", false
 	default:
@@ -640,7 +640,10 @@ func (l *State) PushClosure(n int, f Function) {
 		panic("too many upvalues")
 	}
 	upvalueStart := len(l.stack) - n
-	upvalues := slices.Clone(l.stack[upvalueStart:])
+	upvalues := make([]upvalue, 0, n)
+	for _, v := range l.stack[upvalueStart:] {
+		upvalues = append(upvalues, standaloneUpvalue(v))
+	}
 	l.setTop(upvalueStart)
 	l.push(goFunction{
 		id:       nextID(),
@@ -1114,6 +1117,11 @@ func (l *State) prepareCall(numArgs, numResults int) (isLua bool, err error) {
 	for range maxMetaDepth {
 		switch f := l.stack[functionIndex].(type) {
 		case luaFunction:
+			if err := l.checkUpvalues(f.upvalues); err != nil {
+				l.popCallStack()
+				l.setTop(functionIndex - 1)
+				return true, err
+			}
 			if !l.grow(len(l.stack) + int(f.proto.MaxStackSize) - numArgs) {
 				l.popCallStack()
 				l.setTop(functionIndex - 1)
@@ -1121,6 +1129,11 @@ func (l *State) prepareCall(numArgs, numResults int) (isLua bool, err error) {
 			}
 			return true, nil
 		case goFunction:
+			if err := l.checkUpvalues(f.upvalues); err != nil {
+				l.popCallStack()
+				l.setTop(functionIndex - 1)
+				return false, err
+			}
 			if !l.grow(len(l.stack) + minStack) {
 				l.popCallStack()
 				l.setTop(functionIndex - 1)
@@ -1222,9 +1235,11 @@ func (l *State) Load(r io.Reader, chunkName luacode.Source, mode string) (err er
 
 	l.init()
 	l.push(luaFunction{
-		id:       nextID(),
-		proto:    p,
-		upvalues: []any{l.registry.get(RegistryIndexGlobals)},
+		id:    nextID(),
+		proto: p,
+		upvalues: []upvalue{
+			standaloneUpvalue(l.registry.get(RegistryIndexGlobals)),
+		},
 	})
 	return nil
 }

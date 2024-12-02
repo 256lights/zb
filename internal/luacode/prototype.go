@@ -263,11 +263,18 @@ func (f *Prototype) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
+// UpvalueDescriptor describes an upvalue in a [Prototype].
 type UpvalueDescriptor struct {
-	Name    string
+	Name string
+	// InStack is true if the upvalue refers to a local variable
+	// in the containing function.
+	// Otherwise, the upvalue refers to an upvalue in the containing function.
 	InStack bool
-	Index   uint8
-	Kind    VariableKind
+	// Index is the index of the local variable or upvalue
+	// to initialize the upvalue to.
+	// Its interpretation depends on the value of InStack.
+	Index uint8
+	Kind  VariableKind
 }
 
 type VariableKind uint8
