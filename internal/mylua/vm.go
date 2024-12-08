@@ -148,8 +148,9 @@ func (l *State) exec() error {
 			p := l.resolveUpvalue(f.upvalues[i.ArgB()])
 			*p = registers[i.ArgA()]
 		case luacode.OpGetTabUp:
+			u := l.resolveUpvalue(f.upvalues[i.ArgB()])
 			var err error
-			registers[i.ArgA()], err = l.index(f.upvalues[i.ArgB()], importConstant(f.proto.Constants[i.ArgC()]))
+			registers[i.ArgA()], err = l.index(*u, importConstant(f.proto.Constants[i.ArgC()]))
 			if err != nil {
 				l.setTop(callerValueTop)
 				return err
@@ -176,8 +177,9 @@ func (l *State) exec() error {
 				return err
 			}
 		case luacode.OpSetTabUp:
+			u := l.resolveUpvalue(f.upvalues[i.ArgA()])
 			err := l.setIndex(
-				f.upvalues[i.ArgA()],
+				*u,
 				importConstant(f.proto.Constants[i.ArgB()]),
 				rkC(i),
 			)
