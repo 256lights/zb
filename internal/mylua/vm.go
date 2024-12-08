@@ -240,7 +240,7 @@ func (l *State) exec() error {
 				l.setTop(callerValueTop)
 				return err
 			}
-		case luacode.OpJmp:
+		case luacode.OpJMP:
 			nextPC += int(i.J())
 		case luacode.OpTest:
 			cond := toBoolean(registers[i.ArgA()])

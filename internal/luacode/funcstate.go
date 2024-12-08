@@ -89,11 +89,11 @@ func (fs *funcState) finish() error {
 				instruction, _ = instruction.WithArgC(fs.NumParams + 1)
 			}
 			fs.Code[i] = instruction
-		case OpJmp:
+		case OpJMP:
 			target := i
 			for count := 0; count < 100; count++ {
 				curr := fs.Code[target]
-				if curr.OpCode() != OpJmp {
+				if curr.OpCode() != OpJMP {
 					break
 				}
 				target += int(curr.J()) + 1
@@ -349,7 +349,7 @@ func (fs *funcState) fixJump(pc int, dest int) error {
 		return errors.New("control structure too long")
 	}
 	op := jmp.OpCode()
-	if op != OpJmp {
+	if op != OpJMP {
 		return fmt.Errorf("fixJump called on %v", op)
 	}
 	*jmp = JInstruction(op, int32(offset))

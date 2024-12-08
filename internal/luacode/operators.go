@@ -255,7 +255,7 @@ func (op unaryOperator) toOpCode() (_ OpCode, ok bool) {
 	if op <= unaryOperatorNone || op > numUnaryOperators {
 		return maxOpCode + 1, false
 	}
-	return OpUnM + OpCode(op-unaryOperatorMinus), true
+	return OpUNM + OpCode(op-unaryOperatorMinus), true
 }
 
 func (op unaryOperator) toArithmetic() (_ ArithmeticOperator, ok bool) {

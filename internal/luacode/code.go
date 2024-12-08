@@ -53,7 +53,7 @@ func (p *parser) codeNil(fs *funcState, from registerIndex, n uint8) {
 //
 // Equivalent to `luaK_jump` in upstream Lua.
 func (p *parser) codeJump(fs *funcState) int {
-	return p.code(fs, JInstruction(OpJmp, noJump))
+	return p.code(fs, JInstruction(OpJMP, noJump))
 }
 
 // codeReturn appends a return instruction to fs.Code.
@@ -520,9 +520,9 @@ func (p *parser) codePostfix(fs *funcState, operator binaryOperator, e1, e2 expr
 	case binaryOperatorShiftL:
 		if i1, ok := e1.intConstant(); ok && fitsSignedArg(i1) {
 			// I << r2
-			return p.codeBinaryExpImmediate(fs, OpShlI, e2, e1, true, line, TagMethodSHL)
+			return p.codeBinaryExpImmediate(fs, OpSHLI, e2, e1, true, line, TagMethodSHL)
 		}
-		if result, err := p.finishBinaryExpNegated(fs, e1, e2, OpShrI, line, TagMethodSHL); err != nil {
+		if result, err := p.finishBinaryExpNegated(fs, e1, e2, OpSHRI, line, TagMethodSHL); err != nil {
 			return voidExpression(), err
 		} else if result.kind != expressionKindVoid {
 			return result, nil
@@ -531,7 +531,7 @@ func (p *parser) codePostfix(fs *funcState, operator binaryOperator, e1, e2 expr
 	case binaryOperatorShiftR:
 		if i2, ok := e2.intConstant(); ok && fitsSignedArg(i2) {
 			// r1 >> I
-			return p.codeBinaryExpImmediate(fs, OpShrI, e1, e2, false, line, TagMethodSHR)
+			return p.codeBinaryExpImmediate(fs, OpSHRI, e1, e2, false, line, TagMethodSHR)
 		}
 		return p.codeBinaryExp(fs, operator, e1, e2, line)
 	case binaryOperatorEq, binaryOperatorNE:
@@ -831,7 +831,7 @@ func (p *parser) codeEq(fs *funcState, operator binaryOperator, e1, e2 expressio
 	var b uint8
 	var c uint8 // Not needed here, but kept for symmetry.
 	if immediate, isFloat, isImmediate := e2.toSignedArg(); isImmediate {
-		op = OpEqI
+		op = OpEQI
 		b = immediate
 		if isFloat {
 			c = 1
@@ -843,9 +843,9 @@ func (p *parser) codeEq(fs *funcState, operator binaryOperator, e1, e2 expressio
 			return voidExpression(), err
 		}
 		if k {
-			op = OpEqK
+			op = OpEQK
 		} else {
-			op = OpEq
+			op = OpEQ
 			// TODO(maybe): expToRK should have already converted to register.
 			// Is this necessary?
 			var r2 registerIndex

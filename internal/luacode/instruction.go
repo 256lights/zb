@@ -430,7 +430,7 @@ const (
 	OpAddK OpCode = 22 // ADDK
 	// A B C R[A] := R[B] - K[C]:number
 	OpSubK OpCode = 23 // SUBK
-	// A B C R[A] := R[B]
+	// A B C R[A] := R[B] * K[C]:number
 	OpMulK OpCode = 24 // MULK
 	// A B C R[A] := R[B] % K[C]:number
 	OpModK OpCode = 25 // MODK
@@ -446,18 +446,18 @@ const (
 	// A B C R[A] := R[B] | K[C]:integer
 	OpBOrK OpCode = 30 // BORK
 	// A B C R[A] := R[B] ~ K[C]:integer
-	OpBXorK OpCode = 31 // BXORK
+	OpBXORK OpCode = 31 // BXORK
 
 	// A B sC R[A] := R[B] >> sC
-	OpShrI OpCode = 32 // SHRI
+	OpSHRI OpCode = 32 // SHRI
 	// A B sC R[A] := sC << R[B]
-	OpShlI OpCode = 33 // SHLI
+	OpSHLI OpCode = 33 // SHLI
 
 	// A B C R[A] := R[B] + R[C]
 	OpAdd OpCode = 34 // ADD
 	// A B C R[A] := R[B] - R[C]
 	OpSub OpCode = 35 // SUB
-	// A B C R[A] := R[B]
+	// A B C R[A] := R[B] * R[C]
 	OpMul OpCode = 36 // MUL
 	// A B C R[A] := R[B] % R[C]
 	OpMod OpCode = 37 // MOD
@@ -473,11 +473,11 @@ const (
 	// A B C R[A] := R[B] | R[C]
 	OpBOr OpCode = 42 // BOR
 	// A B C R[A] := R[B] ~ R[C]
-	OpBXor OpCode = 43 // BXOR
+	OpBXOR OpCode = 43 // BXOR
 	// A B C R[A] := R[B] << R[C]
-	OpShl OpCode = 44 // SHL
+	OpSHL OpCode = 44 // SHL
 	// A B C R[A] := R[B] >> R[C]
-	OpShr OpCode = 45 // SHR
+	OpSHR OpCode = 45 // SHR
 
 	// A B C call C metamethod over R[A] and R[B] (
 	OpMMBin OpCode = 46 // MMBIN
@@ -487,7 +487,7 @@ const (
 	OpMMBinK OpCode = 48 // MMBINK
 
 	// A B R[A] := -R[B]
-	OpUnM OpCode = 49 // UNM
+	OpUNM OpCode = 49 // UNM
 	// A B R[A] := ~R[B]
 	OpBNot OpCode = 50 // BNOT
 	// A B R[A] := not R[B]
@@ -503,18 +503,18 @@ const (
 	// A mark variable A "to be closed"
 	OpTBC OpCode = 55 // TBC
 	// sJ pc += sJ
-	OpJmp OpCode = 56 // JMP
+	OpJMP OpCode = 56 // JMP
 	// A B k if ((R[A] == R[B]) ~= k) then pc++
-	OpEq OpCode = 57 // EQ
+	OpEQ OpCode = 57 // EQ
 	// A B k if ((R[A] <  R[B]) ~= k) then pc++
 	OpLT OpCode = 58 // LT
 	// A B k if ((R[A] <= R[B]) ~= k) then pc++
 	OpLE OpCode = 59 // LE
 
 	// A B k if ((R[A] == K[B]) ~= k) then pc++
-	OpEqK OpCode = 60 // EQK
+	OpEQK OpCode = 60 // EQK
 	// A sB k if ((R[A] == sB) ~= k) then pc++
-	OpEqI OpCode = 61 // EQI
+	OpEQI OpCode = 61 // EQI
 	// A sB k if ((R[A] < sB) ~= k) then pc++
 	OpLTI OpCode = 62 // LTI
 	// A sB k if ((R[A] <= sB) ~= k) then pc++
@@ -619,9 +619,9 @@ var opProps = [...]byte{
 	OpIDivK:      0b00001000 | byte(OpModeABC),
 	OpBAndK:      0b00001000 | byte(OpModeABC),
 	OpBOrK:       0b00001000 | byte(OpModeABC),
-	OpBXorK:      0b00001000 | byte(OpModeABC),
-	OpShrI:       0b00001000 | byte(OpModeABC),
-	OpShlI:       0b00001000 | byte(OpModeABC),
+	OpBXORK:      0b00001000 | byte(OpModeABC),
+	OpSHRI:       0b00001000 | byte(OpModeABC),
+	OpSHLI:       0b00001000 | byte(OpModeABC),
 	OpAdd:        0b00001000 | byte(OpModeABC),
 	OpSub:        0b00001000 | byte(OpModeABC),
 	OpMul:        0b00001000 | byte(OpModeABC),
@@ -631,25 +631,25 @@ var opProps = [...]byte{
 	OpIDiv:       0b00001000 | byte(OpModeABC),
 	OpBAnd:       0b00001000 | byte(OpModeABC),
 	OpBOr:        0b00001000 | byte(OpModeABC),
-	OpBXor:       0b00001000 | byte(OpModeABC),
-	OpShl:        0b00001000 | byte(OpModeABC),
-	OpShr:        0b00001000 | byte(OpModeABC),
+	OpBXOR:       0b00001000 | byte(OpModeABC),
+	OpSHL:        0b00001000 | byte(OpModeABC),
+	OpSHR:        0b00001000 | byte(OpModeABC),
 	OpMMBin:      0b10000000 | byte(OpModeABC),
 	OpMMBinI:     0b10000000 | byte(OpModeABC),
 	OpMMBinK:     0b10000000 | byte(OpModeABC),
-	OpUnM:        0b00001000 | byte(OpModeABC),
+	OpUNM:        0b00001000 | byte(OpModeABC),
 	OpBNot:       0b00001000 | byte(OpModeABC),
 	OpNot:        0b00001000 | byte(OpModeABC),
 	OpLen:        0b00001000 | byte(OpModeABC),
 	OpConcat:     0b00001000 | byte(OpModeABC),
 	OpClose:      0b00000000 | byte(OpModeABC),
 	OpTBC:        0b00000000 | byte(OpModeABC),
-	OpJmp:        0b00000000 | byte(OpModeJ),
-	OpEq:         0b00010000 | byte(OpModeABC),
+	OpJMP:        0b00000000 | byte(OpModeJ),
+	OpEQ:         0b00010000 | byte(OpModeABC),
 	OpLT:         0b00010000 | byte(OpModeABC),
 	OpLE:         0b00010000 | byte(OpModeABC),
-	OpEqK:        0b00010000 | byte(OpModeABC),
-	OpEqI:        0b00010000 | byte(OpModeABC),
+	OpEQK:        0b00010000 | byte(OpModeABC),
+	OpEQI:        0b00010000 | byte(OpModeABC),
 	OpLTI:        0b00010000 | byte(OpModeABC),
 	OpLEI:        0b00010000 | byte(OpModeABC),
 	OpGTI:        0b00010000 | byte(OpModeABC),

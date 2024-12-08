@@ -13,7 +13,7 @@ func TestUnaryOperatorToOpCode(t *testing.T) {
 		ok   bool
 	}{
 		{unaryOperatorNone, maxOpCode + 1, false},
-		{unaryOperatorMinus, OpUnM, true},
+		{unaryOperatorMinus, OpUNM, true},
 		{unaryOperatorBNot, OpBNot, true},
 		{unaryOperatorNot, OpNot, true},
 		{unaryOperatorLen, OpLen, true},
@@ -66,9 +66,9 @@ func TestBinaryOperatorToOpCode(t *testing.T) {
 				{binaryOperatorIDiv, OpIDiv, true},
 				{binaryOperatorBAnd, OpBAnd, true},
 				{binaryOperatorBOr, OpBOr, true},
-				{binaryOperatorBXor, OpBXor, true},
-				{binaryOperatorShiftL, OpShl, true},
-				{binaryOperatorShiftR, OpShr, true},
+				{binaryOperatorBXor, OpBXOR, true},
+				{binaryOperatorShiftL, OpSHL, true},
+				{binaryOperatorShiftR, OpSHR, true},
 				{binaryOperatorConcat, OpConcat, true},
 
 				{binaryOperatorEq, maxOpCode + 1, false},
@@ -95,7 +95,7 @@ func TestBinaryOperatorToOpCode(t *testing.T) {
 				{binaryOperatorIDiv, OpIDivK, true},
 				{binaryOperatorBAnd, OpBAndK, true},
 				{binaryOperatorBOr, OpBOrK, true},
-				{binaryOperatorBXor, OpBXorK, true},
+				{binaryOperatorBXor, OpBXORK, true},
 
 				{binaryOperatorShiftL, maxOpCode + 1, false},
 				{binaryOperatorShiftR, maxOpCode + 1, false},
@@ -267,7 +267,7 @@ func TestBinaryOperatorTagMethod(t *testing.T) {
 		{binaryOperatorIDiv, TagMethodIDiv, true},
 		{binaryOperatorBAnd, TagMethodBAnd, true},
 		{binaryOperatorBOr, TagMethodBOr, true},
-		{binaryOperatorBXor, TagMethodBXor, true},
+		{binaryOperatorBXor, TagMethodBXOR, true},
 		{binaryOperatorShiftL, TagMethodSHL, true},
 		{binaryOperatorShiftR, TagMethodSHR, true},
 		{binaryOperatorConcat, TagMethodConcat, true},
