@@ -63,38 +63,33 @@ func (tp Type) String() string {
 	}
 }
 
-func valueType(v any) Type {
-	switch v.(type) {
-	case nil:
-		return TypeNil
-	case bool:
-		return TypeBoolean
-	case float64, int64:
-		return TypeNumber
-	case stringValue:
-		return TypeString
-	case *table:
-		return TypeTable
-	case function:
-		return TypeFunction
-	default:
-		panic("unhandled type")
-	}
+// value is the internal representation of a Lua value.
+type value interface {
+	valueType() Type
 }
 
-func importConstant(v luacode.Value) any {
+// valueType returns the [Type] of a [value].
+func valueType(v value) Type {
+	if v == nil {
+		return TypeNil
+	}
+	return v.valueType()
+}
+
+// importConstant converts a compile-time constant to a [value].
+func importConstant(v luacode.Value) value {
 	switch {
 	case v.IsNil():
 		return nil
 	case v.IsBoolean():
 		b, _ := v.Bool()
-		return b
+		return booleanValue(b)
 	case v.IsInteger():
 		i, _ := v.Int64(luacode.OnlyIntegral)
-		return i
+		return integerValue(i)
 	case v.IsNumber():
 		f, _ := v.Float64()
-		return f
+		return floatValue(f)
 	case v.IsString():
 		s, _ := v.Unquoted()
 		return stringValue{s: s}
@@ -103,47 +98,60 @@ func importConstant(v luacode.Value) any {
 	}
 }
 
-func exportNumericConstant(v any) (_ luacode.Value, ok bool) {
+// exportNumericConstant converts a [floatValue] or an [integerValue]
+// to a [luacode.Value].
+func exportNumericConstant(v value) (_ luacode.Value, ok bool) {
 	switch v := v.(type) {
-	case float64:
-		return luacode.FloatValue(v), true
-	case int64:
-		return luacode.IntegerValue(v), true
+	case floatValue:
+		return luacode.FloatValue(float64(v)), true
+	case integerValue:
+		return luacode.IntegerValue(int64(v)), true
 	default:
 		return luacode.Value{}, false
 	}
 }
 
-func compareValues(v1, v2 any) int {
+// compareValues returns
+//
+//   - -1 if v1 is less than v2,
+//   - 0 if v1 equals v2,
+//   - +1 if v1 is greater than v2.
+//
+// Values of differing types are compared by their [Type] values.
+//
+// For [floatValue], a NaN is considered less than any non-NaN,
+// a NaN is considered equal to a NaN,
+// and -0.0 is equal to 0.0.
+func compareValues(v1, v2 value) int {
 	switch v1 := v1.(type) {
 	case nil:
 		return cmp.Compare(TypeNil, valueType(v2))
-	case bool:
-		b2, ok := v2.(bool)
+	case booleanValue:
+		b2, ok := v2.(booleanValue)
 		switch {
 		case !ok:
 			return cmp.Compare(TypeBoolean, valueType(v2))
-		case v1 && !b2:
+		case bool(v1 && !b2):
 			return 1
-		case !v1 && b2:
+		case bool(!v1 && b2):
 			return -1
 		default:
 			return 0
 		}
-	case float64:
+	case floatValue:
 		switch v2.(type) {
-		case int64, float64:
+		case integerValue, floatValue:
 			f2, _ := toNumber(v2)
 			return cmp.Compare(v1, f2)
 		default:
 			return cmp.Compare(TypeNumber, valueType(v2))
 		}
-	case int64:
+	case integerValue:
 		switch v2 := v2.(type) {
-		case int64:
+		case integerValue:
 			return cmp.Compare(v1, v2)
-		case float64:
-			return cmp.Compare(float64(v1), v2)
+		case floatValue:
+			return cmp.Compare(floatValue(v1), v2)
 		default:
 			return cmp.Compare(TypeNumber, valueType(v2))
 		}
@@ -170,29 +178,41 @@ func compareValues(v1, v2 any) int {
 	}
 }
 
-func toNumber(v any) (_ float64, isNumber bool) {
-	switch v := v.(type) {
-	case float64:
-		return v, true
-	case int64:
-		return float64(v), true
-	case stringValue:
-		f, err := lualex.ParseNumber(v.s)
-		if err != nil {
-			return 0, false
-		}
-		return f, true
-	default:
-		return 0, false
-	}
+// numericValue is an optional interface for types that implement [value]
+// and can be [coerced] to a number.
+//
+// [coerced]: https://www.lua.org/manual/5.4/manual.html#3.4.3
+type numericValue interface {
+	value
+	toNumber() (_ floatValue, ok bool)
+	toInteger() (_ integerValue, ok bool)
 }
 
-func toBoolean(v any) bool {
+var (
+	_ numericValue = floatValue(0)
+	_ numericValue = integerValue(0)
+	_ numericValue = stringValue{}
+)
+
+// toNumber [coerces] a [value] to a floating-point number,
+// returning the result and whether the conversion succeeded.
+//
+// [coerces]: https://www.lua.org/manual/5.4/manual.html#3.4.3
+func toNumber(v value) (_ floatValue, isNumber bool) {
+	nv, ok := v.(numericValue)
+	if !ok {
+		return 0, false
+	}
+	return nv.toNumber()
+}
+
+// toBoolean reports whether the value is anything except nil or a false [booleanValue].
+func toBoolean(v value) bool {
 	switch v := v.(type) {
 	case nil:
 		return false
-	case bool:
-		return v
+	case booleanValue:
+		return bool(v)
 	default:
 		return true
 	}
@@ -212,15 +232,19 @@ func newTable(capacity int) *table {
 	return tab
 }
 
+func (tab *table) valueType() Type {
+	return TypeTable
+}
+
 // len returns a [border in the table].
 // This is equivalent to the Lua length ("#") operator.
 //
 // [border in the table]: https://lua.org/manual/5.4/manual.html#3.4.7
-func (tab *table) len() int64 {
+func (tab *table) len() integerValue {
 	if tab == nil {
 		return 0
 	}
-	start, ok := findEntry(tab.entries, int64(1))
+	start, ok := findEntry(tab.entries, integerValue(1))
 	if !ok {
 		return 0
 	}
@@ -233,10 +257,10 @@ func (tab *table) len() int64 {
 	searchSpace := tab.entries[start+1:] // Can skip 1.
 	n := sort.Search(len(searchSpace), func(i int) bool {
 		switch k := searchSpace[i].key.(type) {
-		case int64:
-			return k > int64(maxKey)
-		case float64:
-			return k > float64(maxKey)
+		case integerValue:
+			return k > integerValue(maxKey)
+		case floatValue:
+			return k > floatValue(maxKey)
 		default:
 			return true
 		}
@@ -250,13 +274,13 @@ func (tab *table) len() int64 {
 	// we binary search over the key space to find the first i
 	// for which table[i + 1] == nil.
 	i := sort.Search(maxKey, func(i int) bool {
-		_, found := findEntry(searchSpace, int64(i)+2)
+		_, found := findEntry(searchSpace, integerValue(i)+2)
 		return !found
 	})
-	return int64(i) + 1
+	return integerValue(i) + 1
 }
 
-func (tab *table) get(key any) any {
+func (tab *table) get(key value) value {
 	if tab == nil {
 		return nil
 	}
@@ -267,16 +291,16 @@ func (tab *table) get(key any) any {
 	return tab.entries[i].value
 }
 
-func (tab *table) set(key, value any) error {
+func (tab *table) set(key, value value) error {
 	switch k := key.(type) {
 	case nil:
 		return errors.New("table index is nil")
-	case float64:
-		if math.IsNaN(k) {
+	case floatValue:
+		if math.IsNaN(float64(k)) {
 			return errors.New("table index is NaN")
 		}
-		if i, ok := luacode.FloatToInteger(k, luacode.OnlyIntegral); ok {
-			key = i
+		if i, ok := luacode.FloatToInteger(float64(k), luacode.OnlyIntegral); ok {
+			key = integerValue(i)
 		}
 	}
 
@@ -300,66 +324,88 @@ func (tab *table) set(key, value any) error {
 // if the key was found and returns true.
 // Otherwise, if the key was not found,
 // then setExisting does nothing and returns false.
-func (tab *table) setExisting(key, value any) bool {
+func (tab *table) setExisting(k, v value) bool {
 	if tab == nil {
 		return false
 	}
-	i, found := findEntry(tab.entries, key)
+	i, found := findEntry(tab.entries, k)
 	if !found {
 		return false
 	}
-	if value == nil {
+	if v == nil {
 		tab.entries = slices.Delete(tab.entries, i, i+1)
 	} else {
-		tab.entries[i].value = value
+		tab.entries[i].value = v
 	}
 	return true
 }
 
 type tableEntry struct {
-	key, value any
+	key, value value
 }
 
-func findEntry(entries []tableEntry, key any) (int, bool) {
-	return slices.BinarySearchFunc(entries, key, func(e tableEntry, key any) int {
+func findEntry(entries []tableEntry, key value) (int, bool) {
+	return slices.BinarySearchFunc(entries, key, func(e tableEntry, key value) int {
 		return compareValues(e.key, key)
 	})
 }
 
+// booleanValue is a boolean [value].
+type booleanValue bool
+
+func (v booleanValue) valueType() Type { return TypeBoolean }
+
+// integerValue is an integer [value].
+type integerValue int64
+
+func (v integerValue) valueType() Type                 { return TypeNumber }
+func (v integerValue) toNumber() (floatValue, bool)    { return floatValue(v), true }
+func (v integerValue) toInteger() (integerValue, bool) { return v, true }
+
+// floatValue is a floating-point [value].
+type floatValue float64
+
+func (v floatValue) valueType() Type              { return TypeNumber }
+func (v floatValue) toNumber() (floatValue, bool) { return v, true }
+
+func (v floatValue) toInteger() (integerValue, bool) {
+	i, ok := luacode.FloatToInteger(float64(v), luacode.OnlyIntegral)
+	return integerValue(i), ok
+}
+
+// stringValue is a string [value].
+// stringValues implement [numericValue] because they can be coerced to numbers.
+//
+// This interpreter's string values include an optional "context",
+// which is a set of strings that are unioned upon concatenation.
+// Their meaning is application-defined.
 type stringValue struct {
 	s       string
 	context sets.Set[string]
 }
 
-type goFunction struct {
-	id       uint64
-	cb       Function
-	upvalues []upvalue
+func (v stringValue) valueType() Type {
+	return TypeString
 }
 
-func (f goFunction) functionID() uint64 {
-	return f.id
+func (v stringValue) toNumber() (floatValue, bool) {
+	f, err := lualex.ParseNumber(v.s)
+	if err != nil {
+		return 0, false
+	}
+	return floatValue(f), true
 }
 
-func (f goFunction) upvaluesSlice() []upvalue {
-	return f.upvalues
-}
-
-type luaFunction struct {
-	id       uint64
-	proto    *luacode.Prototype
-	upvalues []upvalue
-}
-
-func (f luaFunction) functionID() uint64 {
-	return f.id
-}
-
-func (f luaFunction) upvaluesSlice() []upvalue {
-	return f.upvalues
+func (v stringValue) toInteger() (integerValue, bool) {
+	i, err := lualex.ParseInt(v.s)
+	if err != nil {
+		return 0, false
+	}
+	return integerValue(i), true
 }
 
 type function interface {
+	value
 	functionID() uint64
 	upvaluesSlice() []upvalue
 }
@@ -369,8 +415,28 @@ var (
 	_ function = luaFunction{}
 )
 
+type goFunction struct {
+	id       uint64
+	cb       Function
+	upvalues []upvalue
+}
+
+func (f goFunction) valueType() Type          { return TypeFunction }
+func (f goFunction) functionID() uint64       { return f.id }
+func (f goFunction) upvaluesSlice() []upvalue { return f.upvalues }
+
+type luaFunction struct {
+	id       uint64
+	proto    *luacode.Prototype
+	upvalues []upvalue
+}
+
+func (f luaFunction) valueType() Type          { return TypeFunction }
+func (f luaFunction) functionID() uint64       { return f.id }
+func (f luaFunction) upvaluesSlice() []upvalue { return f.upvalues }
+
 type upvalue struct {
-	p          *any
+	p          *value
 	stackIndex int
 }
 
@@ -378,14 +444,14 @@ func stackUpvalue(i int) upvalue {
 	return upvalue{stackIndex: i}
 }
 
-func standaloneUpvalue(v any) upvalue {
+func standaloneUpvalue(v value) upvalue {
 	return upvalue{
 		p:          &v,
 		stackIndex: -1,
 	}
 }
 
-func (l *State) resolveUpvalue(uv upvalue) *any {
+func (l *State) resolveUpvalue(uv upvalue) *value {
 	if uv.p == nil {
 		return &l.stack[uv.stackIndex]
 	}

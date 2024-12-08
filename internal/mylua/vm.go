@@ -50,7 +50,7 @@ func (frame callFrame) extraArgumentsRange() (start, end int) {
 // and returns a slice of the value stack to be used as the function's registers.
 // loadLuaFrame returns an error if the value stack is not large enough
 // for the function's local registers.
-func (l *State) loadLuaFrame() (frame *callFrame, f luaFunction, registers []any, err error) {
+func (l *State) loadLuaFrame() (frame *callFrame, f luaFunction, registers []value, err error) {
 	frame = l.frame()
 	v := l.stack[frame.functionIndex]
 	f, ok := v.(luaFunction)
@@ -96,7 +96,7 @@ func (l *State) exec() error {
 		return err
 	}
 
-	rkC := func(i luacode.Instruction) any {
+	rkC := func(i luacode.Instruction) value {
 		if i.K() {
 			return importConstant(f.proto.Constants[i.ArgC()])
 		} else {
@@ -122,9 +122,9 @@ func (l *State) exec() error {
 		case luacode.OpMove:
 			registers[i.ArgA()] = registers[i.ArgB()]
 		case luacode.OpLoadI:
-			registers[i.ArgA()] = int64(i.ArgBx())
+			registers[i.ArgA()] = integerValue(i.ArgBx())
 		case luacode.OpLoadF:
-			registers[i.ArgA()] = float64(i.ArgBx())
+			registers[i.ArgA()] = floatValue(i.ArgBx())
 		case luacode.OpLoadK:
 			registers[i.ArgA()] = importConstant(f.proto.Constants[i.ArgBx()])
 		case luacode.OpLoadKX:
@@ -135,16 +135,17 @@ func (l *State) exec() error {
 			}
 			registers[i.ArgA()] = importConstant(f.proto.Constants[arg])
 		case luacode.OpLoadFalse:
-			registers[i.ArgA()] = false
+			registers[i.ArgA()] = booleanValue(false)
 		case luacode.OpLFalseSkip:
-			registers[i.ArgA()] = false
+			registers[i.ArgA()] = booleanValue(false)
 			nextPC++
 		case luacode.OpLoadTrue:
-			registers[i.ArgA()] = true
+			registers[i.ArgA()] = booleanValue(true)
 		case luacode.OpLoadNil:
 			clear(registers[i.ArgA() : i.ArgA()+i.ArgB()])
 		case luacode.OpGetUpval:
-			registers[i.ArgA()] = f.upvalues[i.ArgB()]
+			p := l.resolveUpvalue(f.upvalues[i.ArgB()])
+			registers[i.ArgA()] = *p
 		case luacode.OpSetUpval:
 			p := l.resolveUpvalue(f.upvalues[i.ArgB()])
 			*p = registers[i.ArgA()]
@@ -165,7 +166,7 @@ func (l *State) exec() error {
 			}
 		case luacode.OpGetI:
 			var err error
-			registers[i.ArgA()], err = l.index(registers[i.ArgB()], int64(i.ArgC()))
+			registers[i.ArgA()], err = l.index(registers[i.ArgB()], integerValue(i.ArgC()))
 			if err != nil {
 				l.setTop(callerValueTop)
 				return err
@@ -201,7 +202,7 @@ func (l *State) exec() error {
 		case luacode.OpSetI:
 			err := l.setIndex(
 				registers[i.ArgA()],
-				int64(i.ArgB()),
+				integerValue(i.ArgB()),
 				rkC(i),
 			)
 			if err != nil {
@@ -353,7 +354,7 @@ func (l *State) exec() error {
 			registers[prev.ArgA()], err = l.arithmeticMetamethod(
 				prevOperator.TagMethod(),
 				registers[i.ArgA()],
-				int64(luacode.SignedArg(i.ArgB())),
+				integerValue(luacode.SignedArg(i.ArgB())),
 			)
 			if err != nil {
 				l.setTop(callerValueTop)
@@ -368,7 +369,7 @@ func (l *State) exec() error {
 			registers[prev.ArgA()], err = l.arithmeticMetamethod(
 				prevOperator.TagMethod(),
 				registers[i.ArgA()],
-				f.proto.Constants[i.ArgB()],
+				importConstant(f.proto.Constants[i.ArgB()]),
 			)
 			if err != nil {
 				l.setTop(callerValueTop)
@@ -376,7 +377,7 @@ func (l *State) exec() error {
 			}
 		case luacode.OpUNM:
 			rb := registers[i.ArgB()]
-			if ib, ok := rb.(int64); ok {
+			if ib, ok := rb.(integerValue); ok {
 				registers[i.ArgA()] = -ib
 			} else if nb, ok := toNumber(rb); ok {
 				registers[i.ArgA()] = -nb
@@ -390,8 +391,8 @@ func (l *State) exec() error {
 			}
 		case luacode.OpBNot:
 			rb := registers[i.ArgB()]
-			if ib, ok := rb.(int64); ok {
-				registers[i.ArgA()] = int64(^uint64(ib))
+			if ib, ok := rb.(integerValue); ok {
+				registers[i.ArgA()] = integerValue(^uint64(ib))
 			} else {
 				var err error
 				registers[i.ArgA()], err = l.arithmeticMetamethod(luacode.TagMethodBNot, rb, rb)
@@ -401,7 +402,7 @@ func (l *State) exec() error {
 				}
 			}
 		case luacode.OpNot:
-			registers[i.ArgA()] = !toBoolean(registers[i.ArgB()])
+			registers[i.ArgA()] = booleanValue(!toBoolean(registers[i.ArgB()]))
 		case luacode.OpJMP:
 			nextPC += int(i.J())
 		case luacode.OpTest:
@@ -472,7 +473,7 @@ func (l *State) exec() error {
 		case luacode.OpSetList:
 			t := registers[i.ArgA()]
 			for idx := range i.ArgB() {
-				err := l.setIndex(t, int64(idx)+1, registers[i.ArgC()+idx+1])
+				err := l.setIndex(t, integerValue(idx)+1, registers[i.ArgC()+idx+1])
 				if err != nil {
 					l.setTop(callerValueTop)
 					return err
@@ -565,7 +566,7 @@ func (l *State) finishCall(numResults int) {
 	l.popCallStack()
 }
 
-func (l *State) arithmeticMetamethod(event luacode.TagMethod, arg1, arg2 any) (any, error) {
+func (l *State) arithmeticMetamethod(event luacode.TagMethod, arg1, arg2 value) (value, error) {
 	op, isArithmetic := event.ArithmeticOperator()
 	if !isArithmetic {
 		return nil, fmt.Errorf("%v is not an arithmetic metamethod", event)

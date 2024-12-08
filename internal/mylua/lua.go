@@ -11,7 +11,6 @@ import (
 	"slices"
 
 	"zb.256lights.llc/pkg/internal/luacode"
-	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/sets"
 )
 
@@ -87,7 +86,7 @@ func isPseudo(i int) bool {
 // Such information cannot be gathered after the return of a [State] method,
 // since by then the stack will have been unwound.
 type State struct {
-	stack          []any
+	stack          []value
 	registry       table
 	callStack      []callFrame
 	typeMetatables [9]*table
@@ -99,7 +98,7 @@ func (l *State) init() {
 	}
 	if l.registry.id == 0 {
 		l.registry = *newTable(1)
-		l.registry.set(RegistryIndexGlobals, newTable(0))
+		l.registry.set(integerValue(RegistryIndexGlobals), newTable(0))
 	}
 	if len(l.callStack) == 0 {
 		l.stack = append(l.stack, goFunction{
@@ -140,7 +139,7 @@ func (l *State) stackIndex(idx int) (int, error) {
 	return i, nil
 }
 
-func (l *State) valueByIndex(idx int) (v any, valid bool, err error) {
+func (l *State) valueByIndex(idx int) (v value, valid bool, err error) {
 	switch {
 	case idx == RegistryIndex:
 		return &l.registry, true, nil
@@ -155,7 +154,7 @@ func (l *State) valueByIndex(idx int) (v any, valid bool, err error) {
 		if i > len(upvalues) {
 			return nil, false, nil
 		}
-		return upvalues[i-1], true, nil
+		return *l.resolveUpvalue(upvalues[i-1]), true, nil
 	case isPseudo(idx):
 		return nil, false, fmt.Errorf("invalid pseudo-index (%d)", idx)
 	default:
@@ -354,7 +353,7 @@ func (l *State) IsInteger(idx int) bool {
 	if err != nil {
 		return false
 	}
-	_, ok := v.(int64)
+	_, ok := v.(integerValue)
 	return ok
 }
 
@@ -433,7 +432,9 @@ func (l *State) ToNumber(idx int) (n float64, ok bool) {
 	if err != nil {
 		return 0, false
 	}
-	return toNumber(v)
+	var fv floatValue
+	fv, ok = toNumber(v)
+	return float64(fv), ok
 }
 
 // ToInteger converts the Lua value at the given index to a signed 64-bit integer.
@@ -448,20 +449,12 @@ func (l *State) ToInteger(idx int) (n int64, ok bool) {
 	if err != nil {
 		return 0, false
 	}
-	switch v := v.(type) {
-	case float64:
-		return luacode.FloatToInteger(v, luacode.OnlyIntegral)
-	case int64:
-		return v, true
-	case stringValue:
-		i, err := lualex.ParseInt(v.s)
-		if err != nil {
-			return 0, false
-		}
-		return i, true
-	default:
+	nv, ok := v.(numericValue)
+	if !ok {
 		return 0, false
 	}
+	i, ok := nv.toInteger()
+	return int64(i), ok
 }
 
 // ToBoolean converts the Lua value at the given index to a boolean value.
@@ -484,7 +477,7 @@ func (l *State) ToBoolean(idx int) bool {
 // when ToString is applied to keys during a table traversal.)
 func (l *State) ToString(idx int) (s string, ok bool) {
 	l.init()
-	var p *any
+	var p *value
 	switch {
 	case idx == RegistryIndex:
 		return "", false
@@ -513,11 +506,11 @@ func (l *State) ToString(idx int) (s string, ok bool) {
 	switch v := (*p).(type) {
 	case stringValue:
 		return v.s, true
-	case int64:
-		s, _ := luacode.IntegerValue(v).Unquoted()
+	case integerValue:
+		s, _ := luacode.IntegerValue(int64(v)).Unquoted()
 		return s, true
-	case float64:
-		s, _ := luacode.FloatValue(v).Unquoted()
+	case floatValue:
+		s, _ := luacode.FloatValue(float64(v)).Unquoted()
 		return s, true
 	default:
 		return "", false
@@ -558,7 +551,7 @@ func (l *State) RawLen(idx int) uint64 {
 	}
 }
 
-func (l *State) push(x any) {
+func (l *State) push(x value) {
 	if len(l.stack) == cap(l.stack) {
 		panic(errStackOverflow)
 	}
@@ -584,13 +577,13 @@ func (l *State) PushNil() {
 // PushNumber pushes a floating point number onto the stack.
 func (l *State) PushNumber(n float64) {
 	l.init()
-	l.push(n)
+	l.push(floatValue(n))
 }
 
 // PushInteger pushes an integer onto the stack.
 func (l *State) PushInteger(i int64) {
 	l.init()
-	l.push(i)
+	l.push(integerValue(i))
 }
 
 // PushString pushes a string onto the stack.
@@ -611,7 +604,7 @@ func (l *State) PushStringContext(s string, context sets.Set[string]) {
 // PushBoolean pushes a boolean onto the stack.
 func (l *State) PushBoolean(b bool) {
 	l.init()
-	l.push(b)
+	l.push(booleanValue(b))
 }
 
 // A Function is a callback for a Lua function implemented in Go.
@@ -665,7 +658,7 @@ func (l *State) Global(name string, msgHandler int) (Type, error) {
 		return TypeNil, fmt.Errorf("TODO(someday): support message handlers")
 	}
 	l.init()
-	v, err := l.index(l.registry.get(RegistryIndexGlobals), stringValue{s: name})
+	v, err := l.index(l.registry.get(integerValue(RegistryIndexGlobals)), stringValue{s: name})
 	if err != nil {
 		l.push(nil)
 		return TypeNil, err
@@ -713,7 +706,7 @@ func (l *State) Table(idx, msgHandler int) (Type, error) {
 
 // index gets the value from a table for the given key,
 // calling an __index metamethod if present.
-func (l *State) index(t, k any) (any, error) {
+func (l *State) index(t, k value) (value, error) {
 	if t, ok := t.(*table); ok {
 		if v := t.get(k); v != nil {
 			return v, nil
@@ -799,7 +792,7 @@ func (l *State) RawIndex(idx int, n int64) Type {
 		panic(err)
 	}
 
-	v := t.(*table).get(n)
+	v := t.(*table).get(integerValue(n))
 	l.push(v)
 	return valueType(v)
 }
@@ -816,7 +809,7 @@ func (l *State) RawField(idx int, k string) Type {
 		panic(err)
 	}
 
-	v := t.(*table).get(k)
+	v := t.(*table).get(stringValue{s: k})
 	l.push(v)
 	return valueType(v)
 }
@@ -846,7 +839,7 @@ func (l *State) Metatable(idx int) bool {
 	return true
 }
 
-func (l *State) metatable(v any) *table {
+func (l *State) metatable(v value) *table {
 	switch v := v.(type) {
 	case *table:
 		return v.meta
@@ -874,7 +867,7 @@ func (l *State) SetGlobal(name string, msgHandler int) error {
 	}
 	v := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1)
-	if err := l.setIndex(l.registry.get(RegistryIndexGlobals), stringValue{s: name}, v); err != nil {
+	if err := l.setIndex(l.registry.get(integerValue(RegistryIndexGlobals)), stringValue{s: name}, v); err != nil {
 		return err
 	}
 	return nil
@@ -914,7 +907,7 @@ func (l *State) SetTable(idx, msgHandler int) error {
 
 // setIndex sets the value in a table for the given key,
 // calling a __newindex metamethod if appropriate.
-func (l *State) setIndex(t, k, v any) error {
+func (l *State) setIndex(t, k, v value) error {
 	// If there's an existing table entry, we don't search metatable.
 	if t, _ := t.(*table); t.setExisting(k, v) {
 		return nil
@@ -1010,7 +1003,7 @@ func (l *State) RawSetIndex(idx int, n int64) {
 	if err != nil {
 		panic(err)
 	}
-	if err := t.(*table).set(n, v); err != nil {
+	if err := t.(*table).set(integerValue(n), v); err != nil {
 		panic(err)
 	}
 }
@@ -1087,7 +1080,7 @@ func (l *State) Call(nArgs, nResults, msgHandler int) error {
 // f and args are temporarily pushed onto the stack,
 // thus placing an upper bound on recursion.
 // Results will be pushed on the stack.
-func (l *State) call(numResults int, f any, args ...any) error {
+func (l *State) call(numResults int, f value, args ...value) error {
 	if !l.grow(len(l.stack) + max(1+len(args), numResults)) {
 		return errStackOverflow
 	}
@@ -1108,7 +1101,7 @@ func (l *State) call(numResults int, f any, args ...any) error {
 // call1 calls a function and returns its single result.
 // f and args are temporarily pushed onto the stack,
 // thus placing an upper bound on recursion.
-func (l *State) call1(f any, args ...any) (any, error) {
+func (l *State) call1(f value, args ...value) (value, error) {
 	if err := l.call(1, f, args...); err != nil {
 		return nil, err
 	}
@@ -1247,13 +1240,13 @@ func (l *State) Load(r io.Reader, chunkName luacode.Source, mode string) (err er
 		id:    nextID(),
 		proto: p,
 		upvalues: []upvalue{
-			standaloneUpvalue(l.registry.get(RegistryIndexGlobals)),
+			standaloneUpvalue(l.registry.get(integerValue(RegistryIndexGlobals))),
 		},
 	})
 	return nil
 }
 
-func (l *State) typeName(v any) string {
+func (l *State) typeName(v value) string {
 	switch v := v.(type) {
 	case *table:
 		if s, ok := v.get(stringValue{s: "__name"}).(stringValue); ok {
