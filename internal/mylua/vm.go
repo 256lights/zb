@@ -113,6 +113,7 @@ func (l *State) exec() error {
 		if !i.IsInTop() {
 			// For instructions that don't read the stack top,
 			// use the end of the registers.
+			// This makes it safe to call metamethods.
 			l.setTop(frame.registerStart() + int(f.proto.MaxStackSize))
 		}
 		nextPC := frame.pc + 1
@@ -242,6 +243,165 @@ func (l *State) exec() error {
 				l.setTop(callerValueTop)
 				return err
 			}
+		case luacode.OpAddI, luacode.OpSHRI:
+			c := luacode.IntegerValue(int64(luacode.SignedArg(i.ArgC())))
+			if rb, isNumber := exportNumericConstant(registers[i.ArgB()]); isNumber {
+				op, ok := i.OpCode().ArithmeticOperator()
+				if !ok {
+					panic("operator should always be defined")
+				}
+				result, err := luacode.Arithmetic(op, rb, c)
+				if err != nil {
+					l.setTop(callerValueTop)
+					return err
+				}
+				registers[i.ArgA()] = importConstant(result)
+				// The next instruction is a fallback metamethod invocation.
+				nextPC++
+			}
+		case luacode.OpSHLI:
+			// Separate case because SHLI's arguments are in the opposite order.
+			c := luacode.IntegerValue(int64(luacode.SignedArg(i.ArgC())))
+			if rb, isNumber := exportNumericConstant(registers[i.ArgB()]); isNumber {
+				result, err := luacode.Arithmetic(luacode.ShiftLeft, c, rb)
+				if err != nil {
+					l.setTop(callerValueTop)
+					return err
+				}
+				registers[i.ArgA()] = importConstant(result)
+				// The next instruction is a fallback metamethod invocation.
+				nextPC++
+			}
+		case luacode.OpAddK,
+			luacode.OpSubK,
+			luacode.OpMulK,
+			luacode.OpModK,
+			luacode.OpPowK,
+			luacode.OpDivK,
+			luacode.OpIDivK,
+			luacode.OpBAndK,
+			luacode.OpBOrK,
+			luacode.OpBXORK:
+			kc := f.proto.Constants[i.ArgC()]
+			if !kc.IsNumber() {
+				l.setTop(callerValueTop)
+				return fmt.Errorf("%v on non-numeric constant %v", i.OpCode(), kc)
+			}
+			if rb, isNumber := exportNumericConstant(registers[i.ArgB()]); isNumber {
+				op, ok := i.OpCode().ArithmeticOperator()
+				if !ok {
+					panic("operator should always be defined")
+				}
+				result, err := luacode.Arithmetic(op, rb, kc)
+				if err != nil {
+					l.setTop(callerValueTop)
+					return err
+				}
+				registers[i.ArgA()] = importConstant(result)
+				// The next instruction is a fallback metamethod invocation.
+				nextPC++
+			}
+		case luacode.OpAdd,
+			luacode.OpSub,
+			luacode.OpMul,
+			luacode.OpMod,
+			luacode.OpPow,
+			luacode.OpDiv,
+			luacode.OpIDiv,
+			luacode.OpBAnd,
+			luacode.OpBOr,
+			luacode.OpBXOR,
+			luacode.OpSHL,
+			luacode.OpSHR:
+			if rb, isNumber := exportNumericConstant(registers[i.ArgB()]); isNumber {
+				if rc, isNumber := exportNumericConstant(registers[i.ArgC()]); isNumber {
+					op, ok := i.OpCode().ArithmeticOperator()
+					if !ok {
+						panic("operator should always be defined")
+					}
+					result, err := luacode.Arithmetic(op, rb, rc)
+					if err != nil {
+						l.setTop(callerValueTop)
+						return err
+					}
+					registers[i.ArgA()] = importConstant(result)
+					// The next instruction is a fallback metamethod invocation.
+					nextPC++
+				}
+			}
+		case luacode.OpMMBin:
+			prev, prevOperator, err := decodeBinaryMetamethod(frame, f.proto)
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+			registers[prev.ArgA()], err = l.arithmeticMetamethod(
+				prevOperator.TagMethod(),
+				registers[i.ArgA()],
+				registers[i.ArgB()],
+			)
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+		case luacode.OpMMBinI:
+			prev, prevOperator, err := decodeBinaryMetamethod(frame, f.proto)
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+			registers[prev.ArgA()], err = l.arithmeticMetamethod(
+				prevOperator.TagMethod(),
+				registers[i.ArgA()],
+				int64(luacode.SignedArg(i.ArgB())),
+			)
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+		case luacode.OpMMBinK:
+			prev, prevOperator, err := decodeBinaryMetamethod(frame, f.proto)
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+			registers[prev.ArgA()], err = l.arithmeticMetamethod(
+				prevOperator.TagMethod(),
+				registers[i.ArgA()],
+				f.proto.Constants[i.ArgB()],
+			)
+			if err != nil {
+				l.setTop(callerValueTop)
+				return err
+			}
+		case luacode.OpUNM:
+			rb := registers[i.ArgB()]
+			if ib, ok := rb.(int64); ok {
+				registers[i.ArgA()] = -ib
+			} else if nb, ok := toNumber(rb); ok {
+				registers[i.ArgA()] = -nb
+			} else {
+				var err error
+				registers[i.ArgA()], err = l.arithmeticMetamethod(luacode.TagMethodUNM, rb, rb)
+				if err != nil {
+					l.setTop(callerValueTop)
+					return err
+				}
+			}
+		case luacode.OpBNot:
+			rb := registers[i.ArgB()]
+			if ib, ok := rb.(int64); ok {
+				registers[i.ArgA()] = int64(^uint64(ib))
+			} else {
+				var err error
+				registers[i.ArgA()], err = l.arithmeticMetamethod(luacode.TagMethodBNot, rb, rb)
+				if err != nil {
+					l.setTop(callerValueTop)
+					return err
+				}
+			}
+		case luacode.OpNot:
+			registers[i.ArgA()] = !toBoolean(registers[i.ArgB()])
 		case luacode.OpJMP:
 			nextPC += int(i.J())
 		case luacode.OpTest:
@@ -403,6 +563,55 @@ func (l *State) finishCall(numResults int) {
 	l.setTop(frame.framePointer() + numWantedResults)
 
 	l.popCallStack()
+}
+
+func (l *State) arithmeticMetamethod(event luacode.TagMethod, arg1, arg2 any) (any, error) {
+	op, isArithmetic := event.ArithmeticOperator()
+	if !isArithmetic {
+		return nil, fmt.Errorf("%v is not an arithmetic metamethod", event)
+	}
+
+	eventName := event.String()
+	if f := l.metatable(arg1).get(stringValue{s: eventName}); f != nil {
+		return l.call1(f, arg1, arg2)
+	}
+	if f := l.metatable(arg2).get(stringValue{s: eventName}); f != nil {
+		return l.call1(f, arg1, arg2)
+	}
+
+	kind := "arithmetic"
+	if op.IsIntegral() {
+		if valueType(arg1) == TypeNumber && valueType(arg2) == TypeNumber {
+			return nil, luacode.ErrNotInteger
+		}
+		kind = "bitwise operation"
+	}
+	var tname string
+	if valueType(arg1) == TypeNumber {
+		tname = l.typeName(arg2)
+	} else {
+		tname = l.typeName(arg1)
+	}
+	return nil, fmt.Errorf("attempt to perform %s on a %s value", kind, tname)
+}
+
+func decodeBinaryMetamethod(frame *callFrame, proto *luacode.Prototype) (luacode.Instruction, luacode.ArithmeticOperator, error) {
+	i := proto.Code[frame.pc]
+	if frame.pc <= 0 {
+		return 0, 0, fmt.Errorf("decode error: %v must be preceded by binary arithmetic instruction", i.OpCode())
+	}
+	prev := proto.Code[frame.pc-1]
+	prevOpCode := prev.OpCode()
+	prevOperator, isArithmetic := prevOpCode.ArithmeticOperator()
+	if !isArithmetic || !prevOperator.IsBinary() {
+		return 0, 0, fmt.Errorf("decode error: %v must be preceded by binary arithmetic instruction (found %v)", i.OpCode(), prevOpCode)
+	}
+	if got, want := luacode.TagMethod(i.ArgC()), prevOperator.TagMethod(); got != want {
+		err := fmt.Errorf("decode error: found metamethod %v in %v after %v (expected %v)",
+			got, i.OpCode(), prev.OpCode(), want)
+		return prev, prevOperator, err
+	}
+	return prev, prevOperator, nil
 }
 
 func decodeExtraArg(frame *callFrame, proto *luacode.Prototype) (uint32, error) {

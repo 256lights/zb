@@ -40,3 +40,31 @@ const (
 	TagMethodCall   TagMethod = 23 // __call
 	TagMethodClose  TagMethod = 24 // __close
 )
+
+// ArithmeticOperator returns the [ArithmeticOperator]
+// that the metamethod represents (if applicable).
+func (tm TagMethod) ArithmeticOperator() (_ ArithmeticOperator, ok bool) {
+	for opMinusOne, opTM := range operatorTagMethods {
+		if opTM == tm {
+			return ArithmeticOperator(opMinusOne + 1), true
+		}
+	}
+	return 0, false
+}
+
+var operatorTagMethods = [numArithmeticOperators]TagMethod{
+	Add - 1:           TagMethodAdd,
+	Subtract - 1:      TagMethodSub,
+	Multiply - 1:      TagMethodMul,
+	Modulo - 1:        TagMethodMod,
+	Power - 1:         TagMethodPow,
+	Divide - 1:        TagMethodDiv,
+	IntegerDivide - 1: TagMethodIDiv,
+	BitwiseAnd - 1:    TagMethodBAnd,
+	BitwiseOr - 1:     TagMethodBOr,
+	BitwiseXOR - 1:    TagMethodBXOR,
+	ShiftLeft - 1:     TagMethodSHL,
+	ShiftRight - 1:    TagMethodSHR,
+	UnaryMinus - 1:    TagMethodUNM,
+	BitwiseNot - 1:    TagMethodBNot,
+}

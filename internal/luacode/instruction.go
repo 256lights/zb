@@ -374,6 +374,39 @@ func (op OpCode) IsMetamethod() bool {
 	return op.props()&(1<<7) != 0
 }
 
+// ArithmeticOperator returns the [ArithmeticOperator]
+// that the instruction represents.
+func (op OpCode) ArithmeticOperator() (_ ArithmeticOperator, ok bool) {
+	switch op {
+	case OpAddI, OpAddK, OpAdd:
+		return Add, true
+	case OpSubK, OpSub:
+		return Subtract, true
+	case OpMulK, OpMul:
+		return Multiply, true
+	case OpModK, OpMod:
+		return Modulo, true
+	case OpPowK, OpPow:
+		return Power, true
+	case OpDivK, OpDiv:
+		return Divide, true
+	case OpIDivK, OpIDiv:
+		return IntegerDivide, true
+	case OpBAndK, OpBAnd:
+		return BitwiseAnd, true
+	case OpBOrK, OpBOr:
+		return BitwiseOr, true
+	case OpBXORK, OpBXOR:
+		return BitwiseXOR, true
+	case OpSHRI, OpSHR:
+		return ShiftRight, true
+	case OpSHLI, OpSHL:
+		return ShiftLeft, true
+	default:
+		return 0, false
+	}
+}
+
 // Defined [OpCode] values.
 const (
 	// A B R[A] := R[B]

@@ -732,22 +732,7 @@ func (l *State) index(t, k any) (any, error) {
 				return v, nil
 			}
 		case luaFunction, goFunction:
-			if !l.grow(len(l.stack) + 3) {
-				return nil, errStackOverflow
-			}
-			l.stack = append(l.stack, tm, t, k)
-			isLua, err := l.prepareCall(2, 1)
-			if err != nil {
-				return nil, err
-			}
-			if isLua {
-				if err := l.exec(); err != nil {
-					return nil, err
-				}
-			}
-			v := l.stack[len(l.stack)-1]
-			l.setTop(len(l.stack) - 1)
-			return v, nil
+			return l.call1(tm, t, k)
 		}
 
 		t = tm
@@ -949,18 +934,8 @@ func (l *State) setIndex(t, k, v any) error {
 				return nil
 			}
 		case luaFunction, goFunction:
-			if !l.grow(len(l.stack) + 4) {
-				return errStackOverflow
-			}
-			l.stack = append(l.stack, tm, t, k, v)
-			isLua, err := l.prepareCall(3, 0)
-			if err != nil {
+			if err := l.call(0, tm, t, k, v); err != nil {
 				return err
-			}
-			if isLua {
-				if err := l.exec(); err != nil {
-					return err
-				}
 			}
 			return nil
 		}
@@ -1106,6 +1081,40 @@ func (l *State) Call(nArgs, nResults, msgHandler int) error {
 		}
 	}
 	return nil
+}
+
+// call calls a function directly.
+// f and args are temporarily pushed onto the stack,
+// thus placing an upper bound on recursion.
+// Results will be pushed on the stack.
+func (l *State) call(numResults int, f any, args ...any) error {
+	if !l.grow(len(l.stack) + max(1+len(args), numResults)) {
+		return errStackOverflow
+	}
+	l.stack = append(l.stack, f)
+	l.stack = append(l.stack, args...)
+	isLua, err := l.prepareCall(len(args), numResults)
+	if err != nil {
+		return err
+	}
+	if isLua {
+		if err := l.exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// call1 calls a function and returns its single result.
+// f and args are temporarily pushed onto the stack,
+// thus placing an upper bound on recursion.
+func (l *State) call1(f any, args ...any) (any, error) {
+	if err := l.call(1, f, args...); err != nil {
+		return nil, err
+	}
+	v := l.stack[len(l.stack)-1]
+	l.setTop(len(l.stack) - 1)
+	return v, nil
 }
 
 func (l *State) prepareCall(numArgs, numResults int) (isLua bool, err error) {

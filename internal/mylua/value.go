@@ -103,6 +103,17 @@ func importConstant(v luacode.Value) any {
 	}
 }
 
+func exportNumericConstant(v any) (_ luacode.Value, ok bool) {
+	switch v := v.(type) {
+	case float64:
+		return luacode.FloatValue(v), true
+	case int64:
+		return luacode.IntegerValue(v), true
+	default:
+		return luacode.Value{}, false
+	}
+}
+
 func compareValues(v1, v2 any) int {
 	switch v1 := v1.(type) {
 	case nil:

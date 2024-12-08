@@ -40,9 +40,33 @@ func (op ArithmeticOperator) isValid() bool {
 	return 0 < op && op <= numArithmeticOperators
 }
 
+// TagMethod returns the metamethod name for the given operator.
+// TagMethod panics if op is not a valid arithmetic operator.
+func (op ArithmeticOperator) TagMethod() TagMethod {
+	if !op.isValid() {
+		panic("invalid arithmetic operator")
+	}
+	return operatorTagMethods[op-1]
+}
+
 // IsUnary reports whether the operator only uses one value.
 func (op ArithmeticOperator) IsUnary() bool {
 	return op == UnaryMinus || op == BitwiseNot
+}
+
+// IsBinary reports whether the operator uses two values.
+func (op ArithmeticOperator) IsBinary() bool {
+	return !op.IsUnary()
+}
+
+// IsIntegral reports whether the operator only operates on integral values.
+func (op ArithmeticOperator) IsIntegral() bool {
+	return op == BitwiseAnd ||
+		op == BitwiseOr ||
+		op == BitwiseXOR ||
+		op == ShiftLeft ||
+		op == ShiftRight ||
+		op == BitwiseNot
 }
 
 // intArithmeticMode is the [FloatToIntegerMode] used for [Arithmetic].
