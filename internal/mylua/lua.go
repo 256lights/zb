@@ -193,7 +193,7 @@ func (l *State) Top() int {
 	if len(l.callStack) == 0 {
 		return 0
 	}
-	return len(l.stack) - l.frame().registerStart()
+	return max(len(l.stack)-l.frame().registerStart(), 0)
 }
 
 // SetTop accepts any index, or 0, and sets the stack top to this index.
