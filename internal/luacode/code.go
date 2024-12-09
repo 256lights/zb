@@ -869,14 +869,16 @@ const fieldsPerFlush = 50
 
 // codeSetList appends the instructions for an [OpSetList] instruction to fs.Code.
 // base is the register that keeps table;
-// numElements is the length of the table plus those to be stored now;
+// numElements is the length of the table (excluding those to be stored now);
 // toStore is the number of values (in registers base + 1, ...)
 // to add to the table (or [multiReturn] to add up to stack top).
+//
+// Equivalent to `luaK_setlist` in upstream Lua.
 func (p *parser) codeSetList(fs *funcState, base registerIndex, numElements int, toStore int) error {
 	switch {
 	case toStore == MultiReturn:
 		toStore = 0
-	case toStore <= 0 || toStore >= fieldsPerFlush:
+	case toStore <= 0 || toStore > fieldsPerFlush:
 		return fmt.Errorf("internal error: codeSetList: toStore out of range (%d)", toStore)
 	}
 	if numElements <= maxArgC {

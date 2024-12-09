@@ -21,6 +21,11 @@ func TestParse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	diffOptions := cmp.Options{
+		cmp.AllowUnexported(LineInfo{}),
+		cmp.AllowUnexported(absLineInfo{}),
+		cmpopts.EquateEmpty(),
+	}
 
 	for _, ent := range listing {
 		name := ent.Name()
@@ -56,7 +61,7 @@ func TestParse(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if diff := cmp.Diff(want, got, cmp.AllowUnexported(LineInfo{}), cmpopts.EquateEmpty()); diff != "" {
+			if diff := cmp.Diff(want, got, diffOptions); diff != "" {
 				t.Errorf("-want +got:\n%s", diff)
 			}
 		})

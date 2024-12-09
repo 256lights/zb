@@ -601,7 +601,15 @@ const (
 	// A Bx if R[A+2] ~= nil then { R[A]=R[A+2]; pc -= Bx }
 	OpTForLoop OpCode = 77 // TFORLOOP
 
-	// A B C k R[A][C+i] := R[A+i], 1 <= i <= B
+	// OpSetList sets the elements [C+1,C+B]
+	// of the table in R[A]
+	// to the registers [A+1,A+B].
+	// "Raw" sets are used; no metamethods are called.
+	// If k is set, then C is augmented with an [OpExtraArg] instruction:
+	// the starting index to set in the table is
+	// the extra argument multiplied by 256, plus C plus 1.
+	//
+	//	A B C k R[A][C+i] := R[A+i], 1 <= i <= B
 	OpSetList OpCode = 78 // SETLIST
 
 	// A Bx R[A] := closure(KPROTO[Bx])
