@@ -130,7 +130,7 @@ func (l *State) stackIndex(idx int) (int, error) {
 		if idx < -l.Top() {
 			return -1, fmt.Errorf("invalid index %d (top = %d)", idx, l.Top())
 		}
-		return l.frame().registerStart() - idx - 1, nil
+		return len(l.stack) + idx, nil
 	}
 	i := l.frame().registerStart() + idx - 1
 	if i >= cap(l.stack) {
