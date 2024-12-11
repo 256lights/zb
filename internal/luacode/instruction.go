@@ -450,7 +450,14 @@ const (
 	// A B C R[A][K[B]:string] := RK(C)
 	OpSetField OpCode = 18 // SETFIELD
 
-	// A B C k R[A] := {}
+	// OpNewTable creates a new table and stores it in R[A].
+	// C is a hint that integer ("array") keys [1,C] are expected;
+	// 2^B is a hint as to how many non-"array" keys are expected.
+	// OpNewTable is always followed by an [OpExtraArg].
+	// If k is set, then the array size is
+	// the extra argument multiplied by 256 plus C.
+	//
+	//	A B C k R[A] := {}
 	OpNewTable OpCode = 19 // NEWTABLE
 
 	// A B C R[A+1] := R[B]; R[A] := R[B][RK(C):string]
