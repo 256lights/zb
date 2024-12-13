@@ -743,6 +743,26 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			*ra = booleanValue(!toBoolean(*rb))
+		case luacode.OpLen:
+			a := i.ArgA()
+			if _, err := register(registers(), a); err != nil {
+				return err
+			}
+			rb, err := register(registers(), i.ArgB())
+			if err != nil {
+				return err
+			}
+			result, err := l.len(*rb)
+			if err != nil {
+				return err
+			}
+			// Calling a metamethod may grow the stack,
+			// so get register address afterward to avoid referencing an old array.
+			ra, err := register(registers(), a)
+			if err != nil {
+				return err
+			}
+			*ra = result
 		case luacode.OpJMP:
 			nextPC += int(i.J())
 		case luacode.OpTest:

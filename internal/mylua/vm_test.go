@@ -166,4 +166,52 @@ func TestVM(t *testing.T) {
 			state.Pop(1)
 		}
 	})
+
+	t.Run("LenString", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const source = `return #"abc"`
+		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+		if !state.IsNumber(-1) {
+			t.Fatalf("top of stack is %v; want number", state.Type(-1))
+		}
+		const want = int64(3)
+		if got, ok := state.ToInteger(-1); got != want || !ok {
+			t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, want)
+		}
+	})
+
+	t.Run("LenTable", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const source = `return #{123, 456}`
+		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+		if !state.IsNumber(-1) {
+			t.Fatalf("top of stack is %v; want number", state.Type(-1))
+		}
+		const want = int64(2)
+		if got, ok := state.ToInteger(-1); got != want || !ok {
+			t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, want)
+		}
+	})
 }

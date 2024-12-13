@@ -541,14 +541,11 @@ func (l *State) RawLen(idx int) uint64 {
 	if err != nil {
 		panic(err)
 	}
-	switch v := v.(type) {
-	case stringValue:
-		return uint64(len(v.s))
-	case *table:
-		return uint64(v.len())
-	default:
+	lv, ok := v.(lenValue)
+	if !ok {
 		return 0
 	}
+	return uint64(lv.len())
 }
 
 func (l *State) push(x value) {
@@ -1244,6 +1241,50 @@ func (l *State) Load(r io.Reader, chunkName luacode.Source, mode string) (err er
 		},
 	})
 	return nil
+}
+
+// Len pushes the length of the value at the given index to the stack.
+// It is equivalent to the ['#' operator in Lua]
+// and may trigger a [metamethod] for the "length" event.
+//
+// If there is any error, Len catches it,
+// pushes nil or the error object (see Error Handling in [State]) onto the stack,
+// and returns an error.
+//
+// ['#' operator in Lua]: https://www.lua.org/manual/5.4/manual.html#3.4.7
+// [metamethod]: https://www.lua.org/manual/5.4/manual.html#2.4
+func (l *State) Len(idx, msgHandler int) error {
+	l.init()
+	v, _, err := l.valueByIndex(idx)
+	if err != nil {
+		panic(err)
+	}
+	if msgHandler != 0 {
+		return fmt.Errorf("TODO(someday): support message handlers")
+	}
+
+	result, err := l.len(v)
+	if err != nil {
+		return err
+	}
+	l.push(result)
+	return nil
+}
+
+func (l *State) len(v value) (value, error) {
+	// Strings always return their byte length.
+	if v, ok := v.(stringValue); ok {
+		return v.len(), nil
+	}
+
+	if mm := l.metatable(v).get(stringValue{s: luacode.TagMethodLen.String()}); mm != nil {
+		return l.call1(mm, v)
+	}
+	lv, ok := v.(lenValue)
+	if !ok {
+		return nil, fmt.Errorf("attempt to get length of a %s value", l.typeName(v))
+	}
+	return lv.len(), nil
 }
 
 func (l *State) typeName(v value) string {

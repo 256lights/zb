@@ -218,6 +218,17 @@ func toBoolean(v value) bool {
 	}
 }
 
+// lenValue is a [value] that has a defined "raw" length.
+type lenValue interface {
+	value
+	len() integerValue
+}
+
+var (
+	_ lenValue = (*table)(nil)
+	_ lenValue = stringValue{}
+)
+
 type table struct {
 	id      uint64
 	entries []tableEntry
@@ -386,6 +397,10 @@ type stringValue struct {
 
 func (v stringValue) valueType() Type {
 	return TypeString
+}
+
+func (v stringValue) len() integerValue {
+	return integerValue(len(v.s))
 }
 
 func (v stringValue) toNumber() (floatValue, bool) {
