@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
 	"zb.256lights.llc/pkg/internal/luacode"
 	"zb.256lights.llc/pkg/sets"
@@ -506,11 +507,8 @@ func (l *State) ToString(idx int) (s string, ok bool) {
 	switch v := (*p).(type) {
 	case stringValue:
 		return v.s, true
-	case integerValue:
-		s, _ := luacode.IntegerValue(int64(v)).Unquoted()
-		return s, true
-	case floatValue:
-		s, _ := luacode.FloatValue(float64(v)).Unquoted()
+	case valueStringer:
+		*p = v.stringValue()
 		return s, true
 	default:
 		return "", false
@@ -1241,6 +1239,156 @@ func (l *State) Load(r io.Reader, chunkName luacode.Source, mode string) (err er
 		},
 	})
 	return nil
+}
+
+// Concat concatenates the n values at the top of the stack, pops them,
+// and leaves the result on the top.
+// If n is 1, the result is the single value on the stack
+// (that is, the function does nothing);
+// if n is 0, the result is the empty string.
+// Concatenation is performed following the usual semantics of Lua.
+//
+// If there is any error, Concat catches it,
+// leaves nil or the error object (see Error Handling in [State]) on the top of the stack,
+// and returns an error.
+func (l *State) Concat(n, msgHandler int) error {
+	if n < 0 {
+		return errors.New("lua concat: negative argument length")
+	}
+	if n > l.Top() {
+		return errors.New("lua concat: not enough arguments on the stack")
+	}
+	if msgHandler != 0 {
+		return fmt.Errorf("TODO(someday): support message handlers")
+	}
+
+	if err := l.concat(n); err != nil {
+		l.push(nil)
+		return err
+	}
+	return nil
+}
+
+func (l *State) concat(n int) error {
+	if n == 0 {
+		l.push(stringValue{})
+		return nil
+	}
+	firstArg := len(l.stack) - n
+	if firstArg < l.frame().registerStart() {
+		return errors.New("concat: stack underflow")
+	}
+
+	isEmptyString := func(v value) bool {
+		sv, ok := v.(stringValue)
+		return ok && sv.isEmpty()
+	}
+
+	for len(l.stack) > firstArg+1 {
+		v1 := l.stack[len(l.stack)-2]
+		_, isStringer1 := v1.(valueStringer)
+		v2 := l.stack[len(l.stack)-1]
+		vs2, isStringer2 := v2.(valueStringer)
+		switch {
+		case !isStringer1 || !isStringer2:
+			if err := l.concatMetamethod(); err != nil {
+				l.setTop(firstArg)
+				return err
+			}
+		case isEmptyString(v1):
+			l.stack[len(l.stack)-2] = vs2.stringValue()
+			fallthrough
+		case isEmptyString(v2):
+			l.setTop(len(l.stack) - 1)
+		default:
+			// The end of the slice has two or more non-empty strings.
+			// Find the longest run of values that can be coerced to a string,
+			// and perform raw string concatenation.
+			concatStart := firstArg + stringerTailStart(l.stack[firstArg:len(l.stack)-2])
+			initialCapacity, hasContext := minConcatSize(l.stack[concatStart:])
+			sb := new(strings.Builder)
+			sb.Grow(initialCapacity)
+			var sctx sets.Set[string]
+			if hasContext {
+				sctx = make(sets.Set[string])
+			}
+
+			for _, v := range l.stack[concatStart:] {
+				sv := v.(valueStringer).stringValue()
+				sb.WriteString(sv.s)
+				sctx.AddSeq(sv.context.All())
+			}
+
+			l.stack[concatStart] = stringValue{
+				s:       sb.String(),
+				context: sctx,
+			}
+			l.setTop(concatStart + 1)
+		}
+	}
+	return nil
+}
+
+// concatMetamethod attempts to call the __concat metamethod
+// with the two values on the top of the stack.
+func (l *State) concatMetamethod() error {
+	arg1 := l.stack[len(l.stack)-2]
+	arg2 := l.stack[len(l.stack)-1]
+	eventName := stringValue{s: luacode.TagMethodConcat.String()}
+	f := l.metatable(arg1).get(eventName)
+	if f == nil {
+		f = l.metatable(arg2).get(eventName)
+		if f == nil {
+			badArg := arg1
+			if _, isStringer := badArg.(valueStringer); isStringer {
+				badArg = arg2
+			}
+			return fmt.Errorf("attempt to concatenate a %s value", l.typeName(badArg))
+		}
+	}
+
+	// Insert metamethod before two arguments.
+	l.push(f)
+	rotate(l.stack[len(l.stack)-3:], 1)
+
+	// Call metamethod.
+	isLua, err := l.prepareCall(2, 1)
+	if err != nil {
+		return err
+	}
+	if isLua {
+		if err := l.exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// stringerTailStart returns the first index i
+// where every element of values[i:] implements [valueStringer].
+func stringerTailStart(values []value) int {
+	for ; len(values) > 0; values = values[:len(values)-1] {
+		_, isStringer := values[len(values)-1].(valueStringer)
+		if !isStringer {
+			break
+		}
+	}
+	return len(values)
+}
+
+// minConcatSize returns the minimum buffer size necessary
+// to concatenate the given values.
+func minConcatSize(values []value) (n int, hasContext bool) {
+	for _, v := range values {
+		if sv, ok := v.(stringValue); ok {
+			n += len(sv.s)
+			hasContext = hasContext || len(sv.context) > 0
+		} else {
+			// Numbers are non-empty, so add 1.
+			n++
+		}
+	}
+	return
 }
 
 // Len pushes the length of the value at the given index to the stack.

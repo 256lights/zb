@@ -218,6 +218,24 @@ func toBoolean(v value) bool {
 	}
 }
 
+type valueStringer interface {
+	stringValue() stringValue
+}
+
+var (
+	_ valueStringer = floatValue(0)
+	_ valueStringer = integerValue(0)
+	_ valueStringer = stringValue{}
+)
+
+func toString(v value) (_ stringValue, ok bool) {
+	sv, ok := v.(valueStringer)
+	if !ok {
+		return stringValue{}, false
+	}
+	return sv.stringValue(), true
+}
+
 // lenValue is a [value] that has a defined "raw" length.
 type lenValue interface {
 	value
@@ -373,6 +391,11 @@ func (v integerValue) valueType() Type                 { return TypeNumber }
 func (v integerValue) toNumber() (floatValue, bool)    { return floatValue(v), true }
 func (v integerValue) toInteger() (integerValue, bool) { return v, true }
 
+func (v integerValue) stringValue() stringValue {
+	s, _ := luacode.IntegerValue(int64(v)).Unquoted()
+	return stringValue{s: s}
+}
+
 // floatValue is a floating-point [value].
 type floatValue float64
 
@@ -382,6 +405,11 @@ func (v floatValue) toNumber() (floatValue, bool) { return v, true }
 func (v floatValue) toInteger() (integerValue, bool) {
 	i, ok := luacode.FloatToInteger(float64(v), luacode.OnlyIntegral)
 	return integerValue(i), ok
+}
+
+func (v floatValue) stringValue() stringValue {
+	s, _ := luacode.FloatValue(float64(v)).Unquoted()
+	return stringValue{s: s}
 }
 
 // stringValue is a string [value].
@@ -401,6 +429,14 @@ func (v stringValue) valueType() Type {
 
 func (v stringValue) len() integerValue {
 	return integerValue(len(v.s))
+}
+
+func (v stringValue) isEmpty() bool {
+	return len(v.s) == 0 && len(v.context) == 0
+}
+
+func (v stringValue) stringValue() stringValue {
+	return v
 }
 
 func (v stringValue) toNumber() (floatValue, bool) {

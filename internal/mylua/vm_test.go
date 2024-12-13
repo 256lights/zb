@@ -214,4 +214,56 @@ func TestVM(t *testing.T) {
 			t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, want)
 		}
 	})
+
+	t.Run("Concat2", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.PushString("World")
+		if err := state.SetGlobal("x", 0); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `return "Hello, "..x`
+		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+		const want = "Hello, World"
+		if got, ok := state.ToString(-1); got != want || !ok {
+			t.Errorf("state.ToString(-1) = %q, %t; want %q, true", got, ok, want)
+		}
+	})
+
+	t.Run("Concat3", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.PushString("World")
+		if err := state.SetGlobal("x", 0); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `return "Hello, "..x.."!"`
+		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+		const want = "Hello, World!"
+		if got, ok := state.ToString(-1); got != want || !ok {
+			t.Errorf("state.ToString(-1) = %q, %t; want %q, true", got, ok, want)
+		}
+	})
 }

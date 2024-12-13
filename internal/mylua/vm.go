@@ -763,6 +763,17 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			*ra = result
+		case luacode.OpConcat:
+			a, b := i.ArgA(), i.ArgB()
+			top := int(a) + int(b)
+			if top > int(f.proto.MaxStackSize) {
+				return fmt.Errorf("decode instruction (pc=%d): concat: register %d out-of-bounds (stack is %d slots)",
+					frame.pc, top-1, f.proto.MaxStackSize)
+			}
+			l.setTop(frame.registerStart() + top)
+			if err := l.concat(int(b)); err != nil {
+				return err
+			}
 		case luacode.OpJMP:
 			nextPC += int(i.J())
 		case luacode.OpTest:
