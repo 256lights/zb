@@ -611,27 +611,24 @@ func (l *State) compare(op ComparisonOperator, v1, v2 value) (bool, error) {
 			result := compareValues(v1, v2)
 			return result < 0 || result == 0 && op == LessOrEqual, nil
 		}
-		var eventName stringValue
+		var event luacode.TagMethod
 		switch op {
 		case Less:
-			eventName = stringValue{s: luacode.TagMethodLT.String()}
+			event = luacode.TagMethodLT
 		case LessOrEqual:
-			eventName = stringValue{s: luacode.TagMethodLE.String()}
+			event = luacode.TagMethodLE
 		default:
 			panic("unreachable")
 		}
-		f := l.metatable(v1).get(eventName)
+		f := l.binaryMetamethod(v1, v2, event)
 		if f == nil {
-			f = l.metatable(v2).get(eventName)
-			if f == nil {
-				// Neither value has the needed metamethod.
-				tn1 := l.typeName(v1)
-				tn2 := l.typeName(v2)
-				if tn1 == tn2 {
-					return false, fmt.Errorf("attempt to compare two %s values", tn1)
-				}
-				return false, fmt.Errorf("attempt to compare %s with %s", tn1, tn2)
+			// Neither value has the needed metamethod.
+			tn1 := l.typeName(v1)
+			tn2 := l.typeName(v2)
+			if tn1 == tn2 {
+				return false, fmt.Errorf("attempt to compare two %s values", tn1)
 			}
+			return false, fmt.Errorf("attempt to compare %s with %s", tn1, tn2)
 		}
 		result, err := l.call1(f, v1, v2)
 		if err != nil {
@@ -658,14 +655,10 @@ func (l *State) equal(v1, v2 value) (bool, error) {
 	if !(t1 == TypeTable || t1 == TypeUserdata) {
 		return false, nil
 	}
-	eventName := stringValue{s: luacode.TagMethodEQ.String()}
-	f := l.metatable(v1).get(eventName)
+	f := l.binaryMetamethod(v1, v2, luacode.TagMethodEQ)
 	if f == nil {
-		f = l.metatable(v2).get(eventName)
-		if f == nil {
-			// Neither value has an __eq metamethod.
-			return false, nil
-		}
+		// Neither value has an __eq metamethod.
+		return false, nil
 	}
 	result, err := l.call1(f, v1, v2)
 	if err != nil {
@@ -836,7 +829,7 @@ func (l *State) index(t, k value) (value, error) {
 		}
 	}
 	for range maxMetaDepth {
-		tm := l.metatable(t).get(stringValue{s: luacode.TagMethodIndex.String()})
+		tm := l.metamethod(t, luacode.TagMethodIndex)
 		switch tm := tm.(type) {
 		case nil:
 			if _, isValueTable := t.(*table); !isValueTable {
@@ -971,6 +964,26 @@ func (l *State) metatable(v value) *table {
 	}
 }
 
+// metamethod returns a field from v's metatable
+// or nil if no such field (or metatable) exists.
+func (l *State) metamethod(v value, tm luacode.TagMethod) value {
+	return l.metatable(v).get(stringValue{s: tm.String()})
+}
+
+// binaryMetamethod returns a field from v1's or v2's metatable
+// or nil if neither v1 nor v2 have such a field (or metatable).
+// If both v1 and v2 have a field, v1's field will be returned.
+func (l *State) binaryMetamethod(v1, v2 value, tm luacode.TagMethod) value {
+	eventName := stringValue{s: tm.String()}
+	if mm := l.metatable(v1).get(eventName); mm != nil {
+		return mm
+	}
+	if mm := l.metatable(v2).get(eventName); mm != nil {
+		return mm
+	}
+	return nil
+}
+
 // SetGlobal pops a value from the stack
 // and sets it as the new value of the global with the given name.
 //
@@ -1037,7 +1050,7 @@ func (l *State) setIndex(t, k, v value) error {
 	}
 
 	for range maxMetaDepth {
-		tm := l.metatable(t).get(stringValue{s: luacode.TagMethodNewIndex.String()})
+		tm := l.metamethod(t, luacode.TagMethodNewIndex)
 		switch tm := tm.(type) {
 		case nil:
 			tab, _ := t.(*table)
@@ -1273,7 +1286,7 @@ func (l *State) prepareCall(numArgs, numResults int) (isLua bool, err error) {
 			l.finishCall(n)
 			return false, nil
 		default:
-			tm := l.metatable(f).get(stringValue{s: luacode.TagMethodCall.String()})
+			tm := l.metamethod(f, luacode.TagMethodCall)
 			if tm == nil {
 				l.popCallStack()
 				l.setTop(functionIndex - 1)
@@ -1463,17 +1476,13 @@ func (l *State) concat(n int) error {
 func (l *State) concatMetamethod() error {
 	arg1 := l.stack[len(l.stack)-2]
 	arg2 := l.stack[len(l.stack)-1]
-	eventName := stringValue{s: luacode.TagMethodConcat.String()}
-	f := l.metatable(arg1).get(eventName)
+	f := l.binaryMetamethod(arg1, arg2, luacode.TagMethodConcat)
 	if f == nil {
-		f = l.metatable(arg2).get(eventName)
-		if f == nil {
-			badArg := arg1
-			if _, isStringer := badArg.(valueStringer); isStringer {
-				badArg = arg2
-			}
-			return fmt.Errorf("attempt to concatenate a %s value", l.typeName(badArg))
+		badArg := arg1
+		if _, isStringer := badArg.(valueStringer); isStringer {
+			badArg = arg2
 		}
+		return fmt.Errorf("attempt to concatenate a %s value", l.typeName(badArg))
 	}
 
 	// Insert metamethod before two arguments.
@@ -1554,7 +1563,7 @@ func (l *State) len(v value) (value, error) {
 		return v.len(), nil
 	}
 
-	if mm := l.metatable(v).get(stringValue{s: luacode.TagMethodLen.String()}); mm != nil {
+	if mm := l.metamethod(v, luacode.TagMethodLen); mm != nil {
 		return l.call1(mm, v)
 	}
 	lv, ok := v.(lenValue)

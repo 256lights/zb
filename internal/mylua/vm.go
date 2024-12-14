@@ -1068,11 +1068,7 @@ func (l *State) arithmeticMetamethod(event luacode.TagMethod, arg1, arg2 value) 
 		return nil, fmt.Errorf("%v is not an arithmetic metamethod", event)
 	}
 
-	eventName := event.String()
-	if f := l.metatable(arg1).get(stringValue{s: eventName}); f != nil {
-		return l.call1(f, arg1, arg2)
-	}
-	if f := l.metatable(arg2).get(stringValue{s: eventName}); f != nil {
+	if f := l.binaryMetamethod(arg1, arg2, event); f != nil {
 		return l.call1(f, arg1, arg2)
 	}
 
