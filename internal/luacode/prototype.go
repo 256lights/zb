@@ -208,7 +208,6 @@ func dumpFunction(buf []byte, f *Prototype, parentSource Source) ([]byte, error)
 func dumpString(buf []byte, s string) []byte {
 	buf = dumpVarint(buf, len(s)+1)
 	buf = append(buf, s...)
-	buf = append(buf, 0)
 	return buf
 }
 
@@ -220,7 +219,7 @@ func dumpVarint(buf []byte, size int) []byte {
 	for {
 		buf = append(buf, uint8(size&0x7f))
 		size >>= 7
-		if size != 0 {
+		if size == 0 {
 			break
 		}
 	}

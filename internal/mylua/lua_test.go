@@ -4,6 +4,7 @@
 package mylua
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"testing/iotest"
 
 	"github.com/google/go-cmp/cmp"
+	"zb.256lights.llc/pkg/internal/luacode"
 )
 
 func TestLoad(t *testing.T) {
@@ -25,6 +27,39 @@ func TestLoad(t *testing.T) {
 
 		const source = "return 2 + 2"
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+		if !state.IsNumber(-1) {
+			t.Fatalf("top of stack is %v; want number", state.Type(-1))
+		}
+		const want = int64(4)
+		if got, ok := state.ToInteger(-1); got != want || !ok {
+			t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, want)
+		}
+	})
+
+	t.Run("Binary", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const source = "return 2 + 2"
+		proto, err := luacode.Parse(source, strings.NewReader(source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		chunk, err := proto.MarshalBinary()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := state.Load(bytes.NewReader(chunk), "", "b"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 1, 0); err != nil {

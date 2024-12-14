@@ -1187,6 +1187,7 @@ func (l *State) popCallStack() {
 //
 // [debug information]: https://www.lua.org/manual/5.4/manual.html#4.7
 func (l *State) Load(r io.Reader, chunkName luacode.Source, mode string) (err error) {
+	l.init()
 	defer func() {
 		if err != nil {
 			l.PushString(err.Error())
@@ -1218,6 +1219,7 @@ func (l *State) Load(r io.Reader, chunkName luacode.Source, mode string) (err er
 		if err != nil {
 			return err
 		}
+		p = new(luacode.Prototype)
 		if err := p.UnmarshalBinary(data); err != nil {
 			return err
 		}
@@ -1230,7 +1232,6 @@ func (l *State) Load(r io.Reader, chunkName luacode.Source, mode string) (err er
 		}
 	}
 
-	l.init()
 	l.push(luaFunction{
 		id:    nextID(),
 		proto: p,

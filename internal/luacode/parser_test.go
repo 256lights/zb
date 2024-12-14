@@ -6,53 +6,24 @@ package luacode
 import (
 	"bufio"
 	"errors"
+	"iter"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestParse(t *testing.T) {
-	root := "testdata"
-	listing, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	diffOptions := cmp.Options{
-		cmp.AllowUnexported(LineInfo{}),
-		cmp.AllowUnexported(absLineInfo{}),
-		cmpopts.EquateEmpty(),
-	}
-
-	for _, ent := range listing {
-		name := ent.Name()
-		if !ent.IsDir() || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
-			continue
-		}
-		const inputName = "input.lua"
-		const outputName = "luac.out"
-
-		f, err := os.Open(filepath.Join(root, name, inputName))
-		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				t.Error(err)
-			}
-			continue
-		}
-
-		t.Run(name, func(t *testing.T) {
-			defer f.Close()
-
-			source := Source("@" + filepath.ToSlash(root) + "/" + name + "/" + inputName)
-			got, err := Parse(source, bufio.NewReader(f))
+	for test := range readTestData(t) {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := Parse(test.source, bufio.NewReader(test.input))
 			if err != nil {
 				t.Fatal("Parse:", err)
 			}
 
-			wantChunk, err := os.ReadFile(filepath.Join(root, name, outputName))
+			wantChunk, err := os.ReadFile(test.luacOutputPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,10 +32,56 @@ func TestParse(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if diff := cmp.Diff(want, got, diffOptions); diff != "" {
+			if diff := cmp.Diff(want, got, prototypeDiffOptions); diff != "" {
 				t.Errorf("-want +got:\n%s", diff)
 			}
 		})
+
+		test.input.Close()
+	}
+}
+
+type parseTest struct {
+	name           string
+	source         Source
+	input          *os.File
+	luacOutputPath string
+}
+
+func readTestData(tb testing.TB) iter.Seq[parseTest] {
+	const inputName = "input.lua"
+	const outputName = "luac.out"
+
+	return func(yield func(parseTest) bool) {
+		root := "testdata"
+		listing, err := os.ReadDir(root)
+		if err != nil {
+			tb.Error(err)
+			return
+		}
+
+		for _, ent := range listing {
+			name := ent.Name()
+			if !ent.IsDir() || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+				continue
+			}
+			f, err := os.Open(filepath.Join(root, name, inputName))
+			if err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					tb.Error(err)
+				}
+				continue
+			}
+			test := parseTest{
+				name:           name,
+				source:         Source("@" + filepath.ToSlash(root) + "/" + name + "/" + inputName),
+				input:          f,
+				luacOutputPath: filepath.Join(root, name, outputName),
+			}
+			if !yield(test) {
+				return
+			}
+		}
 	}
 }
 
