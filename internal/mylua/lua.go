@@ -202,16 +202,24 @@ func (l *State) Top() int {
 // then the new elements are filled with nil.
 // If idx is 0, then all stack elements are removed.
 func (l *State) SetTop(idx int) {
+	if isPseudo(idx) {
+		panic("invalid new top")
+	}
 	l.init()
-	if idx == 0 {
-		l.setTop(l.frame().registerStart())
-		return
+	base := l.frame().registerStart()
+	var newTop int
+	if idx >= 0 {
+		newTop = base + idx
+		if newTop > cap(l.stack) {
+			panic("new top too large")
+		}
+	} else {
+		newTop = len(l.stack) + idx + 1
+		if newTop < base {
+			panic("invalid new top")
+		}
 	}
-	i, err := l.stackIndex(idx)
-	if err != nil {
-		panic(err)
-	}
-	l.setTop(i + 1)
+	l.setTop(newTop)
 }
 
 func (l *State) setTop(i int) {
