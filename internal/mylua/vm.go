@@ -157,7 +157,7 @@ func (l *State) exec() (err error) {
 		}
 		nextPC := frame.pc + 1
 
-		switch i.OpCode() {
+		switch opCode := i.OpCode(); opCode {
 		case luacode.OpMove:
 			r := registers()
 			ra, err := register(r, i.ArgA())
@@ -470,7 +470,7 @@ func (l *State) exec() (err error) {
 			}
 			c := luacode.IntegerValue(int64(luacode.SignedArg(i.ArgC())))
 			if kb, isNumber := exportNumericConstant(*rb); isNumber {
-				op, ok := i.OpCode().ArithmeticOperator()
+				op, ok := opCode.ArithmeticOperator()
 				if !ok {
 					panic("operator should always be defined")
 				}
@@ -527,10 +527,10 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if !kc.IsNumber() {
-				return fmt.Errorf("decode instruction (pc=%d): %v on non-numeric constant %v", frame.pc, i.OpCode(), kc)
+				return fmt.Errorf("decode instruction (pc=%d): %v on non-numeric constant %v", frame.pc, opCode, kc)
 			}
 			if rb, isNumber := exportNumericConstant(*rb); isNumber {
-				op, ok := i.OpCode().ArithmeticOperator()
+				op, ok := opCode.ArithmeticOperator()
 				if !ok {
 					panic("operator should always be defined")
 				}
@@ -569,7 +569,7 @@ func (l *State) exec() (err error) {
 			}
 			if kb, isNumber := exportNumericConstant(*rb); isNumber {
 				if kc, isNumber := exportNumericConstant(*rc); isNumber {
-					op, ok := i.OpCode().ArithmeticOperator()
+					op, ok := opCode.ArithmeticOperator()
 					if !ok {
 						panic("operator should always be defined")
 					}
@@ -776,6 +776,107 @@ func (l *State) exec() (err error) {
 			}
 		case luacode.OpJMP:
 			nextPC += int(i.J())
+		case luacode.OpEQ:
+			r := registers()
+			ra, err := register(r, i.ArgA())
+			if err != nil {
+				return err
+			}
+			rb, err := register(r, i.ArgB())
+			if err != nil {
+				return err
+			}
+			result, err := l.equal(*ra, *rb)
+			if err != nil {
+				return err
+			}
+			if result != i.K() {
+				nextPC++
+			}
+		case luacode.OpEQK:
+			ra, err := register(registers(), i.ArgA())
+			if err != nil {
+				return err
+			}
+			kb, err := constant(uint32(i.ArgB()))
+			if err != nil {
+				return err
+			}
+			result, err := l.equal(*ra, importConstant(kb))
+			if err != nil {
+				return err
+			}
+			if result != i.K() {
+				nextPC++
+			}
+		case luacode.OpEQI:
+			ra, err := register(registers(), i.ArgA())
+			if err != nil {
+				return err
+			}
+			result, err := l.equal(*ra, integerValue(luacode.SignedArg(i.ArgB())))
+			if err != nil {
+				return err
+			}
+			if result != i.K() {
+				nextPC++
+			}
+		case luacode.OpLT, luacode.OpLE:
+			r := registers()
+			ra, err := register(r, i.ArgA())
+			if err != nil {
+				return err
+			}
+			rb, err := register(r, i.ArgB())
+			if err != nil {
+				return err
+			}
+			op := Less
+			if opCode == luacode.OpLE {
+				op = LessOrEqual
+			}
+			result, err := l.compare(op, *ra, *rb)
+			if err != nil {
+				return err
+			}
+			if result != i.K() {
+				nextPC++
+			}
+		case luacode.OpLTI, luacode.OpLEI:
+			ra, err := register(registers(), i.ArgA())
+			if err != nil {
+				return err
+			}
+			op := Less
+			if opCode == luacode.OpLEI {
+				op = LessOrEqual
+			}
+			result, err := l.compare(op, *ra, integerValue(luacode.SignedArg(i.ArgB())))
+			if err != nil {
+				return err
+			}
+			if result != i.K() {
+				nextPC++
+			}
+		case luacode.OpGTI, luacode.OpGEI:
+			ra, err := register(registers(), i.ArgA())
+			if err != nil {
+				return err
+			}
+			// According to the Lua reference manual,
+			// "A comparison a > b is translated to b < a and a >= b is translated to b <= a."
+			// https://www.lua.org/manual/5.4/manual.html#3.4.4
+			op := Less
+			if opCode == luacode.OpGEI {
+				op = LessOrEqual
+			}
+			result, err := l.compare(op, integerValue(luacode.SignedArg(i.ArgB())), *ra)
+			if err != nil {
+				return err
+			}
+			if result != i.K() {
+				nextPC++
+			}
 		case luacode.OpTest:
 			ra, err := register(registers(), i.ArgA())
 			if err != nil {
@@ -930,7 +1031,7 @@ func (l *State) exec() (err error) {
 				frame.numExtraArguments = numExtraArguments
 			}
 		default:
-			return fmt.Errorf("decode instruction (pc=%d): unhandled instruction %v", frame.pc, i.OpCode())
+			return fmt.Errorf("decode instruction (pc=%d): unhandled instruction %v", frame.pc, opCode)
 		}
 
 		frame.pc = nextPC

@@ -1,6 +1,8 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
+//go:generate stringer -type=ComparisonOperator -linecomment -output=lua_string.go
+
 package mylua
 
 import (
@@ -552,6 +554,124 @@ func (l *State) RawLen(idx int) uint64 {
 		return 0
 	}
 	return uint64(lv.len())
+}
+
+// RawEqual reports whether the two values in the given indices
+// are primitively equal (that is, equal without calling the __eq metamethod).
+// If either index is invalid, then RawEqual reports false.
+func (l *State) RawEqual(idx1, idx2 int) bool {
+	l.init()
+	v1, _, err := l.valueByIndex(idx1)
+	if err != nil {
+		return false
+	}
+	v2, _, err := l.valueByIndex(idx2)
+	if err != nil {
+		return false
+	}
+	return valuesEqual(v1, v2)
+}
+
+// ComparisonOperator is an enumeration of operators
+// that can be used with [*State.Compare].
+type ComparisonOperator int
+
+// Defined [ComparisonOperator] values.
+const (
+	Equal       ComparisonOperator = iota // ==
+	Less                                  // <
+	LessOrEqual                           // <=
+)
+
+func (l *State) Compare(idx1, idx2 int, op ComparisonOperator, msgHandler int) (bool, error) {
+	l.init()
+	v1, _, err := l.valueByIndex(idx1)
+	if err != nil {
+		return false, err
+	}
+	v2, _, err := l.valueByIndex(idx2)
+	if err != nil {
+		return false, err
+	}
+	if msgHandler != 0 {
+		return false, fmt.Errorf("TODO(someday): support message handlers")
+	}
+	return l.compare(op, v1, v2)
+}
+
+// compare returns the result of comparing v1 and v2 with the given operator
+// according to Lua's full comparison rules (including metamethods).
+func (l *State) compare(op ComparisonOperator, v1, v2 value) (bool, error) {
+	switch op {
+	case Equal:
+		return l.equal(v1, v2)
+	case Less, LessOrEqual:
+		t1, t2 := valueType(v1), valueType(v2)
+		if t1 == TypeNumber && t2 == TypeNumber || t1 == TypeString && t2 == TypeString {
+			result := compareValues(v1, v2)
+			return result < 0 || result == 0 && op == LessOrEqual, nil
+		}
+		var eventName stringValue
+		switch op {
+		case Less:
+			eventName = stringValue{s: luacode.TagMethodLT.String()}
+		case LessOrEqual:
+			eventName = stringValue{s: luacode.TagMethodLE.String()}
+		default:
+			panic("unreachable")
+		}
+		f := l.metatable(v1).get(eventName)
+		if f == nil {
+			f = l.metatable(v2).get(eventName)
+			if f == nil {
+				// Neither value has the needed metamethod.
+				tn1 := l.typeName(v1)
+				tn2 := l.typeName(v2)
+				if tn1 == tn2 {
+					return false, fmt.Errorf("attempt to compare two %s values", tn1)
+				}
+				return false, fmt.Errorf("attempt to compare %s with %s", tn1, tn2)
+			}
+		}
+		result, err := l.call1(f, v1, v2)
+		if err != nil {
+			return false, err
+		}
+		return toBoolean(result), nil
+	default:
+		return false, fmt.Errorf("invalid %v", op)
+	}
+}
+
+// equal reports whether v1 == v2 according to Lua's full equality rules (including metamethods).
+func (l *State) equal(v1, v2 value) (bool, error) {
+	// Values of different types are never equal.
+	t1, t2 := valueType(v1), valueType(v2)
+	if t1 != t2 {
+		return false, nil
+	}
+	// If the values are primitively equal, then it's equal.
+	if valuesEqual(v1, v2) {
+		return true, nil
+	}
+	// Check __eq metamethod for types with individual metatables.
+	if !(t1 == TypeTable || t1 == TypeUserdata) {
+		return false, nil
+	}
+	eventName := stringValue{s: luacode.TagMethodEQ.String()}
+	f := l.metatable(v1).get(eventName)
+	if f == nil {
+		f = l.metatable(v2).get(eventName)
+		if f == nil {
+			// Neither value has an __eq metamethod.
+			return false, nil
+		}
+	}
+	result, err := l.call1(f, v1, v2)
+	if err != nil {
+		return false, err
+	}
+	return toBoolean(result), nil
 }
 
 func (l *State) push(x value) {

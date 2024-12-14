@@ -8,12 +8,14 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/iotest"
 
 	"github.com/google/go-cmp/cmp"
 	"zb.256lights.llc/pkg/internal/luacode"
+	"zb.256lights.llc/pkg/internal/lualex"
 )
 
 func TestLoad(t *testing.T) {
@@ -96,6 +98,139 @@ func TestLoad(t *testing.T) {
 	})
 }
 
+func TestCompare(t *testing.T) {
+	type compareTable [3]int8
+	const bad int8 = -1
+
+	tests := []struct {
+		name string
+		push func(l *State)
+		want compareTable
+	}{
+		{
+			name: "StringNumber",
+			push: func(l *State) {
+				l.PushString("0")
+				l.PushInteger(0)
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        bad,
+				LessOrEqual: bad,
+			},
+		},
+		{
+			name: "NumberString",
+			push: func(l *State) {
+				l.PushInteger(0)
+				l.PushString("0")
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        bad,
+				LessOrEqual: bad,
+			},
+		},
+	}
+
+	t.Run("StateMethod", func(t *testing.T) {
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				state := new(State)
+				defer func() {
+					if err := state.Close(); err != nil {
+						t.Error("Close:", err)
+					}
+				}()
+
+				test.push(state)
+				s1 := describeValue(state, -2)
+				s2 := describeValue(state, -1)
+
+				for opIndex, want := range test.want {
+					op := ComparisonOperator(opIndex)
+					got, err := state.Compare(-2, -1, op, 0)
+					if got != (want == 1) || (err != nil) != (want == bad) {
+						wantError := "<nil>"
+						if want == bad {
+							wantError = "<error>"
+						}
+						t.Errorf("(%s %v %s) = %t, %v; want %t, %s",
+							s1, op, s2, got, err, (want == 1), wantError)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("Load", func(t *testing.T) {
+		// Parse scripts for comparing two arguments.
+		scripts := [len(compareTable{})][]byte{}
+		for i := range scripts {
+			op := ComparisonOperator(i)
+			source := "local x, y = ...\nreturn x " + op.String() + " y\n"
+			proto, err := luacode.Parse(luacode.Source(source), strings.NewReader(source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			scripts[i], err = proto.MarshalBinary()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				state := new(State)
+				defer func() {
+					if err := state.Close(); err != nil {
+						t.Error("Close:", err)
+					}
+				}()
+
+				test.push(state)
+				s1 := describeValue(state, -2)
+				s2 := describeValue(state, -1)
+
+				for i, want := range test.want {
+					op := ComparisonOperator(i)
+					// TODO(now)
+					if err := state.Load(bytes.NewReader(scripts[i]), "", "b"); err != nil {
+						t.Error("Load:", err)
+						continue
+					}
+
+					// Copy pushed values on top of function pushed.
+					state.PushValue(-3)
+					state.PushValue(-3)
+
+					if err := state.Call(2, 1, 0); err != nil {
+						t.Logf("(%s %v %s): %v", s1, op, s2, err)
+						if want != bad {
+							t.Fail()
+						}
+						continue
+					}
+					if want == bad {
+						t.Fatalf("Comparison did not throw an error")
+					}
+
+					if got, want := state.Type(-1), TypeBoolean; got != want {
+						t.Errorf("(%s %v %s) returned %v; want %v",
+							s1, op, s2, got, want)
+					}
+					got := state.ToBoolean(-1)
+					if got != (want == 1) {
+						t.Errorf("(%s %v %s) = %t, <nil>; want %t, <nil>",
+							s1, op, s2, got, (want == 1))
+					}
+					state.Pop(1)
+				}
+			})
+		}
+	})
+}
+
 func TestRotate(t *testing.T) {
 	tests := []struct {
 		s    []int
@@ -136,5 +271,39 @@ func BenchmarkExec(b *testing.B) {
 			b.Fatal(err)
 		}
 		state.Pop(1)
+	}
+}
+
+func describeValue(l *State, idx int) string {
+	switch l.Type(idx) {
+	case TypeNone:
+		return "<none>"
+	case TypeNil:
+		return "nil"
+	case TypeBoolean:
+		return strconv.FormatBool(l.ToBoolean(idx))
+	case TypeString:
+		s, _ := l.ToString(idx)
+		return lualex.Quote(s)
+	case TypeNumber:
+		if l.IsInteger(idx) {
+			i, _ := l.ToInteger(idx)
+			return strconv.FormatInt(i, 10)
+		}
+		f, _ := l.ToNumber(idx)
+		return strconv.FormatFloat(f, 'g', 0, 64)
+	case TypeTable:
+		if l.RawLen(idx) == 0 {
+			return "{}"
+		}
+		return "{...}"
+	case TypeFunction:
+		return "<function>"
+	case TypeLightUserdata, TypeUserdata:
+		return "<userdata>"
+	case TypeThread:
+		return "<thread>"
+	default:
+		return "<unknown>"
 	}
 }

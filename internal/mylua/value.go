@@ -122,6 +122,13 @@ func exportNumericConstant(v value) (_ luacode.Value, ok bool) {
 // For [floatValue], a NaN is considered less than any non-NaN,
 // a NaN is considered equal to a NaN,
 // and -0.0 is equal to 0.0.
+//
+// This is a superset of the comparisons performed by [Lua relational operators]
+// for the purpose of providing a total ordering for tables.
+//
+// If you only need to check for equality, [valuesEqual] is more efficient.
+//
+// [Lua relational operators]: https://www.lua.org/manual/5.4/manual.html#3.4.4
 func compareValues(v1, v2 value) int {
 	switch v1 := v1.(type) {
 	case nil:
@@ -173,6 +180,48 @@ func compareValues(v1, v2 value) int {
 			return cmp.Compare(TypeFunction, valueType(v2))
 		}
 		return cmp.Compare(v1.functionID(), f2.functionID())
+	default:
+		panic("unhandled type")
+	}
+}
+
+// valuesEqual reports whether v1 and v2 are [primitively equal] —
+// that is, whether they are equal in Lua without consulting the “__eq” metamethod.
+// This involves less comparisons than [compareValues].
+//
+// [primitively equal]: https://www.lua.org/manual/5.4/manual.html#3.4.4
+func valuesEqual(v1, v2 value) bool {
+	switch v1 := v1.(type) {
+	case nil:
+		return v2 == nil
+	case booleanValue:
+		b2, ok := v2.(booleanValue)
+		return ok && v1 == b2
+	case floatValue:
+		switch v2 := v2.(type) {
+		case integerValue:
+			i1, ok := v1.toInteger()
+			return ok && i1 == v2
+		case floatValue:
+			return v1 == v2
+		default:
+			return false
+		}
+	case integerValue:
+		switch v2 := v2.(type) {
+		case integerValue:
+			return v1 == v2
+		case floatValue:
+			i2, ok := v2.toInteger()
+			return ok && v1 == i2
+		default:
+			return false
+		}
+	case stringValue:
+		s2, ok := v2.(stringValue)
+		return ok && v1.s == s2.s
+	case *table, function:
+		return v1 == v2
 	default:
 		panic("unhandled type")
 	}
