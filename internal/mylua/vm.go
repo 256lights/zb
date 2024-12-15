@@ -4,7 +4,6 @@
 package mylua
 
 import (
-	"errors"
 	"fmt"
 
 	"zb.256lights.llc/pkg/internal/luacode"
@@ -67,31 +66,35 @@ func (l *State) loadLuaFrame() (frame *callFrame, f luaFunction, err error) {
 	return frame, f, nil
 }
 
-func (l *State) checkUpvalues(upvalues []upvalue) error {
-	frame := l.frame()
-	for i, uv := range upvalues {
-		if uv.stackIndex >= frame.framePointer() {
-			return fmt.Errorf("internal error: function upvalue [%d] inside current frame", i)
-		}
-	}
-	return nil
-}
-
 func (l *State) exec() (err error) {
 	if len(l.callStack) == 0 {
 		panic("exec called on empty call stack")
 	}
 	callerDepth := len(l.callStack) - 1
 	frame, f, firstLoadError := l.loadLuaFrame()
-	defer func(callerValueTop int) {
+	defer func() {
 		if err != nil {
 			// TODO(someday): Message handler.
-			l.setTop(callerValueTop)
 		}
 
-		clear(l.callStack[callerDepth:])
-		l.callStack = l.callStack[:callerDepth]
-	}(frame.framePointer())
+		// Unwind stack.
+		for len(l.callStack) > callerDepth {
+			base := l.frame().registerStart()
+			l.closeUpvalues(base)
+			err = l.closeTBCSlots(base, false, err)
+			fp := l.frame().framePointer()
+			for i := uint(fp); i < uint(base); i++ {
+				if l.tbc.Has(i) {
+					panic("TBC between activation records")
+				}
+			}
+			l.setTop(fp)
+
+			n := len(l.callStack) - 1
+			l.callStack[n] = callFrame{}
+			l.callStack = l.callStack[:n]
+		}
+	}()
 	if firstLoadError != nil {
 		return firstLoadError
 	}
@@ -144,7 +147,7 @@ func (l *State) exec() (err error) {
 		}
 	}
 
-	for len(l.callStack) > callerDepth {
+	for {
 		if frame.pc >= len(f.proto.Code) {
 			return fmt.Errorf("jumped out of bounds")
 		}
@@ -774,6 +777,26 @@ func (l *State) exec() (err error) {
 			if err := l.concat(int(b)); err != nil {
 				return err
 			}
+		case luacode.OpClose:
+			a := i.ArgA()
+			if a >= f.proto.MaxStackSize {
+				return fmt.Errorf("decode instruction (pc=%d): register %d out-of-bounds (stack is %d slots)",
+					frame.pc, a, f.proto.MaxStackSize)
+			}
+			bottom := frame.registerStart() + int(a)
+			l.closeUpvalues(bottom)
+			if err := l.closeTBCSlots(bottom, true, nil); err != nil {
+				return err
+			}
+		case luacode.OpTBC:
+			a := i.ArgA()
+			if a >= f.proto.MaxStackSize {
+				return fmt.Errorf("decode instruction (pc=%d): register %d out-of-bounds (stack is %d slots)",
+					frame.pc, a, f.proto.MaxStackSize)
+			}
+			if err := l.markTBC(frame.registerStart() + int(a)); err != nil {
+				return err
+			}
 		case luacode.OpJMP:
 			nextPC += int(i.J())
 		case luacode.OpEQ:
@@ -924,8 +947,10 @@ func (l *State) exec() (err error) {
 			if numResults < 0 {
 				numResults = len(l.stack) - resultStackStart
 			}
-			if i.K() {
-				return errors.New("TODO(soon): close upvalues")
+			// We ignore the K hint and close locals regardless.
+			l.closeUpvalues(frame.registerStart())
+			if err := l.closeTBCSlots(frame.registerStart(), true, nil); err != nil {
+				return err
 			}
 
 			l.setTop(resultStackStart + numResults)
@@ -938,15 +963,36 @@ func (l *State) exec() (err error) {
 				return err
 			}
 		case luacode.OpReturn0:
+			// The RETURN0 instruction shouldn't be generated if we need to close locals,
+			// but for safety, we do it anyway.
+			l.closeUpvalues(frame.registerStart())
+			if err := l.closeTBCSlots(frame.registerStart(), false, nil); err != nil {
+				return err
+			}
+
 			l.finishCall(0)
+			if len(l.callStack) <= callerDepth {
+				return nil
+			}
 			frame, f, err = l.loadLuaFrame()
 			if err != nil {
 				return err
 			}
 		case luacode.OpReturn1:
+			// The RETURN1 instruction shouldn't be generated if we need to close locals,
+			// but for safety, we do it anyway.
+			l.closeUpvalues(frame.registerStart())
+			if err := l.closeTBCSlots(frame.registerStart(), true, nil); err != nil {
+				return err
+			}
+
 			// TODO(soon): Validate ArgA.
+
 			l.setTop(frame.registerStart() + int(i.ArgA()) + 1)
 			l.finishCall(1)
+			if len(l.callStack) <= callerDepth {
+				return nil
+			}
 			frame, f, err = l.loadLuaFrame()
 			if err != nil {
 				return err
@@ -989,10 +1035,10 @@ func (l *State) exec() (err error) {
 			}
 			p := f.proto.Functions[i.ArgBx()]
 
-			upvalues := make([]upvalue, len(p.Upvalues))
+			upvalues := make([]*upvalue, len(p.Upvalues))
 			for i, uv := range p.Upvalues {
 				if uv.InStack {
-					upvalues[i] = stackUpvalue(frame.registerStart() + int(uv.Index))
+					upvalues[i] = l.stackUpvalue(frame.registerStart() + int(uv.Index))
 				} else {
 					upvalues[i] = f.upvalues[uv.Index]
 				}
@@ -1022,6 +1068,7 @@ func (l *State) exec() (err error) {
 			if frame.numExtraArguments != 0 {
 				return fmt.Errorf("cannot run %v multiple times", luacode.OpVarargPrep)
 			}
+			// TODO(soon): Run this upon entering the function.
 			numArguments := len(l.stack) - frame.registerStart()
 			numFixedParameters := int(i.ArgA())
 			numExtraArguments := numArguments - numFixedParameters
@@ -1036,8 +1083,6 @@ func (l *State) exec() (err error) {
 
 		frame.pc = nextPC
 	}
-
-	return nil
 }
 
 // finishCall moves the top numResults stack values

@@ -504,60 +504,6 @@ func (v stringValue) toInteger() (integerValue, bool) {
 	return integerValue(i), true
 }
 
-type function interface {
-	value
-	functionID() uint64
-	upvaluesSlice() []upvalue
-}
-
-var (
-	_ function = goFunction{}
-	_ function = luaFunction{}
-)
-
-type goFunction struct {
-	id       uint64
-	cb       Function
-	upvalues []upvalue
-}
-
-func (f goFunction) valueType() Type          { return TypeFunction }
-func (f goFunction) functionID() uint64       { return f.id }
-func (f goFunction) upvaluesSlice() []upvalue { return f.upvalues }
-
-type luaFunction struct {
-	id       uint64
-	proto    *luacode.Prototype
-	upvalues []upvalue
-}
-
-func (f luaFunction) valueType() Type          { return TypeFunction }
-func (f luaFunction) functionID() uint64       { return f.id }
-func (f luaFunction) upvaluesSlice() []upvalue { return f.upvalues }
-
-type upvalue struct {
-	p          *value
-	stackIndex int
-}
-
-func stackUpvalue(i int) upvalue {
-	return upvalue{stackIndex: i}
-}
-
-func standaloneUpvalue(v value) upvalue {
-	return upvalue{
-		p:          &v,
-		stackIndex: -1,
-	}
-}
-
-func (l *State) resolveUpvalue(uv upvalue) *value {
-	if uv.p == nil {
-		return &l.stack[uv.stackIndex]
-	}
-	return uv.p
-}
-
 var globalIDs struct {
 	mu sync.Mutex
 	n  uint64

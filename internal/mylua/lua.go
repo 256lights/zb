@@ -89,10 +89,12 @@ func isPseudo(i int) bool {
 // Such information cannot be gathered after the return of a [State] method,
 // since by then the stack will have been unwound.
 type State struct {
-	stack          []value
-	registry       table
-	callStack      []callFrame
-	typeMetatables [9]*table
+	stack            []value
+	registry         table
+	callStack        []callFrame
+	typeMetatables   [9]*table
+	pendingVariables []*upvalue
+	tbc              sets.Bit
 }
 
 func (l *State) init() {
@@ -224,6 +226,8 @@ func (l *State) SetTop(idx int) {
 	l.setTop(newTop)
 }
 
+// setTop sets the top of the stack to i.
+// It does not close any upvalues or close any to-be-closed variables.
 func (l *State) setTop(i int) {
 	if i < len(l.stack) {
 		clear(l.stack[i:])
@@ -749,9 +753,9 @@ func (l *State) PushClosure(n int, f Function) {
 		panic("too many upvalues")
 	}
 	upvalueStart := len(l.stack) - n
-	upvalues := make([]upvalue, 0, n)
+	upvalues := make([]*upvalue, 0, n)
 	for _, v := range l.stack[upvalueStart:] {
-		upvalues = append(upvalues, standaloneUpvalue(v))
+		upvalues = append(upvalues, closedUpvalue(v))
 	}
 	l.setTop(upvalueStart)
 	l.push(goFunction{
@@ -1376,8 +1380,8 @@ func (l *State) Load(r io.Reader, chunkName luacode.Source, mode string) (err er
 	l.push(luaFunction{
 		id:    nextID(),
 		proto: p,
-		upvalues: []upvalue{
-			standaloneUpvalue(l.registry.get(integerValue(RegistryIndexGlobals))),
+		upvalues: []*upvalue{
+			closedUpvalue(l.registry.get(integerValue(RegistryIndexGlobals))),
 		},
 	})
 	return nil
