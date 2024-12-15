@@ -33,5 +33,17 @@
 			"/internal/frontend/prelude.lua",
 			"/internal/lua/testdata/*.lua",
 		]
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"name": "Test current package",
+				"type": "go",
+				"request": "launch",
+				"mode": "test",
+				"program": "${fileDirname}"
+			}
+		]
 	}
 }
