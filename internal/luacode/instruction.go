@@ -587,11 +587,17 @@ const (
 	OpReturn OpCode = 70 // RETURN
 	// OpReturn0 instructs control flow to return to the function's caller
 	// with zero results.
-	// This instruction cannot be used in a variadic function.
+	// This instruction cannot be used in a function
+	// that is variadic,
+	// has variables referenced by its functions,
+	// or has to-be-closed variables.
 	OpReturn0 OpCode = 71 // RETURN0
 	// OpReturn1 instructs control flow to return to the function's caller
 	// with a single result stored in R[A].
-	// This instruction cannot be used in a variadic function.
+	// This instruction cannot be used in a function
+	// that is variadic,
+	// has variables referenced by its functions,
+	// or has to-be-closed variables.
 	//
 	//	A return R[A]
 	OpReturn1 OpCode = 72 // RETURN1

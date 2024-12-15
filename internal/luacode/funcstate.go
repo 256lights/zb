@@ -38,7 +38,8 @@ type funcState struct {
 	// instructionsSinceLastAbsLineInfo is a counter
 	// of instructions added since the last [absLineInfo].
 	instructionsSinceLastAbsLineInfo uint8
-	// needClose is true if the function needs to close upvalues when returning.
+	// needClose is true if the function needs to close upvalues and/or to-be-closed variables
+	// when returning.
 	needClose bool
 }
 
@@ -53,8 +54,9 @@ type blockControl struct {
 	numActiveVariables uint8
 
 	// upval is true if some variable in the block is an upvalue.
-	upval     bool
-	isLoop    bool
+	upval  bool
+	isLoop bool
+	// insideTBC is true if any to-be-closed locals are in scope.
 	insideTBC bool
 }
 
