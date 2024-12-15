@@ -1710,45 +1710,31 @@ func (p *parser) constructor(fs *funcState) (expressionDescriptor, error) {
 	lastListItem := voidExpression()
 	arraySize, hashSize, toStore := 0, 0, 0
 	p.advance()
-	if p.curr.Kind != lualex.RBraceToken {
-		for {
-			if lastListItem.kind != expressionKindVoid {
-				if _, _, err := p.toNextRegister(fs, lastListItem); err != nil {
+	for p.curr.Kind != lualex.RBraceToken {
+		if lastListItem.kind != expressionKindVoid {
+			if _, _, err := p.toNextRegister(fs, lastListItem); err != nil {
+				return voidExpression(), err
+			}
+			lastListItem = voidExpression()
+
+			if toStore == fieldsPerFlush {
+				if err := p.codeSetList(fs, tableRegister, arraySize, toStore); err != nil {
 					return voidExpression(), err
 				}
-				lastListItem = voidExpression()
-
-				if toStore == fieldsPerFlush {
-					if err := p.codeSetList(fs, tableRegister, arraySize, toStore); err != nil {
-						return voidExpression(), err
-					}
-					arraySize += toStore
-					toStore = 0
-				}
+				arraySize += toStore
+				toStore = 0
 			}
+		}
 
-			switch p.curr.Kind {
-			case lualex.IdentifierToken:
-				// Can either be an expression or a record field.
-				if p.peek().Kind == lualex.AssignToken {
-					if err := p.recordField(fs, tableExpression); err != nil {
-						return voidExpression(), err
-					}
-					hashSize++
-				} else {
-					var err error
-					lastListItem, err = p.expression(fs)
-					if err != nil {
-						return voidExpression(), err
-					}
-					toStore++
-				}
-			case lualex.LBracketToken:
+		switch p.curr.Kind {
+		case lualex.IdentifierToken:
+			// Can either be an expression or a record field.
+			if p.peek().Kind == lualex.AssignToken {
 				if err := p.recordField(fs, tableExpression); err != nil {
 					return voidExpression(), err
 				}
 				hashSize++
-			default:
+			} else {
 				var err error
 				lastListItem, err = p.expression(fs)
 				if err != nil {
@@ -1756,12 +1742,24 @@ func (p *parser) constructor(fs *funcState) (expressionDescriptor, error) {
 				}
 				toStore++
 			}
-
-			if p.curr.Kind != lualex.CommaToken && p.curr.Kind != lualex.SemiToken {
-				break
+		case lualex.LBracketToken:
+			if err := p.recordField(fs, tableExpression); err != nil {
+				return voidExpression(), err
 			}
-			p.advance()
+			hashSize++
+		default:
+			var err error
+			lastListItem, err = p.expression(fs)
+			if err != nil {
+				return voidExpression(), err
+			}
+			toStore++
 		}
+
+		if p.curr.Kind != lualex.CommaToken && p.curr.Kind != lualex.SemiToken {
+			break
+		}
+		p.advance()
 	}
 	if err := p.checkMatch(fs, start, lualex.LBraceToken, lualex.RBraceToken); err != nil {
 		return voidExpression(), err
