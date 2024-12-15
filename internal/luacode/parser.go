@@ -2072,13 +2072,14 @@ func (p *parser) searchVariable(fs *funcState, n string) (_ expressionDescriptor
 //
 // Equivalent to `removevars` in upstream Lua.
 func (p *parser) removeVariables(fs *funcState, toLevel int) {
+	n := max(int(fs.numActiveVariables)-toLevel, 0)
 	for int(fs.numActiveVariables) > toLevel {
 		fs.numActiveVariables--
 		if v := p.localDebugInfo(fs, int(fs.numActiveVariables)); v != nil {
 			v.EndPC = len(fs.Code)
 		}
 	}
-	p.activeVariables = p.activeVariables[:len(p.activeVariables)-(int(fs.numActiveVariables)-toLevel)]
+	p.activeVariables = p.activeVariables[:len(p.activeVariables)-n]
 }
 
 // checkWritable returns an error if the variable described by e is read-only.
