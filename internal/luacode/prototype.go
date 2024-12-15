@@ -41,7 +41,9 @@ type Prototype struct {
 
 	// Debug information:
 
-	Source          Source
+	Source Source
+	// LocalVariables is a list of the function's local variables in declaration order.
+	// It is guaranteed that LocalVariables[i].StartPC <= LocalVariables[i+1].StartPC.
 	LocalVariables  []LocalVariable
 	LineInfo        LineInfo
 	LineDefined     int
@@ -72,6 +74,27 @@ func (f *Prototype) StripDebug() *Prototype {
 	}
 
 	return f2
+}
+
+// LocalName returns the name of the local variable the given register represents
+// during the execution of the given instruction,
+// or the empty string if the register does not represent a local variable
+// (or the debug information has been stripped).
+func (f *Prototype) LocalName(register uint8, pc int) string {
+	for _, v := range f.LocalVariables {
+		if v.StartPC > pc {
+			// Local variables are ordered by StartPC,
+			// so this variable and any subsequent ones will be out of scope.
+			break
+		}
+		if pc < v.EndPC {
+			if register == 0 {
+				return v.Name
+			}
+			register--
+		}
+	}
+	return ""
 }
 
 func (f *Prototype) hasUpvalueNames() bool {
