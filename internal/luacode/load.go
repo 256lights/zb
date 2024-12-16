@@ -151,7 +151,7 @@ func loadFunction(f *Prototype, r *chunkReader, parentSource Source) error {
 	}
 
 	// Debug
-	f.LineInfo, err = loadLineInfo(r)
+	f.LineInfo, err = loadLineInfo(r, f.LineDefined)
 	if err != nil {
 		return fmt.Errorf("load function: %v", err)
 	}
@@ -189,45 +189,6 @@ func loadFunction(f *Prototype, r *chunkReader, parentSource Source) error {
 	}
 
 	return nil
-}
-
-func loadLineInfo(r *chunkReader) (LineInfo, error) {
-	n, err := r.readVarint()
-	if err != nil {
-		return LineInfo{}, fmt.Errorf("line info: %v", err)
-	}
-	info := LineInfo{
-		rel: make([]int8, n),
-	}
-	for i := range info.rel {
-		b, ok := r.readByte()
-		if !ok {
-			return LineInfo{}, fmt.Errorf("line info: %v", io.ErrUnexpectedEOF)
-		}
-		info.rel[i] = int8(b)
-	}
-
-	n, err = r.readVarint()
-	if err != nil {
-		return LineInfo{}, fmt.Errorf("line info: %v", err)
-	}
-	info.abs = make([]absLineInfo, n)
-	for i := range info.abs {
-		info.abs[i].pc, err = r.readVarint()
-		if err != nil {
-			return LineInfo{}, fmt.Errorf("line info: %v", err)
-		}
-		if i > 0 && info.abs[i-1].pc >= info.abs[i].pc {
-			return LineInfo{}, fmt.Errorf("line info: absolute line information not monotonically increasing")
-		}
-
-		info.abs[i].line, err = r.readVarint()
-		if err != nil {
-			return LineInfo{}, fmt.Errorf("line info: %v", err)
-		}
-	}
-
-	return info, nil
 }
 
 type chunkReader struct {

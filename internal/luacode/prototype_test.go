@@ -13,8 +13,7 @@ import (
 )
 
 var prototypeDiffOptions = cmp.Options{
-	cmp.AllowUnexported(LineInfo{}),
-	cmp.AllowUnexported(absLineInfo{}),
+	lineInfoCompareOption,
 	cmpopts.EquateEmpty(),
 }
 

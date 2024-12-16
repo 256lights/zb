@@ -209,7 +209,7 @@ func dumpFunction(buf []byte, f *Prototype, parentSource Source) ([]byte, error)
 	}
 
 	// Debug information
-	buf = dumpLineInfo(buf, f.LineInfo)
+	buf = dumpLineInfo(buf, f.LineDefined, f.LineInfo)
 	buf = dumpVarint(buf, len(f.LocalVariables))
 	for _, v := range f.LocalVariables {
 		buf = dumpString(buf, v.Name)
@@ -391,41 +391,6 @@ func (source Source) String() string {
 		line = line[:stringSize-len(truncSignifier)]
 	}
 	return prefix + line + truncSignifier + suffix
-}
-
-const maxInstructionsWithoutAbsLineInfo = 128
-
-const (
-	// lineInfoRelativeLimit is the limit for values in the rel slice
-	// of [LineInfo].
-	lineInfoRelativeLimit = 1 << 7
-
-	// absMarker is the mark for entries in the rel slice of [LineInfo]
-	// that have absolute information in the abs slice.
-	absMarker int8 = -lineInfoRelativeLimit
-)
-
-type LineInfo struct {
-	rel []int8
-	abs []absLineInfo
-}
-
-type absLineInfo struct {
-	pc   int
-	line int
-}
-
-func dumpLineInfo(buf []byte, info LineInfo) []byte {
-	buf = dumpVarint(buf, len(info.rel))
-	for _, i := range info.rel {
-		buf = append(buf, byte(i))
-	}
-	buf = dumpVarint(buf, len(info.abs))
-	for _, a := range info.abs {
-		buf = dumpVarint(buf, a.pc)
-		buf = dumpVarint(buf, a.line)
-	}
-	return buf
 }
 
 // maxRegisters is the maximum number of registers in a Lua function.

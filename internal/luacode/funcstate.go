@@ -35,12 +35,11 @@ type funcState struct {
 	numActiveVariables uint8
 	// firstFreeRegister is the first free register.
 	firstFreeRegister registerIndex
-	// instructionsSinceLastAbsLineInfo is a counter
-	// of instructions added since the last [absLineInfo].
-	instructionsSinceLastAbsLineInfo uint8
 	// needClose is true if the function needs to close upvalues and/or to-be-closed variables
 	// when returning.
 	needClose bool
+
+	lineInfoWriter lineInfoWriter
 }
 
 // blockControl is a linked list of active blocks.
@@ -130,55 +129,30 @@ func (fs *funcState) label() int {
 }
 
 // saveLineInfo save the line information for a new instruction.
-// If difference from last line does not fit in a byte,
-// of after that many instructions,
-// save a new absolute line info;
-// (in that case, the special value 'ABSLINEINFO' in 'lineinfo'
-// signals the existence of this absolute information.)
-// Otherwise, store the difference from last line in 'lineinfo'.
 //
 // Equivalent to `savelineinfo` in upstream Lua.
 func (fs *funcState) saveLineInfo(line int) {
-	const deltaLimit = 1 << 7
-	delta := line - fs.previousLine
-	absDelta := delta
-	if delta < 0 {
-		absDelta = -delta
-	}
-
-	pc := len(fs.Code) - 1 // last instruction coded
-
-	if absDelta >= deltaLimit || fs.instructionsSinceLastAbsLineInfo >= maxInstructionsWithoutAbsLineInfo {
+	rel := fs.lineInfoWriter.next(line)
+	if rel == absMarker {
 		fs.LineInfo.abs = append(fs.LineInfo.abs, absLineInfo{
-			pc:   pc,
+			pc:   len(fs.LineInfo.rel),
 			line: line,
 		})
-		delta = int(absMarker)
-		fs.instructionsSinceLastAbsLineInfo = 1
-	} else {
-		fs.instructionsSinceLastAbsLineInfo++
 	}
-
-	fs.LineInfo.rel = append(fs.LineInfo.rel, int8(delta))
-	fs.previousLine = line
+	fs.LineInfo.rel = append(fs.LineInfo.rel, rel)
 }
 
 // removeLastLineInfo remove line information from the last instruction.
 //
-// Equivalent to `removeLastLineInfo` in upstream Lua.
+// Equivalent to `removelastlineinfo` in upstream Lua.
 func (fs *funcState) removeLastLineInfo() {
 	lineInfo := &fs.LineInfo
-
-	if lastDelta := lineInfo.rel[len(lineInfo.rel)-1]; lastDelta == absMarker {
-		lineInfo.abs = lineInfo.abs[:len(lineInfo.abs)-1]
-		// Force next line info to be absolute.
-		fs.instructionsSinceLastAbsLineInfo = maxInstructionsWithoutAbsLineInfo + 1
-	} else {
-		fs.previousLine -= int(lastDelta)
-		fs.instructionsSinceLastAbsLineInfo--
-	}
-
+	lastDelta := lineInfo.rel[len(lineInfo.rel)-1]
 	lineInfo.rel = lineInfo.rel[:len(lineInfo.rel)-1]
+	if lastDelta == absMarker {
+		lineInfo.abs = lineInfo.abs[:len(lineInfo.abs)-1]
+	}
+	fs.lineInfoWriter.prev(lastDelta)
 }
 
 // fixLineInfo changes the line information associated with the last instruction.
