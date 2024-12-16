@@ -1173,6 +1173,33 @@ func (l *State) RawSetField(idx int, k string) {
 	}
 }
 
+// SetMetatable pops a table or nil from the stack
+// and sets that value as the new metatable for the value at the given index.
+// (nil means no metatable.)
+func (l *State) SetMetatable(idx int) {
+	if l.Top() < 1 {
+		panic(errMissingArguments)
+	}
+	l.init()
+	v, _, err := l.valueByIndex(idx)
+	mtValue := l.stack[len(l.stack)-1]
+	l.setTop(len(l.stack) - 1) // Always pop metatable.
+	if err != nil {
+		panic(err)
+	}
+	mt, ok := mtValue.(*table)
+	if !ok && mtValue != nil {
+		panic("set metatable: table expected")
+	}
+	switch v := v.(type) {
+	case *table:
+		v.meta = mt
+	// TODO(soon): Userdata.
+	default:
+		l.typeMetatables[v.valueType()] = mt
+	}
+}
+
 // Call calls a function (or callable object) in protected mode.
 //
 // To do a call you must use the following protocol:
