@@ -269,6 +269,47 @@ func TestVM(t *testing.T) {
 		}
 	})
 
+	t.Run("Vararg", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		var got []int64
+		state.PushClosure(0, func(state *State) (int, error) {
+			for i := range state.Top() {
+				n, ok := state.ToInteger(1 + i)
+				if !ok {
+					t.Errorf("emit arg %d is a %v", len(got)+1, state.Type(1))
+				}
+				got = append(got, n)
+			}
+			return 0, nil
+		})
+		if err := state.SetGlobal("emit", 0); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `local function passthru(...)` + "\n" +
+			`return ...` + "\n" +
+			`end` + "\n" +
+			// Not returning, because that would be a tail call.
+			`emit(passthru(123, 456, 789))` + "\n"
+		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+
+		want := []int64{123, 456, 789}
+		if !slices.Equal(want, got) {
+			t.Errorf("emit arguments = %v; want %v", got, want)
+		}
+	})
+
 	t.Run("TBC", func(t *testing.T) {
 		state := new(State)
 		defer func() {

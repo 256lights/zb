@@ -926,10 +926,16 @@ func (l *State) exec() (err error) {
 				*ra = *rb
 			}
 		case luacode.OpCall:
-			numArguments := int(i.ArgB())
+			numArguments := int(i.ArgB()) - 1
 			numResults := int(i.ArgC()) - 1
 			// TODO(soon): Validate ArgA.
-			l.setTop(frame.registerStart() + int(i.ArgA()) + 1 + numArguments)
+			functionIndex := frame.registerStart() + int(i.ArgA())
+			if numArguments < 0 {
+				// Varargs: read from top.
+				numArguments = len(l.stack) - (functionIndex + 1)
+			} else {
+				l.setTop(functionIndex + 1 + numArguments)
+			}
 			isLua, err := l.prepareCall(numArguments, numResults)
 			if err != nil {
 				return err
