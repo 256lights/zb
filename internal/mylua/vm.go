@@ -795,7 +795,7 @@ func (l *State) exec() (err error) {
 					sourceLocation(f.proto, frame.pc-1), a, f.proto.MaxStackSize)
 			}
 			if err := l.markTBC(frame.registerStart() + int(a)); err != nil {
-				return err
+				return fmt.Errorf("%s: %v", sourceLocation(f.proto, frame.pc-1), err)
 			}
 		case luacode.OpJMP:
 			frame.pc += int(i.J())

@@ -4,6 +4,8 @@
 package mylua
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -264,6 +266,66 @@ func TestVM(t *testing.T) {
 		const want = "Hello, World!"
 		if got, ok := state.ToString(-1); got != want || !ok {
 			t.Errorf("state.ToString(-1) = %q, %t; want %q, true", got, ok, want)
+		}
+	})
+
+	t.Run("TBC", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.PushClosure(0, func(state *State) (int, error) {
+			state.SetTop(2)
+			if got := state.Type(1); got != TypeTable {
+				return 0, fmt.Errorf("setmetatable: first argument must be a table (got %v)", got)
+			}
+			if got := state.Type(2); got != TypeTable && got != TypeNil {
+				return 0, fmt.Errorf("setmetatable: second argument must be a table or nil (got %v)", got)
+			}
+			state.SetMetatable(1)
+			return 1, nil
+		})
+		if err := state.SetGlobal("setmetatable", 0); err != nil {
+			t.Fatal(err)
+		}
+
+		var got []int64
+		state.PushClosure(0, func(state *State) (int, error) {
+			state.SetTop(1)
+			i, _ := state.ToInteger(1)
+			got = append(got, i)
+			return 0, nil
+		})
+		if err := state.SetGlobal("emit", 0); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `local meta = {` + "\n" +
+			`__close = function (tab, e)` + "\n" +
+			`emit(tab.x)` + "\n" +
+			`end,` + "\n" +
+			`}` + "\n" +
+			`local function newThing(x)` + "\n" +
+			// Avoid testing tail calls in this function
+			// by using parentheses to adjust results to 1.
+			`return (setmetatable({x = x}, meta))` + "\n" +
+			`end` + "\n" +
+			`local v1 <close> = newThing(1)` + "\n" +
+			`local v2 <close> = newThing(2)` + "\n" +
+			`local v3 <close> = newThing(3)` + "\n"
+		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+
+		want := []int64{3, 2, 1}
+		if !slices.Equal(want, got) {
+			t.Errorf("emit sequence = %v; want %v", got, want)
 		}
 	})
 }
