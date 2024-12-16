@@ -110,22 +110,22 @@ func (l *State) exec() (err error) {
 	// for the i'th register of the function at the top of the call stack.
 	register := func(r []value, i uint8) (*value, error) {
 		if int(i) >= len(r) {
-			return nil, fmt.Errorf("decode instruction (pc=%d): register %d out-of-bounds (stack is %d slots)",
-				frame.pc, i, len(r))
+			return nil, fmt.Errorf("%s: decode instruction: register %d out-of-bounds (stack is %d slots)",
+				sourceLocation(f.proto, frame.pc-1), i, len(r))
 		}
 		return &r[i], nil
 	}
 
 	constant := func(i uint32) (luacode.Value, error) {
 		if int64(i) >= int64(len(f.proto.Constants)) {
-			return luacode.Value{}, fmt.Errorf("decode instruction (pc=%d): constant %d out-of-bounds (table has %d entries)", frame.pc, i, len(f.proto.Constants))
+			return luacode.Value{}, fmt.Errorf("%s: decode instruction: constant %d out-of-bounds (table has %d entries)", sourceLocation(f.proto, frame.pc-1), i, len(f.proto.Constants))
 		}
 		return f.proto.Constants[i], nil
 	}
 
 	fUpvalue := func(i uint8) (*value, error) {
 		if int(i) >= len(f.upvalues) {
-			return nil, fmt.Errorf("decode instruction (pc=%d): upvalue %d out-of-bounds (function has %d upvalues)", frame.pc, i, len(f.upvalues))
+			return nil, fmt.Errorf("%s: decode instruction: upvalue %d out-of-bounds (function has %d upvalues)", sourceLocation(f.proto, frame.pc-1), i, len(f.upvalues))
 		}
 		return l.resolveUpvalue(f.upvalues[i]), nil
 	}
@@ -149,16 +149,16 @@ func (l *State) exec() (err error) {
 
 	for {
 		if frame.pc >= len(f.proto.Code) {
-			return fmt.Errorf("jumped out of bounds")
+			return fmt.Errorf("%s: jumped out of bounds", functionLocation(f.proto))
 		}
 		i := f.proto.Code[frame.pc]
+		frame.pc++
 		if !i.IsInTop() {
 			// For instructions that don't read the stack top,
 			// use the end of the registers.
 			// This makes it safe to call metamethods.
 			l.setTop(frame.registerStart() + int(f.proto.MaxStackSize))
 		}
-		nextPC := frame.pc + 1
 
 		switch opCode := i.OpCode(); opCode {
 		case luacode.OpMove:
@@ -203,7 +203,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			nextPC++ // Skip extra arg.
+			frame.pc++ // Skip extra arg.
 			karg, err := constant(arg)
 			if err != nil {
 				return err
@@ -221,7 +221,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			*ra = booleanValue(false)
-			nextPC++
+			frame.pc++
 		case luacode.OpLoadTrue:
 			ra, err := register(registers(), i.ArgA())
 			if err != nil {
@@ -426,7 +426,7 @@ func (l *State) exec() (err error) {
 				}
 				arraySize += int(arg) * (1 << 8)
 			}
-			nextPC++ // Extra arg is always present even if unused.
+			frame.pc++ // Extra arg is always present even if unused.
 
 			ra, err := register(registers(), i.ArgA())
 			if err != nil {
@@ -483,7 +483,7 @@ func (l *State) exec() (err error) {
 				}
 				*ra = importConstant(result)
 				// The next instruction is a fallback metamethod invocation.
-				nextPC++
+				frame.pc++
 			}
 		case luacode.OpSHLI:
 			// Separate case because SHLI's arguments are in the opposite order.
@@ -504,7 +504,7 @@ func (l *State) exec() (err error) {
 				}
 				*ra = importConstant(result)
 				// The next instruction is a fallback metamethod invocation.
-				nextPC++
+				frame.pc++
 			}
 		case luacode.OpAddK,
 			luacode.OpSubK,
@@ -530,7 +530,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if !kc.IsNumber() {
-				return fmt.Errorf("decode instruction (pc=%d): %v on non-numeric constant %v", frame.pc, opCode, kc)
+				return fmt.Errorf("%s: decode instruction: %v on non-numeric constant %v", sourceLocation(f.proto, frame.pc-1), opCode, kc)
 			}
 			if rb, isNumber := exportNumericConstant(*rb); isNumber {
 				op, ok := opCode.ArithmeticOperator()
@@ -543,7 +543,7 @@ func (l *State) exec() (err error) {
 				}
 				*ra = importConstant(result)
 				// The next instruction is a fallback metamethod invocation.
-				nextPC++
+				frame.pc++
 			}
 		case luacode.OpAdd,
 			luacode.OpSub,
@@ -582,7 +582,7 @@ func (l *State) exec() (err error) {
 					}
 					*ra = importConstant(result)
 					// The next instruction is a fallback metamethod invocation.
-					nextPC++
+					frame.pc++
 				}
 			}
 		case luacode.OpMMBin:
@@ -770,8 +770,8 @@ func (l *State) exec() (err error) {
 			a, b := i.ArgA(), i.ArgB()
 			top := int(a) + int(b)
 			if top > int(f.proto.MaxStackSize) {
-				return fmt.Errorf("decode instruction (pc=%d): concat: register %d out-of-bounds (stack is %d slots)",
-					frame.pc, top-1, f.proto.MaxStackSize)
+				return fmt.Errorf("%s: decode instruction: concat: register %d out-of-bounds (stack is %d slots)",
+					sourceLocation(f.proto, frame.pc-1), top-1, f.proto.MaxStackSize)
 			}
 			l.setTop(frame.registerStart() + top)
 			if err := l.concat(int(b)); err != nil {
@@ -780,8 +780,8 @@ func (l *State) exec() (err error) {
 		case luacode.OpClose:
 			a := i.ArgA()
 			if a >= f.proto.MaxStackSize {
-				return fmt.Errorf("decode instruction (pc=%d): register %d out-of-bounds (stack is %d slots)",
-					frame.pc, a, f.proto.MaxStackSize)
+				return fmt.Errorf("%s: decode instruction: register %d out-of-bounds (stack is %d slots)",
+					sourceLocation(f.proto, frame.pc-1), a, f.proto.MaxStackSize)
 			}
 			bottom := frame.registerStart() + int(a)
 			l.closeUpvalues(bottom)
@@ -791,14 +791,14 @@ func (l *State) exec() (err error) {
 		case luacode.OpTBC:
 			a := i.ArgA()
 			if a >= f.proto.MaxStackSize {
-				return fmt.Errorf("decode instruction (pc=%d): register %d out-of-bounds (stack is %d slots)",
-					frame.pc, a, f.proto.MaxStackSize)
+				return fmt.Errorf("%s: decode instruction: register %d out-of-bounds (stack is %d slots)",
+					sourceLocation(f.proto, frame.pc-1), a, f.proto.MaxStackSize)
 			}
 			if err := l.markTBC(frame.registerStart() + int(a)); err != nil {
 				return err
 			}
 		case luacode.OpJMP:
-			nextPC += int(i.J())
+			frame.pc += int(i.J())
 		case luacode.OpEQ:
 			r := registers()
 			ra, err := register(r, i.ArgA())
@@ -814,7 +814,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if result != i.K() {
-				nextPC++
+				frame.pc++
 			}
 		case luacode.OpEQK:
 			ra, err := register(registers(), i.ArgA())
@@ -830,7 +830,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if result != i.K() {
-				nextPC++
+				frame.pc++
 			}
 		case luacode.OpEQI:
 			ra, err := register(registers(), i.ArgA())
@@ -842,7 +842,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if result != i.K() {
-				nextPC++
+				frame.pc++
 			}
 		case luacode.OpLT, luacode.OpLE:
 			r := registers()
@@ -863,7 +863,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if result != i.K() {
-				nextPC++
+				frame.pc++
 			}
 		case luacode.OpLTI, luacode.OpLEI:
 			ra, err := register(registers(), i.ArgA())
@@ -879,7 +879,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if result != i.K() {
-				nextPC++
+				frame.pc++
 			}
 		case luacode.OpGTI, luacode.OpGEI:
 			ra, err := register(registers(), i.ArgA())
@@ -898,7 +898,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if result != i.K() {
-				nextPC++
+				frame.pc++
 			}
 		case luacode.OpTest:
 			ra, err := register(registers(), i.ArgA())
@@ -907,7 +907,7 @@ func (l *State) exec() (err error) {
 			}
 			cond := toBoolean(*ra)
 			if cond != i.K() {
-				nextPC++
+				frame.pc++
 			}
 		case luacode.OpTestSet:
 			r := registers()
@@ -921,7 +921,7 @@ func (l *State) exec() (err error) {
 			}
 			cond := toBoolean(*rb)
 			if cond != i.K() {
-				nextPC++
+				frame.pc++
 			} else {
 				*ra = *rb
 			}
@@ -1005,15 +1005,15 @@ func (l *State) exec() (err error) {
 			}
 			t, isTable := (*ra).(*table)
 			if !isTable {
-				return fmt.Errorf("set list (pc=%d): value in register %d is a %s (need table)", frame.pc, i.ArgA(), l.typeName(*ra))
+				return fmt.Errorf("%s: set list: value in register %d is a %s (need table)", sourceLocation(f.proto, frame.pc-1), i.ArgA(), l.typeName(*ra))
 			}
 			n := int(i.ArgB())
 			stackBase := frame.registerStart() + int(a) + 1
 			if n == 0 {
 				n = len(l.stack) - stackBase
 			} else if int(a)+1+n > int(f.proto.MaxStackSize) {
-				return fmt.Errorf("decode instruction (pc=%d): set list (a=%d n=%d) overflows stack (size=%d)",
-					frame.pc, a, n, f.proto.MaxStackSize)
+				return fmt.Errorf("%s: decode instruction: set list (a=%d n=%d) overflows stack (size=%d)",
+					sourceLocation(f.proto, frame.pc-1), a, n, f.proto.MaxStackSize)
 			}
 			indexBase := integerValue(i.ArgC()) + 1
 
@@ -1031,7 +1031,7 @@ func (l *State) exec() (err error) {
 			}
 			bx := i.ArgBx()
 			if int(bx) >= len(f.proto.Functions) {
-				return fmt.Errorf("decode instruction (pc=%d): closure %d out of range", frame.pc, bx)
+				return fmt.Errorf("%s: decode instruction: closure %d out of range", sourceLocation(f.proto, frame.pc-1), bx)
 			}
 			p := f.proto.Functions[i.ArgBx()]
 
@@ -1062,7 +1062,7 @@ func (l *State) exec() (err error) {
 			n := copy(l.stack[a:], l.stack[varargStart:varargEnd])
 			clear(l.stack[a+n:])
 		case luacode.OpVarargPrep:
-			if frame.pc != 0 {
+			if frame.pc != 1 {
 				return fmt.Errorf("%v must be first instruction in function", luacode.OpVarargPrep)
 			}
 			if frame.numExtraArguments != 0 {
@@ -1078,10 +1078,9 @@ func (l *State) exec() (err error) {
 				frame.numExtraArguments = numExtraArguments
 			}
 		default:
-			return fmt.Errorf("decode instruction (pc=%d): unhandled instruction %v", frame.pc, opCode)
+			return fmt.Errorf("%s: decode instruction: unhandled instruction %v",
+				sourceLocation(f.proto, frame.pc-1), opCode)
 		}
-
-		frame.pc = nextPC
 	}
 }
 
@@ -1134,35 +1133,38 @@ func (l *State) arithmeticMetamethod(event luacode.TagMethod, arg1, arg2 value) 
 }
 
 func decodeBinaryMetamethod(frame *callFrame, proto *luacode.Prototype) (uint8, luacode.ArithmeticOperator, error) {
-	i := proto.Code[frame.pc]
-	if frame.pc <= 0 {
-		return 0, 0, fmt.Errorf("decode instruction (pc=%d): %v must be preceded by binary arithmetic instruction", frame.pc, i.OpCode())
+	pc := frame.pc - 1
+	i := proto.Code[pc]
+	if pc == 0 {
+		return 0, 0, fmt.Errorf("%s: decode instruction: %v must be preceded by binary arithmetic instruction",
+			sourceLocation(proto, pc), i.OpCode())
 	}
-	prev := proto.Code[frame.pc-1]
+	prev := proto.Code[pc-1]
 	prevOpCode := prev.OpCode()
 	prevOperator, isArithmetic := prevOpCode.ArithmeticOperator()
 	if !isArithmetic || !prevOperator.IsBinary() {
-		return 0, 0, fmt.Errorf("decode instruction (pc=%d): %v must be preceded by binary arithmetic instruction (found %v)",
-			frame.pc, i.OpCode(), prevOpCode)
+		return 0, 0, fmt.Errorf("%s: decode instruction: %v must be preceded by binary arithmetic instruction (found %v)",
+			sourceLocation(proto, pc), i.OpCode(), prevOpCode)
 	}
 	if got, want := luacode.TagMethod(i.ArgC()), prevOperator.TagMethod(); got != want {
-		err := fmt.Errorf("decode instruction (pc=%d): found metamethod %v in %v after %v (expected %v)",
-			frame.pc, got, i.OpCode(), prev.OpCode(), want)
+		err := fmt.Errorf("%s: decode instruction: found metamethod %v in %v after %v (expected %v)",
+			sourceLocation(proto, pc), got, i.OpCode(), prev.OpCode(), want)
 		return prev.ArgA(), prevOperator, err
 	}
 	return prev.ArgA(), prevOperator, nil
 }
 
 func decodeExtraArg(frame *callFrame, proto *luacode.Prototype) (uint32, error) {
-	argPC := frame.pc + 1
+	pc := frame.pc - 1
+	argPC := pc + 1
 	if argPC >= len(proto.Code) {
-		return 0, fmt.Errorf("decode instruction (pc=%d, last): %v expects extra argument",
-			frame.pc, proto.Code[frame.pc].OpCode())
+		return 0, fmt.Errorf("%s: decode instruction: %v expects extra argument",
+			sourceLocation(proto, pc), proto.Code[pc].OpCode())
 	}
 	i := proto.Code[argPC]
 	if got := i.OpCode(); got != luacode.OpExtraArg {
-		return 0, fmt.Errorf("decode instruction (pc=%d): %v expects extra argument (found %v)",
-			frame.pc, proto.Code[frame.pc].OpCode(), got)
+		return 0, fmt.Errorf("%s: decode instruction: %v expects extra argument (found %v)",
+			sourceLocation(proto, pc), proto.Code[pc].OpCode(), got)
 	}
 	return i.ArgAx(), nil
 }
