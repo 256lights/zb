@@ -70,6 +70,8 @@ func isPseudo(i int) bool {
 	return i <= RegistryIndex
 }
 
+var errMissingArguments = errors.New("not enough elements in stack")
+
 // A State is a Lua execution environment.
 // The zero value is a ready-to-use environment
 // with an empty stack and and an empty global table.
@@ -748,10 +750,13 @@ type Function func(*State) (int, error)
 // (When there are multiple upvalues, the first value is pushed first.)
 // If n is negative or greater than 256, then PushClosure panics.
 func (l *State) PushClosure(n int, f Function) {
-	l.init()
-	if n > maxUpvalues || n > l.Top() {
+	if n > maxUpvalues {
 		panic("too many upvalues")
 	}
+	if n > l.Top() {
+		panic(errMissingArguments)
+	}
+	l.init()
 	upvalueStart := len(l.stack) - n
 	upvalues := make([]*upvalue, 0, n)
 	for _, v := range l.stack[upvalueStart:] {
@@ -804,10 +809,10 @@ func (l *State) Table(idx, msgHandler int) (Type, error) {
 	if msgHandler != 0 {
 		return TypeNil, fmt.Errorf("TODO(someday): support message handlers")
 	}
-	l.init()
 	if l.Top() == 0 {
-		return TypeNil, errors.New("empty stack")
+		return TypeNil, errMissingArguments
 	}
+	l.init()
 	t, _, err := l.valueByIndex(idx)
 	k := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1) // Always pop key.
@@ -885,15 +890,15 @@ func (l *State) Field(idx int, k string, msgHandler int) (Type, error) {
 // RawGet does a raw access (i.e. without metamethods).
 // The value at idx must be a table.
 func (l *State) RawGet(idx int) Type {
+	if l.Top() < 1 {
+		panic(errMissingArguments)
+	}
 	l.init()
 	t, _, err := l.valueByIndex(idx)
 	if err != nil {
 		panic(err)
 	}
-	k, _, err := l.valueByIndex(-1)
-	if err != nil {
-		panic(err)
-	}
+	k := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1)
 
 	v := t.(*table).get(k)
@@ -1001,10 +1006,10 @@ func (l *State) SetGlobal(name string, msgHandler int) error {
 	if msgHandler != 0 {
 		return fmt.Errorf("TODO(someday): support message handlers")
 	}
-	l.init()
-	if l.Top() == 0 {
-		return errors.New("stack empty")
+	if l.Top() < 1 {
+		return errMissingArguments
 	}
+	l.init()
 	v := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1)
 	if err := l.setIndex(l.registry.get(integerValue(RegistryIndexGlobals)), stringValue{s: name}, v); err != nil {
@@ -1028,10 +1033,10 @@ func (l *State) SetTable(idx, msgHandler int) error {
 	if msgHandler != 0 {
 		return fmt.Errorf("TODO(someday): support message handlers")
 	}
-	l.init()
 	if l.Top() < 2 {
-		return errors.New("stack underflow")
+		return errMissingArguments
 	}
+	l.init()
 	t, _, err := l.valueByIndex(idx)
 	k := l.stack[len(l.stack)-2]
 	v := l.stack[len(l.stack)-1]
@@ -1089,10 +1094,10 @@ func (l *State) SetField(idx int, k string, msgHandler int) error {
 	if msgHandler != 0 {
 		return fmt.Errorf("TODO(someday): support message handlers")
 	}
-	l.init()
 	if l.Top() < 1 {
-		return errors.New("empty stack")
+		return errMissingArguments
 	}
+	l.init()
 	t, _, err := l.valueByIndex(idx)
 	v := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1) // Always pop value.
@@ -1111,10 +1116,10 @@ func (l *State) SetField(idx int, k string, msgHandler int) error {
 // and k is the value just below the top.
 // This function pops both the key and the value from the stack.
 func (l *State) RawSet(idx int) {
-	l.init()
 	if l.Top() < 2 {
-		panic("stack underflow")
+		panic(errMissingArguments)
 	}
+	l.init()
 	t, _, err := l.valueByIndex(idx)
 	k := l.stack[len(l.stack)-2]
 	v := l.stack[len(l.stack)-1]
@@ -1133,10 +1138,10 @@ func (l *State) RawSet(idx int) {
 // This function pops the value from the stack.
 // The assignment is raw, that is, it does not use the __newindex metavalue.
 func (l *State) RawSetIndex(idx int, n int64) {
-	l.init()
 	if l.Top() < 1 {
-		panic("stack underflow")
+		panic(errMissingArguments)
 	}
+	l.init()
 	t, _, err := l.valueByIndex(idx)
 	v := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1) // Always pop value.
@@ -1153,10 +1158,10 @@ func (l *State) RawSetIndex(idx int, n int64) {
 // and v is the value on the top of the stack.
 // This function pops the value from the stack.
 func (l *State) RawSetField(idx int, k string) {
-	l.init()
 	if l.Top() < 1 {
-		panic("stack underflow")
+		panic(errMissingArguments)
 	}
+	l.init()
 	t, _, err := l.valueByIndex(idx)
 	v := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1) // Always pop value.
@@ -1193,10 +1198,10 @@ func (l *State) RawSetField(idx int, k string) {
 // then Call will push an error object to the stack.
 // (See Error Handling in [State] for details.)
 func (l *State) Call(nArgs, nResults, msgHandler int) error {
-	l.init()
 	if l.Top() < nArgs+1 {
-		return fmt.Errorf("not enough elements in the stack")
+		return errMissingArguments
 	}
+	l.init()
 	if nResults != MultipleReturns && cap(l.stack)-len(l.stack) < nResults-nArgs {
 		return fmt.Errorf("results from function overflow current stack size")
 	}
@@ -1402,7 +1407,7 @@ func (l *State) Concat(n, msgHandler int) error {
 		return errors.New("lua concat: negative argument length")
 	}
 	if n > l.Top() {
-		return errors.New("lua concat: not enough arguments on the stack")
+		return errMissingArguments
 	}
 	if msgHandler != 0 {
 		return fmt.Errorf("TODO(someday): support message handlers")
