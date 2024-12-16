@@ -369,4 +369,47 @@ func TestVM(t *testing.T) {
 			t.Errorf("emit sequence = %v; want %v", got, want)
 		}
 	})
+
+	t.Run("Upvalues", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		var got []int64
+		state.PushClosure(0, func(state *State) (int, error) {
+			state.SetTop(1)
+			i, ok := state.ToInteger(1)
+			if !ok {
+				t.Errorf("on call %d, emit received %v", len(got)+1, state.Type(1))
+			}
+			got = append(got, i)
+			return 0, nil
+		})
+		if err := state.SetGlobal("emit", 0); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `local function counter()` + "\n" +
+			`local x = 1` + "\n" +
+			`return function() x = x + 1; return x - 1 end` + "\n" +
+			`end` + "\n" +
+			`local c = counter()` + "\n" +
+			`emit(c())` + "\n" +
+			`emit(c())` + "\n" +
+			`emit(c())` + "\n"
+		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+
+		want := []int64{1, 2, 3}
+		if !slices.Equal(want, got) {
+			t.Errorf("emit sequence = %v; want %v", got, want)
+		}
+	})
 }

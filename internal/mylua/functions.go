@@ -158,14 +158,14 @@ func (l *State) checkUpvalues(upvalues []*upvalue) error {
 }
 
 // closeUpvalues moves the values of any upvalues
-// that refer to stack values at indices less than top
+// that refer to stack values at indices greater than or equal to top
 // off to the stack, thus “closing” them.
 // This is distinct from calling the “__close” metamethods,
 // but often happens at the same time.
-func (l *State) closeUpvalues(top int) {
+func (l *State) closeUpvalues(bottom int) {
 	n := 0
 	for _, uv := range l.pendingVariables {
-		if uv.isOpen() && uv.stackIndex >= top {
+		if uv.isOpen() && uv.stackIndex >= bottom {
 			// Close the upvalue.
 			uv.storage = l.stack[uv.stackIndex]
 			uv.stackIndex = -1
