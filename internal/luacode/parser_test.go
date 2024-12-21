@@ -91,3 +91,13 @@ func TestMaxVariables(t *testing.T) {
 		t.Errorf("maxVariables = %d; want <%d due to bytecode format", maxVariables, limit)
 	}
 }
+
+func BenchmarkLoad(b *testing.B) {
+	const source = "return 2 + 2"
+	for i := 0; i < b.N; i++ {
+		_, err := Parse(source, strings.NewReader(source))
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
