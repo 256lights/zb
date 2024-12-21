@@ -46,26 +46,9 @@ func (frame callFrame) extraArgumentsRange() (start, end int) {
 	return frame.framePointer(), frame.functionIndex
 }
 
-// loadLuaFrame obtains the top [callFrame] of the call stack,
-// reads the [luaFunction] from the value stack,
-// and returns a slice of the value stack to be used as the function's registers.
-// loadLuaFrame returns an error if the value stack is not large enough
-// for the function's local registers.
-func (l *State) loadLuaFrame() (frame *callFrame, f luaFunction, err error) {
-	frame = l.frame()
-	v := l.stack[frame.functionIndex]
-	f, ok := v.(luaFunction)
-	if !ok {
-		return frame, luaFunction{}, fmt.Errorf("internal error: call frame function is a %T", v)
-	}
-	if err := l.checkUpvalues(f.upvalues); err != nil {
-		return frame, f, err
-	}
-	registerEnd := frame.registerStart() + int(f.proto.MaxStackSize)
-	if !l.grow(registerEnd) {
-		return frame, f, errStackOverflow
-	}
-	return frame, f, nil
+// findLuaFunction obtains the [luaFunction] at the top [callFrame] of the call stack.
+func (l *State) findLuaFunction() luaFunction {
+	return l.stack[l.frame().functionIndex].(luaFunction)
 }
 
 func (l *State) exec() (err error) {
@@ -73,7 +56,6 @@ func (l *State) exec() (err error) {
 		panic("exec called on empty call stack")
 	}
 	callerDepth := len(l.callStack) - 1
-	frame, f, firstLoadError := l.loadLuaFrame()
 	defer func() {
 		if err != nil {
 			// TODO(someday): Message handler.
@@ -97,31 +79,38 @@ func (l *State) exec() (err error) {
 			l.callStack = l.callStack[:n]
 		}
 	}()
-	if firstLoadError != nil {
-		return firstLoadError
-	}
+	currFunction := l.findLuaFunction()
 
 	// registers returns the slice of l.stack
 	// that represents the register file for the function at the top of the call stack.
 	registers := func() []value {
-		start := frame.registerStart()
-		return l.stack[start : start+int(f.proto.MaxStackSize)]
+		start := l.frame().registerStart()
+		return l.stack[start : start+int(currFunction.proto.MaxStackSize)]
 	}
 
 	// register returns a pointer to the element of l.stack
 	// for the i'th register of the function at the top of the call stack.
 	register := func(r []value, i uint8) (*value, error) {
 		if int(i) >= len(r) {
-			return nil, fmt.Errorf("%s: decode instruction: register %d out-of-bounds (stack is %d slots)",
-				sourceLocation(f.proto, frame.pc-1), i, len(r))
+			return nil, fmt.Errorf(
+				"%s: decode instruction: register %d out-of-bounds (stack is %d slots)",
+				sourceLocation(currFunction.proto, l.frame().pc-1),
+				i,
+				len(r),
+			)
 		}
 		return &r[i], nil
 	}
 
 	numericForLoopRegisters := func(r []value, i uint8) (idx, limit, step, control *value, err error) {
 		if int(i)+4 > len(r) {
-			return nil, nil, nil, nil, fmt.Errorf("%s: decode instruction: for loop registers [%d,%d] out-of-bounds (stack is %d slots)",
-				sourceLocation(f.proto, frame.pc-1), i, i+3, len(r))
+			return nil, nil, nil, nil, fmt.Errorf(
+				"%s: decode instruction: for loop registers [%d,%d] out-of-bounds (stack is %d slots)",
+				sourceLocation(currFunction.proto, l.frame().pc-1),
+				i,
+				i+3,
+				len(r),
+			)
 		}
 		return &r[i], &r[i+1], &r[i+2], &r[i+3], nil
 	}
@@ -129,24 +118,39 @@ func (l *State) exec() (err error) {
 	const genericForLoopStateSize = 4
 	genericForLoopRegisters := func(r []value, i uint8) (state *[genericForLoopStateSize]value, err error) {
 		if int(i)+genericForLoopStateSize > len(r) {
-			return nil, fmt.Errorf("%s: decode instruction: for loop registers [%d,%d] out-of-bounds (stack is %d slots)",
-				sourceLocation(f.proto, frame.pc-1), i, i+(genericForLoopStateSize-1), len(r))
+			return nil, fmt.Errorf(
+				"%s: decode instruction: for loop registers [%d,%d] out-of-bounds (stack is %d slots)",
+				sourceLocation(currFunction.proto, l.frame().pc-1),
+				i,
+				i+(genericForLoopStateSize-1),
+				len(r),
+			)
 		}
 		return (*[genericForLoopStateSize]value)(r[i : i+genericForLoopStateSize]), nil
 	}
 
 	constant := func(i uint32) (luacode.Value, error) {
-		if int64(i) >= int64(len(f.proto.Constants)) {
-			return luacode.Value{}, fmt.Errorf("%s: decode instruction: constant %d out-of-bounds (table has %d entries)", sourceLocation(f.proto, frame.pc-1), i, len(f.proto.Constants))
+		if int64(i) >= int64(len(currFunction.proto.Constants)) {
+			return luacode.Value{}, fmt.Errorf(
+				"%s: decode instruction: constant %d out-of-bounds (table has %d entries)",
+				sourceLocation(currFunction.proto, l.frame().pc-1),
+				i,
+				len(currFunction.proto.Constants),
+			)
 		}
-		return f.proto.Constants[i], nil
+		return currFunction.proto.Constants[i], nil
 	}
 
 	fUpvalue := func(i uint8) (*value, error) {
-		if int(i) >= len(f.upvalues) {
-			return nil, fmt.Errorf("%s: decode instruction: upvalue %d out-of-bounds (function has %d upvalues)", sourceLocation(f.proto, frame.pc-1), i, len(f.upvalues))
+		if int(i) >= len(currFunction.upvalues) {
+			return nil, fmt.Errorf(
+				"%s: decode instruction: upvalue %d out-of-bounds (function has %d upvalues)",
+				sourceLocation(currFunction.proto, l.frame().pc-1),
+				i,
+				len(currFunction.upvalues),
+			)
 		}
-		return l.resolveUpvalue(f.upvalues[i]), nil
+		return l.resolveUpvalue(currFunction.upvalues[i]), nil
 	}
 
 	rkC := func(r []value, i luacode.Instruction) (value, error) {
@@ -167,16 +171,20 @@ func (l *State) exec() (err error) {
 	}
 
 	for {
-		if frame.pc < 0 || frame.pc >= len(f.proto.Code) {
-			return fmt.Errorf("%s: jumped out of bounds", functionLocation(f.proto))
-		}
-		i := f.proto.Code[frame.pc]
-		frame.pc++
-		if !i.IsInTop() {
-			// For instructions that don't read the stack top,
-			// use the end of the registers.
-			// This makes it safe to call metamethods.
-			l.setTop(frame.registerStart() + int(f.proto.MaxStackSize))
+		var i luacode.Instruction
+		{
+			frame := l.frame() // Limit the scope of the pointer to l.callStack.
+			if frame.pc < 0 || frame.pc >= len(currFunction.proto.Code) {
+				return fmt.Errorf("%s: jumped out of bounds", functionLocation(currFunction.proto))
+			}
+			i = currFunction.proto.Code[frame.pc]
+			frame.pc++
+			if !i.IsInTop() {
+				// For instructions that don't read the stack top,
+				// use the end of the registers.
+				// This makes it safe to call metamethods.
+				l.setTop(frame.registerStart() + int(currFunction.proto.MaxStackSize))
+			}
 		}
 
 		switch opCode := i.OpCode(); opCode {
@@ -218,11 +226,11 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			arg, err := decodeExtraArg(frame, f.proto)
+			arg, err := decodeExtraArg(l.frame(), currFunction.proto)
 			if err != nil {
 				return err
 			}
-			frame.pc++ // Skip extra arg.
+			l.frame().pc++ // Skip extra arg.
 			karg, err := constant(arg)
 			if err != nil {
 				return err
@@ -240,7 +248,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			*ra = booleanValue(false)
-			frame.pc++
+			l.frame().pc++
 		case luacode.OpLoadTrue:
 			ra, err := register(registers(), i.ArgA())
 			if err != nil {
@@ -439,13 +447,13 @@ func (l *State) exec() (err error) {
 			}
 			arraySize := int(i.ArgC())
 			if i.K() {
-				arg, err := decodeExtraArg(frame, f.proto)
+				arg, err := decodeExtraArg(l.frame(), currFunction.proto)
 				if err != nil {
 					return err
 				}
 				arraySize += int(arg) * (1 << 8)
 			}
-			frame.pc++ // Extra arg is always present even if unused.
+			l.frame().pc++ // Extra arg is always present even if unused.
 
 			ra, err := register(registers(), i.ArgA())
 			if err != nil {
@@ -502,7 +510,7 @@ func (l *State) exec() (err error) {
 				}
 				*ra = importConstant(result)
 				// The next instruction is a fallback metamethod invocation.
-				frame.pc++
+				l.frame().pc++
 			}
 		case luacode.OpSHLI:
 			// Separate case because SHLI's arguments are in the opposite order.
@@ -523,7 +531,7 @@ func (l *State) exec() (err error) {
 				}
 				*ra = importConstant(result)
 				// The next instruction is a fallback metamethod invocation.
-				frame.pc++
+				l.frame().pc++
 			}
 		case luacode.OpAddK,
 			luacode.OpSubK,
@@ -549,7 +557,12 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if !kc.IsNumber() {
-				return fmt.Errorf("%s: decode instruction: %v on non-numeric constant %v", sourceLocation(f.proto, frame.pc-1), opCode, kc)
+				return fmt.Errorf(
+					"%s: decode instruction: %v on non-numeric constant %v",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+					opCode,
+					kc,
+				)
 			}
 			if rb, isNumber := exportNumericConstant(*rb); isNumber {
 				op, ok := opCode.ArithmeticOperator()
@@ -562,7 +575,7 @@ func (l *State) exec() (err error) {
 				}
 				*ra = importConstant(result)
 				// The next instruction is a fallback metamethod invocation.
-				frame.pc++
+				l.frame().pc++
 			}
 		case luacode.OpAdd,
 			luacode.OpSub,
@@ -601,11 +614,11 @@ func (l *State) exec() (err error) {
 					}
 					*ra = importConstant(result)
 					// The next instruction is a fallback metamethod invocation.
-					frame.pc++
+					l.frame().pc++
 				}
 			}
 		case luacode.OpMMBin:
-			resultRegister, prevOperator, err := decodeBinaryMetamethod(frame, f.proto)
+			resultRegister, prevOperator, err := decodeBinaryMetamethod(l.frame(), currFunction.proto)
 			if err != nil {
 				return err
 			}
@@ -634,7 +647,7 @@ func (l *State) exec() (err error) {
 			}
 			*prevRA = result
 		case luacode.OpMMBinI:
-			resultRegister, prevOperator, err := decodeBinaryMetamethod(frame, f.proto)
+			resultRegister, prevOperator, err := decodeBinaryMetamethod(l.frame(), currFunction.proto)
 			if err != nil {
 				return err
 			}
@@ -662,7 +675,7 @@ func (l *State) exec() (err error) {
 			}
 			*prevRA = result
 		case luacode.OpMMBinK:
-			resultRegister, prevOperator, err := decodeBinaryMetamethod(frame, f.proto)
+			resultRegister, prevOperator, err := decodeBinaryMetamethod(l.frame(), currFunction.proto)
 			if err != nil {
 				return err
 			}
@@ -788,36 +801,48 @@ func (l *State) exec() (err error) {
 		case luacode.OpConcat:
 			a, b := i.ArgA(), i.ArgB()
 			top := int(a) + int(b)
-			if top > int(f.proto.MaxStackSize) {
-				return fmt.Errorf("%s: decode instruction: concat: register %d out-of-bounds (stack is %d slots)",
-					sourceLocation(f.proto, frame.pc-1), top-1, f.proto.MaxStackSize)
+			if top > int(currFunction.proto.MaxStackSize) {
+				return fmt.Errorf(
+					"%s: decode instruction: concat: register %d out-of-bounds (stack is %d slots)",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+					top-1,
+					currFunction.proto.MaxStackSize,
+				)
 			}
-			l.setTop(frame.registerStart() + top)
+			l.setTop(l.frame().registerStart() + top)
 			if err := l.concat(int(b)); err != nil {
 				return err
 			}
 		case luacode.OpClose:
 			a := i.ArgA()
-			if a >= f.proto.MaxStackSize {
-				return fmt.Errorf("%s: decode instruction: register %d out-of-bounds (stack is %d slots)",
-					sourceLocation(f.proto, frame.pc-1), a, f.proto.MaxStackSize)
+			if a >= currFunction.proto.MaxStackSize {
+				return fmt.Errorf(
+					"%s: decode instruction: register %d out-of-bounds (stack is %d slots)",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+					a,
+					currFunction.proto.MaxStackSize,
+				)
 			}
-			bottom := frame.registerStart() + int(a)
+			bottom := l.frame().registerStart() + int(a)
 			l.closeUpvalues(bottom)
 			if err := l.closeTBCSlots(bottom, true, nil); err != nil {
 				return err
 			}
 		case luacode.OpTBC:
 			a := i.ArgA()
-			if a >= f.proto.MaxStackSize {
-				return fmt.Errorf("%s: decode instruction: register %d out-of-bounds (stack is %d slots)",
-					sourceLocation(f.proto, frame.pc-1), a, f.proto.MaxStackSize)
+			if a >= currFunction.proto.MaxStackSize {
+				return fmt.Errorf(
+					"%s: decode instruction: register %d out-of-bounds (stack is %d slots)",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+					a,
+					currFunction.proto.MaxStackSize,
+				)
 			}
-			if err := l.markTBC(frame.registerStart() + int(a)); err != nil {
-				return fmt.Errorf("%s: %v", sourceLocation(f.proto, frame.pc-1), err)
+			if err := l.markTBC(l.frame().registerStart() + int(a)); err != nil {
+				return fmt.Errorf("%s: %v", sourceLocation(currFunction.proto, l.frame().pc-1), err)
 			}
 		case luacode.OpJMP:
-			frame.pc += int(i.J())
+			l.frame().pc += int(i.J())
 		case luacode.OpEQ:
 			r := registers()
 			ra, err := register(r, i.ArgA())
@@ -833,7 +858,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if result != i.K() {
-				frame.pc++
+				l.frame().pc++
 			}
 		case luacode.OpEQK:
 			ra, err := register(registers(), i.ArgA())
@@ -849,7 +874,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if result != i.K() {
-				frame.pc++
+				l.frame().pc++
 			}
 		case luacode.OpEQI:
 			ra, err := register(registers(), i.ArgA())
@@ -861,7 +886,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if result != i.K() {
-				frame.pc++
+				l.frame().pc++
 			}
 		case luacode.OpLT, luacode.OpLE:
 			r := registers()
@@ -882,7 +907,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if result != i.K() {
-				frame.pc++
+				l.frame().pc++
 			}
 		case luacode.OpLTI, luacode.OpLEI:
 			ra, err := register(registers(), i.ArgA())
@@ -898,7 +923,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if result != i.K() {
-				frame.pc++
+				l.frame().pc++
 			}
 		case luacode.OpGTI, luacode.OpGEI:
 			ra, err := register(registers(), i.ArgA())
@@ -917,7 +942,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if result != i.K() {
-				frame.pc++
+				l.frame().pc++
 			}
 		case luacode.OpTest:
 			ra, err := register(registers(), i.ArgA())
@@ -926,7 +951,7 @@ func (l *State) exec() (err error) {
 			}
 			cond := toBoolean(*ra)
 			if cond != i.K() {
-				frame.pc++
+				l.frame().pc++
 			}
 		case luacode.OpTestSet:
 			r := registers()
@@ -940,7 +965,7 @@ func (l *State) exec() (err error) {
 			}
 			cond := toBoolean(*rb)
 			if cond != i.K() {
-				frame.pc++
+				l.frame().pc++
 			} else {
 				*ra = *rb
 			}
@@ -948,7 +973,7 @@ func (l *State) exec() (err error) {
 			numArguments := int(i.ArgB()) - 1
 			numResults := int(i.ArgC()) - 1
 			// TODO(soon): Validate ArgA.
-			functionIndex := frame.registerStart() + int(i.ArgA())
+			functionIndex := l.frame().registerStart() + int(i.ArgA())
 			if numArguments < 0 {
 				// Varargs: read from top.
 				numArguments = len(l.stack) - (functionIndex + 1)
@@ -960,30 +985,29 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if isLua {
-				frame, f, err = l.loadLuaFrame()
-				if err != nil {
-					return err
-				}
+				currFunction = l.findLuaFunction()
 			}
 		case luacode.OpTailCall:
-			if maxTBC, hasTBC := l.tbc.Max(); hasTBC && maxTBC >= uint(frame.registerStart()) {
-				return fmt.Errorf("%s: internal error: cannot make tail call when block has to-be-closed variables in scope",
-					sourceLocation(f.proto, frame.pc-1))
+			if maxTBC, hasTBC := l.tbc.Max(); hasTBC && maxTBC >= uint(l.frame().registerStart()) {
+				return fmt.Errorf(
+					"%s: internal error: cannot make tail call when block has to-be-closed variables in scope",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+				)
 			}
 
 			numArguments := int(i.ArgB()) - 1
 			numResults := l.frame().numResults
 			// TODO(soon): Validate ArgA.
-			functionIndex := frame.registerStart() + int(i.ArgA())
+			functionIndex := l.frame().registerStart() + int(i.ArgA())
 
-			l.closeUpvalues(frame.registerStart())
+			l.closeUpvalues(l.frame().registerStart())
 			if numArguments < 0 {
 				// Varargs: read from top.
 				numArguments = len(l.stack) - (functionIndex + 1)
 			} else {
 				l.setTop(functionIndex + 1 + numArguments)
 			}
-			fp := frame.framePointer()
+			fp := l.frame().framePointer()
 			copy(l.stack[fp:], l.stack[functionIndex:])
 			l.setTop(fp + 1 + numArguments)
 			l.callStack = l.callStack[:len(l.callStack)-1]
@@ -992,21 +1016,19 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if isLua {
-				frame, f, err = l.loadLuaFrame()
-				if err != nil {
-					return err
-				}
+				currFunction = l.findLuaFunction()
 			}
 		case luacode.OpReturn:
 			// TODO(soon): Validate ArgA+numResults.
-			resultStackStart := frame.registerStart() + int(i.ArgA())
+			registerStart := l.frame().registerStart()
+			resultStackStart := registerStart + int(i.ArgA())
 			numResults := int(i.ArgB()) - 1
 			if numResults < 0 {
 				numResults = len(l.stack) - resultStackStart
 			}
 			// We ignore the K hint and close locals regardless.
-			l.closeUpvalues(frame.registerStart())
-			if err := l.closeTBCSlots(frame.registerStart(), true, nil); err != nil {
+			l.closeUpvalues(registerStart)
+			if err := l.closeTBCSlots(registerStart, true, nil); err != nil {
 				return err
 			}
 
@@ -1015,15 +1037,13 @@ func (l *State) exec() (err error) {
 			if len(l.callStack) <= callerDepth {
 				return nil
 			}
-			frame, f, err = l.loadLuaFrame()
-			if err != nil {
-				return err
-			}
+			currFunction = l.findLuaFunction()
 		case luacode.OpReturn0:
 			// The RETURN0 instruction shouldn't be generated if we need to close locals,
 			// but for safety, we do it anyway.
-			l.closeUpvalues(frame.registerStart())
-			if err := l.closeTBCSlots(frame.registerStart(), false, nil); err != nil {
+			registerStart := l.frame().registerStart()
+			l.closeUpvalues(registerStart)
+			if err := l.closeTBCSlots(registerStart, false, nil); err != nil {
 				return err
 			}
 
@@ -1031,29 +1051,24 @@ func (l *State) exec() (err error) {
 			if len(l.callStack) <= callerDepth {
 				return nil
 			}
-			frame, f, err = l.loadLuaFrame()
-			if err != nil {
-				return err
-			}
+			currFunction = l.findLuaFunction()
 		case luacode.OpReturn1:
 			// The RETURN1 instruction shouldn't be generated if we need to close locals,
 			// but for safety, we do it anyway.
-			l.closeUpvalues(frame.registerStart())
-			if err := l.closeTBCSlots(frame.registerStart(), true, nil); err != nil {
+			registerStart := l.frame().registerStart()
+			l.closeUpvalues(registerStart)
+			if err := l.closeTBCSlots(registerStart, true, nil); err != nil {
 				return err
 			}
 
 			// TODO(soon): Validate ArgA.
 
-			l.setTop(frame.registerStart() + int(i.ArgA()) + 1)
+			l.setTop(registerStart + int(i.ArgA()) + 1)
 			l.finishCall(1)
 			if len(l.callStack) <= callerDepth {
 				return nil
 			}
-			frame, f, err = l.loadLuaFrame()
-			if err != nil {
-				return err
-			}
+			currFunction = l.findLuaFunction()
 		case luacode.OpForLoop:
 			idx, limit, step, control, err := numericForLoopRegisters(registers(), i.ArgA())
 			if err != nil {
@@ -1063,13 +1078,19 @@ func (l *State) exec() (err error) {
 			case integerValue:
 				indexInteger, ok := (*idx).(integerValue)
 				if !ok {
-					return fmt.Errorf("%s: internal error: bad 'for' index (integer expected, got %s)",
-						sourceLocation(f.proto, frame.pc-1), l.typeName(*idx))
+					return fmt.Errorf(
+						"%s: internal error: bad 'for' index (integer expected, got %s)",
+						sourceLocation(currFunction.proto, l.frame().pc-1),
+						l.typeName(*idx),
+					)
 				}
 				limitInteger, ok := (*limit).(integerValue)
 				if !ok {
-					return fmt.Errorf("%s: internal error: bad 'for' counter (integer expected, got %s)",
-						sourceLocation(f.proto, frame.pc-1), l.typeName(*limit))
+					return fmt.Errorf(
+						"%s: internal error: bad 'for' counter (integer expected, got %s)",
+						sourceLocation(currFunction.proto, l.frame().pc-1),
+						l.typeName(*limit),
+					)
 				}
 
 				if count := uint64(limitInteger); count > 0 {
@@ -1077,29 +1098,38 @@ func (l *State) exec() (err error) {
 					nextIndex := indexInteger + step
 					*idx = nextIndex
 					*control = nextIndex
-					frame.pc -= int(i.ArgBx())
+					l.frame().pc -= int(i.ArgBx())
 				}
 			case floatValue:
 				indexFloat, ok := (*idx).(floatValue)
 				if !ok {
-					return fmt.Errorf("%s: internal error: bad 'for' index (number expected, got %s)",
-						sourceLocation(f.proto, frame.pc-1), l.typeName(*idx))
+					return fmt.Errorf(
+						"%s: internal error: bad 'for' index (number expected, got %s)",
+						sourceLocation(currFunction.proto, l.frame().pc-1),
+						l.typeName(*idx),
+					)
 				}
 				limitFloat, ok := (*limit).(floatValue)
 				if !ok {
-					return fmt.Errorf("%s: internal error: bad 'for' counter (number expected, got %s)",
-						sourceLocation(f.proto, frame.pc-1), l.typeName(*limit))
+					return fmt.Errorf(
+						"%s: internal error: bad 'for' counter (number expected, got %s)",
+						sourceLocation(currFunction.proto, l.frame().pc-1),
+						l.typeName(*limit),
+					)
 				}
 
 				nextIndex := indexFloat + step
 				if continueForLoop(nextIndex, limitFloat, step) {
 					*idx = nextIndex
 					*control = nextIndex
-					frame.pc -= int(i.ArgBx())
+					l.frame().pc -= int(i.ArgBx())
 				}
 			default:
-				return fmt.Errorf("%s: internal error: bad 'for' step (number expected, got %s)",
-					sourceLocation(f.proto, frame.pc-1), l.typeName(step))
+				return fmt.Errorf(
+					"%s: internal error: bad 'for' step (number expected, got %s)",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+					l.typeName(step),
+				)
 			}
 		case luacode.OpForPrep:
 			idx, limit, step, control, err := numericForLoopRegisters(registers(), i.ArgA())
@@ -1107,7 +1137,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			if err := l.forPrep(idx, limit, step, control); err == errSkipLoop {
-				frame.pc += int(i.ArgBx() + 1)
+				l.frame().pc += int(i.ArgBx() + 1)
 			} else if err != nil {
 				return err
 			}
@@ -1118,20 +1148,34 @@ func (l *State) exec() (err error) {
 			}
 
 			// Validate jump destination.
+			frame := l.frame()
 			callPC := frame.pc + int(i.ArgBx())
-			if callPC < 0 || callPC >= len(f.proto.Code) {
-				return fmt.Errorf("%s: decode instruction: %v instruction jumps out-of-bounds",
-					sourceLocation(f.proto, frame.pc-1), opCode)
+			if callPC < 0 || callPC >= len(currFunction.proto.Code) {
+				return fmt.Errorf(
+					"%s: decode instruction: %v instruction jumps out-of-bounds",
+					sourceLocation(currFunction.proto, frame.pc-1),
+					opCode,
+				)
 			}
-			callInstruction := f.proto.Code[callPC]
+			callInstruction := currFunction.proto.Code[callPC]
 			callOpCode := callInstruction.OpCode()
 			if want := luacode.OpTForCall; callOpCode != want {
-				return fmt.Errorf("%s: decode instruction: %v instruction jumps to %v (must be %v)",
-					sourceLocation(f.proto, frame.pc-1), opCode, callOpCode, want)
+				return fmt.Errorf(
+					"%s: decode instruction: %v instruction jumps to %v (must be %v)",
+					sourceLocation(currFunction.proto, frame.pc-1),
+					opCode,
+					callOpCode,
+					want,
+				)
 			}
 			if got := callInstruction.ArgA(); got != a {
-				return fmt.Errorf("%s: decode instruction: %v instruction jumps to instruction with A=%d (must be %d)",
-					sourceLocation(f.proto, frame.pc-1), opCode, got, a)
+				return fmt.Errorf(
+					"%s: decode instruction: %v instruction jumps to instruction with A=%d (must be %d)",
+					sourceLocation(currFunction.proto, frame.pc-1),
+					opCode,
+					got,
+					a,
+				)
 			}
 
 			// Mark control variable as to-be-closed.
@@ -1150,11 +1194,14 @@ func (l *State) exec() (err error) {
 			}
 			c := int(i.ArgC())
 			if c < 1 {
-				return fmt.Errorf("%s: decode %v instruction: generic 'for' loop call must return at least 1 value",
-					sourceLocation(f.proto, frame.pc-1), opCode)
+				return fmt.Errorf(
+					"%s: decode %v instruction: generic 'for' loop call must return at least 1 value",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+					opCode,
+				)
 			}
 
-			stateStart := frame.registerStart() + int(a)
+			stateStart := l.frame().registerStart() + int(a)
 			stateEnd := stateStart + genericForLoopStateSize
 			const numArgs = 2
 			newTop := stateEnd + 1 + numArgs
@@ -1182,10 +1229,14 @@ func (l *State) exec() (err error) {
 
 			// An [luacode.OpTForCall] instructions will place the results
 			// on the stack after the for loop state.
+			frame := l.frame()
 			newControlIndex := frame.registerStart() + int(a) + genericForLoopStateSize
 			if newControlIndex >= cap(l.stack) {
-				return fmt.Errorf("%s: decode %v instruction: 'for' loop call results out-of-bounds",
-					sourceLocation(f.proto, frame.pc-1), opCode)
+				return fmt.Errorf(
+					"%s: decode %v instruction: 'for' loop call results out-of-bounds",
+					sourceLocation(currFunction.proto, frame.pc-1),
+					opCode,
+				)
 			}
 			newControl := l.stack[:newControlIndex+1][newControlIndex]
 			if newControl != nil {
@@ -1200,15 +1251,25 @@ func (l *State) exec() (err error) {
 			}
 			t, isTable := (*ra).(*table)
 			if !isTable {
-				return fmt.Errorf("%s: set list: value in register %d is a %s (need table)", sourceLocation(f.proto, frame.pc-1), i.ArgA(), l.typeName(*ra))
+				return fmt.Errorf(
+					"%s: set list: value in register %d is a %s (need table)",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+					i.ArgA(),
+					l.typeName(*ra),
+				)
 			}
 			n := int(i.ArgB())
-			stackBase := frame.registerStart() + int(a) + 1
+			stackBase := l.frame().registerStart() + int(a) + 1
 			if n == 0 {
 				n = len(l.stack) - stackBase
-			} else if int(a)+1+n > int(f.proto.MaxStackSize) {
-				return fmt.Errorf("%s: decode instruction: set list (a=%d n=%d) overflows stack (size=%d)",
-					sourceLocation(f.proto, frame.pc-1), a, n, f.proto.MaxStackSize)
+			} else if int(a)+1+n > int(currFunction.proto.MaxStackSize) {
+				return fmt.Errorf(
+					"%s: decode instruction: set list (a=%d n=%d) overflows stack (size=%d)",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+					a,
+					n,
+					currFunction.proto.MaxStackSize,
+				)
 			}
 			indexBase := integerValue(i.ArgC()) + 1
 
@@ -1225,17 +1286,22 @@ func (l *State) exec() (err error) {
 				return err
 			}
 			bx := i.ArgBx()
-			if int(bx) >= len(f.proto.Functions) {
-				return fmt.Errorf("%s: decode instruction: closure %d out of range", sourceLocation(f.proto, frame.pc-1), bx)
+			if int(bx) >= len(currFunction.proto.Functions) {
+				return fmt.Errorf(
+					"%s: decode instruction: closure %d out of range",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+					bx,
+				)
 			}
-			p := f.proto.Functions[i.ArgBx()]
+			p := currFunction.proto.Functions[i.ArgBx()]
 
 			upvalues := make([]*upvalue, len(p.Upvalues))
+			registerStart := l.frame().registerStart()
 			for i, uv := range p.Upvalues {
 				if uv.InStack {
-					upvalues[i] = l.stackUpvalue(frame.registerStart() + int(uv.Index))
+					upvalues[i] = l.stackUpvalue(registerStart + int(uv.Index))
 				} else {
-					upvalues[i] = f.upvalues[uv.Index]
+					upvalues[i] = currFunction.upvalues[uv.Index]
 				}
 			}
 			*ra = luaFunction{
@@ -1244,6 +1310,7 @@ func (l *State) exec() (err error) {
 				upvalues: upvalues,
 			}
 		case luacode.OpVararg:
+			frame := l.frame()
 			numWanted := int(i.ArgC()) - 1
 			if numWanted == MultipleReturns {
 				numWanted = frame.numExtraArguments
@@ -1257,24 +1324,19 @@ func (l *State) exec() (err error) {
 			n := copy(l.stack[a:], l.stack[varargStart:varargEnd])
 			clear(l.stack[a+n:])
 		case luacode.OpVarargPrep:
-			if frame.pc != 1 {
-				return fmt.Errorf("%v must be first instruction in function", luacode.OpVarargPrep)
-			}
-			if frame.numExtraArguments != 0 {
-				return fmt.Errorf("cannot run %v multiple times", luacode.OpVarargPrep)
-			}
-			// TODO(soon): Run this upon entering the function.
-			numArguments := len(l.stack) - frame.registerStart()
-			numFixedParameters := int(i.ArgA())
-			numExtraArguments := numArguments - numFixedParameters
-			if numExtraArguments > 0 {
-				rotate(l.stack[frame.functionIndex:], numExtraArguments)
-				frame.functionIndex += numExtraArguments
-				frame.numExtraArguments = numExtraArguments
+			if l.frame().pc != 1 {
+				return fmt.Errorf(
+					"%s: %v must be first instruction in function",
+					functionLocation(currFunction.proto),
+					opCode,
+				)
 			}
 		default:
-			return fmt.Errorf("%s: decode instruction: unhandled instruction %v",
-				sourceLocation(f.proto, frame.pc-1), opCode)
+			return fmt.Errorf(
+				"%s: decode instruction: unhandled instruction %v",
+				sourceLocation(currFunction.proto, l.frame().pc-1),
+				opCode,
+			)
 		}
 	}
 }

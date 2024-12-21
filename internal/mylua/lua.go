@@ -121,7 +121,7 @@ func (l *State) Close() error {
 	return nil
 }
 
-// frame returns the top [callFrame] from the stack.
+// frame returns a pointer to the top [callFrame] from the stack.
 func (l *State) frame() *callFrame {
 	return &l.callStack[len(l.callStack)-1]
 }
@@ -1322,6 +1322,16 @@ func (l *State) prepareCall(numArgs, numResults int) (isLua bool, err error) {
 				l.popCallStack()
 				l.setTop(functionIndex - 1)
 				return true, errStackOverflow
+			}
+			if f.proto.IsVararg {
+				numFixedParameters := int(f.proto.NumParams)
+				numExtraArguments := numArgs - numFixedParameters
+				if numExtraArguments > 0 {
+					rotate(l.stack[functionIndex:], numExtraArguments)
+					frame := l.frame()
+					frame.functionIndex += numExtraArguments
+					frame.numExtraArguments = numExtraArguments
+				}
 			}
 			return true, nil
 		case goFunction:
