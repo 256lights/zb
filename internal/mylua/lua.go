@@ -80,7 +80,7 @@ var errMissingArguments = errors.New("not enough elements in stack")
 //
 // If the msgHandler argument to a [State] method is 0,
 // then errors are returned as a Go error value.
-// (This is in contrast to the C Lua implementation which pushes an error object onto the stack.)
+// (This is in contrast to the C Lua API which pushes an error object onto the stack.)
 // Otherwise, msgHandler is the stack index of a message handler.
 // (This index cannot be a pseudo-index.)
 // In case of runtime errors, this handler will be called with the error object
@@ -323,6 +323,41 @@ func (l *State) Insert(idx int) {
 // because a pseudo-index is not an actual stack position.
 func (l *State) Remove(idx int) {
 	l.Rotate(idx, -1)
+	l.Pop(1)
+}
+
+// Copy copies the element at index fromIdx into the valid index toIdx,
+// replacing the value at that position.
+// Values at other positions are not affected.
+func (l *State) Copy(fromIdx, toIdx int) {
+	l.init()
+	v, _, err := l.valueByIndex(fromIdx)
+	if err != nil {
+		panic(err)
+	}
+
+	if i, isUpvalue := upvalueFromIndex(toIdx); isUpvalue {
+		fv := l.stack[l.frame().functionIndex]
+		f, ok := fv.(function)
+		if !ok {
+			panic(fmt.Errorf("internal error: call frame missing function (found %T)", fv))
+		}
+		*l.resolveUpvalue(f.upvaluesSlice()[i-1]) = v
+		return
+	}
+
+	i, err := l.stackIndex(toIdx)
+	if err != nil {
+		panic(err)
+	}
+	l.stack[i] = v
+}
+
+// Replace moves the top element into the given valid index without shifting any element
+// (therefore replacing the value at that given index),
+// and then pops the top element.
+func (l *State) Replace(idx int) {
+	l.Copy(-1, idx)
 	l.Pop(1)
 }
 
