@@ -1017,13 +1017,13 @@ func (l *State) CreateTable(nArr, nRec int) {
 	l.push(newTable(nArr + nRec))
 }
 
-// NewUserdataUV creates and pushes on the stack a new full userdata,
+// NewUserdata creates and pushes on the stack a new full userdata,
 // with numUserValues associated Lua values, called user values,
 // plus the given Go value.
 // The user values can be accessed or modified
 // using [*State.UserValue] and [*State.SetUserValue] respectively.
 // The stored Go value can be read using [*State.ToUserdata].
-func (l *State) NewUserdataUV(x any, numUserValues int) {
+func (l *State) NewUserdata(x any, numUserValues int) {
 	l.init()
 	l.push(newUserdata(x, numUserValues))
 }

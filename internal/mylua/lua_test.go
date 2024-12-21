@@ -470,7 +470,7 @@ func TestFullUserdata(t *testing.T) {
 	}()
 
 	initValue := [4]byte{}
-	state.NewUserdataUV(initValue, 1)
+	state.NewUserdata(initValue, 1)
 	if got, want := state.RawLen(-1), uint64(0); got != want {
 		t.Errorf("state.RawLen(-1) = %d; want %d", got, want)
 	}
