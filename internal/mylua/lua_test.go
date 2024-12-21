@@ -218,6 +218,150 @@ func TestCompare(t *testing.T) {
 				LessOrEqual: bad,
 			},
 		},
+		{
+			name: "IntegerFloat",
+			push: func(l *State) {
+				l.PushInteger(42)
+				l.PushNumber(42)
+			},
+			want: compareTable{
+				Equal:       1,
+				Less:        0,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "FloatInteger",
+			push: func(l *State) {
+				l.PushNumber(42)
+				l.PushInteger(42)
+			},
+			want: compareTable{
+				Equal:       1,
+				Less:        0,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "EqualIntegers",
+			push: func(l *State) {
+				l.PushInteger(42)
+				l.PushInteger(42)
+			},
+			want: compareTable{
+				Equal:       1,
+				Less:        0,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "AscendingIntegers",
+			push: func(l *State) {
+				l.PushInteger(42)
+				l.PushInteger(100)
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        1,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "DescendingIntegers",
+			push: func(l *State) {
+				l.PushInteger(100)
+				l.PushInteger(42)
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        0,
+				LessOrEqual: 0,
+			},
+		},
+		{
+			name: "EmptyStrings",
+			push: func(l *State) {
+				l.PushString("")
+				l.PushString("")
+			},
+			want: compareTable{
+				Equal:       1,
+				Less:        0,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "EmptyNonEmptyString",
+			push: func(l *State) {
+				l.PushString("")
+				l.PushString("abc")
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        1,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "NonEmptyEmptyString",
+			push: func(l *State) {
+				l.PushString("abc")
+				l.PushString("")
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        0,
+				LessOrEqual: 0,
+			},
+		},
+		{
+			name: "FalseTrue",
+			push: func(l *State) {
+				l.PushBoolean(false)
+				l.PushBoolean(true)
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        bad,
+				LessOrEqual: bad,
+			},
+		},
+		{
+			name: "TrueFalse",
+			push: func(l *State) {
+				l.PushBoolean(true)
+				l.PushBoolean(false)
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        bad,
+				LessOrEqual: bad,
+			},
+		},
+		{
+			name: "TwoFalse",
+			push: func(l *State) {
+				l.PushBoolean(false)
+				l.PushBoolean(false)
+			},
+			want: compareTable{
+				Equal:       1,
+				Less:        bad,
+				LessOrEqual: bad,
+			},
+		},
+		{
+			name: "TwoTrue",
+			push: func(l *State) {
+				l.PushBoolean(true)
+				l.PushBoolean(true)
+			},
+			want: compareTable{
+				Equal:       1,
+				Less:        bad,
+				LessOrEqual: bad,
+			},
+		},
 	}
 
 	t.Run("StateMethod", func(t *testing.T) {
