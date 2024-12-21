@@ -75,7 +75,7 @@ func (tab *table) len() integerValue {
 }
 
 func (tab *table) get(key value) value {
-	if tab == nil {
+	if tab == nil || key == nil {
 		return nil
 	}
 	i, found := findEntry(tab.entries, key)
@@ -132,6 +132,29 @@ func (tab *table) setExisting(k, v value) bool {
 		tab.entries[i].value = v
 	}
 	return true
+}
+
+// next returns the next table entry after the given key
+// in ascending order (as determined by [compareValues]).
+// Passing a nil key returns the first entry in the table.
+// If there are no more elements in the table,
+// the key of the returned tableEntry is nil.
+func (tab *table) next(k value) tableEntry {
+	if tab == nil {
+		return tableEntry{}
+	}
+	i := 0
+	if k != nil {
+		var found bool
+		i, found = findEntry(tab.entries, k)
+		if found {
+			i++
+		}
+	}
+	if i >= len(tab.entries) {
+		return tableEntry{}
+	}
+	return tab.entries[i]
 }
 
 // clear removes all entries from the table,

@@ -1560,6 +1560,44 @@ func (l *State) Load(r io.ByteScanner, chunkName luacode.Source, mode string) (e
 	return nil
 }
 
+// Next pops a key from the stack,
+// and pushes a key–value pair from the table at the given index,
+// the “next” pair after the given key.
+// If there are no more elements in the table,
+// then Next returns false and pushes nothing.
+// Next panics if the value at the given index is not a table.
+//
+// While traversing a table,
+// avoid calling [*State.ToString] directly on a key,
+// unless you know that the key is actually a string.
+// Recall that [*State.ToString] may change the value at the given index;
+// this confuses the next call to Next.
+//
+// Unlike the C Lua API, Next has well-defined behavior
+// if the table is modified during traversal
+// or if the key is not present in the table.
+// This implementation of Lua has a total ordering of keys,
+// so Next always return the next key in ascending order.
+func (l *State) Next(idx int) bool {
+	if l.Top() == 0 {
+		panic(errMissingArguments)
+	}
+	l.init()
+	t, _, err := l.valueByIndex(idx)
+	k := l.stack[len(l.stack)-1]
+	l.setTop(len(l.stack) - 1) // Always pop key.
+	if err != nil {
+		panic(err)
+	}
+	next := t.(*table).next(k)
+	if next.key == nil {
+		return false
+	}
+	l.push(next.key)
+	l.push(next.value)
+	return true
+}
+
 // Concat concatenates the n values at the top of the stack, pops them,
 // and leaves the result on the top.
 // If n is 1, the result is the single value on the stack
