@@ -881,6 +881,28 @@ func (l *State) Field(idx int, k string, msgHandler int) (Type, error) {
 	return valueType(v), nil
 }
 
+// Index pushes onto the stack the value t[i],
+// where t is the value at the given index.
+// See [State.Table] for further information.
+func (l *State) Index(idx int, i int64, msgHandler int) (Type, error) {
+	if msgHandler != 0 {
+		return TypeNil, fmt.Errorf("TODO(someday): support message handlers")
+	}
+	l.init()
+	t, _, err := l.valueByIndex(idx)
+	if err != nil {
+		l.push(nil)
+		return TypeNil, err
+	}
+	v, err := l.index(t, integerValue(i))
+	if err != nil {
+		l.push(nil)
+		return TypeNil, err
+	}
+	l.push(v)
+	return valueType(v), nil
+}
+
 // RawGet pushes onto the stack t[k],
 // where t is the value at the given index
 // and k is the value on the top of the stack.

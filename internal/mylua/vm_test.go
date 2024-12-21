@@ -412,4 +412,155 @@ func TestVM(t *testing.T) {
 			t.Errorf("emit sequence = %v; want %v", got, want)
 		}
 	})
+
+	t.Run("NumericForLoop", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		var got []int64
+		state.PushClosure(0, func(state *State) (int, error) {
+			state.SetTop(1)
+			i, ok := state.ToInteger(1)
+			if !ok {
+				t.Errorf("on call %d, emit received %v", len(got)+1, state.Type(1))
+			}
+			got = append(got, i)
+			return 0, nil
+		})
+		if err := state.SetGlobal("emit", 0); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `for i = 1, 3 do` + "\n" +
+			`emit(i)` + "\n" +
+			`end` + "\n"
+		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+
+		want := []int64{1, 2, 3}
+		if !slices.Equal(want, got) {
+			t.Errorf("emit sequence = %v; want %v", got, want)
+		}
+	})
+
+	t.Run("NumericForLoopWithExplicitStep", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		var got []int64
+		state.PushClosure(0, func(state *State) (int, error) {
+			state.SetTop(1)
+			i, ok := state.ToInteger(1)
+			if !ok {
+				t.Errorf("on call %d, emit received %v", len(got)+1, state.Type(1))
+			}
+			got = append(got, i)
+			return 0, nil
+		})
+		if err := state.SetGlobal("emit", 0); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `for i = 10, 1, -1 do` + "\n" +
+			`emit(i)` + "\n" +
+			`end` + "\n"
+		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+
+		want := []int64{10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
+		if !slices.Equal(want, got) {
+			t.Errorf("emit sequence = %v; want %v", got, want)
+		}
+	})
+
+	t.Run("GenericForLoop", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		var got []float64
+		state.PushClosure(0, func(state *State) (int, error) {
+			state.SetTop(2)
+			i, ok := state.ToInteger(1)
+			if !ok {
+				t.Errorf("on call %d, emit arg #1 is %v", len(got)+1, state.Type(1))
+			} else if want := int64(len(got) + 1); i != want {
+				t.Errorf("on call %d, emit arg #1 = %d (want %d)", len(got)+1, i, want)
+			}
+			v, ok := state.ToNumber(2)
+			if !ok {
+				t.Errorf("on call %d, emit arg #2 is %v", len(got)+1, state.Type(2))
+			}
+			got = append(got, v)
+			return 0, nil
+		})
+		if err := state.SetGlobal("emit", 0); err != nil {
+			t.Fatal(err)
+		}
+
+		// Very light-weight copy of ipairs.
+		state.PushClosure(0, func(state *State) (int, error) {
+			state.SetTop(1)
+
+			f := func(state *State) (int, error) {
+				i, ok := state.ToInteger(2)
+				if !ok {
+					return 0, fmt.Errorf("ipairs iterator function arg #2 not an integer (got %v)", state.Type(2))
+				}
+				i++
+				state.PushInteger(i)
+				tp, err := state.Index(1, i, 0)
+				if err != nil {
+					return 0, err
+				}
+				if tp == TypeNil {
+					return 1, nil
+				}
+				return 2, nil
+			}
+
+			state.PushClosure(0, f)
+			state.PushValue(1)
+			state.PushInteger(0)
+			return 3, nil
+		})
+		if err := state.SetGlobal("ipairs", 0); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `a = {42, 3.14}` + "\n" +
+			`for i, v in ipairs(a) do` + "\n" +
+			`emit(i, v)` + "\n" +
+			`end` + "\n"
+		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+
+		want := []float64{42, 3.14}
+		if !slices.Equal(want, got) {
+			t.Errorf("emit sequence = %v; want %v", got, want)
+		}
+	})
 }

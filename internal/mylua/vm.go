@@ -4,7 +4,9 @@
 package mylua
 
 import (
+	"errors"
 	"fmt"
+	"math"
 
 	"zb.256lights.llc/pkg/internal/luacode"
 )
@@ -116,6 +118,23 @@ func (l *State) exec() (err error) {
 		return &r[i], nil
 	}
 
+	numericForLoopRegisters := func(r []value, i uint8) (idx, limit, step, control *value, err error) {
+		if int(i)+4 > len(r) {
+			return nil, nil, nil, nil, fmt.Errorf("%s: decode instruction: for loop registers [%d,%d] out-of-bounds (stack is %d slots)",
+				sourceLocation(f.proto, frame.pc-1), i, i+3, len(r))
+		}
+		return &r[i], &r[i+1], &r[i+2], &r[i+3], nil
+	}
+
+	const genericForLoopStateSize = 4
+	genericForLoopRegisters := func(r []value, i uint8) (state *[genericForLoopStateSize]value, err error) {
+		if int(i)+genericForLoopStateSize > len(r) {
+			return nil, fmt.Errorf("%s: decode instruction: for loop registers [%d,%d] out-of-bounds (stack is %d slots)",
+				sourceLocation(f.proto, frame.pc-1), i, i+(genericForLoopStateSize-1), len(r))
+		}
+		return (*[genericForLoopStateSize]value)(r[i : i+genericForLoopStateSize]), nil
+	}
+
 	constant := func(i uint32) (luacode.Value, error) {
 		if int64(i) >= int64(len(f.proto.Constants)) {
 			return luacode.Value{}, fmt.Errorf("%s: decode instruction: constant %d out-of-bounds (table has %d entries)", sourceLocation(f.proto, frame.pc-1), i, len(f.proto.Constants))
@@ -148,7 +167,7 @@ func (l *State) exec() (err error) {
 	}
 
 	for {
-		if frame.pc >= len(f.proto.Code) {
+		if frame.pc < 0 || frame.pc >= len(f.proto.Code) {
 			return fmt.Errorf("%s: jumped out of bounds", functionLocation(f.proto))
 		}
 		i := f.proto.Code[frame.pc]
@@ -1003,6 +1022,144 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
+		case luacode.OpForLoop:
+			idx, limit, step, control, err := numericForLoopRegisters(registers(), i.ArgA())
+			if err != nil {
+				return err
+			}
+			switch step := (*step).(type) {
+			case integerValue:
+				indexInteger, ok := (*idx).(integerValue)
+				if !ok {
+					return fmt.Errorf("%s: internal error: bad 'for' index (integer expected, got %s)",
+						sourceLocation(f.proto, frame.pc-1), l.typeName(*idx))
+				}
+				limitInteger, ok := (*limit).(integerValue)
+				if !ok {
+					return fmt.Errorf("%s: internal error: bad 'for' counter (integer expected, got %s)",
+						sourceLocation(f.proto, frame.pc-1), l.typeName(*limit))
+				}
+
+				if count := uint64(limitInteger); count > 0 {
+					*limit = integerValue(count - 1)
+					nextIndex := indexInteger + step
+					*idx = nextIndex
+					*control = nextIndex
+					frame.pc -= int(i.ArgBx())
+				}
+			case floatValue:
+				indexFloat, ok := (*idx).(floatValue)
+				if !ok {
+					return fmt.Errorf("%s: internal error: bad 'for' index (number expected, got %s)",
+						sourceLocation(f.proto, frame.pc-1), l.typeName(*idx))
+				}
+				limitFloat, ok := (*limit).(floatValue)
+				if !ok {
+					return fmt.Errorf("%s: internal error: bad 'for' counter (number expected, got %s)",
+						sourceLocation(f.proto, frame.pc-1), l.typeName(*limit))
+				}
+
+				nextIndex := indexFloat + step
+				if continueForLoop(nextIndex, limitFloat, step) {
+					*idx = nextIndex
+					*control = nextIndex
+					frame.pc -= int(i.ArgBx())
+				}
+			default:
+				return fmt.Errorf("%s: internal error: bad 'for' step (number expected, got %s)",
+					sourceLocation(f.proto, frame.pc-1), l.typeName(step))
+			}
+		case luacode.OpForPrep:
+			idx, limit, step, control, err := numericForLoopRegisters(registers(), i.ArgA())
+			if err != nil {
+				return err
+			}
+			if err := l.forPrep(idx, limit, step, control); err == errSkipLoop {
+				frame.pc += int(i.ArgBx() + 1)
+			} else if err != nil {
+				return err
+			}
+		case luacode.OpTForPrep:
+			a := i.ArgA()
+			if _, err := genericForLoopRegisters(registers(), a); err != nil {
+				return err
+			}
+
+			// Validate jump destination.
+			callPC := frame.pc + int(i.ArgBx())
+			if callPC < 0 || callPC >= len(f.proto.Code) {
+				return fmt.Errorf("%s: decode instruction: %v instruction jumps out-of-bounds",
+					sourceLocation(f.proto, frame.pc-1), opCode)
+			}
+			callInstruction := f.proto.Code[callPC]
+			callOpCode := callInstruction.OpCode()
+			if want := luacode.OpTForCall; callOpCode != want {
+				return fmt.Errorf("%s: decode instruction: %v instruction jumps to %v (must be %v)",
+					sourceLocation(f.proto, frame.pc-1), opCode, callOpCode, want)
+			}
+			if got := callInstruction.ArgA(); got != a {
+				return fmt.Errorf("%s: decode instruction: %v instruction jumps to instruction with A=%d (must be %d)",
+					sourceLocation(f.proto, frame.pc-1), opCode, got, a)
+			}
+
+			// Mark control variable as to-be-closed.
+			if err := l.markTBC(frame.registerStart() + int(a) + 3); err != nil {
+				return err
+			}
+			// Jump to the call instruction and fallthrough.
+			i = callInstruction
+			opCode = callOpCode
+			frame.pc = callPC + 1
+			fallthrough
+		case luacode.OpTForCall:
+			a := i.ArgA()
+			if _, err := genericForLoopRegisters(registers(), a); err != nil {
+				return err
+			}
+			c := int(i.ArgC())
+			if c < 1 {
+				return fmt.Errorf("%s: decode %v instruction: generic 'for' loop call must return at least 1 value",
+					sourceLocation(f.proto, frame.pc-1), opCode)
+			}
+
+			stateStart := frame.registerStart() + int(a)
+			stateEnd := stateStart + genericForLoopStateSize
+			const numArgs = 2
+			newTop := stateEnd + 1 + numArgs
+			if !l.grow(newTop) {
+				return errStackOverflow
+			}
+			l.setTop(newTop)
+			copy(l.stack[stateEnd:], l.stack[stateStart:stateStart+1+numArgs])
+			isLua, err := l.prepareCall(numArgs, c)
+			if err != nil {
+				return err
+			}
+			if isLua {
+				if err := l.exec(); err != nil {
+					return err
+				}
+			}
+		case luacode.OpTForLoop:
+			r := registers()
+			a := i.ArgA()
+			state, err := genericForLoopRegisters(r, a)
+			if err != nil {
+				return err
+			}
+
+			// An [luacode.OpTForCall] instructions will place the results
+			// on the stack after the for loop state.
+			newControlIndex := frame.registerStart() + int(a) + genericForLoopStateSize
+			if newControlIndex >= cap(l.stack) {
+				return fmt.Errorf("%s: decode %v instruction: 'for' loop call results out-of-bounds",
+					sourceLocation(f.proto, frame.pc-1), opCode)
+			}
+			newControl := l.stack[:newControlIndex+1][newControlIndex]
+			if newControl != nil {
+				state[2] = newControl
+				frame.pc -= int(i.ArgBx())
+			}
 		case luacode.OpSetList:
 			a := i.ArgA()
 			ra, err := register(registers(), a)
@@ -1158,6 +1315,137 @@ func decodeBinaryMetamethod(frame *callFrame, proto *luacode.Prototype) (uint8, 
 		return prev.ArgA(), prevOperator, err
 	}
 	return prev.ArgA(), prevOperator, nil
+}
+
+// forPrep initializes the numeric for loop state
+// during an [luacode.OpForPrep] instruction.
+// forPrep returns [errSkipLoop] if initialization succeeded
+// but the loop should not be entered.
+func (l *State) forPrep(idx, limit, step, control *value) error {
+	initInteger, isInitInteger := (*idx).(integerValue)
+	stepInteger, isStepInteger := (*step).(integerValue)
+	if isInitInteger && isStepInteger {
+		limitInteger, err := l.forLoopLimitToInteger(initInteger, *limit, stepInteger)
+		if err != nil {
+			return err
+		}
+		var count uint64
+		if stepInteger > 0 {
+			count = uint64(limitInteger) - uint64(initInteger)
+			if stepInteger != 1 { // Avoid division in the default case.
+				count /= uint64(stepInteger)
+			}
+		} else {
+			// stepInteger+1 avoids negating [math.MinInt64].
+			positiveStep := uint64(-(stepInteger + 1)) + 1
+			count = (uint64(initInteger) - uint64(limitInteger)) / positiveStep
+		}
+		*limit = integerValue(count)
+		*control = initInteger
+		return nil
+	}
+
+	limitNumber, ok := toNumber(*limit)
+	if !ok {
+		return fmt.Errorf("bad 'for' limit (number expected, got %s)", l.typeName(*limit))
+	}
+	stepNumber, ok := toNumber(*step)
+	if !ok {
+		return fmt.Errorf("bad 'for' step (number expected, got %s)", l.typeName(*step))
+	}
+	initNumber, ok := toNumber(*idx)
+	if !ok {
+		return fmt.Errorf("bad 'for' initial value (number expected, got %s)", l.typeName(*idx))
+	}
+	if stepNumber == 0 {
+		return errZeroStep
+	}
+	if !continueForLoop(initNumber, limitNumber, stepNumber) {
+		return errSkipLoop
+	}
+	// Coerce all registers to floatValue.
+	*idx = initNumber
+	*limit = limitNumber
+	*step = stepNumber
+	*control = initNumber
+	return nil
+}
+
+// forLoopLimitToInteger converts the given “for” loop limit value to an integer.
+// forLoopLimitToInteger will return [errSkipLoop] if the loop should not be entered.
+func (l *State) forLoopLimitToInteger(init integerValue, limit value, step integerValue) (limitInteger integerValue, err error) {
+	if step == 0 {
+		return 0, errZeroStep
+	}
+	switch limit := limit.(type) {
+	case integerValue:
+		limitInteger = limit
+	case stringValue:
+		var ok bool
+		limitInteger, ok = limit.toInteger()
+		if !ok {
+			limitFloat, ok := limit.toNumber()
+			if !ok {
+				return 0, fmt.Errorf("bad 'for' limit (number expected, got %s)", l.typeName(limit))
+			}
+			limitInteger, ok = floatToIntegerForLoopLimit(limitFloat, step)
+			if !ok {
+				return 0, errSkipLoop
+			}
+		}
+	case floatValue:
+		var ok bool
+		limitInteger, ok = floatToIntegerForLoopLimit(limit, step)
+		if !ok {
+			return 0, errSkipLoop
+		}
+	default:
+		return 0, fmt.Errorf("bad 'for' limit (number expected, got %s)", l.typeName(limit))
+	}
+
+	if !continueForLoop(init, limitInteger, step) {
+		return limitInteger, errSkipLoop
+	}
+	return limitInteger, nil
+}
+
+var (
+	errSkipLoop = errors.New("'for' limit prevents loop execution")
+	errZeroStep = errors.New("'for' step is zero")
+)
+
+// floatToIntegerForLoopLimit converts a floating-point number to an integer
+// for use as a “for” loop limit.
+// If the floating-point value is out of range of an integer,
+// then the limit is clipped to an integer.
+// ok is true if and only if there exists any initial value that could satisfy the limit.
+func floatToIntegerForLoopLimit(limit floatValue, step integerValue) (limitInteger integerValue, ok bool) {
+	if math.IsNaN(float64(limit)) || step == 0 {
+		return 0, false
+	}
+	mode := luacode.Floor
+	if step < 0 {
+		mode = luacode.Ceil
+	}
+	i, ok := luacode.FloatToInteger(float64(limit), mode)
+	switch {
+	case !ok && limit > 0:
+		return math.MaxInt64, step > 0
+	case !ok && limit < 0:
+		return math.MinInt64, step < 0
+	default:
+		return integerValue(i), true
+	}
+}
+
+// continueForLoop reports whether a for loop with the given limit and step
+// should start another iteration with the given index.
+func continueForLoop[T integerValue | floatValue](idx, limit, step T) bool {
+	if step > 0 {
+		return idx <= limit
+	} else {
+		return limit <= idx
+	}
 }
 
 func decodeExtraArg(frame *callFrame, proto *luacode.Prototype) (uint32, error) {
