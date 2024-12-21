@@ -205,7 +205,7 @@ func (p *parser) enterBlock(fs *funcState, isLoop bool) *blockControl {
 
 // closeFunction finalizes a [funcState] so that its [Prototype] is usable.
 //
-// Equivalent to `open_func` in upstream Lua.
+// Equivalent to `close_func` in upstream Lua.
 func (p *parser) closeFunction(fs *funcState) error {
 	p.codeReturn(fs, p.numVariablesInStack(fs), 0)
 	if err := p.leaveBlock(fs); err != nil {

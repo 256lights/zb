@@ -485,7 +485,7 @@ func (p *parser) codePostfix(fs *funcState, operator binaryOperator, e1, e2 expr
 		}
 		return e2, nil
 	case binaryOperatorOr:
-		if e1.t != noJump {
+		if e1.f != noJump {
 			return voidExpression(), errors.New("internal error: codePostfix: list should have been closed by codeInfix")
 		}
 		var err error
@@ -1105,7 +1105,7 @@ func (p *parser) toRegister(fs *funcState, e expressionDescriptor, reg registerI
 		if err := fs.patchList(e.f, final, reg, positionLoadFalse); err != nil {
 			return e, err
 		}
-		if err := fs.patchList(e.f, final, reg, positionLoadTrue); err != nil {
+		if err := fs.patchList(e.t, final, reg, positionLoadTrue); err != nil {
 			return e, err
 		}
 	}
