@@ -4,6 +4,7 @@
 package mylua
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"io"
@@ -76,6 +77,51 @@ func TestLoad(t *testing.T) {
 		}
 	})
 
+	t.Run("Autodetect", func(t *testing.T) {
+		const source = "return 2 + 2"
+		proto, err := luacode.Parse(source, strings.NewReader(source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		chunk, err := proto.MarshalBinary()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tests := []struct {
+			name string
+			data []byte
+		}{
+			{name: "Text", data: []byte(source)},
+			{name: "Binary", data: chunk},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				state := new(State)
+				defer func() {
+					if err := state.Close(); err != nil {
+						t.Error("Close:", err)
+					}
+				}()
+
+				if err := state.Load(bytes.NewReader(test.data), source, "bt"); err != nil {
+					t.Fatal(err)
+				}
+				if err := state.Call(0, 1, 0); err != nil {
+					t.Fatal(err)
+				}
+				if !state.IsNumber(-1) {
+					t.Fatalf("top of stack is %v; want number", state.Type(-1))
+				}
+				const want = int64(4)
+				if got, ok := state.ToInteger(-1); got != want || !ok {
+					t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, want)
+				}
+			})
+		}
+
+	})
+
 	t.Run("ReadError", func(t *testing.T) {
 		state := new(State)
 		defer func() {
@@ -86,7 +132,7 @@ func TestLoad(t *testing.T) {
 
 		const message = "bork"
 		r := io.MultiReader(strings.NewReader("return"), iotest.ErrReader(errors.New(message)))
-		err := state.Load(r, "=(reader)", "t")
+		err := state.Load(bufio.NewReader(r), "=(reader)", "t")
 		if err == nil {
 			t.Error("state.Load(...) = <nil>; want error")
 		} else if got := err.Error(); !strings.Contains(got, message) {

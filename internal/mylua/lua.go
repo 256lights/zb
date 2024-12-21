@@ -6,7 +6,7 @@
 package mylua
 
 import (
-	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -1395,7 +1395,7 @@ func (l *State) popCallStack() {
 // or "bt" (both binary and text).
 //
 // [debug information]: https://www.lua.org/manual/5.4/manual.html#4.7
-func (l *State) Load(r io.Reader, chunkName luacode.Source, mode string) (err error) {
+func (l *State) Load(r io.ByteScanner, chunkName luacode.Source, mode string) (err error) {
 	l.init()
 	defer func() {
 		if err != nil {
@@ -1403,28 +1403,25 @@ func (l *State) Load(r io.Reader, chunkName luacode.Source, mode string) (err er
 		}
 	}()
 
+	if mode == "" || mode == "bt" {
+		prefix := make([]byte, len(luacode.Signature))
+		n, err := readFull(r, prefix)
+		if err != nil && err != io.ErrUnexpectedEOF {
+			return err
+		}
+		prefix = prefix[:n]
+		if string(prefix) == luacode.Signature {
+			mode = "b"
+		} else {
+			mode = "t"
+		}
+		r = &multiByteScanner{[]io.ByteScanner{bytes.NewReader(prefix), r}}
+	}
+
 	var p *luacode.Prototype
 	switch mode {
-	case "bt":
-		br := bufio.NewReader(r)
-		if prefix, _ := br.Peek(len(luacode.Signature)); string(prefix) == luacode.Signature {
-			p = new(luacode.Prototype)
-			data, err := io.ReadAll(br)
-			if err != nil {
-				return err
-			}
-			if err := p.UnmarshalBinary(data); err != nil {
-				return err
-			}
-		} else {
-			var err error
-			p, err = luacode.Parse(chunkName, br)
-			if err != nil {
-				return err
-			}
-		}
 	case "b":
-		data, err := io.ReadAll(r)
+		data, err := readAll(r)
 		if err != nil {
 			return err
 		}
@@ -1433,12 +1430,13 @@ func (l *State) Load(r io.Reader, chunkName luacode.Source, mode string) (err er
 			return err
 		}
 	case "t":
-		br := bufio.NewReader(r)
 		var err error
-		p, err = luacode.Parse(chunkName, br)
+		p, err = luacode.Parse(chunkName, r)
 		if err != nil {
 			return err
 		}
+	default:
+		return fmt.Errorf("load: invalid mode %q", mode)
 	}
 
 	l.push(luaFunction{
@@ -1649,6 +1647,63 @@ func (l *State) typeName(v value) string {
 		}
 	}
 	return valueType(v).String()
+}
+
+func readFull(r io.ByteReader, buf []byte) (n int, err error) {
+	if r, ok := r.(io.Reader); ok {
+		return io.ReadFull(r, buf)
+	}
+	for n < len(buf) {
+		b, err := r.ReadByte()
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		if err != nil {
+			return n, err
+		}
+		buf[n] = b
+	}
+	return n, nil
+}
+
+func readAll(r io.ByteReader) ([]byte, error) {
+	if r, ok := r.(io.Reader); ok {
+		return io.ReadAll(r)
+	}
+	buf := make([]byte, 0, 512)
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			return buf, err
+		}
+		buf = append(buf, b)
+	}
+}
+
+type multiByteScanner struct {
+	scanners []io.ByteScanner
+}
+
+func (mbs *multiByteScanner) ReadByte() (byte, error) {
+	for len(mbs.scanners) > 0 {
+		b, err := mbs.scanners[0].ReadByte()
+		if err != io.EOF {
+			return b, err
+		}
+		mbs.scanners[0] = nil
+		mbs.scanners = mbs.scanners[1:]
+	}
+	return 0, io.EOF
+}
+
+func (mbs *multiByteScanner) UnreadByte() error {
+	if len(mbs.scanners) == 0 {
+		return io.EOF
+	}
+	return mbs.scanners[0].UnreadByte()
 }
 
 var errStackOverflow = errors.New("stack overflow")
