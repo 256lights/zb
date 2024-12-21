@@ -176,6 +176,12 @@ func compareValues(v1, v2 value) int {
 			return cmp.Compare(TypeFunction, valueType(v2))
 		}
 		return cmp.Compare(v1.functionID(), f2.functionID())
+	case *userdata:
+		u2, ok := v2.(*userdata)
+		if !ok {
+			return cmp.Compare(TypeTable, valueType(v2))
+		}
+		return cmp.Compare(v1.id, u2.id)
 	default:
 		panic("unhandled type")
 	}
@@ -216,7 +222,7 @@ func valuesEqual(v1, v2 value) bool {
 	case stringValue:
 		s2, ok := v2.(stringValue)
 		return ok && v1.s == s2.s
-	case *table, function:
+	case *table, function, *userdata:
 		return v1 == v2
 	default:
 		panic("unhandled type")
@@ -366,6 +372,25 @@ func (v stringValue) toInteger() (integerValue, bool) {
 		return 0, false
 	}
 	return integerValue(i), true
+}
+
+type userdata struct {
+	id         uint64
+	x          any
+	meta       *table
+	userValues []value
+}
+
+func newUserdata(x any, numUserValues int) *userdata {
+	return &userdata{
+		id:         nextID(),
+		x:          x,
+		userValues: make([]value, numUserValues),
+	}
+}
+
+func (u *userdata) valueType() Type {
+	return TypeUserdata
 }
 
 var globalIDs struct {

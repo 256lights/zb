@@ -317,6 +317,47 @@ func TestCompare(t *testing.T) {
 	})
 }
 
+func TestFullUserdata(t *testing.T) {
+	state := new(State)
+	defer func() {
+		if err := state.Close(); err != nil {
+			t.Error("Close:", err)
+		}
+	}()
+
+	initValue := [4]byte{}
+	state.NewUserdataUV(initValue, 1)
+	if got, want := state.RawLen(-1), uint64(0); got != want {
+		t.Errorf("state.RawLen(-1) = %d; want %d", got, want)
+	}
+	if got, ok := state.ToUserdata(-1); got != initValue || !ok {
+		t.Errorf("state.ToUserdata(...) = %#v, %t; want %#v, true", got, ok, initValue)
+	}
+
+	const wantUserValue = 42
+	state.PushInteger(wantUserValue)
+	if !state.SetUserValue(-2, 1) {
+		t.Error("Userdata does not have value 1")
+	}
+	if got, want := state.UserValue(-1, 1), TypeNumber; got != want {
+		t.Errorf("user value 1 type = %v; want %v", got, want)
+	}
+	if got, ok := state.ToInteger(-1); got != wantUserValue || !ok {
+		t.Errorf("user value 1 = %s; want %d", describeValue(state, -1), wantUserValue)
+	}
+	state.Pop(1)
+
+	if got, want := state.UserValue(-1, 2), TypeNone; got != want {
+		t.Errorf("user value 2 type = %v; want %v", got, want)
+	}
+	if got, want := state.Top(), 2; got != want {
+		t.Errorf("after state.UserValue(-1, 2), state.Top() = %d; want %d", got, want)
+	}
+	if !state.IsNil(-1) {
+		t.Errorf("user value 2 = %s; want nil", describeValue(state, -2))
+	}
+}
+
 func TestRotate(t *testing.T) {
 	tests := []struct {
 		s    []int

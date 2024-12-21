@@ -405,8 +405,12 @@ func (l *State) IsInteger(idx int) bool {
 // IsUserdata reports if the value at the given index is a userdata (either full or light).
 func (l *State) IsUserdata(idx int) bool {
 	l.init()
-	// TODO(soon)
-	return false
+	v, _, err := l.valueByIndex(idx)
+	if err != nil {
+		return false
+	}
+	t := valueType(v)
+	return t == TypeUserdata || t == TypeLightUserdata
 }
 
 // Type returns the type of the value in the given valid index,
@@ -588,6 +592,21 @@ func (l *State) RawLen(idx int) uint64 {
 		return 0
 	}
 	return uint64(lv.len())
+}
+
+// ToUserdata returns the Go value stored in the userdata at the given index
+// or (nil, false) if the value at the given index is not userdata.
+func (l *State) ToUserdata(idx int) (_ any, isUserdata bool) {
+	l.init()
+	v, _, err := l.valueByIndex(idx)
+	if err != nil {
+		panic(err)
+	}
+	u, ok := v.(*userdata)
+	if !ok {
+		return nil, false
+	}
+	return u.x, true
 }
 
 // RawEqual reports whether the two values in the given indices
@@ -998,6 +1017,17 @@ func (l *State) CreateTable(nArr, nRec int) {
 	l.push(newTable(nArr + nRec))
 }
 
+// NewUserdataUV creates and pushes on the stack a new full userdata,
+// with numUserValues associated Lua values, called user values,
+// plus the given Go value.
+// The user values can be accessed or modified
+// using [*State.UserValue] and [*State.SetUserValue] respectively.
+// The stored Go value can be read using [*State.ToUserdata].
+func (l *State) NewUserdataUV(x any, numUserValues int) {
+	l.init()
+	l.push(newUserdata(x, numUserValues))
+}
+
 // Metatable reports whether the value at the given index has a metatable
 // and if so, pushes that metatable onto the stack.
 func (l *State) Metatable(idx int) bool {
@@ -1017,6 +1047,8 @@ func (l *State) Metatable(idx int) bool {
 func (l *State) metatable(v value) *table {
 	switch v := v.(type) {
 	case *table:
+		return v.meta
+	case *userdata:
 		return v.meta
 	default:
 		return l.typeMetatables[valueType(v)]
@@ -1041,6 +1073,29 @@ func (l *State) binaryMetamethod(v1, v2 value, tm luacode.TagMethod) value {
 		return mm
 	}
 	return nil
+}
+
+// UserValue pushes onto the stack the n-th user value
+// associated with the full userdata at the given index
+// and returns the type of the pushed value.
+// If the userdata does not have that value
+// or the value at the given index is not a full userdata,
+// UserValue pushes nil and returns [TypeNone].
+// (As with other Lua APIs, the first user value is n=1.)
+func (l *State) UserValue(idx int, n int) Type {
+	l.init()
+	v, _, err := l.valueByIndex(idx)
+	if err != nil {
+		panic(err)
+	}
+	u, ok := v.(*userdata)
+	if !ok || n > len(u.userValues) {
+		l.push(nil)
+		return TypeNone
+	}
+	uv := u.userValues[n-1]
+	l.push(uv)
+	return valueType(uv)
 }
 
 // SetGlobal pops a value from the stack
@@ -1226,6 +1281,7 @@ func (l *State) RawSetField(idx int, k string) {
 // SetMetatable pops a table or nil from the stack
 // and sets that value as the new metatable for the value at the given index.
 // (nil means no metatable.)
+// SetMetatable panics if the top of the stack is not a table or nil.
 func (l *State) SetMetatable(idx int) {
 	if l.Top() < 1 {
 		panic(errMissingArguments)
@@ -1244,10 +1300,37 @@ func (l *State) SetMetatable(idx int) {
 	switch v := v.(type) {
 	case *table:
 		v.meta = mt
-	// TODO(soon): Userdata.
+	case *userdata:
+		v.meta = mt
 	default:
 		l.typeMetatables[v.valueType()] = mt
 	}
+}
+
+// SetUserValue pops a value from the stack
+// and sets it as the new n-th user value
+// associated to the full userdata at the given index,
+// reporting if the userdata has that value.
+// (As with other Lua APIs, the first user value is n=1.)
+// SetUserValue does nothing and returns false
+// if the value at the given index is not a full userdata.
+func (l *State) SetUserValue(idx int, n int) bool {
+	if l.Top() < 1 {
+		panic(errMissingArguments)
+	}
+	l.init()
+	v, _, err := l.valueByIndex(idx)
+	uv := l.stack[len(l.stack)-1]
+	l.setTop(len(l.stack) - 1) // Always pop user value.
+	if err != nil {
+		panic(err)
+	}
+	u, ok := v.(*userdata)
+	if !ok || n > len(u.userValues) {
+		return false
+	}
+	u.userValues[n-1] = uv
+	return true
 }
 
 // Call calls a function (or callable object) in protected mode.
