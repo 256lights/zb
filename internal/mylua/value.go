@@ -418,6 +418,14 @@ func (tab *table) setExisting(k, v value) bool {
 	return true
 }
 
+// clear removes all entries from the table,
+// but retains the space allocated for the table.
+// It does not remove the table's metatable association.
+func (tab *table) clear() {
+	clear(tab.entries)
+	tab.entries = tab.entries[:0]
+}
+
 type tableEntry struct {
 	key, value value
 }

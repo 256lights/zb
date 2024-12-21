@@ -105,7 +105,7 @@ func (l *State) init() {
 	}
 	if l.registry.id == 0 {
 		l.registry = *newTable(1)
-		l.registry.set(integerValue(RegistryIndexGlobals), newTable(0))
+		l.initRegistry()
 	}
 	if len(l.callStack) == 0 {
 		l.stack = append(l.stack, goFunction{
@@ -117,7 +117,35 @@ func (l *State) init() {
 	}
 }
 
+func (l *State) initRegistry() {
+	l.registry.set(integerValue(RegistryIndexGlobals), newTable(0))
+}
+
+// Close resets the state,
+// Close returns an error and does nothing if any function calls are in-progress.
+// After a successful call to Close:
+//
+//   - The stack will be empty
+//   - The registry will be initialized to its original state
+//   - Type-wide metatables are removed
+//
+// Unlike the Lua C API, calling Close is not necessary to clean up resources.
+// States and their associated values are garbage-collected like other Go values.
 func (l *State) Close() error {
+	if len(l.callStack) > 1 {
+		return errors.New("close lua state: in use")
+	}
+	if len(l.stack) > 0 {
+		l.closeUpvalues(1) // Clears l.pendingVariables as well.
+		l.setTop(1)
+	}
+	if l.registry.id != 0 {
+		l.registry.clear()
+		l.registry.meta = nil
+		l.initRegistry()
+	}
+	clear(l.typeMetatables[:])
+	l.tbc.Clear()
 	return nil
 }
 

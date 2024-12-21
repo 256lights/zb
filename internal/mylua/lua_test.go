@@ -19,6 +19,47 @@ import (
 	"zb.256lights.llc/pkg/internal/lualex"
 )
 
+func TestClose(t *testing.T) {
+	state := new(State)
+	defer func() {
+		if err := state.Close(); err != nil {
+			t.Error("Close:", err)
+		}
+	}()
+
+	state.PushBoolean(true)
+	state.PushInteger(42)
+	state.PushString("hello")
+	state.PushValue(-1)
+	if err := state.SetGlobal("x", 0); err != nil {
+		t.Error(err)
+	}
+	if tp, err := state.Global("x", 0); err != nil {
+		t.Error(err)
+	} else if tp != TypeString {
+		t.Errorf("type(_G.x) = %v; want %v", tp, TypeString)
+	} else if got, _ := state.ToString(-1); got != "hello" {
+		t.Errorf("_G.x = %q; want %q", got, "hello")
+	}
+	state.Pop(1)
+	if got, want := state.Top(), 3; got != want {
+		t.Errorf("before close, state.Top() = %d; want %d", got, want)
+	}
+
+	if err := state.Close(); err != nil {
+		t.Error("Close:", err)
+	}
+	if got, want := state.Top(), 0; got != want {
+		t.Errorf("after close, state.Top() = %d; want %d", got, want)
+	}
+	if tp, err := state.Global("x", 0); err != nil {
+		t.Error(err)
+	} else if tp != TypeNil {
+		t.Errorf("type(_G.x) = %v; want %v", tp, TypeNil)
+	}
+	state.Pop(1)
+}
+
 func TestLoad(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		state := new(State)
@@ -240,7 +281,6 @@ func TestCompare(t *testing.T) {
 
 				for i, want := range test.want {
 					op := ComparisonOperator(i)
-					// TODO(now)
 					if err := state.Load(bytes.NewReader(scripts[i]), "", "b"); err != nil {
 						t.Error("Load:", err)
 						continue
