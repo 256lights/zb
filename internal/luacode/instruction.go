@@ -569,21 +569,40 @@ const (
 	// A B k if (not R[B] == k) then pc++ else R[A] := R[B] (
 	OpTestSet OpCode = 67 // TESTSET
 
-	// A B C R[A], ... ,R[A+C-2] := R[A](R[A+1], ... ,R[A+B-1])
+	// OpCall calls a function.
+	//
+	//	- R[A] is the function to call.
+	//	  When the function returns, R[A] is also where the first result will be stored.
+	//	- B is the number of arguments to pass to the function plus one.
+	//	  If B is zero, this indicates to use all values after R[A] on the stack
+	//	  as arguments.
+	//	- C is the number of expected results plus one.
+	//	  If C is zero, then all results from the function will be pushed onto the stack,
+	//	  starting at R[A].
 	OpCall OpCode = 68 // CALL
-	// A B C k return R[A](R[A+1], ... ,R[A+B-1])
+	// OpTailCall calls a function as the return of the function,
+	// replacing the stack entry of the calling function.
+	//
+	//	- R[A] is the function to call.
+	//	- B is the number of arguments to pass to the function plus one.
+	//	  If B is zero, this indicates to use all values after R[A] on the stack
+	//	  as arguments.
+	//	- C > 0 means the calling function is vararg,
+	//	  so that any effects of [OpVarargPrep] must be corrected before returning;
+	//	  in this case, (C - 1) is its number of fixed parameters.
+	//	- k should be true if there are upvalues that need to be closed.
+	//	  (The language does not permit tail calls in blocks with to-be-closed variables in scope.)
 	OpTailCall OpCode = 69 // TAILCALL
 
 	// OpReturn instructs control flow to return to the function's caller.
 	//
-	//	A B C k return R[A], ... ,R[A+B-2]
-	//
-	// If (B == 0) then return up to 'top'.
-	// 'k' specifies that the function builds upvalues,
-	// which may need to be closed.
-	// C > 0 means the function is vararg,
-	// so that any effects of [OpVarargPrep] must be corrected before returning;
-	// in this case, (C - 1) is its number of fixed parameters.
+	//	- R[A] is the first result to return.
+	//	- B is the number of results to return.
+	//	  If B is zero, then return up to 'top'.
+	//	- C > 0 means the function is vararg,
+	//	  so that any effects of [OpVarargPrep] must be corrected before returning;
+	//	  in this case, (C - 1) is its number of fixed parameters.
+	//	- k should be true if there are upvalues and/or to-be-closed variables that need to be closed.
 	OpReturn OpCode = 70 // RETURN
 	// OpReturn0 instructs control flow to return to the function's caller
 	// with zero results.
@@ -598,8 +617,6 @@ const (
 	// that is variadic,
 	// has variables referenced by its functions,
 	// or has to-be-closed variables.
-	//
-	//	A return R[A]
 	OpReturn1 OpCode = 72 // RETURN1
 
 	// A Bx update counters; if loop continues then pc-=Bx;

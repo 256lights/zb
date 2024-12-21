@@ -563,4 +563,33 @@ func TestVM(t *testing.T) {
 			t.Errorf("emit sequence = %v; want %v", got, want)
 		}
 	})
+
+	t.Run("TailCall", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const source = `local function factorial(n, acc)` + "\n" +
+			`acc = acc or 1` + "\n" +
+			`if n == 0 then return acc end` + "\n" +
+			`return factorial(n - 1, acc * n)` + "\n" +
+			`end` + "\n" +
+			`return factorial(3)` + "\n"
+		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+		if !state.IsNumber(-1) {
+			t.Fatalf("top of stack is %v; want number", state.Type(-1))
+		}
+		const want = 6.0
+		if got, ok := state.ToNumber(-1); got != want || !ok {
+			t.Errorf("(return value, is number) = (%g, %t); want (%g, true)", got, ok, want)
+		}
+	})
 }

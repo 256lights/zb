@@ -965,6 +965,38 @@ func (l *State) exec() (err error) {
 					return err
 				}
 			}
+		case luacode.OpTailCall:
+			if maxTBC, hasTBC := l.tbc.Max(); hasTBC && maxTBC >= uint(frame.registerStart()) {
+				return fmt.Errorf("%s: internal error: cannot make tail call when block has to-be-closed variables in scope",
+					sourceLocation(f.proto, frame.pc-1))
+			}
+
+			numArguments := int(i.ArgB()) - 1
+			numResults := l.frame().numResults
+			// TODO(soon): Validate ArgA.
+			functionIndex := frame.registerStart() + int(i.ArgA())
+
+			l.closeUpvalues(frame.registerStart())
+			if numArguments < 0 {
+				// Varargs: read from top.
+				numArguments = len(l.stack) - (functionIndex + 1)
+			} else {
+				l.setTop(functionIndex + 1 + numArguments)
+			}
+			fp := frame.framePointer()
+			copy(l.stack[fp:], l.stack[functionIndex:])
+			l.setTop(fp + 1 + numArguments)
+			l.callStack = l.callStack[:len(l.callStack)-1]
+			isLua, err := l.prepareCall(numArguments, numResults)
+			if err != nil {
+				return err
+			}
+			if isLua {
+				frame, f, err = l.loadLuaFrame()
+				if err != nil {
+					return err
+				}
+			}
 		case luacode.OpReturn:
 			// TODO(soon): Validate ArgA+numResults.
 			resultStackStart := frame.registerStart() + int(i.ArgA())

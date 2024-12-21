@@ -88,6 +88,28 @@ func (s *Bit) Len() int {
 	return total
 }
 
+// Min returns the smallest value in the set.
+func (s *Bit) Min() (_ uint, nonEmpty bool) {
+	if s == nil {
+		return 0, false
+	}
+	for x := range s.All() {
+		return x, true
+	}
+	return 0, false
+}
+
+// Max returns the largest value in the set.
+func (s *Bit) Max() (_ uint, nonEmpty bool) {
+	if s == nil {
+		return 0, false
+	}
+	for x := range s.Reversed() {
+		return x, true
+	}
+	return 0, false
+}
+
 // All returns an iterator of the elements of s.
 // Elements are in ascending order.
 func (s *Bit) All() iter.Seq[uint] {
