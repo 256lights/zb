@@ -2272,7 +2272,7 @@ func (p *parser) solveGoto(fs *funcState, g int, lb *labelDescription) error {
 //
 // Originally part of `errorlimit` in upstream Lua.
 func functionLocation(fs *funcState) string {
-	if fs.LineDefined == 0 {
+	if fs.IsMainChunk() {
 		return "main function"
 	}
 	return fmt.Sprintf("function at line %d", fs.LineDefined)

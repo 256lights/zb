@@ -50,6 +50,12 @@ type Prototype struct {
 	LastLineDefined int
 }
 
+// IsMainChunk reports whether the prototype represents a parsed source file
+// (as opposed to a function inside a file).
+func (f *Prototype) IsMainChunk() bool {
+	return f.LineDefined == 0
+}
+
 // StripDebug returns a copy of a [Prototype]
 // with the debug information removed.
 func (f *Prototype) StripDebug() *Prototype {
