@@ -8,8 +8,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"zb.256lights.llc/pkg/internal/luacode"
 )
 
 func TestVM(t *testing.T) {
@@ -148,7 +146,7 @@ func TestVM(t *testing.T) {
 
 		const wantLength = 256
 		source := "return {42" + strings.Repeat(",42", wantLength-1) + "}"
-		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 1, 0); err != nil {
@@ -178,7 +176,7 @@ func TestVM(t *testing.T) {
 		}()
 
 		const source = `return #"abc"`
-		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 1, 0); err != nil {
@@ -202,7 +200,7 @@ func TestVM(t *testing.T) {
 		}()
 
 		const source = `return #{123, 456}`
-		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 1, 0); err != nil {
@@ -231,7 +229,7 @@ func TestVM(t *testing.T) {
 		}
 
 		const source = `return "Hello, "..x`
-		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 1, 0); err != nil {
@@ -257,7 +255,7 @@ func TestVM(t *testing.T) {
 		}
 
 		const source = `return "Hello, "..x.."!"`
-		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 1, 0); err != nil {
@@ -297,7 +295,7 @@ func TestVM(t *testing.T) {
 			`end` + "\n" +
 			// Not returning, because that would be a tail call.
 			`emit(passthru(123, 456, 789))` + "\n"
-		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 0, 0); err != nil {
@@ -357,7 +355,7 @@ func TestVM(t *testing.T) {
 			`local v1 <close> = newThing(1)` + "\n" +
 			`local v2 <close> = newThing(2)` + "\n" +
 			`local v3 <close> = newThing(3)` + "\n"
-		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 0, 0); err != nil {
@@ -400,7 +398,7 @@ func TestVM(t *testing.T) {
 			`emit(c())` + "\n" +
 			`emit(c())` + "\n" +
 			`emit(c())` + "\n"
-		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 0, 0); err != nil {
@@ -438,7 +436,7 @@ func TestVM(t *testing.T) {
 		const source = `for i = 1, 3 do` + "\n" +
 			`emit(i)` + "\n" +
 			`end` + "\n"
-		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 0, 0); err != nil {
@@ -476,7 +474,7 @@ func TestVM(t *testing.T) {
 		const source = `for i = 10, 1, -1 do` + "\n" +
 			`emit(i)` + "\n" +
 			`end` + "\n"
-		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 0, 0); err != nil {
@@ -551,7 +549,7 @@ func TestVM(t *testing.T) {
 			`for i, v in ipairs(a) do` + "\n" +
 			`emit(i, v)` + "\n" +
 			`end` + "\n"
-		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 0, 0); err != nil {
@@ -578,7 +576,7 @@ func TestVM(t *testing.T) {
 			`return factorial(n - 1, acc * n)` + "\n" +
 			`end` + "\n" +
 			`return factorial(3)` + "\n"
-		if err := state.Load(strings.NewReader(source), luacode.Source(source), "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Call(0, 1, 0); err != nil {

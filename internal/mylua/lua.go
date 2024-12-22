@@ -1541,7 +1541,7 @@ func (l *State) popCallStack() {
 // or "bt" (both binary and text).
 //
 // [debug information]: https://www.lua.org/manual/5.4/manual.html#4.7
-func (l *State) Load(r io.ByteScanner, chunkName luacode.Source, mode string) (err error) {
+func (l *State) Load(r io.ByteScanner, chunkName Source, mode string) (err error) {
 	l.init()
 	defer func() {
 		if err != nil {

@@ -279,7 +279,7 @@ func (f *Prototype) UnmarshalBinary(data []byte) error {
 	if !ok {
 		return fmt.Errorf("load lua chunk: %v", io.ErrUnexpectedEOF)
 	}
-	if err := loadFunction(f, r, ""); err != nil {
+	if err := loadFunction(f, r, UnknownSource); err != nil {
 		return fmt.Errorf("load lua chunk: %v", err)
 	}
 	if _, hasMore := r.readByte(); hasMore {
@@ -334,19 +334,44 @@ type LocalVariable struct {
 }
 
 // Source is a description of a chunk that created a [Prototype].
-// If a source starts with a '@',
-// it means that the function was defined in a file
-// where the file name follows the '@'.
-// (The file name can be accessed with [Source.Filename].)
-// If a source starts with a '=',
-// the remainder of its contents describes the source
-// in a user-dependent manner.
-// (The string can be accessed with [Source.Literal].)
-// Otherwise, the function was defined in a string where source is that string.
+// The zero value describes an empty literal string.
 type Source string
 
+// UnknownSource is a placeholder for an unknown [Source].
+const UnknownSource Source = "=?"
+
+// FilenameSource returns a [Source] for a filesystem path.
+// The path can be retrieved later using [Source.Filename].
+//
+// The underlying string in a filename source starts with "@".
+func FilenameSource(path string) Source {
+	return Source("@" + path)
+}
+
+// AbstractSource returns a [Source] from a user-dependent description.
+// The description can be retrieved later using [Source.Abstract].
+//
+// The underlying string in an abstract source starts with "=".
+func AbstractSource(description string) Source {
+	return Source("=" + description)
+}
+
+// LiteralSource returns a [Source] for the given literal string.
+// Because the type for a [Source] is determined by the first byte,
+// if s starts with one of those symbols
+// (which cannot occur in a syntactically valid Lua source file),
+// then LiteralSource returns an [AbstractSource]
+// with a condensed version of the string.
+func LiteralSource(s string) Source {
+	source := Source(s)
+	if _, ok := source.Literal(); !ok {
+		return AbstractSource(describeLiteralSource(s))
+	}
+	return source
+}
+
 // Filename returns the file name of the chunk
-// if the source is a file name.
+// provided to [FilenameSource].
 func (source Source) Filename() (_ string, isFilename bool) {
 	if !strings.HasPrefix(string(source), "@") {
 		return "", false
@@ -354,49 +379,61 @@ func (source Source) Filename() (_ string, isFilename bool) {
 	return string(source[1:]), true
 }
 
-// TODO(now): Pick better name.
-func (source Source) Literal() (string, bool) {
+// Abstract returns the user-dependent description of the source
+// provided to [AbstractSource].
+func (source Source) Abstract() (_ string, isAbstract bool) {
 	if !strings.HasPrefix(string(source), "=") {
 		return "", false
 	}
 	return string(source[1:]), true
 }
 
-// IsString reports whether the source is the literal chunk string.
-func (source Source) IsString() bool {
-	return len(source) == 0 || (source[0] != '@' && source[0] != '=')
+// Literal returns the string provided to [LiteralSource].
+func (source Source) Literal() (_ string, isLiteral bool) {
+	if len(source) != 0 && (source[0] == '@' || source[0] == '=') {
+		return "", false
+	}
+	return string(source), true
 }
+
+const (
+	// maxSourceSize is the maximum length of a string returned by [Source.String].
+	maxSourceSize = 60
+
+	sourceTruncationSignifier = "..."
+)
 
 // String formats the source in a concise manner
 // suitable for debugging.
 func (source Source) String() string {
-	const size = 60
-	const truncSignifier = "..."
-
-	if s, ok := source.Literal(); ok {
-		if len(s) > size {
-			return s[:size]
+	if s, ok := source.Abstract(); ok {
+		if len(s) > maxSourceSize {
+			return s[:maxSourceSize]
 		}
 		return s
 	}
 	if fname, ok := source.Filename(); ok {
-		if len(source) > size {
-			const n = size - len(truncSignifier)
-			return truncSignifier + fname[len(fname)-n:]
+		if len(source) > maxSourceSize {
+			const n = maxSourceSize - len(sourceTruncationSignifier)
+			return sourceTruncationSignifier + fname[len(fname)-n:]
 		}
 		return fname
 	}
+	return describeLiteralSource(string(source))
+}
+
+func describeLiteralSource(s string) string {
 	const prefix = `[string "`
 	const suffix = `"]`
-	const stringSize = size - (len(prefix) - len(suffix))
-	line, _, multipleLines := strings.Cut(string(source), "\n")
+	const stringSize = maxSourceSize - (len(prefix) - len(suffix))
+	line, _, multipleLines := strings.Cut(s, "\n")
 	if !multipleLines && len(line) <= stringSize {
 		return prefix + line + suffix
 	}
-	if len(line)+len(truncSignifier) > stringSize {
-		line = line[:stringSize-len(truncSignifier)]
+	if len(line)+len(sourceTruncationSignifier) > stringSize {
+		line = line[:stringSize-len(sourceTruncationSignifier)]
 	}
-	return prefix + line + truncSignifier + suffix
+	return prefix + line + sourceTruncationSignifier + suffix
 }
 
 // maxRegisters is the maximum number of registers in a Lua function.

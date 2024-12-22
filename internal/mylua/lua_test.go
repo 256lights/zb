@@ -400,7 +400,7 @@ func TestCompare(t *testing.T) {
 		for i := range scripts {
 			op := ComparisonOperator(i)
 			source := "local x, y = ...\nreturn x " + op.String() + " y\n"
-			proto, err := luacode.Parse(luacode.Source(source), strings.NewReader(source))
+			proto, err := luacode.Parse(Source(source), strings.NewReader(source))
 			if err != nil {
 				t.Fatal(err)
 			}
