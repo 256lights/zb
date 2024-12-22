@@ -105,7 +105,7 @@ func newDebug(f function, info *callFrame) *Debug {
 			db.What = "Lua"
 		}
 		if info != nil {
-			if pc := info.pc - 1; pc < 0 || pc >= f.proto.LineInfo.Len() {
+			if pc := info.pc - 1; 0 <= pc && pc < f.proto.LineInfo.Len() {
 				db.CurrentLine = f.proto.LineInfo.At(pc)
 			}
 		}

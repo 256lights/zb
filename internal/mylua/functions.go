@@ -161,11 +161,10 @@ func (l *State) resolveUpvalue(uv *upvalue) *value {
 }
 
 // checkUpvalues ensures that the given set of upvalues
-// are either closed or referring to variables in the calling function.
-func (l *State) checkUpvalues(upvalues []*upvalue) error {
-	frame := l.frame()
+// are either closed or referring to variables below the given stack index.
+func (l *State) checkUpvalues(top int, upvalues []*upvalue) error {
 	for i, uv := range upvalues {
-		if uv.stackIndex >= frame.framePointer() {
+		if uv.stackIndex >= top {
 			return fmt.Errorf("internal error: function upvalue [%d] inside current frame", i)
 		}
 	}

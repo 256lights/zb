@@ -976,13 +976,10 @@ func (l *State) exec() (err error) {
 			numResults := int(i.ArgC()) - 1
 			// TODO(soon): Validate ArgA.
 			functionIndex := l.frame().registerStart() + int(i.ArgA())
-			if numArguments < 0 {
-				// Varargs: read from top.
-				numArguments = len(l.stack) - (functionIndex + 1)
-			} else {
+			if numArguments >= 0 {
 				l.setTop(functionIndex + 1 + numArguments)
 			}
-			isLua, err := l.prepareCall(numArguments, numResults, false)
+			isLua, err := l.prepareCall(functionIndex, numResults, false)
 			if err != nil {
 				return err
 			}
@@ -997,28 +994,28 @@ func (l *State) exec() (err error) {
 				)
 			}
 
+			frame := l.frame()
 			numArguments := int(i.ArgB()) - 1
-			numResults := l.frame().numResults
+			numResults := frame.numResults
+			registerStart := frame.registerStart()
 			// TODO(soon): Validate ArgA.
-			functionIndex := l.frame().registerStart() + int(i.ArgA())
-
-			l.closeUpvalues(l.frame().registerStart())
-			if numArguments < 0 {
-				// Varargs: read from top.
-				numArguments = len(l.stack) - (functionIndex + 1)
-			} else {
+			functionIndex := registerStart + int(i.ArgA())
+			if numArguments >= 0 {
 				l.setTop(functionIndex + 1 + numArguments)
 			}
-			fp := l.frame().framePointer()
-			copy(l.stack[fp:], l.stack[functionIndex:])
-			l.setTop(fp + 1 + numArguments)
-			l.callStack = l.callStack[:len(l.callStack)-1]
-			isLua, err := l.prepareCall(numArguments, numResults, true)
+
+			l.closeUpvalues(registerStart)
+			clear(l.stack[registerStart:functionIndex])
+			varargStart, varargEnd := frame.extraArgumentsRange()
+			clear(l.stack[varargStart:varargEnd])
+			isLua, err := l.prepareCall(functionIndex, numResults, true)
 			if err != nil {
 				return err
 			}
 			if isLua {
 				currFunction = l.findLuaFunction()
+			} else if len(l.callStack) <= callerDepth {
+				return nil
 			}
 		case luacode.OpReturn:
 			// TODO(soon): Validate ArgA+numResults.
@@ -1211,8 +1208,8 @@ func (l *State) exec() (err error) {
 				return errStackOverflow
 			}
 			l.setTop(newTop)
-			copy(l.stack[stateEnd:], l.stack[stateStart:stateStart+1+numArgs])
-			isLua, err := l.prepareCall(numArgs, c, false)
+			copy(l.stack[stateEnd:], l.stack[stateStart:])
+			isLua, err := l.prepareCall(stateEnd, c, false)
 			if err != nil {
 				return err
 			}

@@ -1412,7 +1412,7 @@ func (l *State) Call(nArgs, nResults, msgHandler int) error {
 		return fmt.Errorf("TODO(someday): support message handlers")
 	}
 
-	isLua, err := l.prepareCall(nArgs, nResults, false)
+	isLua, err := l.prepareCall(len(l.stack)-nArgs-1, nResults, false)
 	if err != nil {
 		return err
 	}
@@ -1432,9 +1432,10 @@ func (l *State) call(numResults int, f value, args ...value) error {
 	if !l.grow(len(l.stack) + max(1+len(args), numResults)) {
 		return errStackOverflow
 	}
+	functionIndex := len(l.stack)
 	l.stack = append(l.stack, f)
 	l.stack = append(l.stack, args...)
-	isLua, err := l.prepareCall(len(args), numResults, false)
+	isLua, err := l.prepareCall(functionIndex, numResults, false)
 	if err != nil {
 		return err
 	}
@@ -1458,66 +1459,102 @@ func (l *State) call1(f value, args ...value) (value, error) {
 	return v, nil
 }
 
-func (l *State) prepareCall(numArgs, numResults int, isTailCall bool) (isLua bool, err error) {
-	functionIndex := len(l.stack) - numArgs - 1
-	l.callStack = append(l.callStack, callFrame{
-		functionIndex: functionIndex,
-		numResults:    numResults,
-		isTailCall:    isTailCall,
-	})
+// prepareCall pushes a new [callFrame] onto l.callStack
+// to start executing a new function.
+// The caller must have pushed the function to call
+// followed by the arguments
+// onto the top of the stack before calling prepareCall.
+// If the called function is a [goFunction],
+// prepareCall performs the call before returning,
+// placing the results on the top of stack where the function used to be,
+// and popping the call stack.
+//
+// When preparing a tail call for a [luaFunction],
+// prepareCall will replace the top [callFrame]
+// instead of pushing a new [callFrame]
+// and prepareCall will move up the function and its arguments on the stack.
+// When preparing a tail call for a [goFunction],
+// prepareCall will push a new [callFrame] before calling the function like a non-tail call,
+// then after the function returns will pop both the new frame and the current frame.
+// This matches the behavior of the upstream Lua interpreter
+// and permits Go functions to always get traceback on their immediate caller.
+func (l *State) prepareCall(functionIndex, numResults int, isTailCall bool) (isLua bool, err error) {
+	defer func() {
+		if err != nil {
+			if isTailCall {
+				fp := l.frame().framePointer()
+				l.popCallStack()
+				l.setTop(fp)
+			} else {
+				l.setTop(functionIndex)
+			}
+		}
+	}()
+
 	for range maxMetaDepth {
 		switch f := l.stack[functionIndex].(type) {
 		case luaFunction:
-			if err := l.checkUpvalues(f.upvalues); err != nil {
-				l.popCallStack()
-				l.setTop(functionIndex - 1)
+			if err := l.checkUpvalues(functionIndex, f.upvalues); err != nil {
 				return true, err
 			}
-			if !l.grow(len(l.stack) + int(f.proto.MaxStackSize) - numArgs) {
-				l.popCallStack()
-				l.setTop(functionIndex - 1)
+			newFrame := callFrame{
+				functionIndex: functionIndex,
+				numResults:    numResults,
+				isTailCall:    isTailCall,
+			}
+			if !l.grow(newFrame.registerStart() + int(f.proto.MaxStackSize)) {
 				return true, errStackOverflow
 			}
 			if f.proto.IsVararg {
 				numFixedParameters := int(f.proto.NumParams)
-				numExtraArguments := numArgs - numFixedParameters
+				numExtraArguments := len(l.stack) - newFrame.registerStart() - numFixedParameters
 				if numExtraArguments > 0 {
-					rotate(l.stack[functionIndex:], numExtraArguments)
-					frame := l.frame()
-					frame.functionIndex += numExtraArguments
-					frame.numExtraArguments = numExtraArguments
+					rotate(l.stack[newFrame.functionIndex:], numExtraArguments)
+					newFrame.functionIndex += numExtraArguments
+					newFrame.numExtraArguments = numExtraArguments
 				}
+			}
+			if isTailCall {
+				// Move function and arguments up to the frame pointer.
+				frame := l.frame()
+				fp := frame.framePointer()
+				n := copy(l.stack[fp:], l.stack[newFrame.functionIndex:])
+				l.setTop(fp + n)
+
+				newFrame.functionIndex = fp
+				newFrame.isTailCall = true
+				*frame = newFrame
+			} else {
+				l.callStack = append(l.callStack, newFrame)
 			}
 			return true, nil
 		case goFunction:
-			if err := l.checkUpvalues(f.upvalues); err != nil {
-				l.popCallStack()
-				l.setTop(functionIndex - 1)
+			if err := l.checkUpvalues(functionIndex, f.upvalues); err != nil {
 				return false, err
 			}
 			if !l.grow(len(l.stack) + minStack) {
-				l.popCallStack()
-				l.setTop(functionIndex - 1)
 				return false, errStackOverflow
 			}
+			l.callStack = append(l.callStack, callFrame{
+				functionIndex: functionIndex,
+				numResults:    numResults,
+			})
 			n, err := f.cb(l)
 			if err != nil {
 				l.popCallStack()
-				l.setTop(functionIndex - 1)
 				return false, err
+			}
+			if isTailCall {
+				l.popCallStack()
 			}
 			l.finishCall(n)
 			return false, nil
 		default:
 			tm := l.metamethod(f, luacode.TagMethodCall)
 			if tm == nil {
-				l.popCallStack()
-				l.setTop(functionIndex - 1)
 				return false, fmt.Errorf("function is a %v", valueType(f))
 			}
 			if !l.grow(len(l.stack) + 1) {
-				l.popCallStack()
-				l.setTop(functionIndex - 1)
 				return false, errStackOverflow
 			}
 			// Move original function object into first argument position.
@@ -1525,8 +1562,6 @@ func (l *State) prepareCall(numArgs, numResults int, isTailCall bool) (isLua boo
 		}
 	}
 
-	l.popCallStack()
-	l.setTop(functionIndex - 1)
 	return false, fmt.Errorf("exceeded depth for %v", luacode.TagMethodCall)
 }
 
@@ -1749,7 +1784,7 @@ func (l *State) concatMetamethod() error {
 	rotate(l.stack[len(l.stack)-3:], 1)
 
 	// Call metamethod.
-	isLua, err := l.prepareCall(2, 1, false)
+	isLua, err := l.prepareCall(len(l.stack)-3, 1, false)
 	if err != nil {
 		return err
 	}
