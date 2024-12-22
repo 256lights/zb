@@ -644,6 +644,29 @@ func (l *State) ToUserdata(idx int) (_ any, isUserdata bool) {
 	return u.x, true
 }
 
+// ID returns a generic identifier for the value at the given index.
+// The value can be a userdata, a table, a thread, or a function;
+// otherwise, ID returns 0.
+// Different objects will give different identifiers.
+// Typically this function is used only for hashing and debug information.
+func (l *State) ID(idx int) uint64 {
+	l.init()
+	v, _, err := l.valueByIndex(idx)
+	if err != nil {
+		panic(err)
+	}
+	switch v := v.(type) {
+	case function:
+		return v.functionID()
+	case *table:
+		return v.id
+	case *userdata:
+		return v.id
+	default:
+		return 0
+	}
+}
+
 // RawEqual reports whether the two values in the given indices
 // are primitively equal (that is, equal without calling the __eq metamethod).
 // If either index is invalid, then RawEqual reports false.
@@ -1389,7 +1412,7 @@ func (l *State) Call(nArgs, nResults, msgHandler int) error {
 		return fmt.Errorf("TODO(someday): support message handlers")
 	}
 
-	isLua, err := l.prepareCall(nArgs, nResults)
+	isLua, err := l.prepareCall(nArgs, nResults, false)
 	if err != nil {
 		return err
 	}
@@ -1411,7 +1434,7 @@ func (l *State) call(numResults int, f value, args ...value) error {
 	}
 	l.stack = append(l.stack, f)
 	l.stack = append(l.stack, args...)
-	isLua, err := l.prepareCall(len(args), numResults)
+	isLua, err := l.prepareCall(len(args), numResults, false)
 	if err != nil {
 		return err
 	}
@@ -1435,11 +1458,12 @@ func (l *State) call1(f value, args ...value) (value, error) {
 	return v, nil
 }
 
-func (l *State) prepareCall(numArgs, numResults int) (isLua bool, err error) {
+func (l *State) prepareCall(numArgs, numResults int, isTailCall bool) (isLua bool, err error) {
 	functionIndex := len(l.stack) - numArgs - 1
 	l.callStack = append(l.callStack, callFrame{
 		functionIndex: functionIndex,
 		numResults:    numResults,
+		isTailCall:    isTailCall,
 	})
 	for range maxMetaDepth {
 		switch f := l.stack[functionIndex].(type) {
@@ -1725,7 +1749,7 @@ func (l *State) concatMetamethod() error {
 	rotate(l.stack[len(l.stack)-3:], 1)
 
 	// Call metamethod.
-	isLua, err := l.prepareCall(2, 1)
+	isLua, err := l.prepareCall(2, 1, false)
 	if err != nil {
 		return err
 	}

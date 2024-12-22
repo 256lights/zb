@@ -31,6 +31,8 @@ type callFrame struct {
 	// pc is the current instruction index in Prototype.Code
 	// (the program counter).
 	pc int
+
+	isTailCall bool
 }
 
 // framePointer returns the top of the value stack for the calling function.
@@ -980,7 +982,7 @@ func (l *State) exec() (err error) {
 			} else {
 				l.setTop(functionIndex + 1 + numArguments)
 			}
-			isLua, err := l.prepareCall(numArguments, numResults)
+			isLua, err := l.prepareCall(numArguments, numResults, false)
 			if err != nil {
 				return err
 			}
@@ -1011,7 +1013,7 @@ func (l *State) exec() (err error) {
 			copy(l.stack[fp:], l.stack[functionIndex:])
 			l.setTop(fp + 1 + numArguments)
 			l.callStack = l.callStack[:len(l.callStack)-1]
-			isLua, err := l.prepareCall(numArguments, numResults)
+			isLua, err := l.prepareCall(numArguments, numResults, true)
 			if err != nil {
 				return err
 			}
@@ -1210,7 +1212,7 @@ func (l *State) exec() (err error) {
 			}
 			l.setTop(newTop)
 			copy(l.stack[stateEnd:], l.stack[stateStart:stateStart+1+numArgs])
-			isLua, err := l.prepareCall(numArgs, c)
+			isLua, err := l.prepareCall(numArgs, c, false)
 			if err != nil {
 				return err
 			}
