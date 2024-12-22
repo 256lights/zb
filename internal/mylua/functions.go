@@ -10,6 +10,21 @@ import (
 	"zb.256lights.llc/pkg/internal/luacode"
 )
 
+// A Function is a callback for a Lua function implemented in Go.
+// A Go function receives its arguments from Lua in its stack in direct order
+// (the first argument is pushed first).
+// So, when the function starts,
+// [State.Top] returns the number of arguments received by the function.
+// The first argument (if any) is at index 1 and its last argument is at index [State.Top].
+// To return values to Lua, a Go function just pushes them onto the stack,
+// in direct order (the first result is pushed first),
+// and returns in Go the number of results.
+// Any other value in the stack below the results will be properly discarded by Lua.
+// Like a Lua function, a Go function called by Lua can also return many results.
+// To raise an error, return a Go error
+// and the string result of its Error() method will be used as the error object.
+type Function func(*State) (int, error)
+
 type function interface {
 	value
 	functionID() uint64
