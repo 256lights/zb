@@ -10,7 +10,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
+
+	"zb.256lights.llc/pkg/internal/lualex"
 )
 
 // GName is the name of the global table.
@@ -62,10 +65,10 @@ func NewOpenBase(opts *BaseOptions) Function {
 			"rawset":       baseRawSet,
 			"select":       baseSelect,
 			"setmetatable": baseSetMetatable,
-			// TODO(now): tonumber
-			"tostring": baseToString,
-			"type":     baseType,
-			"warn":     newBaseWarn(opts.Warner),
+			"tonumber":     baseToNumber,
+			"tostring":     baseToString,
+			"type":         baseType,
+			"warn":         newBaseWarn(opts.Warner),
 			// TODO(someday): xpcall
 
 			GName:             nil,
@@ -471,6 +474,52 @@ func baseSelect(l *State) (int, error) {
 		return 0, NewArgError(l, 1, "index out of range")
 	}
 	return int(n - i), nil
+}
+
+func baseToNumber(l *State) (int, error) {
+	if !l.IsNoneOrNil(2) {
+		// Parse integer by given base.
+		base, err := CheckInteger(l, 2)
+		if err != nil {
+			return 0, err
+		}
+		if got, want := l.Type(1), TypeString; got != want {
+			return 0, NewTypeError(l, 1, want.String())
+		}
+		s, _ := l.ToString(1)
+		if !(2 <= base && base <= 36) {
+			return 0, NewArgError(l, 2, "base out of range")
+		}
+		result, err := strconv.ParseInt(strings.TrimSpace(s), int(base), 64)
+		if err != nil {
+			l.PushNil()
+			return 1, nil
+		}
+		l.PushInteger(result)
+		return 1, nil
+	}
+
+	if l.Type(1) == TypeNumber {
+		l.SetTop(1)
+		return 1, nil
+	}
+
+	if s, ok := l.ToString(1); ok {
+		n, err := lualex.ParseNumber(s)
+		if err != nil {
+			l.PushNil()
+			return 1, nil
+		}
+		l.PushNumber(n)
+		return 1, nil
+	}
+
+	if l.IsNone(1) {
+		return 0, NewArgError(l, 1, "value expected")
+	}
+
+	l.PushNil()
+	return 1, nil
 }
 
 func baseToString(l *State) (int, error) {
