@@ -370,3 +370,31 @@ func NewTypeError(l *State, arg int, tname string) error {
 	}
 	return NewArgError(l, arg, fmt.Sprintf("%s expected, got %s", tname, typeArg))
 }
+
+// OpenLibraries opens all standard Lua libraries into the given state
+// with their default settings.
+func OpenLibraries(l *State) error {
+	libs := []struct {
+		name  string
+		openf Function
+	}{
+		{GName, NewOpenBase(nil)},
+		// {TableLibraryName, OpenTable},
+		// {IOLibraryName, NewIOLibrary().OpenLibrary},
+		// {OSLibraryName, NewOSLibrary().OpenLibrary},
+		// {StringLibraryName, OpenString},
+		// {UTF8LibraryName, OpenUTF8},
+		// {MathLibraryName, NewOpenMath(nil)},
+		// {DebugLibraryName, OpenDebug},
+		// {PackageLibraryName, OpenPackage},
+	}
+
+	for _, lib := range libs {
+		if err := Require(l, lib.name, true, lib.openf); err != nil {
+			return err
+		}
+		l.Pop(1)
+	}
+
+	return nil
+}

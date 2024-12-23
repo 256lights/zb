@@ -17,6 +17,17 @@ import (
 	"zb.256lights.llc/pkg/sets"
 )
 
+// Version numbers.
+const (
+	VersionNum = 504
+
+	VersionMajor = 5
+	VersionMinor = 4
+)
+
+// Version is the version string without the final "release" number.
+const Version = "Lua 5.4"
+
 const (
 	// minStack is the minimum number of elements a Go function can push onto the stack.
 	minStack = 20
@@ -1573,7 +1584,6 @@ func (l *State) popCallStack() {
 // Load loads a Lua chunk without running it.
 // If there are no errors,
 // Load pushes the compiled chunk as a Lua function on top of the stack.
-// Otherwise, it pushes an error message.
 //
 // The chunkName argument gives a name to the chunk,
 // which is used for error messages and in [debug information].
@@ -1587,11 +1597,6 @@ func (l *State) popCallStack() {
 // [debug information]: https://www.lua.org/manual/5.4/manual.html#4.7
 func (l *State) Load(r io.ByteScanner, chunkName Source, mode string) (err error) {
 	l.init()
-	defer func() {
-		if err != nil {
-			l.PushString(err.Error())
-		}
-	}()
 
 	if mode == "" || mode == "bt" {
 		prefix := make([]byte, len(luacode.Signature))

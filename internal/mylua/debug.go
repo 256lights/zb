@@ -154,6 +154,73 @@ func (l *State) Info(level int) *Debug {
 	return newDebug(f, frame)
 }
 
+// Upvalue gets information about the i'th upvalue of the closure at funcIndex.
+// Upvalue pushes the upvalue's value onto the stack
+// and returns its name.
+// Returns ("", false) and pushes nothing when i is greater than the number of upvalues.
+// The first upvalue is accessed with an i of 1.
+func (l *State) Upvalue(funcIndex int, i int) (upvalueName string, ok bool) {
+	l.init()
+	upvalueName, ptr := l.upvalue(funcIndex, i)
+	if ptr == nil {
+		return "", false
+	}
+	l.push(*ptr)
+	return upvalueName, true
+}
+
+func (l *State) upvalue(funcIndex int, i int) (upvalueName string, upvalue *value) {
+	i-- // Convert to 0-based.
+	if i < 0 {
+		return "", nil
+	}
+
+	v, _, err := l.valueByIndex(funcIndex)
+	if err != nil {
+		return "", nil
+	}
+	switch f := v.(type) {
+	case luaFunction:
+		if i >= len(f.upvalues) {
+			return "", nil
+		}
+		if i-1 < len(f.proto.Upvalues) {
+			upvalueName = f.proto.Upvalues[i].Name
+		}
+		return upvalueName, l.resolveUpvalue(f.upvalues[i])
+	case function:
+		upvalues := f.upvaluesSlice()
+		if i >= len(upvalues) {
+			return "", nil
+		}
+		return "", l.resolveUpvalue(upvalues[i])
+	default:
+		return "", nil
+	}
+}
+
+// SetUpvalue sets the value of a closure's upvalue.
+// SetUpvalue assigns the value on the top of the stack to the upvalue,
+// returns the upvalue's name,
+// and also pops the value from the stack.
+// Returns ("", false) when i is greater than the number of upvalues.
+// The first upvalue is accessed with an i of 1.
+func (l *State) SetUpvalue(funcIndex int, i int) (upvalueName string, ok bool) {
+	if l.Top() < 1 {
+		panic(errMissingArguments)
+	}
+	l.init()
+	upvalueName, ptr := l.upvalue(funcIndex, i)
+	if ptr == nil {
+		return "", false
+	}
+	top := len(l.stack) - 1
+	v := l.stack[top]
+	l.setTop(top)
+	*ptr = v
+	return upvalueName, true
+}
+
 func (l *State) localVariableName(frame *callFrame, i int) string {
 	if start, end := frame.extraArgumentsRange(); start <= i && i < end {
 		return "(vararg)"
