@@ -1,27 +1,12 @@
-// Copyright 2023 Roxy Light
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the “Software”), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package lua
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLen(t *testing.T) {
 	state := new(State)
@@ -47,31 +32,48 @@ func TestLen(t *testing.T) {
 }
 
 func TestWhere(t *testing.T) {
-	state := new(State)
-	defer func() {
-		if err := state.Close(); err != nil {
-			t.Error("Close:", err)
-		}
-	}()
+	tests := []struct {
+		name    string
+		luaCode string
+	}{
+		{
+			name: "Call",
+			// Extra parentheses to prevent tail call.
+			luaCode: "\nreturn (identify())\n",
+		},
+		{
+			name:    "TailCall",
+			luaCode: "\nreturn identify()\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state := new(State)
+			defer func() {
+				if err := state.Close(); err != nil {
+					t.Error("Close:", err)
+				}
+			}()
 
-	state.PushClosure(0, func(l *State) (int, error) {
-		l.PushString(Where(l, 1))
-		return 1, nil
-	})
-	if err := state.SetGlobal("identify", 0); err != nil {
-		t.Fatal(err)
-	}
-	const luaCode = "\nreturn identify()\n"
-	const chunkName = "=(load)"
-	if err := state.LoadString(luaCode, chunkName, "t"); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.Call(0, 1, 0); err != nil {
-		t.Fatal(err)
-	}
+			state.PushClosure(0, func(l *State) (int, error) {
+				l.PushString(Where(l, 1))
+				return 1, nil
+			})
+			if err := state.SetGlobal("identify", 0); err != nil {
+				t.Fatal(err)
+			}
+			const chunkName Source = "=(load)"
+			if err := state.Load(strings.NewReader(test.luaCode), chunkName, "t"); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.Call(0, 1, 0); err != nil {
+				t.Fatal(err)
+			}
 
-	got, ok := state.ToString(-1)
-	if want := "(load):2: "; got != want || !ok {
-		t.Errorf("result = %q; want %q", got, want)
+			got, ok := state.ToString(-1)
+			if want := "(load):2: "; got != want || !ok {
+				t.Errorf("result = %q; want %q", got, want)
+			}
+		})
 	}
 }

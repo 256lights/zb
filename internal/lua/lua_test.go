@@ -1,37 +1,64 @@
-// Copyright 2023 Roxy Light
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the “Software”), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package lua
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/iotest"
-	"unsafe"
 
-	"zb.256lights.llc/pkg/internal/lua54"
+	"github.com/google/go-cmp/cmp"
+	"zb.256lights.llc/pkg/internal/luacode"
+	"zb.256lights.llc/pkg/internal/lualex"
 )
+
+func TestClose(t *testing.T) {
+	state := new(State)
+	defer func() {
+		if err := state.Close(); err != nil {
+			t.Error("Close:", err)
+		}
+	}()
+
+	state.PushBoolean(true)
+	state.PushInteger(42)
+	state.PushString("hello")
+	state.PushValue(-1)
+	if err := state.SetGlobal("x", 0); err != nil {
+		t.Error(err)
+	}
+	if tp, err := state.Global("x", 0); err != nil {
+		t.Error(err)
+	} else if tp != TypeString {
+		t.Errorf("type(_G.x) = %v; want %v", tp, TypeString)
+	} else if got, _ := state.ToString(-1); got != "hello" {
+		t.Errorf("_G.x = %q; want %q", got, "hello")
+	}
+	state.Pop(1)
+	if got, want := state.Top(), 3; got != want {
+		t.Errorf("before close, state.Top() = %d; want %d", got, want)
+	}
+
+	if err := state.Close(); err != nil {
+		t.Error("Close:", err)
+	}
+	if got, want := state.Top(), 0; got != want {
+		t.Errorf("after close, state.Top() = %d; want %d", got, want)
+	}
+	if tp, err := state.Global("x", 0); err != nil {
+		t.Error(err)
+	} else if tp != TypeNil {
+		t.Errorf("type(_G.x) = %v; want %v", tp, TypeNil)
+	}
+	state.Pop(1)
+}
 
 func TestLoad(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
@@ -58,6 +85,84 @@ func TestLoad(t *testing.T) {
 		}
 	})
 
+	t.Run("Binary", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const source = "return 2 + 2"
+		proto, err := luacode.Parse(source, strings.NewReader(source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		chunk, err := proto.MarshalBinary()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := state.Load(bytes.NewReader(chunk), "", "b"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+		if !state.IsNumber(-1) {
+			t.Fatalf("top of stack is %v; want number", state.Type(-1))
+		}
+		const want = int64(4)
+		if got, ok := state.ToInteger(-1); got != want || !ok {
+			t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, want)
+		}
+	})
+
+	t.Run("Autodetect", func(t *testing.T) {
+		const source = "return 2 + 2"
+		proto, err := luacode.Parse(source, strings.NewReader(source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		chunk, err := proto.MarshalBinary()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tests := []struct {
+			name string
+			data []byte
+		}{
+			{name: "Text", data: []byte(source)},
+			{name: "Binary", data: chunk},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				state := new(State)
+				defer func() {
+					if err := state.Close(); err != nil {
+						t.Error("Close:", err)
+					}
+				}()
+
+				if err := state.Load(bytes.NewReader(test.data), source, "bt"); err != nil {
+					t.Fatal(err)
+				}
+				if err := state.Call(0, 1, 0); err != nil {
+					t.Fatal(err)
+				}
+				if !state.IsNumber(-1) {
+					t.Fatalf("top of stack is %v; want number", state.Type(-1))
+				}
+				const want = int64(4)
+				if got, ok := state.ToInteger(-1); got != want || !ok {
+					t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, want)
+				}
+			})
+		}
+
+	})
+
 	t.Run("ReadError", func(t *testing.T) {
 		state := new(State)
 		defer func() {
@@ -68,7 +173,7 @@ func TestLoad(t *testing.T) {
 
 		const message = "bork"
 		r := io.MultiReader(strings.NewReader("return"), iotest.ErrReader(errors.New(message)))
-		err := state.Load(r, "=(reader)", "t")
+		err := state.Load(bufio.NewReader(r), "=(reader)", "t")
 		if err == nil {
 			t.Error("state.Load(...) = <nil>; want error")
 		} else if got := err.Error(); !strings.Contains(got, message) {
@@ -80,62 +185,280 @@ func TestLoad(t *testing.T) {
 	})
 }
 
-func TestLoadString(t *testing.T) {
-	state := new(State)
-	defer func() {
-		if err := state.Close(); err != nil {
-			t.Error("Close:", err)
+func TestCompare(t *testing.T) {
+	type compareTable [3]int8
+	const bad int8 = -1
+
+	tests := []struct {
+		name string
+		push func(l *State)
+		want compareTable
+	}{
+		{
+			name: "StringNumber",
+			push: func(l *State) {
+				l.PushString("0")
+				l.PushInteger(0)
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        bad,
+				LessOrEqual: bad,
+			},
+		},
+		{
+			name: "NumberString",
+			push: func(l *State) {
+				l.PushInteger(0)
+				l.PushString("0")
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        bad,
+				LessOrEqual: bad,
+			},
+		},
+		{
+			name: "IntegerFloat",
+			push: func(l *State) {
+				l.PushInteger(42)
+				l.PushNumber(42)
+			},
+			want: compareTable{
+				Equal:       1,
+				Less:        0,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "FloatInteger",
+			push: func(l *State) {
+				l.PushNumber(42)
+				l.PushInteger(42)
+			},
+			want: compareTable{
+				Equal:       1,
+				Less:        0,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "EqualIntegers",
+			push: func(l *State) {
+				l.PushInteger(42)
+				l.PushInteger(42)
+			},
+			want: compareTable{
+				Equal:       1,
+				Less:        0,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "AscendingIntegers",
+			push: func(l *State) {
+				l.PushInteger(42)
+				l.PushInteger(100)
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        1,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "DescendingIntegers",
+			push: func(l *State) {
+				l.PushInteger(100)
+				l.PushInteger(42)
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        0,
+				LessOrEqual: 0,
+			},
+		},
+		{
+			name: "EmptyStrings",
+			push: func(l *State) {
+				l.PushString("")
+				l.PushString("")
+			},
+			want: compareTable{
+				Equal:       1,
+				Less:        0,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "EmptyNonEmptyString",
+			push: func(l *State) {
+				l.PushString("")
+				l.PushString("abc")
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        1,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "NonEmptyEmptyString",
+			push: func(l *State) {
+				l.PushString("abc")
+				l.PushString("")
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        0,
+				LessOrEqual: 0,
+			},
+		},
+		{
+			name: "FalseTrue",
+			push: func(l *State) {
+				l.PushBoolean(false)
+				l.PushBoolean(true)
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        bad,
+				LessOrEqual: bad,
+			},
+		},
+		{
+			name: "TrueFalse",
+			push: func(l *State) {
+				l.PushBoolean(true)
+				l.PushBoolean(false)
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        bad,
+				LessOrEqual: bad,
+			},
+		},
+		{
+			name: "TwoFalse",
+			push: func(l *State) {
+				l.PushBoolean(false)
+				l.PushBoolean(false)
+			},
+			want: compareTable{
+				Equal:       1,
+				Less:        bad,
+				LessOrEqual: bad,
+			},
+		},
+		{
+			name: "TwoTrue",
+			push: func(l *State) {
+				l.PushBoolean(true)
+				l.PushBoolean(true)
+			},
+			want: compareTable{
+				Equal:       1,
+				Less:        bad,
+				LessOrEqual: bad,
+			},
+		},
+	}
+
+	t.Run("StateMethod", func(t *testing.T) {
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				state := new(State)
+				defer func() {
+					if err := state.Close(); err != nil {
+						t.Error("Close:", err)
+					}
+				}()
+
+				test.push(state)
+				s1 := describeValue(state, -2)
+				s2 := describeValue(state, -1)
+
+				for opIndex, want := range test.want {
+					op := ComparisonOperator(opIndex)
+					got, err := state.Compare(-2, -1, op, 0)
+					if got != (want == 1) || (err != nil) != (want == bad) {
+						wantError := "<nil>"
+						if want == bad {
+							wantError = "<error>"
+						}
+						t.Errorf("(%s %v %s) = %t, %v; want %t, %s",
+							s1, op, s2, got, err, (want == 1), wantError)
+					}
+				}
+			})
 		}
-	}()
+	})
 
-	const source = "return 2 + 2"
-	if err := state.LoadString(source, source, "t"); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.Call(0, 1, 0); err != nil {
-		t.Fatal(err)
-	}
-	if !state.IsNumber(-1) {
-		t.Fatalf("top of stack is %v; want number", state.Type(-1))
-	}
-	const want = int64(4)
-	if got, ok := state.ToInteger(-1); got != want || !ok {
-		t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, want)
-	}
-}
-
-func TestDump(t *testing.T) {
-	state := new(State)
-	defer func() {
-		if err := state.Close(); err != nil {
-			t.Error("Close:", err)
+	t.Run("Load", func(t *testing.T) {
+		// Parse scripts for comparing two arguments.
+		scripts := [len(compareTable{})][]byte{}
+		for i := range scripts {
+			op := ComparisonOperator(i)
+			source := "local x, y = ...\nreturn x " + op.String() + " y\n"
+			proto, err := luacode.Parse(Source(source), strings.NewReader(source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			scripts[i], err = proto.MarshalBinary()
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
-	}()
 
-	const source = "return 2 + 2"
-	if err := state.LoadString(source, source, "t"); err != nil {
-		t.Fatal(err)
-	}
-	compiledChunk := new(strings.Builder)
-	n, err := state.Dump(compiledChunk, false)
-	if wantN := int64(compiledChunk.Len()); n != wantN || err != nil {
-		t.Errorf("state.Dump(...) = %d, %v; want %d, <nil>", n, err, wantN)
-	}
-	state.Pop(1)
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				state := new(State)
+				defer func() {
+					if err := state.Close(); err != nil {
+						t.Error("Close:", err)
+					}
+				}()
 
-	if err := state.LoadString(compiledChunk.String(), "=(load)", "b"); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.Call(0, 1, 0); err != nil {
-		t.Fatal(err)
-	}
-	if !state.IsNumber(-1) {
-		t.Fatalf("top of stack is %v; want number", state.Type(-1))
-	}
-	const want = int64(4)
-	if got, ok := state.ToInteger(-1); got != want || !ok {
-		t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, want)
-	}
+				test.push(state)
+				s1 := describeValue(state, -2)
+				s2 := describeValue(state, -1)
+
+				for i, want := range test.want {
+					op := ComparisonOperator(i)
+					if err := state.Load(bytes.NewReader(scripts[i]), "", "b"); err != nil {
+						t.Error("Load:", err)
+						continue
+					}
+
+					// Copy pushed values on top of function pushed.
+					state.PushValue(-3)
+					state.PushValue(-3)
+
+					if err := state.Call(2, 1, 0); err != nil {
+						t.Logf("(%s %v %s): %v", s1, op, s2, err)
+						if want != bad {
+							t.Fail()
+						}
+						continue
+					}
+					if want == bad {
+						t.Fatalf("Comparison did not throw an error")
+					}
+
+					if got, want := state.Type(-1), TypeBoolean; got != want {
+						t.Errorf("(%s %v %s) returned %v; want %v",
+							s1, op, s2, got, want)
+					}
+					got := state.ToBoolean(-1)
+					if got != (want == 1) {
+						t.Errorf("(%s %v %s) = %t, <nil>; want %t, <nil>",
+							s1, op, s2, got, (want == 1))
+					}
+					state.Pop(1)
+				}
+			})
+		}
+	})
 }
 
 func TestFullUserdata(t *testing.T) {
@@ -146,21 +469,13 @@ func TestFullUserdata(t *testing.T) {
 		}
 	}()
 
-	state.NewUserdataUV(4, 1)
-	if got, want := state.RawLen(-1), uint64(4); got != want {
+	initValue := [4]byte{}
+	state.NewUserdata(initValue, 1)
+	if got, want := state.RawLen(-1), uint64(0); got != want {
 		t.Errorf("state.RawLen(-1) = %d; want %d", got, want)
 	}
-	var gotBlock [4]byte
-	if got, want := state.CopyUserdata(gotBlock[:], -1, 0), 4; got != want {
-		t.Errorf("CopyUserdata(...) = %d; want %d", got, want)
-	} else if want := ([4]byte{}); gotBlock != want {
-		t.Errorf("after init, block = %v; want %v", gotBlock, want)
-	}
-	state.SetUserdata(-1, 0, []byte{0xde, 0xad, 0xbe, 0xef})
-	if got, want := state.CopyUserdata(gotBlock[:], -1, 0), 4; got != want {
-		t.Errorf("CopyUserdata(...) = %d; want %d", got, want)
-	} else if want := ([4]byte{0xde, 0xad, 0xbe, 0xef}); gotBlock != want {
-		t.Errorf("after init, block = %v; want %v", gotBlock, want)
+	if got, ok := state.ToUserdata(-1); got != initValue || !ok {
+		t.Errorf("state.ToUserdata(...) = %#v, %t; want %#v, true", got, ok, initValue)
 	}
 
 	const wantUserValue = 42
@@ -172,11 +487,7 @@ func TestFullUserdata(t *testing.T) {
 		t.Errorf("user value 1 type = %v; want %v", got, want)
 	}
 	if got, ok := state.ToInteger(-1); got != wantUserValue || !ok {
-		value, err := ToString(state, -1)
-		if err != nil {
-			value = "<unknown value>"
-		}
-		t.Errorf("user value 1 = %s; want %d", value, wantUserValue)
+		t.Errorf("user value 1 = %s; want %d", describeValue(state, -1), wantUserValue)
 	}
 	state.Pop(1)
 
@@ -187,155 +498,31 @@ func TestFullUserdata(t *testing.T) {
 		t.Errorf("after state.UserValue(-1, 2), state.Top() = %d; want %d", got, want)
 	}
 	if !state.IsNil(-1) {
-		value, err := ToString(state, -1)
-		if err != nil {
-			value = "<unknown value>"
-		}
-		t.Errorf("user value 2 = %s; want nil", value)
+		t.Errorf("user value 2 = %s; want nil", describeValue(state, -2))
 	}
 }
 
-func TestLightUserdata(t *testing.T) {
-	state := new(State)
-	defer func() {
-		if err := state.Close(); err != nil {
-			t.Error("Close:", err)
-		}
-	}()
-
-	vals := []uintptr{0, 42}
-	for _, p := range vals {
-		state.PushLightUserdata(p)
+func TestRotate(t *testing.T) {
+	tests := []struct {
+		s    []int
+		n    int
+		want []int
+	}{
+		{[]int{}, 0, []int{}},
+		{[]int{1, 2, 3}, 0, []int{1, 2, 3}},
+		{[]int{1, 2, 3}, 1, []int{3, 1, 2}},
+		{[]int{1, 2, 3}, 2, []int{2, 3, 1}},
+		{[]int{1, 2, 3}, 3, []int{1, 2, 3}},
+		{[]int{1, 2, 3}, -1, []int{2, 3, 1}},
+		{[]int{1, 2, 3}, -2, []int{3, 1, 2}},
 	}
-
-	if got, want := state.Top(), len(vals); got != want {
-		t.Fatalf("state.Top() = %d; want %d", got, want)
-	}
-	for i := 1; i <= len(vals); i++ {
-		if got, want := state.Type(i), TypeLightUserdata; got != want {
-			t.Errorf("state.Type(%d) = %v; want %v", i, got, want)
-		}
-		if !state.IsUserdata(i) {
-			t.Errorf("state.IsUserdata(%d) = false; want true", i)
-		}
-		if got, want := state.ToPointer(i), vals[i-1]; got != want {
-			t.Errorf("state.ToPointer(%d) = %#x; want %#x", i, got, want)
+	for _, test := range tests {
+		got := slices.Clone(test.s)
+		rotate(got, test.n)
+		if diff := cmp.Diff(test.want, got); diff != "" {
+			t.Errorf("rotate(%v, %d) (-want +got):\n%s", test.s, test.n, diff)
 		}
 	}
-}
-
-func TestPushClosure(t *testing.T) {
-	t.Run("NoUpvalues", func(t *testing.T) {
-		state := new(State)
-		defer func() {
-			if err := state.Close(); err != nil {
-				t.Error("Close:", err)
-			}
-		}()
-
-		const want = 42
-		state.PushClosure(0, func(l *State) (int, error) {
-			l.PushInteger(want)
-			return 1, nil
-		})
-		if err := state.Call(0, 1, 0); err != nil {
-			t.Fatal(err)
-		}
-		if got, ok := state.ToInteger(-1); got != want || !ok {
-			value, err := ToString(state, -1)
-			if err != nil {
-				value = "<unknown value>"
-			}
-			t.Errorf("function returned %s; want %d", value, want)
-		}
-	})
-
-	t.Run("Upvalues", func(t *testing.T) {
-		state := new(State)
-		defer func() {
-			if err := state.Close(); err != nil {
-				t.Error("Close:", err)
-			}
-		}()
-
-		const want = 42
-		state.PushInteger(want)
-		state.PushClosure(1, func(l *State) (int, error) {
-			l.PushValue(UpvalueIndex(1))
-			return 1, nil
-		})
-		if err := state.Call(0, 1, 0); err != nil {
-			t.Fatal(err)
-		}
-		if got, ok := state.ToInteger(-1); got != want || !ok {
-			value, err := ToString(state, -1)
-			if err != nil {
-				value = "<unknown value>"
-			}
-			t.Errorf("function returned %s; want %d", value, want)
-		}
-	})
-}
-
-// TestStateRepresentation ensures that State has the same memory representation
-// as lua54.State.
-// This is critical for the correct functioning of [State.PushClosure],
-// which avoids allocating a new closure by using a func(*State) (int, error)
-// as a func(*lua54.State) (int, error).
-func TestStateRepresentation(t *testing.T) {
-	if got, want := unsafe.Offsetof(State{}.state), uintptr(0); got != want {
-		t.Errorf("unsafe.Offsetof(State{}.state) = %d; want %d", got, want)
-	}
-	if got, want := unsafe.Sizeof(State{}), unsafe.Sizeof(lua54.State{}); got != want {
-		t.Errorf("unsafe.Sizeof(State{}) = %d; want %d", got, want)
-	}
-	if got, want := unsafe.Alignof(State{}), unsafe.Alignof(lua54.State{}); got%want != 0 {
-		t.Errorf("unsafe.Alignof(State{}) = %d; want %d", got, want)
-	}
-}
-
-func TestStringContext(t *testing.T) {
-	t.Run("Basic", func(t *testing.T) {
-		state := new(State)
-		defer func() {
-			if err := state.Close(); err != nil {
-				t.Error("Close:", err)
-			}
-		}()
-
-		const s = "hello"
-		want := []string{"bar", "foo"}
-		state.PushStringContext(s, slices.Clone(want))
-		if got := state.StringContext(-1); !slices.Equal(got, want) {
-			t.Errorf("state.StringContext(-1) = %q; want %q", got, want)
-		}
-		if got, ok := state.ToString(-1); got != s || !ok {
-			t.Errorf("state.ToString(-1) = %q, %t; want %q, true", got, ok, s)
-		}
-	})
-
-	t.Run("Concat", func(t *testing.T) {
-		state := new(State)
-		defer func() {
-			if err := state.Close(); err != nil {
-				t.Error("Close:", err)
-			}
-		}()
-
-		state.PushStringContext("a", []string{"foo"})
-		state.PushStringContext("b", []string{"bar"})
-		if err := state.Concat(2, 0); err != nil {
-			t.Fatal(err)
-		}
-
-		if got, want := state.StringContext(-1), ([]string{"foo", "bar"}); !slices.Equal(got, want) {
-			t.Errorf("state.StringContext(-1) = %q; want %q", got, want)
-		}
-		const want = "ab"
-		if got, ok := state.ToString(-1); got != want || !ok {
-			t.Errorf("state.ToString(-1) = %q, %t; want %q, true", got, ok, want)
-		}
-	})
 }
 
 func BenchmarkExec(b *testing.B) {
@@ -348,7 +535,7 @@ func BenchmarkExec(b *testing.B) {
 
 	const source = "return 2 + 2"
 	for i := 0; i < b.N; i++ {
-		if err := state.LoadString(source, source, "t"); err != nil {
+		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			b.Fatal(err)
 		}
 		if err := state.Call(0, 1, 0); err != nil {
@@ -358,36 +545,36 @@ func BenchmarkExec(b *testing.B) {
 	}
 }
 
-func BenchmarkPushClosure(b *testing.B) {
-	b.ReportAllocs()
-
-	state := new(State)
-	defer func() {
-		if err := state.Close(); err != nil {
-			b.Error("Close:", err)
+func describeValue(l *State, idx int) string {
+	switch l.Type(idx) {
+	case TypeNone:
+		return "<none>"
+	case TypeNil:
+		return "nil"
+	case TypeBoolean:
+		return strconv.FormatBool(l.ToBoolean(idx))
+	case TypeString:
+		s, _ := l.ToString(idx)
+		return lualex.Quote(s)
+	case TypeNumber:
+		if l.IsInteger(idx) {
+			i, _ := l.ToInteger(idx)
+			return strconv.FormatInt(i, 10)
 		}
-	}()
-
-	f := Function(func(l *State) (int, error) { return 0, nil })
-	for i := 0; i < b.N; i++ {
-		state.PushClosure(0, f)
-		state.Pop(1)
-	}
-}
-
-func BenchmarkOpenLibraries(b *testing.B) {
-	b.ReportAllocs()
-
-	state := new(State)
-	defer func() {
-		if err := state.Close(); err != nil {
-			b.Error("Close:", err)
+		f, _ := l.ToNumber(idx)
+		return strconv.FormatFloat(f, 'g', 0, 64)
+	case TypeTable:
+		if l.RawLen(idx) == 0 {
+			return "{}"
 		}
-	}()
-
-	for i := 0; i < b.N; i++ {
-		if err := OpenLibraries(state); err != nil {
-			b.Fatal(err)
-		}
+		return "{...}"
+	case TypeFunction:
+		return "<function>"
+	case TypeLightUserdata, TypeUserdata:
+		return "<userdata>"
+	case TypeThread:
+		return "<thread>"
+	default:
+		return "<unknown>"
 	}
 }

@@ -88,7 +88,30 @@ func (s *Bit) Len() int {
 	return total
 }
 
+// Min returns the smallest value in the set.
+func (s *Bit) Min() (_ uint, nonEmpty bool) {
+	if s == nil {
+		return 0, false
+	}
+	for x := range s.All() {
+		return x, true
+	}
+	return 0, false
+}
+
+// Max returns the largest value in the set.
+func (s *Bit) Max() (_ uint, nonEmpty bool) {
+	if s == nil {
+		return 0, false
+	}
+	for x := range s.Reversed() {
+		return x, true
+	}
+	return 0, false
+}
+
 // All returns an iterator of the elements of s.
+// Elements are in ascending order.
 func (s *Bit) All() iter.Seq[uint] {
 	if s == nil {
 		return func(yield func(uint) bool) {}
@@ -107,6 +130,31 @@ func (s *Bit) All() iter.Seq[uint] {
 					}
 				}
 				curr++
+			}
+		}
+	}
+}
+
+// Reversed returns an iterator of the elements of s
+// in descending order.
+func (s *Bit) Reversed() iter.Seq[uint] {
+	if s == nil {
+		return func(yield func(uint) bool) {}
+	}
+	return func(yield func(uint) bool) {
+		curr := uint(len(s.words) * bitWordSize)
+		for i := len(s.words) - 1; i >= 0; i-- {
+			if s.words[i] == 0 {
+				curr -= bitWordSize
+				continue
+			}
+			for j := bitWordSize - 1; j >= 0; j-- {
+				curr--
+				if s.words[i]&(1<<j) != 0 {
+					if !yield(curr) {
+						return
+					}
+				}
 			}
 		}
 	}

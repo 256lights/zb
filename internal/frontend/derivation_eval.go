@@ -6,7 +6,6 @@ package frontend
 import (
 	"context"
 	"fmt"
-	"runtime/cgo"
 	"strings"
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
@@ -24,7 +23,6 @@ func registerDerivationMetatable(l *lua.State) {
 	err := lua.SetFuncs(l, 0, map[string]lua.Function{
 		"__index":     indexDerivation,
 		"__pairs":     derivationPairs,
-		"__gc":        gcDerivation,
 		"__tostring":  derivationToString,
 		"__concat":    concatDerivation,
 		"__metatable": nil, // prevent Lua access to metatable
@@ -203,17 +201,15 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 			DrvPath:    drvPath,
 			OutputName: outputName,
 		}
-		l.PushStringContext(placeholder, []string{contextValue{outputReference: ref}.String()})
+		l.PushStringContext(placeholder, sets.New(contextValue{outputReference: ref}.String()))
 		if err := l.SetField(tableCopyIndex, outputName, 0); err != nil {
 			return 0, fmt.Errorf("derivation: %v", err)
 		}
 	}
 
-	l.NewUserdataUV(8, 1)
+	l.NewUserdata(drv, 1)
 	l.Rotate(-2, -1) // Swap userdata and argument table copy.
 	l.SetUserValue(-2, 1)
-	handle := cgo.NewHandle(drv)
-	setUserdataHandle(l, -1, handle)
 
 	lua.SetMetatable(l, derivationTypeName)
 
@@ -277,7 +273,7 @@ func stringToEnvVar(l *lua.State, drv *zbstore.Derivation, idx int) (string, err
 	l.PushValue(idx) // Clone so that we don't munge a number.
 	defer l.Pop(1)
 	s, _ := l.ToString(-1)
-	for _, dep := range l.StringContext(-1) {
+	for dep := range l.StringContext(-1).All() {
 		c, err := parseContextString(dep)
 		if err != nil {
 			return "", fmt.Errorf("internal error: %v", err)
@@ -359,28 +355,9 @@ func toDerivation(l *lua.State) (*zbstore.Derivation, error) {
 }
 
 func testDerivation(l *lua.State, idx int) *zbstore.Derivation {
-	handle, _ := testUserdataHandle(l, idx, derivationTypeName)
-	if handle == 0 {
-		return nil
-	}
-	drv, _ := handle.Value().(*zbstore.Derivation)
+	x, _ := lua.TestUserdata(l, idx, derivationTypeName)
+	drv, _ := x.(*zbstore.Derivation)
 	return drv
-}
-
-// gcDerivation handles the __gc metamethod on derivations
-// by releasing the [*derivation].
-func gcDerivation(l *lua.State) (int, error) {
-	const idx = 1
-	handle, ok := testUserdataHandle(l, idx, derivationTypeName)
-	if !ok {
-		return 0, lua.NewTypeError(l, idx, derivationTypeName)
-	}
-	if handle == 0 {
-		return 0, nil
-	}
-	handle.Delete()
-	setUserdataHandle(l, idx, 0)
-	return 0, nil
 }
 
 // indexDerivation handles the __index metamethod on derivations.
@@ -497,5 +474,5 @@ func (c contextValue) String() string {
 }
 
 func pushStorePath(l *lua.State, path zbstore.Path) {
-	l.PushStringContext(string(path), []string{contextValue{path: path}.String()})
+	l.PushStringContext(string(path), sets.New(contextValue{path: path}.String()))
 }

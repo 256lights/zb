@@ -5,6 +5,15 @@
 			"$LINE_COMMENT Copyright $CURRENT_YEAR The zb Authors",
 			"$LINE_COMMENT SPDX-License-Identifier: MIT"
 		],
-		"description": "Apache license header"
+		"description": "MIT license header"
+	},
+	"Copyright with Lua": {
+		"prefix": "luacopyright",
+		"body": [
+			"$LINE_COMMENT Copyright (C) 1994-2024 Lua.org, PUC-Rio.",
+			"$LINE_COMMENT Copyright $CURRENT_YEAR The zb Authors",
+			"$LINE_COMMENT SPDX-License-Identifier: MIT"
+		],
+		"description": "MIT license header with Lua attribution"
 	}
 }

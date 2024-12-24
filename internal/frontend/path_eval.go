@@ -16,6 +16,7 @@ import (
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
@@ -26,7 +27,7 @@ import (
 
 func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.State) (nResults int, err error) {
 	var p string
-	var pcontext []string
+	var pcontext sets.Set[string]
 	var name string
 	switch l.Type(1) {
 	case lua.TypeString:
@@ -226,7 +227,7 @@ func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error)
 	h := nix.NewHasher(nix.SHA256)
 	h.WriteString(s)
 	var refs zbstore.References
-	for _, dep := range l.StringContext(2) {
+	for dep := range l.StringContext(2) {
 		c, err := parseContextString(dep)
 		if err != nil {
 			return 0, fmt.Errorf("internal error: %v", err)
@@ -297,7 +298,7 @@ func writeSingleFileNAR(w io.Writer, r io.Reader, sz int64) error {
 
 // absSourcePath takes a source path passed as an argument from Lua to Go
 // and resolves it relative to the calling function.
-func absSourcePath(l *lua.State, path string, context []string) (string, error) {
+func absSourcePath(l *lua.State, path string, context sets.Set[string]) (string, error) {
 	if filepath.IsAbs(path) {
 		return path, nil
 	}
@@ -306,7 +307,7 @@ func absSourcePath(l *lua.State, path string, context []string) (string, error) 
 		// Such placeholders have a leading slash, followed by a long hash digest.
 		// On non-POSIX systems, such a path might not be recognized as an absolute path.
 		// We treat this as an absolute path while preserving the placeholder.
-		for _, dep := range context {
+		for dep := range context {
 			c, err := parseContextString(dep)
 			if err != nil {
 				return "", fmt.Errorf("resolve path: internal error: %v", err)
@@ -329,12 +330,13 @@ func absSourcePath(l *lua.State, path string, context []string) (string, error) 
 		}
 	}
 
-	// TODO(maybe): This is probably wonky with tail calls.
-	debugInfo := l.Stack(1).Info("S")
+	// Lua guarantees that a call to a native function will never be a tail call,
+	// so we can always get information about the immediate caller.
+	debugInfo := l.Info(1)
 	if debugInfo == nil {
 		return "", fmt.Errorf("resolve path: no caller information available")
 	}
-	source, ok := strings.CutPrefix(debugInfo.Source, "@")
+	source, ok := debugInfo.Source.Filename()
 	if !ok {
 		// Not loaded from a file. Use working directory.
 		//
