@@ -293,21 +293,113 @@ func (i Instruction) IsOutTop() bool {
 //
 // [luac]: https://www.lua.org/manual/5.4/luac.html
 func (i Instruction) String() string {
-	switch op := i.OpCode(); op.OpMode() {
-	case OpModeABC:
-		k := 0
+	const opCodeWidth = 9
+	op := i.OpCode()
+	k := func() string {
 		if i.K() {
-			k = 1
+			return "k"
+		} else {
+			return ""
 		}
-		return fmt.Sprintf("%-9s %#02x %#02x %#02x %d", op, i.ArgA(), i.ArgB(), i.ArgC(), k)
+	}
+	kBool := func() string {
+		if i.K() {
+			return "1"
+		} else {
+			return "0"
+		}
+	}
+	describeResult := func(n uint8, noun string) string {
+		if n == 0 {
+			return "all " + noun
+		} else {
+			return fmt.Sprintf("%d %s", n-1, noun)
+		}
+	}
+
+	switch op {
+	case OpReturn0:
+		return fmt.Sprintf("%-*s", opCodeWidth, op)
+	case OpLoadKX, OpLoadFalse, OpLFalseSkip, OpLoadTrue, OpClose, OpTBC, OpReturn1, OpVarargPrep:
+		// A
+		return fmt.Sprintf("%-*s\t%d", opCodeWidth, op, i.ArgA())
+	case OpTest:
+		// Ak
+		return fmt.Sprintf("%-*s\t%d %s", opCodeWidth, op, i.ArgA(), kBool())
+	case OpMove, OpLoadNil, OpGetUpval, OpSetUpval, OpUNM, OpBNot, OpLen, OpConcat:
+		// AB
+		return fmt.Sprintf("%-*s\t%d %d", opCodeWidth, op, i.ArgA(), i.ArgB())
+	case OpTForCall, OpVararg:
+		// AC
+		return fmt.Sprintf("%-*s\t%d %d", opCodeWidth, op, i.ArgA(), i.ArgC())
+	case OpEQ, OpLT, OpLE, OpEQK, OpEQI, OpLTI, OpLEI, OpGTI, OpGEI, OpTestSet:
+		// ABk
+		return fmt.Sprintf("%-*s\t%d %d %s", opCodeWidth, op, i.ArgA(), i.ArgB(), kBool())
+	case OpGetTabUp, OpGetTable, OpGetI, OpGetField, OpNewTable, OpMMBin, OpSetList,
+		OpAddK, OpSubK, OpMulK, OpModK, OpPowK, OpDivK, OpIDivK, OpBAndK, OpBOrK, OpBXORK,
+		OpAdd, OpSub, OpMul, OpMod, OpPow, OpDiv, OpIDiv, OpBAnd, OpBOr, OpBXOR, OpSHL, OpSHR:
+		// ABC
+		return fmt.Sprintf("%-*s\t%d %d %d", opCodeWidth, op, i.ArgA(), i.ArgB(), i.ArgC())
+	case OpAddI, OpSHLI, OpSHRI:
+		// ABsC
+		return fmt.Sprintf("%-*s\t%d %d %d", opCodeWidth, op, i.ArgA(), i.ArgB(), SignedArg(i.ArgC()))
+	case OpMMBinI:
+		// AsBCk
+		return fmt.Sprintf("%-*s\t%d %d %d %s", opCodeWidth, op, i.ArgA(), SignedArg(i.ArgB()), i.ArgC(), kBool())
+	case OpCall:
+		// CALL
+		b := i.ArgB()
+		c := i.ArgC()
+		return fmt.Sprintf(
+			"%-*s\t%d %d %d\t; %s %s",
+			opCodeWidth,
+			op,
+			i.ArgA(),
+			b,
+			c,
+			describeResult(b, "in"),
+			describeResult(c, "out"),
+		)
+	case OpTailCall:
+		// TAILCALL
+		b := i.ArgB()
+		return fmt.Sprintf(
+			"%-*s\t%d %d %d%s\t; %s",
+			opCodeWidth,
+			op,
+			i.ArgA(),
+			b,
+			i.ArgC(),
+			k(),
+			describeResult(b, "in"),
+		)
+	case OpReturn:
+		// RETURN
+		b := i.ArgB()
+		return fmt.Sprintf(
+			"%-*s\t%d %d %d%s\t; %s",
+			opCodeWidth,
+			op,
+			i.ArgA(),
+			b,
+			i.ArgC(),
+			k(),
+			describeResult(b, "out"),
+		)
+	}
+
+	switch op.OpMode() {
+	case OpModeABC:
+		// ABCk
+		return fmt.Sprintf("%-*s\t%d %d %d%s", opCodeWidth, op, i.ArgA(), i.ArgB(), i.ArgC(), k())
 	case OpModeABx:
-		return fmt.Sprintf("%-9s %#02x %#04x", op, i.ArgA(), i.ArgBx())
+		return fmt.Sprintf("%-*s\t%d %d", opCodeWidth, op, i.ArgA(), i.ArgBx())
 	case OpModeAsBx:
-		return fmt.Sprintf("%-9s %#02x %d", op, i.ArgA(), i.ArgBx())
+		return fmt.Sprintf("%-*s\t%d %d", opCodeWidth, op, i.ArgA(), i.ArgBx())
 	case OpModeAx:
-		return fmt.Sprintf("%-9s %#07x", op, i.ArgAx())
+		return fmt.Sprintf("%-*s\t%d", opCodeWidth, op, i.ArgAx())
 	case OpModeJ:
-		return fmt.Sprintf("%-9s %+d", op, i.J())
+		return fmt.Sprintf("%-*s\t%+d", opCodeWidth, op, i.J())
 	default:
 		return fmt.Sprintf("Instruction(%#08x)", uint32(i))
 	}

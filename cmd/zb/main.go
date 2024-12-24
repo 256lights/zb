@@ -84,6 +84,7 @@ func main() {
 		newEvalCommand(g),
 		newServeCommand(g),
 		newStoreCommand(g),
+		newLuacCommand(g),
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), interruptSignals...)
