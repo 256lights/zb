@@ -23,7 +23,7 @@ see the early blog posts:
 
 ## Examples
 
-The [hello world](demo/hello.lua) example:
+The [hello world](demo/hello_linux.lua) example:
 
 ```lua
 return derivation {
@@ -52,15 +52,24 @@ Prerequisites:
 - Knowledge of using the command-line for your OS (e.g. Terminal.app, Command Prompt, etc.)
 - [Go](https://go.dev/dl/) 1.23.2 or later.
 
-### Linux or macOS
+### Linux
 
 1. `sudo mkdir /zb && sudo chown $(id -u):$(id -g) /zb`
 2. Clone this repository to your computer and `cd` into it.
 3. `go build ./cmd/zb`
 4. Start the build server (only on startup): `./zb serve --sandbox=0 &`
-5. Run a build: `./zb build --file demo/hello.lua`
+5. Run a build: `./zb build --file demo/hello_linux.lua`
 
 You can use `./zb --help` to get more information on commands.
+
+### macOS
+
+1. `mkdir $HOME/zb`
+2. Clone this repository to your computer and `cd` into it.
+3. `go build ./cmd/zb`
+4. `export ZB_STORE_DIR="$HOME/zb" ZB_STORE_SOCKET="$HOME/zb/var/zb/server.sock"`
+5. Start the build server (only on startup): `./zb serve --sandbox=0 --db="$HOME/zb/var/zb/db.sqlite" &`
+6. Run a build: `./zb build --file demo/hello_macos.lua`
 
 ### Windows
 
