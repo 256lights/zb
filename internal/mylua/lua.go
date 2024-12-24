@@ -1269,6 +1269,31 @@ func (l *State) SetField(idx int, k string, msgHandler int) error {
 	return nil
 }
 
+// SetIndex does the equivalent to t[i] = v,
+// where t is the value at the given index
+// and v is the value on the top of the stack.
+// This function pops the value from the stack.
+// See [State.SetTable] for more information.
+func (l *State) SetIndex(idx int, i int64, msgHandler int) error {
+	if msgHandler != 0 {
+		return fmt.Errorf("TODO(someday): support message handlers")
+	}
+	if l.Top() < 1 {
+		return errMissingArguments
+	}
+	l.init()
+	t, _, err := l.valueByIndex(idx)
+	v := l.stack[len(l.stack)-1]
+	l.setTop(len(l.stack) - 1) // Always pop value.
+	if err != nil {
+		return err
+	}
+	if err := l.setIndex(t, integerValue(i), v); err != nil {
+		return err
+	}
+	return nil
+}
+
 // RawSet does the equivalent to t[k] = v,
 // where t is the value at the given index,
 // v is the value on the top of the stack,

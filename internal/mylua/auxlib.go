@@ -379,7 +379,7 @@ func OpenLibraries(l *State) error {
 		openf Function
 	}{
 		{GName, NewOpenBase(nil)},
-		// {TableLibraryName, OpenTable},
+		{TableLibraryName, OpenTable},
 		// {IOLibraryName, NewIOLibrary().OpenLibrary},
 		// {OSLibraryName, NewOSLibrary().OpenLibrary},
 		// {StringLibraryName, OpenString},
