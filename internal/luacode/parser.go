@@ -1654,7 +1654,11 @@ func (p *parser) functionArguments(fs *funcState, f expressionDescriptor) (expre
 			return voidExpression(), err
 		}
 	case lualex.LBraceToken:
-		return p.constructor(fs)
+		var err error
+		args, err = p.constructor(fs)
+		if err != nil {
+			return voidExpression(), err
+		}
 	case lualex.StringToken:
 		args = codeString(p.curr.Value)
 		p.advance()
