@@ -1,22 +1,4 @@
-// Copyright 2023 Roxy Light
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the “Software”), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
+// Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
 package lua
@@ -25,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"unsafe"
-
-	"zb.256lights.llc/pkg/internal/lua54"
 )
+
+// LoadedTable is the key in the registry for table of loaded modules.
+const LoadedTable = "_LOADED"
 
 // Metafield pushes onto the stack the field event
 // from the metatable of the object at index obj
@@ -40,8 +22,7 @@ func Metafield(l *State, obj int, event string) Type {
 	if !l.Metatable(obj) {
 		return TypeNil
 	}
-	l.PushString(event)
-	tt := l.RawGet(-2)
+	tt := l.RawField(-1, event)
 	if tt == TypeNil {
 		l.Pop(2) // remove metatable and metafield
 	} else {
@@ -68,7 +49,6 @@ func CallMeta(l *State, obj int, event string) (bool, error) {
 	}
 	l.PushValue(obj)
 	if err := l.Call(1, 1, 0); err != nil {
-		l.Pop(1)
 		return true, fmt.Errorf("lua: call metafield %q: %w", event, err)
 	}
 	return true, nil
@@ -124,7 +104,7 @@ func ToString(l *State, idx int) (string, error) {
 			}
 			kind = l.Type(idx).String()
 		}
-		return fmt.Sprintf("%s: %#x", kind, l.ToPointer(idx)), nil
+		return fmt.Sprintf("%s: %#x", kind, l.ID(idx)), nil
 	}
 }
 
@@ -161,7 +141,17 @@ func CheckInteger(l *State, arg int) (int64, error) {
 // Regardless, the function pushes onto the stack
 // the final value associated with tname in the registry.
 func NewMetatable(l *State, tname string) bool {
-	return lua54.NewMetatable(&l.state, tname)
+	if Metatable(l, tname) != TypeNil {
+		// Name already in use.
+		return false
+	}
+	l.Pop(1)
+	l.CreateTable(0, 2)
+	l.PushString(tname)
+	l.RawSetField(-2, "__name") // metatable.__name = tname
+	l.PushValue(-1)
+	l.RawSetField(RegistryIndex, tname)
+	return true
 }
 
 // Metatable pushes onto the stack the metatable associated with the name tname
@@ -169,7 +159,7 @@ func NewMetatable(l *State, tname string) bool {
 // or nil if there is no metatable associated with that name.
 // Returns the type of the pushed value.
 func Metatable(l *State, tname string) Type {
-	return Type(lua54.Metatable(&l.state, tname))
+	return l.RawField(RegistryIndex, tname)
 }
 
 // SetMetatable sets the metatable of the object on the top of the stack
@@ -180,35 +170,34 @@ func SetMetatable(l *State, tname string) {
 	l.SetMetatable(-2)
 }
 
-// TestUserdata returns a copy of the block of bytes
+// TestUserdata returns a copy of the Go value
 // for the userdata at the given index.
-// TestUserdata returns non-nil if and only if the value at the given index
+// isUserdata is true if and only if the value at the given index
 // is a userdata and has the type tname (see [NewMetatable]).
-func TestUserdata(l *State, idx int, tname string) []byte {
-	if !l.IsUserdata(idx) {
-		return nil
+func TestUserdata(l *State, idx int, tname string) (_ any, isUserdata bool) {
+	ud, isUserdata := l.ToUserdata(idx)
+	if !isUserdata {
+		return nil, false
 	}
 	if !l.Metatable(idx) {
-		return nil
+		return nil, false
 	}
 	Metatable(l, tname)
-	ok := l.RawEqual(-1, -2)
+	metatableMatch := l.RawEqual(-1, -2)
 	l.Pop(2)
-	if !ok {
-		return nil
+	if !metatableMatch {
+		return nil, false
 	}
-	buf := make([]byte, l.RawLen(idx))
-	l.CopyUserdata(buf, idx, 0)
-	return buf
+	return ud, true
 }
 
-// CheckUserdata returns a copy of the block of bytes
+// CheckUserdata returns a copy of the Go value
 // for the given userdata argument.
 // CheckUserdata returns an error if the function argument arg
 // is not a userdata of the type tname (see [NewMetatable]).
-func CheckUserdata(l *State, arg int, tname string) ([]byte, error) {
-	data := TestUserdata(l, arg, tname)
-	if data == nil {
+func CheckUserdata(l *State, arg int, tname string) (any, error) {
+	data, ok := TestUserdata(l, arg, tname)
+	if !ok {
 		return nil, NewTypeError(l, arg, tname)
 	}
 	return data, nil
@@ -225,18 +214,16 @@ func CheckUserdata(l *State, arg int, tname string) ([]byte, error) {
 //
 // This function is used to build a prefix for error messages.
 func Where(l *State, level int) string {
-	ar := l.Stack(level).Info("Sl")
-	if ar.CurrentLine <= 0 {
+	ar := l.Info(level)
+	if ar == nil || ar.CurrentLine <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s:%d: ", ar.ShortSource, ar.CurrentLine)
+	return fmt.Sprintf("%v:%d: ", ar.Source, ar.CurrentLine)
 }
 
 // Len returns the "length" of the value at the given index as an integer.
-// It is similar to
 func Len(l *State, idx int) (int64, error) {
 	if err := l.Len(idx, 0); err != nil {
-		l.Pop(1)
 		return 0, err
 	}
 	n, ok := l.ToInteger(-1)
@@ -277,7 +264,7 @@ func SetFuncs(l *State, nUp int, reg map[string]Function) error {
 			l.PushClosure(nUp, f)
 		}
 		if err := l.SetField(-(nUp + 2), name, 0); err != nil {
-			l.Pop(nUp + 1)
+			l.Pop(nUp)
 			return err
 		}
 	}
@@ -293,7 +280,6 @@ func SetFuncs(l *State, nUp int, reg map[string]Function) error {
 func Subtable(l *State, idx int, fname string) (bool, error) {
 	tp, err := l.Field(idx, fname, 0)
 	if err != nil {
-		l.Pop(1) // pop error value
 		return false, err
 	}
 	if tp == TypeTable {
@@ -305,7 +291,7 @@ func Subtable(l *State, idx int, fname string) (bool, error) {
 	l.PushValue(-1) // copy to be left at top
 	err = l.SetField(idx, fname, 0)
 	if err != nil {
-		l.Pop(2) // pop table and error value
+		l.Pop(1) // pop table
 		return false, err
 	}
 	return false, nil
@@ -351,7 +337,7 @@ func Require(l *State, modName string, global bool, openf Function) error {
 // of the Go function that called it,
 // using a standard message that includes msg as a comment.
 func NewArgError(l *State, arg int, msg string) error {
-	ar := l.Stack(0).Info("n")
+	ar := l.Info(0)
 	if ar == nil {
 		// No stack frame.
 		return fmt.Errorf("%sbad argument #%d (%s)", Where(l, 1), arg, msg)
@@ -385,21 +371,30 @@ func NewTypeError(l *State, arg int, tname string) error {
 	return NewArgError(l, arg, fmt.Sprintf("%s expected, got %s", tname, typeArg))
 }
 
-func unmarshalUintptr(buf []byte) uintptr {
-	if len(buf) != int(unsafe.Sizeof(uintptr(0))) {
-		return 0
+// OpenLibraries opens all standard Lua libraries into the given state
+// with their default settings.
+func OpenLibraries(l *State) error {
+	libs := []struct {
+		name  string
+		openf Function
+	}{
+		{GName, NewOpenBase(nil)},
+		{TableLibraryName, OpenTable},
+		// {IOLibraryName, NewIOLibrary().OpenLibrary},
+		// {OSLibraryName, NewOSLibrary().OpenLibrary},
+		// {StringLibraryName, OpenString},
+		// {UTF8LibraryName, OpenUTF8},
+		// {MathLibraryName, NewOpenMath(nil)},
+		// {DebugLibraryName, OpenDebug},
+		// {PackageLibraryName, OpenPackage},
 	}
-	var x uintptr
-	for i, b := range buf {
-		x |= uintptr(b) << (i * 8)
-	}
-	return x
-}
 
-func setUintptr(l *State, idx int, x uintptr) {
-	var buf [unsafe.Sizeof(uintptr(0))]byte
-	for i := range buf {
-		buf[i] = byte(x >> (i * 8))
+	for _, lib := range libs {
+		if err := Require(l, lib.name, true, lib.openf); err != nil {
+			return err
+		}
+		l.Pop(1)
 	}
-	l.SetUserdata(idx, 0, buf[:])
+
+	return nil
 }

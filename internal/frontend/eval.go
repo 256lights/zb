@@ -4,9 +4,9 @@
 package frontend
 
 import (
+	"bufio"
 	"context"
 	"embed"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +14,6 @@ import (
 	"os"
 	slashpath "path"
 	"path/filepath"
-	"runtime/cgo"
 	"strings"
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
@@ -72,7 +71,9 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 
 	registerDerivationMetatable(&eval.l)
 
-	base := lua.NewOpenBase(io.Discard, nil)
+	base := lua.NewOpenBase(&lua.BaseOptions{
+		Output: io.Discard,
+	})
 	if err := lua.Require(&eval.l, lua.GName, true, base); err != nil {
 		return nil, err
 	}
@@ -123,7 +124,7 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 	}
 
 	// Run prelude.
-	if err := eval.l.LoadString(preludeSource, "=(prelude)", "t"); err != nil {
+	if err := eval.l.Load(strings.NewReader(preludeSource), lua.AbstractSource("(prelude)"), "t"); err != nil {
 		return nil, err
 	}
 	if err := eval.l.Call(0, 0, 0); err != nil {
@@ -258,7 +259,6 @@ func (eval *Eval) File(ctx context.Context, exprFile string, attrPaths []string)
 		return nil, err
 	}
 	if err := eval.l.Call(0, 1, 0); err != nil {
-		eval.l.Pop(1)
 		return nil, err
 	}
 	return eval.attrPaths(attrPaths)
@@ -281,7 +281,6 @@ func (eval *Eval) Expression(ctx context.Context, expr string, attrPaths []strin
 		return nil, err
 	}
 	if err := eval.l.Call(0, 1, 0); err != nil {
-		eval.l.Pop(1)
 		return nil, err
 	}
 	return eval.attrPaths(attrPaths)
@@ -305,13 +304,12 @@ func (eval *Eval) attrPaths(paths []string) ([]any, error) {
 			expr += "."
 		}
 		expr += p + ";"
-		if err := eval.l.LoadString(expr, expr, "t"); err != nil {
+		if err := eval.l.Load(strings.NewReader(expr), lua.LiteralSource(expr), "t"); err != nil {
 			eval.l.Pop(1)
 			return result, fmt.Errorf("%s: %v", p, err)
 		}
 		eval.l.PushValue(-2)
 		if err := eval.l.Call(1, 1, 0); err != nil {
-			eval.l.Pop(1)
 			return result, fmt.Errorf("%s: %v", p, err)
 		}
 		x, err := luaToGo(&eval.l)
@@ -389,20 +387,6 @@ func luaToGo(l *lua.State) (any, error) {
 	}
 }
 
-func testUserdataHandle(l *lua.State, idx int, tname string) (cgo.Handle, bool) {
-	data := lua.TestUserdata(l, idx, tname)
-	if len(data) != 8 {
-		return 0, false
-	}
-	return cgo.Handle(binary.LittleEndian.Uint64(data)), true
-}
-
-func setUserdataHandle(l *lua.State, idx int, handle cgo.Handle) {
-	var buf [8]byte
-	binary.LittleEndian.PutUint64(buf[:], uint64(handle))
-	l.SetUserdata(idx, 0, buf[:])
-}
-
 func loadFile(l *lua.State, path string) error {
 	path, err := filepath.Abs(path)
 	if err != nil {
@@ -414,7 +398,7 @@ func loadFile(l *lua.State, path string) error {
 	}
 	defer f.Close()
 
-	if err := l.Load(f, "@"+path, "t"); err != nil {
+	if err := l.Load(bufio.NewReader(f), lua.FilenameSource(path), "t"); err != nil {
 		l.Pop(1)
 		return fmt.Errorf("load file %s: %w", path, err)
 	}
@@ -422,11 +406,11 @@ func loadFile(l *lua.State, path string) error {
 }
 
 func loadExpression(l *lua.State, expr string) error {
-	if err := l.LoadString("return "+expr+";", expr, "t"); err == nil {
+	if err := l.Load(strings.NewReader("return "+expr+";"), lua.LiteralSource(expr), "t"); err == nil {
 		return nil
 	}
 	l.Pop(1)
-	if err := l.LoadString(expr, expr, "t"); err != nil {
+	if err := l.Load(strings.NewReader(expr), lua.LiteralSource(expr), "t"); err != nil {
 		l.Pop(1)
 		return err
 	}
@@ -495,7 +479,7 @@ func (eval *Eval) loadfileFunction(ctx context.Context, l *lua.State) (int, erro
 	// TODO(someday): If we have dependencies and we're using a non-local store,
 	// export the store object and read it.
 	var rewrites []string
-	for _, dep := range filenameContext {
+	for dep := range filenameContext {
 		c, err := parseContextString(dep)
 		if err != nil {
 			l.PushNil()
