@@ -274,6 +274,7 @@ func (p *parser) jumpOnCond(fs *funcState, e expressionDescriptor, cond bool) (i
 	if e.kind == expressionKindRelocatable {
 		if ie := fs.Code[e.pc()]; ie.OpCode() == OpNot {
 			// Remove previous OpNot.
+			// (Don't need to free e because [*parser.codeNot] already did that.)
 			fs.removeLastInstruction()
 			p.code(fs, ABCInstruction(OpTest, ie.ArgB(), 0, 0, !cond))
 			return p.codeJump(fs), nil
@@ -308,6 +309,7 @@ func (p *parser) codeNot(fs *funcState, e expressionDescriptor) (expressionDescr
 		if err != nil {
 			return e, err
 		}
+		p.freeExpression(fs, e)
 		pc := p.code(fs, ABCInstruction(OpNot, 0, uint8(e.register()), 0, false))
 		e = relocatableExpression(pc).withJumpLists(e)
 	default:
@@ -535,7 +537,7 @@ func (p *parser) codePostfix(fs *funcState, operator binaryOperator, e1, e2 expr
 		}
 		return p.codeBinaryExp(fs, operator, e1, e2, line)
 	case binaryOperatorEq, binaryOperatorNE:
-		return p.codeEq(fs, operator, e1, e2)
+		return p.codeEquality(fs, operator, e1, e2)
 	case binaryOperatorGT:
 		// Convert "a > b" into "b < a".
 		return p.codeOrder(fs, binaryOperatorLT, e2, e1)
@@ -808,11 +810,11 @@ func (p *parser) codeOrder(fs *funcState, operator binaryOperator, e1, e2 expres
 	return jumpExpression(pc), nil
 }
 
-// codeEq appends code for equality comparisons ("==" or "~=") to fs.Code.
+// codeEquality appends code for equality comparisons ("==" or "~=") to fs.Code.
 // e1 must have already turned into an R/K by [*parser.codeInfix].
 //
 // Equivalent to `codeeq` in upstream Lua.
-func (p *parser) codeEq(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor) (expressionDescriptor, error) {
+func (p *parser) codeEquality(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor) (expressionDescriptor, error) {
 	switch e1.kind {
 	case expressionKindConstant, expressionKindIntConstant, expressionKindFloatConstant:
 		// Swap constant/immediate to right side.
@@ -1204,8 +1206,7 @@ func (p *parser) dischargeVars(fs *funcState, e expressionDescriptor) expression
 		p.freeRegisters(fs, e.tableRegister(), e.indexRegister())
 		addr := p.code(fs, ABCInstruction(OpGetTable, 0, uint8(e.tableRegister()), uint8(e.indexRegister()), false))
 		return relocatableExpression(addr).withJumpLists(e)
-	}
-	if e.kind == expressionKindVararg || e.kind == expressionKindCall {
+	case expressionKindVararg, expressionKindCall:
 		return p.setOneReturn(fs, e)
 	}
 	// There is one value available (somewhere).
@@ -1238,16 +1239,17 @@ func (p *parser) setReturns(fs *funcState, e expressionDescriptor, nResults int)
 		)
 	case expressionKindVararg:
 		i := fs.Code[e.pc()]
+		reg, err := fs.reserveRegister()
+		if err != nil {
+			return err
+		}
 		fs.Code[e.pc()] = ABCInstruction(
 			i.OpCode(),
-			uint8(fs.firstFreeRegister),
+			uint8(reg),
 			i.ArgB(),
 			uint8(c),
 			i.K(),
 		)
-		if err := fs.reserveRegisters(1); err != nil {
-			return err
-		}
 	default:
 		return fmt.Errorf("setReturns on %v", e.kind)
 	}
