@@ -164,6 +164,10 @@ func printFunction(f *luacode.Prototype, functionNames map[*luacode.Prototype]st
 			if b := i.ArgB(); int(b) < len(f.Constants) {
 				fmt.Fprintf(lineBuf, "\t; %v", f.Constants[b])
 			}
+		case luacode.OpGetField:
+			if c := i.ArgC(); int(c) < len(f.Constants) {
+				fmt.Fprintf(lineBuf, "\t; %v", f.Constants[c])
+			}
 		case luacode.OpSetField:
 			if b := i.ArgB(); int(b) < len(f.Constants) {
 				fmt.Fprintf(lineBuf, "\t; %v", f.Constants[b])
