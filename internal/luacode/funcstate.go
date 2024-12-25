@@ -357,7 +357,7 @@ func (fs *funcState) negateCondition(pc int) error {
 //
 // Equivalent to `previousinstruction` in upstream Lua.
 func (fs *funcState) previousInstruction() *Instruction {
-	if len(fs.Code) == 0 || fs.lastTarget <= len(fs.Code) {
+	if len(fs.Code) == 0 || fs.lastTarget >= len(fs.Code) {
 		return nil
 	}
 	return &fs.Code[len(fs.Code)-1]
