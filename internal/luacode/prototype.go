@@ -112,14 +112,6 @@ func (f *Prototype) hasUpvalueNames() bool {
 	return false
 }
 
-func (f *Prototype) addConstant(k Value) int {
-	if i := slices.Index(f.Constants, k); i >= 0 {
-		return i
-	}
-	f.Constants = append(f.Constants, k)
-	return len(f.Constants) - 1
-}
-
 // MarshalBinary marshals the function as a precompiled chunk
 // in the same format as [luac 5.4].
 //

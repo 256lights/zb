@@ -7,6 +7,8 @@ package luacode
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"unique"
 )
 
 // funcState is the mutable state associated with a [Prototype]
@@ -39,6 +41,10 @@ type funcState struct {
 	// when returning.
 	needClose bool
 
+	// constantTable will be copied into the [Prototype] Constants field,
+	// but uses [unique.Handle] to speed up lookups during build.
+	constantTable []unique.Handle[Value]
+
 	lineInfoWriter lineInfoWriter
 }
 
@@ -63,6 +69,11 @@ type blockControl struct {
 //
 // Equivalent to `luaK_finish` in upstream Lua.
 func (fs *funcState) finish() error {
+	fs.Constants = make([]Value, len(fs.constantTable))
+	for i, handle := range fs.constantTable {
+		fs.Constants[i] = handle.Value()
+	}
+
 	for i, instruction := range fs.Code {
 		if i > 0 && fs.Code[i-1].IsOutTop() != instruction.IsInTop() {
 			return fmt.Errorf("internal error: instruction %d: %v follows %v",
@@ -397,4 +408,18 @@ func (fs *funcState) markToBeClosed() {
 	fs.blocks.upval = true
 	fs.blocks.insideTBC = true
 	fs.needClose = true
+}
+
+// addConstant either inserts a constant into the function's Constants table
+// and returns the index of the constant
+// or returns the index of an existing identical constant in the table.
+//
+// Equivalent to `addk` in upstream Lua.
+func (fs *funcState) addConstant(k Value) int {
+	kHandle := unique.Make(k)
+	if i := slices.Index(fs.constantTable, kHandle); i >= 0 {
+		return i
+	}
+	fs.constantTable = append(fs.constantTable, kHandle)
+	return len(fs.constantTable) - 1
 }
