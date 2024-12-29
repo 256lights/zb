@@ -34,7 +34,7 @@ func ParseInt(s string) (int64, error) {
 	}
 }
 
-// ParseFloat converts the given string to a 64-bit floating-point number
+// ParseNumber converts the given string to a 64-bit floating-point number
 // according to the [lexical rules of Lua].
 // Surrounding whitespace is permitted,
 // and any error returned will be of type [*strconv.NumError].
@@ -53,7 +53,17 @@ func ParseNumber(s string) (float64, error) {
 			Err:  strconv.ErrSyntax,
 		}
 	}
-	return strconv.ParseFloat(s, 64)
+	toParse := s
+	if (strings.HasPrefix(withoutSign, "0x") || strings.HasPrefix(withoutSign, "0X")) &&
+		!strings.ContainsAny(s, "pP") {
+		// Go hex float literals must have an exponent.
+		toParse = s + "p0"
+	}
+	f, err := strconv.ParseFloat(toParse, 64)
+	if err != nil {
+		err.(*strconv.NumError).Num = s
+	}
+	return f, err
 }
 
 func cutHexPrefix(s string) (rest string, hex bool) {

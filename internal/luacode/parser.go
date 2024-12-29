@@ -1948,7 +1948,7 @@ func (p *parser) simpleExpression(fs *funcState) (expressionDescriptor, error) {
 		if i, err := lualex.ParseInt(p.curr.Value); err == nil {
 			e = intConstantExpression(i)
 		} else if f, err := lualex.ParseNumber(p.curr.Value); err != nil {
-			return voidExpression(), err
+			return voidExpression(), syntaxError(fs.Source, p.curr, "invalid number")
 		} else {
 			e = floatConstantExpression(f)
 		}
