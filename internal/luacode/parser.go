@@ -1204,6 +1204,7 @@ func (p *parser) assignment(fs *funcState, lhs lhsAssign, numVariables int) erro
 	}
 	switch p.curr.Kind {
 	case lualex.CommaToken:
+		p.advance()
 		v, err := p.prefixExpression(fs)
 		if err != nil {
 			return err
