@@ -289,6 +289,26 @@ func TestScanner(t *testing.T) {
 				{Kind: IdentifierToken, Position: Pos(1, 5), Value: "abc"},
 			},
 		},
+		{
+			s: `res = (h >> (32 - floatbits)) % 2^32`,
+			want: []Token{
+				{Kind: IdentifierToken, Position: Pos(1, 1), Value: "res"},
+				{Kind: AssignToken, Position: Pos(1, 5)},
+				{Kind: LParenToken, Position: Pos(1, 7)},
+				{Kind: IdentifierToken, Position: Pos(1, 8), Value: "h"},
+				{Kind: RShiftToken, Position: Pos(1, 10)},
+				{Kind: LParenToken, Position: Pos(1, 13)},
+				{Kind: NumeralToken, Position: Pos(1, 14), Value: "32"},
+				{Kind: SubToken, Position: Pos(1, 17)},
+				{Kind: IdentifierToken, Position: Pos(1, 19), Value: "floatbits"},
+				{Kind: RParenToken, Position: Pos(1, 28)},
+				{Kind: RParenToken, Position: Pos(1, 29)},
+				{Kind: ModToken, Position: Pos(1, 31)},
+				{Kind: NumeralToken, Position: Pos(1, 33), Value: "2"},
+				{Kind: PowToken, Position: Pos(1, 34)},
+				{Kind: NumeralToken, Position: Pos(1, 35), Value: "32"},
+			},
+		},
 	}
 
 	for _, test := range tests {

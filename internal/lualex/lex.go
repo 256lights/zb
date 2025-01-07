@@ -188,7 +188,7 @@ func (s *Scanner) Scan() (Token, error) {
 				return Token{Kind: GreaterToken, Position: pos}, nil
 			}
 			switch b {
-			case '<':
+			case '>':
 				return Token{Kind: RShiftToken, Position: pos}, nil
 			case '=':
 				return Token{Kind: GreaterEqualToken, Position: pos}, nil
