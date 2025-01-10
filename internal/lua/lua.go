@@ -1728,6 +1728,7 @@ func (l *State) Concat(n, msgHandler int) error {
 		return fmt.Errorf("TODO(someday): support message handlers")
 	}
 
+	l.init()
 	if err := l.concat(n); err != nil {
 		l.push(nil)
 		return err
@@ -1752,7 +1753,7 @@ func (l *State) concat(n int) error {
 
 	for len(l.stack) > firstArg+1 {
 		v1 := l.stack[len(l.stack)-2]
-		_, isStringer1 := v1.(valueStringer)
+		vs1, isStringer1 := v1.(valueStringer)
 		v2 := l.stack[len(l.stack)-1]
 		vs2, isStringer2 := v2.(valueStringer)
 		switch {
@@ -1763,8 +1764,9 @@ func (l *State) concat(n int) error {
 			}
 		case isEmptyString(v1):
 			l.stack[len(l.stack)-2] = vs2.stringValue()
-			fallthrough
+			l.setTop(len(l.stack) - 1)
 		case isEmptyString(v2):
+			l.stack[len(l.stack)-2] = vs1.stringValue()
 			l.setTop(len(l.stack) - 1)
 		default:
 			// The end of the slice has two or more non-empty strings.

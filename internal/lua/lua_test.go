@@ -15,8 +15,10 @@ import (
 	"testing/iotest"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"zb.256lights.llc/pkg/internal/luacode"
 	"zb.256lights.llc/pkg/internal/lualex"
+	"zb.256lights.llc/pkg/sets"
 )
 
 func TestClose(t *testing.T) {
@@ -459,6 +461,135 @@ func TestCompare(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestConcat(t *testing.T) {
+	tests := []struct {
+		name        string
+		push        func(l *State)
+		want        string
+		wantContext sets.Set[string]
+	}{
+		{
+			name: "Empty",
+			push: func(l *State) {},
+			want: "",
+		},
+		{
+			name: "SingleString",
+			push: func(l *State) {
+				l.PushString("abc")
+			},
+			want: "abc",
+		},
+		{
+			name: "SingleStringWithContext",
+			push: func(l *State) {
+				l.PushStringContext("abc", sets.New("1", "2", "3"))
+			},
+			want:        "abc",
+			wantContext: sets.New("1", "2", "3"),
+		},
+		{
+			name: "TwoStrings",
+			push: func(l *State) {
+				l.PushString("abc")
+				l.PushString("def")
+			},
+			want: "abcdef",
+		},
+		{
+			name: "TwoStringsWithContext",
+			push: func(l *State) {
+				l.PushStringContext("abc", sets.New("1", "2", "3"))
+				l.PushStringContext("def", sets.New("4", "5", "6"))
+			},
+			want:        "abcdef",
+			wantContext: sets.New("1", "2", "3", "4", "5", "6"),
+		},
+		{
+			name: "ThreeStrings",
+			push: func(l *State) {
+				l.PushString("abc")
+				l.PushString("def")
+				l.PushString("ghi")
+			},
+			want: "abcdefghi",
+		},
+		{
+			name: "ThreeStringsWithContext",
+			push: func(l *State) {
+				l.PushStringContext("abc", sets.New("1", "2", "3"))
+				l.PushStringContext("def", sets.New("4", "5", "6"))
+				l.PushStringContext("ghi", sets.New("7", "8", "9"))
+			},
+			want:        "abcdefghi",
+			wantContext: sets.New("1", "2", "3", "4", "5", "6", "7", "8", "9"),
+		},
+		{
+			name: "StringWithInteger",
+			push: func(l *State) {
+				l.PushString("abc")
+				l.PushInteger(12)
+			},
+			want: "abc12",
+		},
+		{
+			name: "EmptyStringWithInteger",
+			push: func(l *State) {
+				l.PushString("")
+				l.PushInteger(12)
+			},
+			want: "12",
+		},
+		{
+			name: "FloatWithString",
+			push: func(l *State) {
+				l.PushNumber(12)
+				l.PushString("xyz")
+			},
+			want: "12.0xyz",
+		},
+		{
+			name: "FloatWithEmptyString",
+			push: func(l *State) {
+				l.PushNumber(12)
+				l.PushString("")
+			},
+			want: "12.0",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state := new(State)
+			defer func() {
+				if err := state.Close(); err != nil {
+					t.Error("Close:", err)
+				}
+			}()
+			test.push(state)
+
+			n := state.Top()
+			if err := state.Concat(n, 0); err != nil {
+				t.Errorf("state.Concat(%d, 0): %v", n, err)
+			}
+
+			if got, want := state.Top(), 1; got != want {
+				t.Errorf("after Concat(%d, 0), state.Top() = %d; want %d", n, got, want)
+			}
+			if got, want := state.Type(1), TypeString; got != want {
+				t.Errorf("state.Type(1) = %v; want %v", got, want)
+			}
+			if got, _ := state.ToString(1); got != test.want {
+				t.Errorf("result = %q; want %q", got, test.want)
+			}
+			gotContext := state.StringContext(1)
+			if diff := cmp.Diff(test.wantContext, gotContext, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("context (-want +got):\n%s", diff)
+			}
+		})
+	}
 }
 
 func TestFullUserdata(t *testing.T) {
