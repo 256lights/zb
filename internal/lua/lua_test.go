@@ -179,8 +179,8 @@ func TestLoad(t *testing.T) {
 		} else if got := err.Error(); !strings.Contains(got, message) {
 			t.Errorf("state.Load(...) = %v; want to contain %q", got, message)
 		}
-		if got, ok := state.ToString(-1); !strings.Contains(got, message) || !ok {
-			t.Errorf("state.ToString(-1) = %q, %t; want to contain %q", got, ok, message)
+		if got, want := state.Top(), 0; got != want {
+			t.Errorf("state.Top() = %d; want %d", got, want)
 		}
 	})
 }
