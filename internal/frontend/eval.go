@@ -587,7 +587,7 @@ func dofileFunction(l *lua.State) (int, error) {
 		return 0, fmt.Errorf("dofile: %v", err)
 	}
 	if l.IsNil(-2) {
-		msg, _ := lua.ToString(l, -1)
+		msg, _, _ := lua.ToString(l, -1)
 		return 0, fmt.Errorf("dofile: %s", msg)
 	}
 	l.Pop(1)

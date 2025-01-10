@@ -121,7 +121,7 @@ func newBaseDofile(loadfile Function) Function {
 			return 0, err
 		}
 		if l.IsNil(-2) {
-			msg, _ := ToString(l, -1)
+			msg, _, _ := ToString(l, -1)
 			return 0, fmt.Errorf("dofile: %s", msg)
 		}
 		l.Pop(1)
@@ -393,7 +393,7 @@ func newBasePrint(out io.Writer) Function {
 	return func(l *State) (int, error) {
 		n := l.Top()
 		for i := 1; i <= n; i++ {
-			s, err := ToString(l, i)
+			s, _, err := ToString(l, i)
 			if err != nil {
 				return 0, err
 			}
@@ -526,12 +526,11 @@ func baseToString(l *State) (int, error) {
 	if l.IsNone(1) {
 		return 0, NewArgError(l, 1, "value expected")
 	}
-	s, err := ToString(l, 1)
+	s, sctx, err := ToString(l, 1)
 	if err != nil {
 		return 0, err
 	}
-	// TODO(now): Don't strip context!
-	l.PushString(s)
+	l.PushStringContext(s, sctx)
 	return 1, nil
 }
 

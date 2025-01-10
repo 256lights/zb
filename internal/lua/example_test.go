@@ -53,11 +53,11 @@ func ExampleState_Next() {
 		// since state.ToString may change the value on the stack.
 		// We clone the value here to be safe.
 		state.PushValue(-2)
-		k, _ := lua.ToString(state, -1)
+		k, _, _ := lua.ToString(state, -1)
 		state.Pop(1)
 
 		// Format the value at index -1.
-		v, _ := lua.ToString(state, -1)
+		v, _, _ := lua.ToString(state, -1)
 
 		fmt.Printf("%s - %s\n", k, v)
 

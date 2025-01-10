@@ -6,6 +6,10 @@ package lua
 import (
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"zb.256lights.llc/pkg/sets"
 )
 
 func TestLen(t *testing.T) {
@@ -73,6 +77,86 @@ func TestWhere(t *testing.T) {
 			got, ok := state.ToString(-1)
 			if want := "(load):2: "; got != want || !ok {
 				t.Errorf("result = %q; want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestToString(t *testing.T) {
+	tests := []struct {
+		name        string
+		push        func(l *State)
+		want        string
+		wantContext sets.Set[string]
+	}{
+		{
+			name: "Integer",
+			push: func(l *State) {
+				l.PushInteger(42)
+			},
+			want: "42",
+		},
+		{
+			name: "Float",
+			push: func(l *State) {
+				l.PushNumber(3.14)
+			},
+			want: "3.14",
+		},
+		{
+			name: "IntegralFloat",
+			push: func(l *State) {
+				l.PushNumber(42)
+			},
+			want: "42.0",
+		},
+		{
+			name: "String",
+			push: func(l *State) {
+				l.PushString("abc")
+			},
+			want: "abc",
+		},
+		{
+			name: "StringWithContext",
+			push: func(l *State) {
+				l.PushStringContext("abc", sets.New("def", "ghi"))
+			},
+			want:        "abc",
+			wantContext: sets.New("def", "ghi"),
+		},
+		{
+			name: "False",
+			push: func(l *State) {
+				l.PushBoolean(false)
+			},
+			want: "false",
+		},
+		{
+			name: "True",
+			push: func(l *State) {
+				l.PushBoolean(true)
+			},
+			want: "true",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state := new(State)
+			defer func() {
+				if err := state.Close(); err != nil {
+					t.Error("Close:", err)
+				}
+			}()
+
+			test.push(state)
+			got, gotContext, err := ToString(state, -1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want || !cmp.Equal(test.wantContext, gotContext, cmpopts.EquateEmpty()) {
+				t.Errorf("ToString(l, -1) = %q, %q; want %q, %q", got, gotContext, test.want, test.wantContext)
 			}
 		})
 	}

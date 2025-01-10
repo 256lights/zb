@@ -41,11 +41,10 @@ func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.S
 		if typ == lua.TypeNil {
 			return 0, lua.NewArgError(l, 1, "missing path")
 		}
-		p, err = lua.ToString(l, -1)
+		p, pcontext, err = lua.ToString(l, -1)
 		if err != nil {
 			return 0, fmt.Errorf("path: %v", err)
 		}
-		pcontext = l.StringContext(-1)
 		l.Pop(1)
 
 		typ, err = l.Field(1, "name", 0)
@@ -53,7 +52,7 @@ func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.S
 			return 0, fmt.Errorf("path: %v", err)
 		}
 		if typ != lua.TypeNil {
-			name, _ = lua.ToString(l, -1)
+			name, _, _ = lua.ToString(l, -1)
 		}
 		l.Pop(1)
 	default:

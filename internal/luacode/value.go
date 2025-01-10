@@ -7,6 +7,7 @@ package luacode
 import (
 	"math"
 	"strconv"
+	"strings"
 
 	"zb.256lights.llc/pkg/internal/lualex"
 )
@@ -151,7 +152,11 @@ func (v Value) Unquoted() (s string, isString bool) {
 		return v.s, true
 	case valueTypeFloat:
 		f, _ := v.Float64()
-		return strconv.FormatFloat(f, 'g', -1, 64), false
+		s = strconv.FormatFloat(f, 'g', -1, 64)
+		if !strings.ContainsAny(s, ".e") {
+			s += ".0"
+		}
+		return s, false
 	case valueTypeInteger:
 		i, _ := v.Int64(OnlyIntegral)
 		return strconv.FormatInt(i, 10), false

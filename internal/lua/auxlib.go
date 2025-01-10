@@ -6,7 +6,9 @@ package lua
 import (
 	"errors"
 	"fmt"
-	"strconv"
+
+	"zb.256lights.llc/pkg/internal/luacode"
+	"zb.256lights.llc/pkg/sets"
 )
 
 // LoadedTable is the key in the registry for table of loaded modules.
@@ -60,43 +62,50 @@ func CallMeta(l *State, obj int, event string) (bool, error) {
 // If the value has a metatable with a __tostring field,
 // then ToString calls the corresponding metamethod with the value as argument,
 // and uses the result of the call as its result.
-func ToString(l *State, idx int) (string, error) {
+func ToString(l *State, idx int) (string, sets.Set[string], error) {
 	idx = l.AbsIndex(idx)
 	if hasMethod, err := CallMeta(l, idx, "__tostring"); err != nil {
-		return "", err
+		return "", nil, err
 	} else if hasMethod {
 		if !l.IsString(-1) {
 			l.Pop(1)
-			return "", fmt.Errorf("lua: '__tostring' must return a string")
+			return "", nil, fmt.Errorf("lua: '__tostring' must return a string")
 		}
 		s, _ := l.ToString(idx)
+		sctx := l.StringContext(idx)
 		l.Pop(1)
-		return s, nil
+		return s, sctx, nil
 	}
 
 	switch l.Type(idx) {
 	case TypeNumber:
+		var v luacode.Value
 		if l.IsInteger(idx) {
 			n, _ := l.ToInteger(idx)
-			return strconv.FormatInt(n, 10), nil
+			v = luacode.IntegerValue(n)
+		} else {
+			n, _ := l.ToNumber(idx)
+			v = luacode.FloatValue(n)
 		}
-		n, _ := l.ToNumber(idx)
-		return strconv.FormatFloat(n, 'g', -1, 64), nil
+		s, _ := v.Unquoted()
+		return s, nil, nil
 	case TypeString:
 		s, _ := l.ToString(idx)
-		return s, nil
+		return s, l.StringContext(idx), nil
 	case TypeBoolean:
 		if l.ToBoolean(idx) {
-			return "true", nil
+			return "true", nil, nil
 		} else {
-			return "false", nil
+			return "false", nil, nil
 		}
 	case TypeNil:
-		return "nil", nil
+		return "nil", nil, nil
 	default:
 		var kind string
+		var sctx sets.Set[string]
 		if tt := Metafield(l, idx, "__name"); tt == TypeString {
 			kind, _ = l.ToString(-1)
+			sctx = l.StringContext(-1)
 			l.Pop(1)
 		} else {
 			if tt != TypeNil {
@@ -104,7 +113,7 @@ func ToString(l *State, idx int) (string, error) {
 			}
 			kind = l.Type(idx).String()
 		}
-		return fmt.Sprintf("%s: %#x", kind, l.ID(idx)), nil
+		return fmt.Sprintf("%s: %#x", kind, l.ID(idx)), sctx, nil
 	}
 }
 
