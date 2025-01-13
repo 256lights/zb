@@ -4,6 +4,7 @@
 package lualex
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 )
@@ -94,7 +95,9 @@ func ParseNumber(s string) (float64, error) {
 		toParse = s + "p0"
 	}
 	f, err := strconv.ParseFloat(toParse, 64)
-	if err != nil {
+	if errors.Is(err, strconv.ErrRange) {
+		err = nil
+	} else if err != nil {
 		err.(*strconv.NumError).Num = s
 	}
 	return f, err

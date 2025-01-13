@@ -3,7 +3,10 @@
 
 package lualex
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 var parseIntTests = []struct {
 	s    string
@@ -55,6 +58,7 @@ func TestParseNumber(t *testing.T) {
 		{s: "-INF", err: true},
 		{s: "-infinity", err: true},
 		{s: "-INFINITY", err: true},
+		{s: "-1e9999", want: math.Inf(-1)},
 		{s: "-1.0", want: -1},
 		{s: "0.0", want: 0},
 		{s: "1.0", want: 1},
@@ -68,6 +72,7 @@ func TestParseNumber(t *testing.T) {
 		{s: "0X1.921FB54442D18P+1", want: 0x1.921FB54442D18p+1},
 		{s: "0x1.fp10", want: 1984},
 		{s: "1_000_000", err: true},
+		{s: "1e9999", want: math.Inf(1)},
 		{s: "inf", err: true},
 		{s: "INF", err: true},
 		{s: "infinity", err: true},

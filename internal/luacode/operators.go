@@ -240,10 +240,14 @@ func floatDivide(v1, v2 float64) float64 {
 		// We handle this case ourselves
 		// because as per https://go.dev/ref/spec#Floating_point_operators,
 		// "whether a run-time panic occurs [on division by zero] is implementation-specific."
-		if math.Signbit(v1) != math.Signbit(v2) {
+		switch {
+		case v1 == 0:
+			return math.NaN()
+		case math.Signbit(v1) != math.Signbit(v2):
 			return math.Inf(-1)
+		default:
+			return math.Inf(1)
 		}
-		return math.Inf(1)
 	}
 	return v1 / v2
 }

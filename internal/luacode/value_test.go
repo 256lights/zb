@@ -8,29 +8,45 @@ import (
 	"testing"
 )
 
-func TestValueUnquoted(t *testing.T) {
-	tests := []struct {
-		value    Value
-		want     string
-		isString bool
-	}{
-		{Value{}, "", false},
-		{BoolValue(false), "", false},
-		{BoolValue(true), "", false},
-		{IntegerValue(42), "42", false},
-		{FloatValue(42), "42.0", false},
-		{FloatValue(3.14), "3.14", false},
-		{FloatValue(math.NaN()), "nan", false},
-		{FloatValue(math.Inf(1)), "inf", false},
-		{FloatValue(math.Inf(-1)), "-inf", false},
-		{StringValue(""), "", true},
-		{StringValue("abc"), "abc", true},
-	}
+var valueStringTests = []struct {
+	value       Value
+	luaConstant string
+	toString    string
+	isString    bool
+}{
+	{Value{}, "nil", "", false},
+	{BoolValue(false), "false", "", false},
+	{BoolValue(true), "true", "", false},
+	{IntegerValue(0), "0", "0", false},
+	{IntegerValue(42), "42", "42", false},
+	{IntegerValue(-42), "-42", "-42", false},
+	{IntegerValue(math.MaxInt64), "9223372036854775807", "9223372036854775807", false},
+	{IntegerValue(math.MinInt64), "0x8000000000000000", "-9223372036854775808", false},
+	{FloatValue(0), "0.0", "0.0", false},
+	{FloatValue(math.Copysign(0, -1)), "(1/-1e9999)", "-0.0", false},
+	{FloatValue(42), "42.0", "42.0", false},
+	{FloatValue(3.14), "3.14", "3.14", false},
+	{FloatValue(math.NaN()), "(0/0)", "nan", false},
+	{FloatValue(math.Inf(1)), "1e9999", "inf", false},
+	{FloatValue(math.Inf(-1)), "-1e9999", "-inf", false},
+	{StringValue(""), `""`, "", true},
+	{StringValue("abc"), `"abc"`, "abc", true},
+	{StringValue("abc\ndef"), `"abc\ndef"`, "abc\ndef", true},
+}
 
-	for _, test := range tests {
+func TestValueUnquoted(t *testing.T) {
+	for _, test := range valueStringTests {
 		got, isString := test.value.Unquoted()
-		if got != test.want || isString != test.isString {
-			t.Errorf("%v.Unquoted() = %q, %t; want %q, %t", test.value, got, isString, test.want, test.isString)
+		if want := test.toString; got != want || isString != test.isString {
+			t.Errorf("%v.Unquoted() = %q, %t; want %q, %t", test.value, got, isString, want, test.isString)
+		}
+	}
+}
+
+func TestValueString(t *testing.T) {
+	for _, test := range valueStringTests {
+		if got, want := test.value.String(), test.luaConstant; got != want {
+			t.Errorf("%v.String() = %q; want %q", test.value, got, want)
 		}
 	}
 }

@@ -4,7 +4,35 @@
 
 package luacode
 
-import "testing"
+import (
+	"errors"
+	"math"
+	"testing"
+)
+
+func TestArithmetic(t *testing.T) {
+	tests := []struct {
+		op   ArithmeticOperator
+		p1   Value
+		p2   Value
+		want Value
+		err  error
+	}{
+		{op: Add, p1: IntegerValue(2), p2: IntegerValue(2), want: IntegerValue(4)},
+		{op: Divide, p1: FloatValue(36), p2: FloatValue(4), want: FloatValue(9)},
+		{op: Divide, p1: FloatValue(0), p2: FloatValue(0), want: FloatValue(math.NaN())},
+		{op: Divide, p1: FloatValue(1), p2: FloatValue(0), want: FloatValue(math.Inf(1))},
+		{op: Divide, p1: FloatValue(-1), p2: FloatValue(0), want: FloatValue(math.Inf(-1))},
+		{op: Divide, p1: FloatValue(1), p2: FloatValue(math.Inf(-1)), want: FloatValue(math.Copysign(0, -1))},
+	}
+
+	for _, test := range tests {
+		if got, err := Arithmetic(test.op, test.p1, test.p2); !got.IdenticalTo(test.want) || !errors.Is(err, test.err) {
+			t.Errorf("Arithmetic(%v, %v, %v) = %v, %v; want %v, %v",
+				test.op, test.p1, test.p2, got, err, test.want, test.err)
+		}
+	}
+}
 
 func TestUnaryOperatorToOpCode(t *testing.T) {
 	tests := []struct {

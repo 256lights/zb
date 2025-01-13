@@ -175,6 +175,7 @@ func (v Value) Unquoted() (s string, isString bool) {
 }
 
 // String returns the value as a Lua constant.
+// Equivalent to string.format("%q", v) in Lua.
 func (v Value) String() string {
 	switch v.t {
 	case valueTypeNil:
@@ -183,13 +184,36 @@ func (v Value) String() string {
 		return "false"
 	case valueTypeTrue:
 		return "true"
-	case valueTypeFloat, valueTypeInteger:
+	case valueTypeFloat:
+		switch f, _ := v.Float64(); {
+		case math.IsNaN(f):
+			return "(0/0)"
+		case math.IsInf(f, 1):
+			return "1e9999"
+		case math.IsInf(f, -1):
+			return "-1e9999"
+		case f == 0 && math.Signbit(f):
+			return "(1/-1e9999)"
+		default:
+			s, _ := v.Unquoted()
+			return s
+		}
+	case valueTypeInteger:
+		if int64(v.bits) == math.MinInt64 {
+			// Corner case: the absolute value of the most negative integer overflows,
+			// causing it to be interpreted as a float.
+			// As per the Lua lexical rules,
+			// hex literals without exponents or radix points
+			// are always interpreted as unsigned integers
+			// that are casted and truncated to the integer type.
+			return "0x8000000000000000"
+		}
 		s, _ := v.Unquoted()
 		return s
 	case valueTypeString:
 		return lualex.Quote(v.s)
 	default:
-		return "<invalid value>"
+		return `error("invalid value")`
 	}
 }
 
