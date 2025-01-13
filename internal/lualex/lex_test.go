@@ -343,6 +343,9 @@ func FuzzQuote(f *testing.F) {
 	f.Add("Hello, 世界")
 	f.Add("abc\nxyz")
 	f.Add("abc\x00xyz")
+	f.Add("\x00\x01\x023\x05\x009")
+	f.Add("\x00\xe4\x00b8c\x00")
+	f.Add("\x7f\x80")
 
 	f.Fuzz(func(t *testing.T, s string) {
 		luaString := Quote(s)

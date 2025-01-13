@@ -676,6 +676,12 @@ func Quote(s string) string {
 			sb.WriteRune(c)
 		case isPrint(c):
 			sb.WriteRune(c)
+		case c == 0:
+			if len(s) > size && isDigit(s[size]) {
+				sb.WriteString(`\x00`)
+			} else {
+				sb.WriteString(`\0`)
+			}
 		case c == '\a':
 			sb.WriteString(`\a`)
 		case c == '\b':
@@ -690,6 +696,9 @@ func Quote(s string) string {
 			sb.WriteString(`\t`)
 		case c == '\v':
 			sb.WriteString(`\v`)
+		case c < 0x80:
+			sb.WriteString(`\x`)
+			fmt.Fprintf(sb, "%02x", c)
 		default:
 			sb.WriteString(`\u{`)
 			fmt.Fprintf(sb, "%x", c)
