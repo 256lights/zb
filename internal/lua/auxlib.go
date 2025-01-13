@@ -143,6 +143,16 @@ func CheckInteger(l *State, arg int) (int64, error) {
 	return d, nil
 }
 
+// CheckNumber checks whether the function argument arg is a number
+// and returns this number.
+func CheckNumber(l *State, arg int) (float64, error) {
+	d, ok := l.ToNumber(arg)
+	if !ok {
+		return 0, NewTypeError(l, arg, TypeNumber.String())
+	}
+	return d, nil
+}
+
 // NewMetatable gets or creates a table in the registry
 // to be used as a metatable for userdata.
 // If the table is created, adds the pair __name = tname,
