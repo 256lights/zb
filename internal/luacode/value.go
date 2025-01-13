@@ -151,12 +151,20 @@ func (v Value) Unquoted() (s string, isString bool) {
 	case valueTypeString:
 		return v.s, true
 	case valueTypeFloat:
-		f, _ := v.Float64()
+		switch f, _ := v.Float64(); {
+		case math.IsNaN(f):
+			return "nan", false
+		case math.IsInf(f, 1):
+			return "inf", false
+		case math.IsInf(f, -1):
+			return "-inf", false
+		default:
 		s = strconv.FormatFloat(f, 'g', -1, 64)
 		if !strings.ContainsAny(s, ".e") {
 			s += ".0"
 		}
 		return s, false
+		}
 	case valueTypeInteger:
 		i, _ := v.Int64(OnlyIntegral)
 		return strconv.FormatInt(i, 10), false

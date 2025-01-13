@@ -3,7 +3,10 @@
 
 package luacode
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestValueUnquoted(t *testing.T) {
 	tests := []struct {
@@ -17,6 +20,9 @@ func TestValueUnquoted(t *testing.T) {
 		{IntegerValue(42), "42", false},
 		{FloatValue(42), "42.0", false},
 		{FloatValue(3.14), "3.14", false},
+		{FloatValue(math.NaN()), "nan", false},
+		{FloatValue(math.Inf(1)), "inf", false},
+		{FloatValue(math.Inf(-1)), "-inf", false},
 		{StringValue(""), "", true},
 		{StringValue("abc"), "abc", true},
 	}
