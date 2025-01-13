@@ -7,8 +7,7 @@ package luacode
 import (
 	"errors"
 	"fmt"
-	"slices"
-	"unique"
+	"hash/maphash"
 )
 
 // funcState is the mutable state associated with a [Prototype]
@@ -41,9 +40,12 @@ type funcState struct {
 	// when returning.
 	needClose bool
 
-	// constantTable will be copied into the [Prototype] Constants field,
-	// but uses [unique.Handle] to speed up lookups during build.
-	constantTable []unique.Handle[Value]
+	// constantsIndex is a mapping of [Value]
+	// to their indices in the [Prototype] Constants table.
+	// The key for a [Value] v is determined by hashValue(v).
+	constantsIndex map[uint64][]int
+	// constantsIndexSeed is used to hash the values for constantsIndex.
+	constantsIndexSeed maphash.Seed
 
 	lineInfoWriter lineInfoWriter
 }
@@ -69,11 +71,6 @@ type blockControl struct {
 //
 // Equivalent to `luaK_finish` in upstream Lua.
 func (fs *funcState) finish() error {
-	fs.Constants = make([]Value, len(fs.constantTable))
-	for i, handle := range fs.constantTable {
-		fs.Constants[i] = handle.Value()
-	}
-
 	for i, instruction := range fs.Code {
 		if i > 0 && fs.Code[i-1].IsOutTop() != instruction.IsInTop() {
 			return fmt.Errorf("internal error: instruction %d: %v follows %v",
@@ -410,16 +407,21 @@ func (fs *funcState) markToBeClosed() {
 	fs.needClose = true
 }
 
-// addConstant either inserts a constant into the function's Constants table
+// addConstant either inserts a constant into the [Prototype] Constants table
 // and returns the index of the constant
 // or returns the index of an existing identical constant in the table.
 //
 // Equivalent to `addk` in upstream Lua.
 func (fs *funcState) addConstant(k Value) int {
-	kHandle := unique.Make(k)
-	if i := slices.Index(fs.constantTable, kHandle); i >= 0 {
-		return i
+	kHash := k.hash(fs.constantsIndexSeed)
+	entries := fs.constantsIndex[kHash]
+	for _, i := range entries {
+		if k.IdenticalTo(fs.Constants[i]) {
+			return i
+		}
 	}
-	fs.constantTable = append(fs.constantTable, kHandle)
-	return len(fs.constantTable) - 1
+	fs.Constants = append(fs.Constants, k)
+	i := len(fs.Constants) - 1
+	fs.constantsIndex[kHash] = append(entries, i)
+	return i
 }

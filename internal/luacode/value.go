@@ -5,6 +5,7 @@
 package luacode
 
 import (
+	"hash/maphash"
 	"math"
 	"strconv"
 	"strings"
@@ -36,8 +37,8 @@ func (t valueType) noVariant() valueType {
 // Value is a subset of Lua values that can be used as constants:
 // nil, booleans, floats, integers, and strings.
 // The zero value is nil.
-// Values can be compared for equality with the == operator.
 type Value struct {
+	_    [0]func() // Prevent comparing with "==".
 	bits uint64
 	s    string
 	t    valueType
@@ -159,11 +160,11 @@ func (v Value) Unquoted() (s string, isString bool) {
 		case math.IsInf(f, -1):
 			return "-inf", false
 		default:
-		s = strconv.FormatFloat(f, 'g', -1, 64)
-		if !strings.ContainsAny(s, ".e") {
-			s += ".0"
-		}
-		return s, false
+			s = strconv.FormatFloat(f, 'g', -1, 64)
+			if !strings.ContainsAny(s, ".e") {
+				s += ".0"
+			}
+			return s, false
 		}
 	case valueTypeInteger:
 		i, _ := v.Int64(OnlyIntegral)
@@ -200,6 +201,12 @@ func (v Value) Equal(v2 Value) bool {
 	case valueTypeNil, valueTypeFalse, valueTypeTrue:
 		return v.t == v2.t
 	case valueTypeFloat:
+		if v2.IsInteger() {
+			// Float must have integer value to be equal.
+			i1, ok := v.Int64(OnlyIntegral)
+			i2, _ := v2.Int64(OnlyIntegral)
+			return ok && i1 == i2
+		}
 		f1, _ := v.Float64()
 		f2, ok := v2.Float64()
 		return ok && f1 == f2
@@ -212,6 +219,42 @@ func (v Value) Equal(v2 Value) bool {
 	default:
 		return false
 	}
+}
+
+// IdenticalTo reports whether two values represent the same value.
+// This is mostly the same as [Value.Equal],
+// but will report true for two NaNs, for example.
+func (v Value) IdenticalTo(v2 Value) bool {
+	if v.t != v2.t {
+		return false
+	}
+	switch v.t.noVariant() {
+	case valueTypeNil, valueTypeBoolean:
+		return true
+	case valueTypeString:
+		return v.s == v2.s
+	default:
+		return v.bits == v2.bits
+	}
+}
+
+// hash returns a hash value for v
+// such that if v1.IdenticalTo(v2),
+// then v1.hash(seed) == v2.hash(seed).
+func (v Value) hash(seed maphash.Seed) uint64 {
+	var h maphash.Hash
+	h.SetSeed(seed)
+	h.WriteByte(byte(v.t))
+	switch v.t.noVariant() {
+	case valueTypeNumber:
+		for i := range 64 / 8 {
+			h.WriteByte(byte(v.bits >> (i * 8)))
+		}
+	case valueTypeString:
+		s, _ := v.Unquoted()
+		h.WriteString(s)
+	}
+	return h.Sum64()
 }
 
 // FloatToIntegerMode is an enumeration of rounding modes for [FloatToInteger].

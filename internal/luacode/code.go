@@ -343,7 +343,7 @@ func (p *parser) codeIndexed(fs *funcState, t, k expressionDescriptor) (expressi
 	isKstr := k.kind == expressionKindConstant &&
 		!k.hasJumps() &&
 		k.constantIndex() <= maxArgB &&
-		fs.constantTable[k.constantIndex()].Value().isShortString()
+		fs.Constants[k.constantIndex()].isShortString()
 	if t.kind == expressionKindUpvalue && !isKstr {
 		// [OpGetTabUp] can only index short strings.
 		// Copy the table from an upvalue to a register.

@@ -7,6 +7,7 @@ package luacode
 import (
 	"errors"
 	"fmt"
+	"hash/maphash"
 	"io"
 	"slices"
 	"strings"
@@ -175,12 +176,17 @@ func (p *parser) openFunction(prev *funcState, f *Prototype) *funcState {
 		prev:      prev,
 		Prototype: f,
 
+		constantsIndex: make(map[uint64][]int),
+
 		previousLine: f.LineDefined,
 		firstLocal:   len(p.activeVariables),
 		firstLabel:   len(p.labels),
 	}
 	if prev != nil {
 		prev.Functions = append(prev.Functions, f)
+		fs.constantsIndexSeed = prev.constantsIndexSeed
+	} else {
+		fs.constantsIndexSeed = maphash.MakeSeed()
 	}
 	p.enterBlock(fs, false)
 	return fs

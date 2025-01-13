@@ -13,6 +13,7 @@ import (
 )
 
 var prototypeDiffOptions = cmp.Options{
+	cmp.Comparer(Value.IdenticalTo),
 	lineInfoCompareOption,
 	cmpopts.EquateEmpty(),
 }
