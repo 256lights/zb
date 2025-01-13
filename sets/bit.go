@@ -180,6 +180,35 @@ func (s *Bit) Clear() {
 	}
 }
 
+// Equal reports whether s and s2 contain the same elements.
+func (s *Bit) Equal(s2 *Bit) bool {
+	var words1, words2 []uint64
+	if s != nil {
+		words1 = s.words
+	}
+	if s2 != nil {
+		words2 = s2.words
+	}
+
+	common := min(len(words1), len(words2))
+	for i := range common {
+		if words1[i] != words2[i] {
+			return false
+		}
+	}
+	for _, word := range words1[common:] {
+		if word != 0 {
+			return false
+		}
+	}
+	for _, word := range words2[common:] {
+		if word != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // Format implements [fmt.Formatter]
 // by formatting its elements according to the printer state and verb
 // surrounded by braces.
