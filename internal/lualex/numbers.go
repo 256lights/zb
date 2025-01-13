@@ -24,14 +24,37 @@ func ParseInt(s string) (int64, error) {
 			Err:  strconv.ErrSyntax,
 		}
 	}
-	switch h, isHex := cutHexPrefix(withoutSign); {
-	case isHex && !neg:
-		return strconv.ParseInt(h, 16, 64)
-	case isHex && neg:
-		return strconv.ParseInt("-"+h, 16, 64)
-	default:
-		return strconv.ParseInt(s, 10, 64)
+
+	if h, isHex := cutHexPrefix(withoutSign); isHex {
+		// “Hexadecimal numerals with neither a radix point nor an exponent
+		// always denote an integer value;
+		// if the value overflows, it wraps around to fit into a valid integer.”
+		const maxHexDigits = 64 / 8 * 2
+
+		if len(h) > maxHexDigits {
+			// "Wrapping around" is consistent with truncating to 64 least-significant bits
+			// and converting to a signed integer.
+			i := len(h) - maxHexDigits
+			for _, b := range []byte(h[:i]) {
+				if _, err := hexDigit(b); err != nil {
+					return 0, &strconv.NumError{
+						Func: "ParseInt",
+						Num:  s,
+						Err:  strconv.ErrSyntax,
+					}
+				}
+			}
+			h = h[i:]
+		}
+
+		x, err := strconv.ParseUint(h, 16, 64)
+		if neg {
+			return int64(-x), err
+		}
+		return int64(x), err
 	}
+
+	return strconv.ParseInt(s, 10, 64)
 }
 
 // ParseNumber converts the given string to a 64-bit floating-point number
@@ -56,6 +79,17 @@ func ParseNumber(s string) (float64, error) {
 	toParse := s
 	if (strings.HasPrefix(withoutSign, "0x") || strings.HasPrefix(withoutSign, "0X")) &&
 		!strings.ContainsAny(s, "pP") {
+		if !strings.Contains(s, ".") {
+			// “Hexadecimal numerals with neither a radix point nor an exponent
+			// always denote an integer value;
+			// if the value overflows, it wraps around to fit into a valid integer.”
+			i, err := ParseInt(s)
+			if err != nil {
+				err.(*strconv.NumError).Func = "ParseNumber"
+			}
+			return float64(i), err
+		}
+
 		// Go hex float literals must have an exponent.
 		toParse = s + "p0"
 	}
