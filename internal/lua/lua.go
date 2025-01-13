@@ -602,8 +602,9 @@ func (l *State) ToString(idx int) (s string, ok bool) {
 	case stringValue:
 		return v.s, true
 	case valueStringer:
-		*p = v.stringValue()
-		return s, true
+		sv := v.stringValue()
+		*p = sv
+		return sv.s, true
 	default:
 		return "", false
 	}

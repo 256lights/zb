@@ -71,8 +71,8 @@ func ToString(l *State, idx int) (string, sets.Set[string], error) {
 			l.Pop(1)
 			return "", nil, fmt.Errorf("lua: '__tostring' must return a string")
 		}
-		s, _ := l.ToString(idx)
-		sctx := l.StringContext(idx)
+		s, _ := l.ToString(-1)
+		sctx := l.StringContext(-1)
 		l.Pop(1)
 		return s, sctx, nil
 	}
