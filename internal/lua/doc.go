@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 /*
-Package lua implements a Lua virtual machine.
+Package lua implements a Lua 5.4 virtual machine.
 It is similar to the de facto C Lua implementation,
 but takes advantage of the Go runtime and garbage collector.
 
@@ -28,6 +28,12 @@ However, there are some differences:
     Full userdata holds an “any” value, which is more flexible in Go.
   - There is no lua_topointer, but you can use [*State.ID] for similar purposes.
   - [State] does not have to be closed: the Go garbage collector fully manages its resources.
+
+# Differences from de facto C implementation
+
+  - The “__gc” (finalizer) metamethod is never called.
+    Use “__close” instead, as the semantics are well-defined.
+  - Weak tables (i.e. the “__mode” metafield) are not supported.
 
 [Lua C API]: https://www.lua.org/manual/5.4/manual.html#4
 [auxiliary library]: https://www.lua.org/manual/5.4/manual.html#5
