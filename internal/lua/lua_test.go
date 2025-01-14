@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -229,6 +230,18 @@ func TestCompare(t *testing.T) {
 			want: compareTable{
 				Equal:       1,
 				Less:        0,
+				LessOrEqual: 1,
+			},
+		},
+		{
+			name: "MaxIntNegativeMinInt",
+			push: func(l *State) {
+				l.PushInteger(math.MaxInt)
+				l.PushNumber(float64(-math.MinInt))
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        1,
 				LessOrEqual: 1,
 			},
 		},

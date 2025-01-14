@@ -6,6 +6,7 @@ package lua
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"sync"
 
 	"zb.256lights.llc/pkg/internal/luacode"
@@ -142,10 +143,11 @@ func compareValues(v1, v2 value) int {
 			return 0
 		}
 	case floatValue:
-		switch v2.(type) {
-		case integerValue, floatValue:
-			f2, _ := toNumber(v2)
-			return cmp.Compare(v1, f2)
+		switch v2 := v2.(type) {
+		case floatValue:
+			return cmp.Compare(v1, v2)
+		case integerValue:
+			return -compareIntFloat(v2, v1)
 		default:
 			return cmp.Compare(TypeNumber, valueType(v2))
 		}
@@ -154,7 +156,7 @@ func compareValues(v1, v2 value) int {
 		case integerValue:
 			return cmp.Compare(v1, v2)
 		case floatValue:
-			return cmp.Compare(floatValue(v1), v2)
+			return compareIntFloat(v1, v2)
 		default:
 			return cmp.Compare(TypeNumber, valueType(v2))
 		}
@@ -184,6 +186,36 @@ func compareValues(v1, v2 value) int {
 		return cmp.Compare(v1.id, u2.id)
 	default:
 		panic("unhandled type")
+	}
+}
+
+// compareIntFloat returns
+//
+//   - -1 if i is less than f
+//   - 0 if i equals f
+//   - +1 if i is greater than f
+func compareIntFloat(i integerValue, f floatValue) int {
+	if i.fitsInFloat() {
+		return cmp.Compare(floatValue(i), f)
+	}
+
+	floor := math.Floor(float64(f))
+	if floor < math.MinInt64 {
+		// f is less than any integer.
+		return 1
+	}
+	if floor >= -math.MinInt64 {
+		// f is greater than any integer.
+		return -1
+	}
+	fi := integerValue(floor)
+	switch {
+	case i > fi:
+		return 1
+	case i == fi && floor == float64(f):
+		return 0
+	default:
+		return -1
 	}
 }
 
@@ -313,6 +345,12 @@ func (v integerValue) toInteger() (integerValue, bool) { return v, true }
 func (v integerValue) stringValue() stringValue {
 	s, _ := luacode.IntegerValue(int64(v)).Unquoted()
 	return stringValue{s: s}
+}
+
+func (v integerValue) fitsInFloat() bool {
+	const float64MantissaBits = 53
+	const maxIntegerFitsInFloat64 = 1 << float64MantissaBits
+	return maxIntegerFitsInFloat64+uint64(v) <= 2*maxIntegerFitsInFloat64
 }
 
 // floatValue is a floating-point [value].
