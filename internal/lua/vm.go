@@ -400,7 +400,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			rb, err := register(r, i.ArgA())
+			rb, err := register(r, i.ArgB())
 			if err != nil {
 				return err
 			}

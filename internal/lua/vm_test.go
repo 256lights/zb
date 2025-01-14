@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"zb.256lights.llc/pkg/internal/lualex"
 )
 
 func TestVM(t *testing.T) {
@@ -589,5 +591,35 @@ func TestVM(t *testing.T) {
 		if got, ok := state.ToNumber(-1); got != want || !ok {
 			t.Errorf("(return value, is number) = (%g, %t); want (%g, true)", got, ok, want)
 		}
+	})
+
+	t.Run("SetTable", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const source = `local a = {}` + "\n" +
+			// The index cannot be a constant.
+			`for i = 1,1 do a[i] = "xuxu" end` + "\n" +
+			"return a\n"
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(0, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+
+		if got, err := Len(state, -1); got != 1 || err != nil {
+			t.Errorf("Len(state, -1) = %d, %v; want 1, <nil>", got, err)
+		}
+		if got, want := state.RawIndex(-1, 1), TypeString; got != want {
+			t.Errorf("type(a[1]) = %v; want %v", got, want)
+		} else if got, _ := state.ToString(-1); got != "xuxu" {
+			t.Errorf("a[1] = %s; want %s", lualex.Quote(got), lualex.Quote("xuxu"))
+		}
+		state.Pop(1)
 	})
 }
