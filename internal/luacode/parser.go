@@ -229,9 +229,23 @@ func (p *parser) closeFunction(fs *funcState) error {
 // Equivalent to `leaveblock` in upstream Lua.
 func (p *parser) leaveBlock(fs *funcState) error {
 	bl := fs.blocks
-	// Get the level outside the block.
-	stackLevel := p.registerLevel(fs, int(bl.numActiveVariables))
+
+	// Adjust pending gotos to enclosing block.
+	//
+	// This occurs earlier than in the C Lua implementation
+	// because it reads from p.activeVariables,
+	// which is potentially shortened by the call to p.removeVariables.
+	// In C, this is okay because we haven't modified the variables yet or reallocated the array,
+	// but in Go, this causes an out-of-bounds panic.
+	// p.moveGotosOut only modifies p.pendingGotos,
+	// which is not used by other parts of leaveBlock,
+	// so this modification is safe (and seems more correct than upstream).
+	if err := p.moveGotosOut(fs, bl); err != nil {
+		return err
+	}
+
 	// Remove block locals.
+	stackLevelOutsideBlock := p.registerLevel(fs, int(bl.numActiveVariables))
 	p.removeVariables(fs, int(bl.numActiveVariables))
 	hasClose := false
 	if bl.isLoop {
@@ -244,17 +258,25 @@ func (p *parser) leaveBlock(fs *funcState) error {
 	}
 	if !hasClose && bl.prev != nil && bl.upval {
 		// Still needs a close.
-		p.code(fs, ABCInstruction(OpClose, uint8(stackLevel), 0, 0, false))
+		p.code(fs, ABCInstruction(OpClose, uint8(stackLevelOutsideBlock), 0, 0, false))
 	}
-	fs.firstFreeRegister = stackLevel
+	fs.firstFreeRegister = stackLevelOutsideBlock
 	p.labels = slices.Delete(p.labels, bl.firstLabel, len(p.labels))
 	fs.blocks = bl.prev
-	if bl.prev != nil {
-		// Nested block: updating pending gotos to enclosing block.
-		p.moveGotosOut(fs, bl)
-	} else if bl.firstGoto < len(p.pendingGotos) {
-		// There are still pending gotos.
-		gt := p.pendingGotos[bl.firstGoto]
+	return nil
+}
+
+// moveGotosOut adjusts pending gotos to the block that encloses bl.
+//
+// Roughly equivalent to `movegotosout` in upstream Lua,
+// but inlines part of `leaveblock` for clarity.
+func (p *parser) moveGotosOut(fs *funcState, bl *blockControl) error {
+	stackLevel := p.registerLevel(fs, int(bl.numActiveVariables))
+	gotosForBlock := p.pendingGotos[bl.firstGoto:]
+
+	if len(gotosForBlock) > 0 && bl.prev == nil {
+		// No enclosing block.
+		gt := gotosForBlock[0]
 		var msg string
 		if gt.name == breakLabel {
 			msg = fmt.Sprintf("break outside loop at %v", gt.position)
@@ -263,21 +285,17 @@ func (p *parser) leaveBlock(fs *funcState) error {
 		}
 		return syntaxError(fs.Source, lualex.Token{Position: p.curr.Position}, msg)
 	}
-	return nil
-}
 
-// moveGotosOut adjusts pending gotos to outer level of a block.
-//
-// Equivalent to `movegotosout` in upstream Lua.
-func (p *parser) moveGotosOut(fs *funcState, bl *blockControl) {
-	for i := bl.firstGoto; i < len(p.pendingGotos); i++ {
-		gt := &p.pendingGotos[i]
-		if p.registerLevel(fs, int(gt.numActiveVariables)) > p.registerLevel(fs, int(bl.numActiveVariables)) {
+	for i := range gotosForBlock {
+		gt := &gotosForBlock[i]
+		if p.registerLevel(fs, int(gt.numActiveVariables)) > stackLevel {
 			// If we're leaving a variable scope, the jump may need a close.
 			gt.close = gt.close || bl.upval
 		}
 		gt.numActiveVariables = bl.numActiveVariables
 	}
+
+	return nil
 }
 
 // block parses a block production.
