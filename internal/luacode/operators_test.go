@@ -24,6 +24,9 @@ func TestArithmetic(t *testing.T) {
 		{op: Divide, p1: FloatValue(1), p2: FloatValue(0), want: FloatValue(math.Inf(1))},
 		{op: Divide, p1: FloatValue(-1), p2: FloatValue(0), want: FloatValue(math.Inf(-1))},
 		{op: Divide, p1: FloatValue(1), p2: FloatValue(math.Inf(-1)), want: FloatValue(math.Copysign(0, -1))},
+		{op: IntegerDivide, p1: IntegerValue(-0x8000000000000000), p2: IntegerValue(-1), want: IntegerValue(-0x8000000000000000)},
+		{op: IntegerDivide, p1: IntegerValue(-16), p2: IntegerValue(3), want: IntegerValue(-6)},
+		{op: IntegerDivide, p1: FloatValue(-16), p2: FloatValue(3), want: FloatValue(-6)},
 	}
 
 	for _, test := range tests {

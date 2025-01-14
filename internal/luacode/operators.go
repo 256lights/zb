@@ -172,7 +172,14 @@ func intArithmetic(op ArithmeticOperator, v1, v2 int64) (int64, error) {
 		if v2 == 0 {
 			return 0, ErrDivideByZero
 		}
-		return v1 / v2, nil
+		q := v1 / v2
+		if v1^v2 < 0 && v1%v2 != 0 {
+			// v1/v2 is a negative non-integer
+			// and Go's integer division truncates toward zero.
+			// Lua uses floor rounding.
+			q--
+		}
+		return q, nil
 	case BitwiseAnd:
 		return v1 & v2, nil
 	case BitwiseOr:
