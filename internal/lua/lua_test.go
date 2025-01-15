@@ -246,6 +246,42 @@ func TestCompare(t *testing.T) {
 			},
 		},
 		{
+			name: "NaNZero",
+			push: func(l *State) {
+				l.PushNumber(math.NaN())
+				l.PushNumber(0)
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        0,
+				LessOrEqual: 0,
+			},
+		},
+		{
+			name: "NaNIntegerZero",
+			push: func(l *State) {
+				l.PushNumber(math.NaN())
+				l.PushInteger(0)
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        0,
+				LessOrEqual: 0,
+			},
+		},
+		{
+			name: "TwoNaNs",
+			push: func(l *State) {
+				l.PushNumber(math.NaN())
+				l.PushNumber(math.NaN())
+			},
+			want: compareTable{
+				Equal:       0,
+				Less:        0,
+				LessOrEqual: 0,
+			},
+		},
+		{
 			name: "FloatInteger",
 			push: func(l *State) {
 				l.PushNumber(42)

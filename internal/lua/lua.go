@@ -731,8 +731,8 @@ func (l *State) compare(op ComparisonOperator, v1, v2 value) (bool, error) {
 	case Less, LessOrEqual:
 		t1, t2 := valueType(v1), valueType(v2)
 		if t1 == TypeNumber && t2 == TypeNumber || t1 == TypeString && t2 == TypeString {
-			result := compareValues(v1, v2)
-			return result < 0 || result == 0 && op == LessOrEqual, nil
+			result, comparedWithNaN := compareValues(v1, v2)
+			return !comparedWithNaN && (result < 0 || result == 0 && op == LessOrEqual), nil
 		}
 		var event luacode.TagMethod
 		switch op {

@@ -116,9 +116,11 @@ func exportNumericConstant(v value) (_ luacode.Value, ok bool) {
 //
 // Values of differing types are compared by their [Type] values.
 //
-// For [floatValue], a NaN is considered less than any non-NaN,
+// For numbers, a NaN is considered less than any non-NaN,
 // a NaN is considered equal to a NaN,
 // and -0.0 is equal to 0.0.
+// comparedWithNaN will be true if both arguments are numbers
+// and at least one of them is a NaN.
 //
 // This is a superset of the comparisons performed by [Lua relational operators]
 // for the purpose of providing a total ordering for tables.
@@ -126,64 +128,64 @@ func exportNumericConstant(v value) (_ luacode.Value, ok bool) {
 // If you only need to check for equality, [valuesEqual] is more efficient.
 //
 // [Lua relational operators]: https://www.lua.org/manual/5.4/manual.html#3.4.4
-func compareValues(v1, v2 value) int {
+func compareValues(v1, v2 value) (_ int, comparedWithNaN bool) {
 	switch v1 := v1.(type) {
 	case nil:
-		return cmp.Compare(TypeNil, valueType(v2))
+		return cmp.Compare(TypeNil, valueType(v2)), false
 	case booleanValue:
 		b2, ok := v2.(booleanValue)
 		switch {
 		case !ok:
-			return cmp.Compare(TypeBoolean, valueType(v2))
+			return cmp.Compare(TypeBoolean, valueType(v2)), false
 		case bool(v1 && !b2):
-			return 1
+			return 1, false
 		case bool(!v1 && b2):
-			return -1
+			return -1, false
 		default:
-			return 0
+			return 0, false
 		}
 	case floatValue:
 		switch v2 := v2.(type) {
 		case floatValue:
-			return cmp.Compare(v1, v2)
+			return cmp.Compare(v1, v2), math.IsNaN(float64(v1)) || math.IsNaN(float64(v2))
 		case integerValue:
-			return -compareIntFloat(v2, v1)
+			return -compareIntFloat(v2, v1), math.IsNaN(float64(v1))
 		default:
-			return cmp.Compare(TypeNumber, valueType(v2))
+			return cmp.Compare(TypeNumber, valueType(v2)), false
 		}
 	case integerValue:
 		switch v2 := v2.(type) {
 		case integerValue:
-			return cmp.Compare(v1, v2)
+			return cmp.Compare(v1, v2), false
 		case floatValue:
-			return compareIntFloat(v1, v2)
+			return compareIntFloat(v1, v2), math.IsNaN(float64(v2))
 		default:
-			return cmp.Compare(TypeNumber, valueType(v2))
+			return cmp.Compare(TypeNumber, valueType(v2)), false
 		}
 	case stringValue:
 		s2, ok := v2.(stringValue)
 		if !ok {
-			return cmp.Compare(TypeString, valueType(v2))
+			return cmp.Compare(TypeString, valueType(v2)), false
 		}
-		return cmp.Compare(v1.s, s2.s)
+		return cmp.Compare(v1.s, s2.s), false
 	case *table:
 		t2, ok := v2.(*table)
 		if !ok {
-			return cmp.Compare(TypeTable, valueType(v2))
+			return cmp.Compare(TypeTable, valueType(v2)), false
 		}
-		return cmp.Compare(v1.id, t2.id)
+		return cmp.Compare(v1.id, t2.id), false
 	case function:
 		f2, ok := v2.(function)
 		if !ok {
-			return cmp.Compare(TypeFunction, valueType(v2))
+			return cmp.Compare(TypeFunction, valueType(v2)), false
 		}
-		return cmp.Compare(v1.functionID(), f2.functionID())
+		return cmp.Compare(v1.functionID(), f2.functionID()), false
 	case *userdata:
 		u2, ok := v2.(*userdata)
 		if !ok {
-			return cmp.Compare(TypeTable, valueType(v2))
+			return cmp.Compare(TypeTable, valueType(v2)), false
 		}
-		return cmp.Compare(v1.id, u2.id)
+		return cmp.Compare(v1.id, u2.id), false
 	default:
 		panic("unhandled type")
 	}
@@ -194,6 +196,10 @@ func compareValues(v1, v2 value) int {
 //   - -1 if i is less than f
 //   - 0 if i equals f
 //   - +1 if i is greater than f
+//
+// Like [cmp.Compare], NaN is considered less than any non-NaN,
+// a NaN is considered equal to a NaN,
+// and -0.0 is equal to 0.0.
 func compareIntFloat(i integerValue, f floatValue) int {
 	if i.fitsInFloat() {
 		return cmp.Compare(floatValue(i), f)

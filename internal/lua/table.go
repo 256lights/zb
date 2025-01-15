@@ -171,6 +171,7 @@ type tableEntry struct {
 
 func findEntry(entries []tableEntry, key value) (int, bool) {
 	return slices.BinarySearchFunc(entries, key, func(e tableEntry, key value) int {
-		return compareValues(e.key, key)
+		result, _ := compareValues(e.key, key)
+		return result
 	})
 }
