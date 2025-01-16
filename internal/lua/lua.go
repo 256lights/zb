@@ -1300,7 +1300,7 @@ func (l *State) SetIndex(idx int, i int64, msgHandler int) error {
 // v is the value on the top of the stack,
 // and k is the value just below the top.
 // This function pops both the key and the value from the stack.
-func (l *State) RawSet(idx int) {
+func (l *State) RawSet(idx int) error {
 	if l.Top() < 2 {
 		panic(errMissingArguments)
 	}
@@ -1312,9 +1312,7 @@ func (l *State) RawSet(idx int) {
 	if err != nil {
 		panic(err)
 	}
-	if err := t.(*table).set(k, v); err != nil {
-		panic(err)
-	}
+	return t.(*table).set(k, v)
 }
 
 // RawSetIndex does the equivalent of t[n] = v,

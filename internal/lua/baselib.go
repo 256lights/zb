@@ -449,7 +449,9 @@ func baseRawSet(l *State) (int, error) {
 		return 0, NewArgError(l, 3, "value expected")
 	}
 	l.SetTop(3)
-	l.RawSet(1)
+	if err := l.RawSet(1); err != nil {
+		return 0, err
+	}
 	return 1, nil
 }
 
