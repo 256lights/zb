@@ -679,6 +679,72 @@ func (l *State) ID(idx int) uint64 {
 	}
 }
 
+// Arithmetic performs an arithmetic or bitwise operation over the two values
+// (or one, in the case of negations)
+// at the top of the stack,
+// with the value on the top being the second operand,
+// pops these values,
+// and pushes the result of the operation.
+// The function follows the semantics of the corresponding Lua operator
+// (that is, it may call metamethods).
+func (l *State) Arithmetic(op luacode.ArithmeticOperator, msgHandler int) error {
+	if msgHandler != 0 {
+		return fmt.Errorf("TODO(someday): support message handlers")
+	}
+
+	var v1, v2 value
+	switch {
+	case op.IsUnary():
+		if l.Top() < 1 {
+			return errMissingArguments
+		}
+		l.init()
+		i := len(l.stack) - 1
+		v1 = l.stack[i]
+		v2 = v1
+		l.setTop(i)
+
+		if k, isNumber := exportNumericConstant(v1); isNumber {
+			result, err := luacode.Arithmetic(op, k, luacode.Value{})
+			if err != nil {
+				return err
+			}
+			l.push(importConstant(result))
+			return nil
+		}
+
+	case op.IsBinary():
+		if l.Top() < 2 {
+			return errMissingArguments
+		}
+		first := len(l.stack) - 2
+		v1 = l.stack[first]
+		v2 = l.stack[first+1]
+		l.setTop(first)
+
+		if k1, isNumber := exportNumericConstant(v1); isNumber {
+			if k2, isNumber := exportNumericConstant(v2); isNumber {
+				result, err := luacode.Arithmetic(op, k1, k2)
+				if err != nil {
+					return err
+				}
+				l.push(importConstant(result))
+				return nil
+			}
+		}
+
+	default:
+		return fmt.Errorf("unhandled arithmetic operator %v", op)
+	}
+
+	result, err := l.arithmeticMetamethod(op.TagMethod(), v1, v2)
+	if err != nil {
+		return err
+	}
+	l.push(result)
+	return nil
+}
+
 // RawEqual reports whether the two values in the given indices
 // are primitively equal (that is, equal without calling the __eq metamethod).
 // If either index is invalid, then RawEqual reports false.
