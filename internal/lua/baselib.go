@@ -507,6 +507,10 @@ func baseToNumber(l *State) (int, error) {
 	}
 
 	if s, ok := l.ToString(1); ok {
+		if i, err := lualex.ParseInt(s); err == nil {
+			l.PushInteger(i)
+			return 1, nil
+		}
 		n, err := lualex.ParseNumber(s)
 		if err != nil {
 			l.PushNil()

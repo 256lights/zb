@@ -411,11 +411,15 @@ func (v stringValue) toNumber() (floatValue, bool) {
 }
 
 func (v stringValue) toInteger() (integerValue, bool) {
-	i, err := lualex.ParseInt(v.s)
+	if i, err := lualex.ParseInt(v.s); err == nil {
+		return integerValue(i), true
+	}
+	f, err := lualex.ParseNumber(v.s)
 	if err != nil {
 		return 0, false
 	}
-	return integerValue(i), true
+	i, ok := luacode.FloatToInteger(f, luacode.OnlyIntegral)
+	return integerValue(i), ok
 }
 
 type userdata struct {
