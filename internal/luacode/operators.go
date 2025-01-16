@@ -167,7 +167,18 @@ func intArithmetic(op ArithmeticOperator, v1, v2 int64) (int64, error) {
 	case Multiply:
 		return v1 * v2, nil
 	case Modulo:
-		return v1 % v2, nil
+		switch v2 {
+		case 0:
+			return 0, ErrDivideByZero
+		case -1:
+			return 0, nil
+		default:
+			r := v1 % v2
+			if r != 0 && r^v2 < 0 {
+				r += v2
+			}
+			return r, nil
+		}
 	case IntegerDivide:
 		if v2 == 0 {
 			return 0, ErrDivideByZero
@@ -233,8 +244,11 @@ func floatArithmetic(op ArithmeticOperator, v1, v2 float64) float64 {
 	case UnaryMinus:
 		return -v1
 	case Modulo:
-		// TODO(now): Make sure this aligns with Lua's definition.
-		return math.Mod(v1, v2)
+		m := math.Mod(v1, v2)
+		if (m > 0 && v2 < 0) || (m < 0 && v2 > 0) {
+			m += v2
+		}
+		return m
 	default:
 		panic("unhandled arithmetic operator")
 	}

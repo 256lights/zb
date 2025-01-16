@@ -310,8 +310,8 @@ func FloatToInteger(n float64, mode FloatToIntegerMode) (_ int64, ok bool) {
 	}
 
 	// Comparison is tricky here:
-	// math.MinInt64 always has an exact representation as a float,
-	// but math.MaxInt64 may not.
+	// math.MinInt64 has an exact representation as a float64,
+	// but math.MaxInt64 does not.
 	ok = math.MinInt64 <= f && f < -math.MinInt64
 	if !ok {
 		return 0, false

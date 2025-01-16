@@ -19,14 +19,33 @@ func TestArithmetic(t *testing.T) {
 		err  error
 	}{
 		{op: Add, p1: IntegerValue(2), p2: IntegerValue(2), want: IntegerValue(4)},
+
 		{op: Divide, p1: FloatValue(36), p2: FloatValue(4), want: FloatValue(9)},
 		{op: Divide, p1: FloatValue(0), p2: FloatValue(0), want: FloatValue(math.NaN())},
 		{op: Divide, p1: FloatValue(1), p2: FloatValue(0), want: FloatValue(math.Inf(1))},
 		{op: Divide, p1: FloatValue(-1), p2: FloatValue(0), want: FloatValue(math.Inf(-1))},
 		{op: Divide, p1: FloatValue(1), p2: FloatValue(math.Inf(-1)), want: FloatValue(math.Copysign(0, -1))},
+
 		{op: IntegerDivide, p1: IntegerValue(-0x8000000000000000), p2: IntegerValue(-1), want: IntegerValue(-0x8000000000000000)},
 		{op: IntegerDivide, p1: IntegerValue(-16), p2: IntegerValue(3), want: IntegerValue(-6)},
 		{op: IntegerDivide, p1: FloatValue(-16), p2: FloatValue(3), want: FloatValue(-6)},
+
+		{op: Modulo, p1: IntegerValue(-4), p2: IntegerValue(3), want: IntegerValue(2)},
+		{op: Modulo, p1: IntegerValue(4), p2: IntegerValue(-3), want: IntegerValue(-2)},
+		{op: Modulo, p1: FloatValue(-4), p2: IntegerValue(3), want: FloatValue(2)},
+		{op: Modulo, p1: IntegerValue(4), p2: FloatValue(-3), want: FloatValue(-2)},
+		{op: Modulo, p1: IntegerValue(4), p2: IntegerValue(-5), want: IntegerValue(-1)},
+		{op: Modulo, p1: IntegerValue(4), p2: FloatValue(-5), want: FloatValue(-1)},
+		{op: Modulo, p1: IntegerValue(4), p2: IntegerValue(5), want: IntegerValue(4)},
+		{op: Modulo, p1: IntegerValue(4), p2: FloatValue(5), want: FloatValue(4)},
+		{op: Modulo, p1: IntegerValue(-4), p2: IntegerValue(-5), want: IntegerValue(-4)},
+		{op: Modulo, p1: IntegerValue(-4), p2: FloatValue(-5), want: FloatValue(-4)},
+		{op: Modulo, p1: IntegerValue(-4), p2: IntegerValue(5), want: IntegerValue(1)},
+		{op: Modulo, p1: IntegerValue(-4), p2: FloatValue(5), want: FloatValue(1)},
+		{op: Modulo, p1: FloatValue(4.25), p2: IntegerValue(4), want: FloatValue(0.25)},
+		{op: Modulo, p1: FloatValue(10.0), p2: IntegerValue(2), want: FloatValue(0)},
+		{op: Modulo, p1: FloatValue(-10.0), p2: IntegerValue(2), want: FloatValue(math.Copysign(0, -1))},
+		{op: Modulo, p1: FloatValue(-10.0), p2: IntegerValue(-2), want: FloatValue(math.Copysign(0, -1))},
 	}
 
 	for _, test := range tests {
