@@ -92,14 +92,9 @@ func ToString(l *State, idx int) (string, sets.Set[string], error) {
 	case TypeString:
 		s, _ := l.ToString(idx)
 		return s, l.StringContext(idx), nil
-	case TypeBoolean:
-		if l.ToBoolean(idx) {
-			return "true", nil, nil
-		} else {
-			return "false", nil, nil
-		}
-	case TypeNil:
-		return "nil", nil, nil
+	case TypeBoolean, TypeNil:
+		k, _ := ToConstant(l, idx)
+		return k.String(), nil, nil
 	default:
 		var kind string
 		var sctx sets.Set[string]
@@ -114,6 +109,28 @@ func ToString(l *State, idx int) (string, sets.Set[string], error) {
 			kind = l.Type(idx).String()
 		}
 		return fmt.Sprintf("%s: %#x", kind, l.ID(idx)), sctx, nil
+	}
+}
+
+// ToConstant converts the nil, boolean, number, or string at the given index
+// to a [luacode.Value].
+func ToConstant(l *State, idx int) (_ luacode.Value, ok bool) {
+	switch l.Type(idx) {
+	case TypeNumber:
+		if i, ok := l.ToInteger(idx); ok {
+			return luacode.IntegerValue(i), true
+		}
+		n, _ := l.ToNumber(idx)
+		return luacode.FloatValue(n), true
+	case TypeString:
+		s, _ := l.ToString(idx)
+		return luacode.StringValue(s), true
+	case TypeBoolean:
+		return luacode.BoolValue(l.ToBoolean(idx)), true
+	case TypeNil:
+		return luacode.Value{}, true
+	default:
+		return luacode.Value{}, false
 	}
 }
 
@@ -399,11 +416,11 @@ func OpenLibraries(l *State) error {
 	}{
 		{GName, NewOpenBase(nil)},
 		{TableLibraryName, OpenTable},
+		{StringLibraryName, OpenString},
+		{MathLibraryName, NewOpenMath(nil)},
 		// {IOLibraryName, NewIOLibrary().OpenLibrary},
 		// {OSLibraryName, NewOSLibrary().OpenLibrary},
-		// {StringLibraryName, OpenString},
 		// {UTF8LibraryName, OpenUTF8},
-		// {MathLibraryName, NewOpenMath(nil)},
 		// {DebugLibraryName, OpenDebug},
 		// {PackageLibraryName, OpenPackage},
 	}

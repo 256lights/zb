@@ -34,6 +34,7 @@ However, there are some differences:
   - The “__gc” (finalizer) metamethod is never called.
     Use “__close” instead, as the semantics are well-defined.
   - Weak tables (i.e. the “__mode” metafield) are not supported.
+  - The “string” library has differences; see [OpenString] for more details.
 
 [Lua C API]: https://www.lua.org/manual/5.4/manual.html#4
 [auxiliary library]: https://www.lua.org/manual/5.4/manual.html#5

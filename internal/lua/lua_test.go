@@ -9,6 +9,8 @@ import (
 	"errors"
 	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -702,6 +704,44 @@ func TestRotate(t *testing.T) {
 		if diff := cmp.Diff(test.want, got); diff != "" {
 			t.Errorf("rotate(%v, %d) (-want +got):\n%s", test.s, test.n, diff)
 		}
+	}
+}
+
+func TestSuite(t *testing.T) {
+	names := []string{
+		"math",
+		"strings",
+	}
+
+	for _, name := range names {
+		t.Run(strings.ToUpper(name[:1])+name[1:], func(t *testing.T) {
+			l := new(State)
+			defer func() {
+				if err := l.Close(); err != nil {
+					t.Error("Close:", err)
+				}
+			}()
+			if err := OpenLibraries(l); err != nil {
+				t.Fatal(err)
+			}
+			l.PushBoolean(true)
+			if err := l.SetGlobal("_port", 0); err != nil {
+				t.Fatal(err)
+			}
+
+			sourcePath := filepath.Join("testdata", "testsuite", name+".lua")
+			sourceData, err := os.ReadFile(sourcePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = l.Load(bytes.NewReader(sourceData), FilenameSource(sourcePath), "t")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := l.Call(0, 0, 0); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
