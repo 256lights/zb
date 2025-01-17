@@ -4,6 +4,7 @@
 package lua
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -36,8 +37,8 @@ const StringLibraryName = "string"
 //     instead of silently exhibiting undefined behavior.
 //
 // [string manipulation library]: https://www.lua.org/manual/5.4/manual.html#6.4
-func OpenString(l *State) (int, error) {
-	err := NewLib(l, map[string]Function{
+func OpenString(ctx context.Context, l *State) (int, error) {
+	NewLib(l, map[string]Function{
 		"byte": stringByte,
 		"char": stringChar,
 		// "dump":     stringDump,
@@ -56,9 +57,6 @@ func OpenString(l *State) (int, error) {
 		"unpack":   stringUnpack,
 		"upper":    stringUpper,
 	})
-	if err != nil {
-		return 0, err
-	}
 
 	// Create string metatable.
 	operators := []luacode.ArithmeticOperator{
@@ -75,15 +73,12 @@ func OpenString(l *State) (int, error) {
 	metaMethods[luacode.TagMethodIndex.String()] = nil
 	for _, op := range operators {
 		op := op // Capture constant instead of loop variable.
-		metaMethods[op.TagMethod().String()] = func(l *State) (int, error) {
-			return stringArithmetic(l, op)
+		metaMethods[op.TagMethod().String()] = func(ctx context.Context, l *State) (int, error) {
+			return stringArithmetic(ctx, l, op)
 		}
 	}
 
-	err = NewLib(l, metaMethods)
-	if err != nil {
-		return 0, err
-	}
+	NewLib(l, metaMethods)
 	l.PushValue(-2)
 	l.RawSetField(-2, "__index")
 
@@ -97,7 +92,7 @@ func OpenString(l *State) (int, error) {
 	return 1, nil
 }
 
-func stringByte(l *State) (int, error) {
+func stringByte(ctx context.Context, l *State) (int, error) {
 	s, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -131,7 +126,7 @@ func stringByte(l *State) (int, error) {
 	return n, nil
 }
 
-func stringChar(l *State) (int, error) {
+func stringChar(ctx context.Context, l *State) (int, error) {
 	n := l.Top()
 	sb := new(strings.Builder)
 	sb.Grow(n)
@@ -149,7 +144,7 @@ func stringChar(l *State) (int, error) {
 	return 1, nil
 }
 
-func stringFind(l *State) (int, error) {
+func stringFind(ctx context.Context, l *State) (int, error) {
 	s, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -202,7 +197,7 @@ func stringFind(l *State) (int, error) {
 	return 2 + n, nil
 }
 
-func stringFormat(l *State) (int, error) {
+func stringFormat(ctx context.Context, l *State) (int, error) {
 	format, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -330,7 +325,7 @@ func stringFormat(l *State) (int, error) {
 			if arg > top {
 				return 0, NewArgError(l, arg, "no value")
 			}
-			s, argContext, err := ToString(l, arg)
+			s, argContext, err := ToString(ctx, l, arg)
 			if err != nil {
 				return 0, err
 			}
@@ -433,7 +428,7 @@ func findRunEnd(s string, charset string) int {
 
 const gsubReplacementArg = 3
 
-func stringGMatch(l *State) (int, error) {
+func stringGMatch(ctx context.Context, l *State) (int, error) {
 	s, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -463,7 +458,7 @@ func stringGMatch(l *State) (int, error) {
 	matches := re.FindAllStringSubmatchIndex(s[init:], -1)
 
 	l.PushValue(1)
-	l.PushClosure(1, func(l *State) (int, error) {
+	l.PushClosure(1, func(ctx context.Context, l *State) (int, error) {
 		if len(matches) == 0 {
 			return 0, nil
 		}
@@ -490,7 +485,7 @@ func stringGMatch(l *State) (int, error) {
 	return 1, nil
 }
 
-func stringGSub(l *State) (int, error) {
+func stringGSub(ctx context.Context, l *State) (int, error) {
 	src, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -548,7 +543,7 @@ func stringGSub(l *State) (int, error) {
 	for _, match := range matches {
 		state.copySource(lastMatchEnd, match[0])
 		lastMatchEnd = match[1]
-		changedByMatch, err := replace(l, state, match)
+		changedByMatch, err := replace(ctx, l, state, match)
 		if err != nil {
 			return 0, err
 		}
@@ -586,14 +581,14 @@ func (state *gsubState) copySource(start, end int) {
 	}
 }
 
-type gsubReplaceFunc func(l *State, state *gsubState, match []int) (changed bool, err error)
+type gsubReplaceFunc func(ctx context.Context, l *State, state *gsubState, match []int) (changed bool, err error)
 
 func gsubString(l *State) gsubReplaceFunc {
 	replacementString, _ := l.ToString(gsubReplacementArg)
 	replacementContext := l.StringContext(gsubReplacementArg)
 	addedReplacementContext := false
 
-	return func(l *State, state *gsubState, match []int) (changed bool, err error) {
+	return func(ctx context.Context, l *State, state *gsubState, match []int) (changed bool, err error) {
 		state.result.Grow(len(replacementString))
 		for i := 0; i < len(replacementString); i++ {
 			if b := replacementString[i]; b != '%' {
@@ -640,14 +635,14 @@ func gsubString(l *State) gsubReplaceFunc {
 	}
 }
 
-func gsubTable(l *State, state *gsubState, match []int) (changed bool, err error) {
+func gsubTable(ctx context.Context, l *State, state *gsubState, match []int) (changed bool, err error) {
 	defer l.SetTop(l.Top())
 	matchStart, matchEnd := match[0], match[1]
 	if len(match) > 2 {
 		match = match[2:]
 	}
 	l.PushStringContext(state.src[match[0]:match[1]], state.srcContext)
-	if _, err := l.Table(gsubReplacementArg, 0); err != nil {
+	if _, err := l.Table(ctx, gsubReplacementArg); err != nil {
 		return false, err
 	}
 	if !l.ToBoolean(-1) {
@@ -663,7 +658,7 @@ func gsubTable(l *State, state *gsubState, match []int) (changed bool, err error
 	return true, nil
 }
 
-func gsubFunction(l *State, state *gsubState, match []int) (changed bool, err error) {
+func gsubFunction(ctx context.Context, l *State, state *gsubState, match []int) (changed bool, err error) {
 	defer l.SetTop(l.Top())
 	matchStart, matchEnd := match[0], match[1]
 	if len(match) > 2 {
@@ -674,7 +669,7 @@ func gsubFunction(l *State, state *gsubState, match []int) (changed bool, err er
 	if err != nil {
 		return false, err
 	}
-	if err := l.Call(n, 1, 0); err != nil {
+	if err := l.Call(ctx, n, 1, 0); err != nil {
 		return false, err
 	}
 	if !l.ToBoolean(-1) {
@@ -690,7 +685,7 @@ func gsubFunction(l *State, state *gsubState, match []int) (changed bool, err er
 	return true, nil
 }
 
-func stringLen(l *State) (int, error) {
+func stringLen(ctx context.Context, l *State) (int, error) {
 	s, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -699,7 +694,7 @@ func stringLen(l *State) (int, error) {
 	return 1, nil
 }
 
-func stringLower(l *State) (int, error) {
+func stringLower(ctx context.Context, l *State) (int, error) {
 	s, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -709,7 +704,7 @@ func stringLower(l *State) (int, error) {
 	return 1, nil
 }
 
-func stringMatch(l *State) (int, error) {
+func stringMatch(ctx context.Context, l *State) (int, error) {
 	s, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -758,7 +753,7 @@ func stringMatch(l *State) (int, error) {
 	}
 }
 
-func stringRepeat(l *State) (int, error) {
+func stringRepeat(ctx context.Context, l *State) (int, error) {
 	s, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -794,7 +789,7 @@ func stringRepeat(l *State) (int, error) {
 	return 1, nil
 }
 
-func stringReverse(l *State) (int, error) {
+func stringReverse(ctx context.Context, l *State) (int, error) {
 	s, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -809,7 +804,7 @@ func stringReverse(l *State) (int, error) {
 	return 1, nil
 }
 
-func stringSub(l *State) (int, error) {
+func stringSub(ctx context.Context, l *State) (int, error) {
 	s, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -837,7 +832,7 @@ func stringSub(l *State) (int, error) {
 	return 1, nil
 }
 
-func stringUpper(l *State) (int, error) {
+func stringUpper(ctx context.Context, l *State) (int, error) {
 	s, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -1107,7 +1102,7 @@ func pushSubmatches(l *State, init int, submatches []int, positionCaptures *sets
 // that can be written with [stringPack] et al.
 const maxPackIntegerSize = 16
 
-func stringPackSize(l *State) (int, error) {
+func stringPackSize(ctx context.Context, l *State) (int, error) {
 	format, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -1137,7 +1132,7 @@ func stringPackSize(l *State) (int, error) {
 	return 1, nil
 }
 
-func stringPack(l *State) (int, error) {
+func stringPack(ctx context.Context, l *State) (int, error) {
 	format, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -1278,7 +1273,7 @@ func packInteger(b []byte, x uint64, bigEndian bool) {
 	}
 }
 
-func stringUnpack(l *State) (int, error) {
+func stringUnpack(ctx context.Context, l *State) (int, error) {
 	format, err := CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -1517,7 +1512,7 @@ func packOptionSize(c byte, n int) (size, alignment int, hasFixedSize bool) {
 	}
 }
 
-func stringArithmetic(l *State, op luacode.ArithmeticOperator) (int, error) {
+func stringArithmetic(ctx context.Context, l *State, op luacode.ArithmeticOperator) (int, error) {
 	toNumber := func(arg int) bool {
 		if l.Type(arg) == TypeNumber {
 			l.PushValue(arg)
@@ -1540,7 +1535,7 @@ func stringArithmetic(l *State, op luacode.ArithmeticOperator) (int, error) {
 	}
 
 	if toNumber(1) && toNumber(2) {
-		if err := l.Arithmetic(op, 0); err != nil {
+		if err := l.Arithmetic(ctx, op); err != nil {
 			return 0, err
 		}
 		return 1, nil
@@ -1553,7 +1548,7 @@ func stringArithmetic(l *State, op luacode.ArithmeticOperator) (int, error) {
 			Where(l, 1), mtName[2:], l.Type(-2), l.Type(-1))
 	}
 	l.Insert(-3)
-	if err := l.Call(2, 1, 0); err != nil {
+	if err := l.Call(ctx, 2, 1, 0); err != nil {
 		return 0, err
 	}
 	return 1, nil

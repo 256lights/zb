@@ -4,6 +4,7 @@
 package lua
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -43,14 +44,14 @@ func Metafield(l *State, obj int, event string) Type {
 // CallMeta returns an error without pushing any value on the stack.
 // If there is no metatable or no metamethod,
 // this function returns false without pushing any value on the stack.
-func CallMeta(l *State, obj int, event string) (bool, error) {
+func CallMeta(ctx context.Context, l *State, obj int, event string) (bool, error) {
 	obj = l.AbsIndex(obj)
 	if Metafield(l, obj, event) == TypeNil {
 		// No metafield.
 		return false, nil
 	}
 	l.PushValue(obj)
-	if err := l.Call(1, 1, 0); err != nil {
+	if err := l.Call(ctx, 1, 1, 0); err != nil {
 		return true, fmt.Errorf("lua: call metafield %q: %w", event, err)
 	}
 	return true, nil
@@ -62,9 +63,9 @@ func CallMeta(l *State, obj int, event string) (bool, error) {
 // If the value has a metatable with a __tostring field,
 // then ToString calls the corresponding metamethod with the value as argument,
 // and uses the result of the call as its result.
-func ToString(l *State, idx int) (string, sets.Set[string], error) {
+func ToString(ctx context.Context, l *State, idx int) (string, sets.Set[string], error) {
 	idx = l.AbsIndex(idx)
-	if hasMethod, err := CallMeta(l, idx, "__tostring"); err != nil {
+	if hasMethod, err := CallMeta(ctx, l, idx, "__tostring"); err != nil {
 		return "", nil, err
 	} else if hasMethod {
 		if !l.IsString(-1) {
@@ -258,8 +259,9 @@ func Where(l *State, level int) string {
 }
 
 // Len returns the "length" of the value at the given index as an integer.
-func Len(l *State, idx int) (int64, error) {
-	if err := l.Len(idx, 0); err != nil {
+func Len(ctx context.Context, l *State, idx int) (int64, error) {
+	if err := l.Len(ctx, idx); err != nil {
+		l.Pop(1)
 		return 0, err
 	}
 	n, ok := l.ToInteger(-1)
@@ -271,9 +273,15 @@ func Len(l *State, idx int) (int64, error) {
 }
 
 // NewLib creates a new table and registers there the functions in the map reg.
-func NewLib(l *State, reg map[string]Function) error {
+func NewLib(l *State, reg map[string]Function) {
 	l.CreateTable(0, len(reg))
-	return SetFuncs(l, 0, reg)
+	err := setFuncs(l, 0, reg, func(l *State, idx int, k string) error {
+		l.RawSetField(idx, k)
+		return nil
+	})
+	if err != nil {
+		panic(err)
+	}
 }
 
 // SetFuncs registers all functions the map reg
@@ -285,7 +293,13 @@ func NewLib(l *State, reg map[string]Function) error {
 // initialized with copies of the nUp values previously pushed on the stack
 // on top of the library table.
 // These values are popped from the stack after the registration.
-func SetFuncs(l *State, nUp int, reg map[string]Function) error {
+func SetFuncs(ctx context.Context, l *State, nUp int, reg map[string]Function) error {
+	return setFuncs(l, 0, reg, func(l *State, idx int, k string) error {
+		return l.SetField(ctx, idx, k)
+	})
+}
+
+func setFuncs(l *State, nUp int, reg map[string]Function, setField func(l *State, idx int, k string) error) error {
 	if !l.CheckStack(nUp) {
 		l.Pop(nUp)
 		return errors.New("too many upvalues")
@@ -299,7 +313,7 @@ func SetFuncs(l *State, nUp int, reg map[string]Function) error {
 			}
 			l.PushClosure(nUp, f)
 		}
-		if err := l.SetField(-(nUp + 2), name, 0); err != nil {
+		if err := setField(l, -(nUp + 2), name); err != nil {
 			l.Pop(nUp)
 			return err
 		}
@@ -313,8 +327,8 @@ func SetFuncs(l *State, nUp int, reg map[string]Function) error {
 // and pushes that table onto the stack.
 // Returns true if it finds a previous table there
 // and false if it creates a new table.
-func Subtable(l *State, idx int, fname string) (bool, error) {
-	tp, err := l.Field(idx, fname, 0)
+func Subtable(ctx context.Context, l *State, idx int, fname string) (bool, error) {
+	tp, err := l.Field(ctx, idx, fname)
 	if err != nil {
 		return false, err
 	}
@@ -325,7 +339,7 @@ func Subtable(l *State, idx int, fname string) (bool, error) {
 	idx = l.AbsIndex(idx)
 	l.CreateTable(0, 0)
 	l.PushValue(-1) // copy to be left at top
-	err = l.SetField(idx, fname, 0)
+	err = l.SetField(ctx, idx, fname)
 	if err != nil {
 		l.Pop(1) // pop table
 		return false, err
@@ -340,29 +354,29 @@ func Subtable(l *State, idx int, fname string) (bool, error) {
 // as if that function has been called through require.
 // If global is true, also stores the module into the global modName.
 // Leaves a copy of the module on the stack.
-func Require(l *State, modName string, global bool, openf Function) error {
-	if _, err := Subtable(l, RegistryIndex, LoadedTable); err != nil {
+func Require(ctx context.Context, l *State, modName string, global bool, openf Function) error {
+	if _, err := Subtable(ctx, l, RegistryIndex, LoadedTable); err != nil {
 		return fmt.Errorf("lua: require %q: %w", modName, err)
 	}
-	if _, err := l.Field(-1, modName, 0); err != nil {
+	if _, err := l.Field(ctx, -1, modName); err != nil {
 		return fmt.Errorf("lua: require %q: %w", modName, err)
 	}
 	if !l.ToBoolean(-1) {
 		l.Pop(1) // remove field
 		l.PushClosure(0, openf)
 		l.PushString(modName)
-		if err := l.Call(1, 1, 0); err != nil {
+		if err := l.Call(ctx, 1, 1, 0); err != nil {
 			return fmt.Errorf("lua: require %q: %w", modName, err)
 		}
 		l.PushValue(-1)
-		if err := l.SetField(-3, modName, 0); err != nil {
+		if err := l.SetField(ctx, -3, modName); err != nil {
 			return fmt.Errorf("lua: require %q: %w", modName, err)
 		}
 	}
 	l.Remove(-2) // remove LOADED table
 	if global {
 		l.PushValue(-1) // copy of module
-		if err := l.SetGlobal(modName, 0); err != nil {
+		if err := l.SetGlobal(ctx, modName); err != nil {
 			return fmt.Errorf("lua: require %q: %w", modName, err)
 		}
 	}
@@ -409,7 +423,7 @@ func NewTypeError(l *State, arg int, tname string) error {
 
 // OpenLibraries opens all standard Lua libraries into the given state
 // with their default settings.
-func OpenLibraries(l *State) error {
+func OpenLibraries(ctx context.Context, l *State) error {
 	libs := []struct {
 		name  string
 		openf Function
@@ -426,7 +440,7 @@ func OpenLibraries(l *State) error {
 	}
 
 	for _, lib := range libs {
-		if err := Require(l, lib.name, true, lib.openf); err != nil {
+		if err := Require(ctx, l, lib.name, true, lib.openf); err != nil {
 			return err
 		}
 		l.Pop(1)

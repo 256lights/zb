@@ -4,6 +4,7 @@
 package lua
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 )
 
 func TestLen(t *testing.T) {
+	ctx := context.Background()
 	state := new(State)
 	defer func() {
 		if err := state.Close(); err != nil {
@@ -26,7 +28,7 @@ func TestLen(t *testing.T) {
 		state.RawSetIndex(-2, int64(1+i))
 	}
 
-	got, err := Len(state, -1)
+	got, err := Len(ctx, state, -1)
 	if got != int64(len(want)) || err != nil {
 		t.Errorf("Len(...) = %d, %v; want %d, <nil>", got, err, len(want))
 	}
@@ -52,6 +54,7 @@ func TestWhere(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
 			state := new(State)
 			defer func() {
 				if err := state.Close(); err != nil {
@@ -59,18 +62,18 @@ func TestWhere(t *testing.T) {
 				}
 			}()
 
-			state.PushClosure(0, func(l *State) (int, error) {
+			state.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
 				l.PushString(Where(l, 1))
 				return 1, nil
 			})
-			if err := state.SetGlobal("identify", 0); err != nil {
+			if err := state.SetGlobal(ctx, "identify"); err != nil {
 				t.Fatal(err)
 			}
 			const chunkName Source = "=(load)"
 			if err := state.Load(strings.NewReader(test.luaCode), chunkName, "t"); err != nil {
 				t.Fatal(err)
 			}
-			if err := state.Call(0, 1, 0); err != nil {
+			if err := state.Call(ctx, 0, 1, 0); err != nil {
 				t.Fatal(err)
 			}
 
@@ -143,6 +146,7 @@ func TestToString(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
 			state := new(State)
 			defer func() {
 				if err := state.Close(); err != nil {
@@ -151,7 +155,7 @@ func TestToString(t *testing.T) {
 			}()
 
 			test.push(state)
-			got, gotContext, err := ToString(state, -1)
+			got, gotContext, err := ToString(ctx, state, -1)
 			if err != nil {
 				t.Fatal(err)
 			}

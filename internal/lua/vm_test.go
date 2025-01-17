@@ -4,6 +4,7 @@
 package lua
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 func TestVM(t *testing.T) {
 	t.Run("AddImmediate", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -22,14 +24,14 @@ func TestVM(t *testing.T) {
 		}()
 
 		state.PushInteger(5)
-		if err := state.SetGlobal("x", 0); err != nil {
+		if err := state.SetGlobal(ctx, "x"); err != nil {
 			t.Fatal(err)
 		}
 		const source = "return x + 2"
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -42,6 +44,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("AddRegisters", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -50,14 +53,14 @@ func TestVM(t *testing.T) {
 		}()
 
 		state.PushInteger(5)
-		if err := state.SetGlobal("x", 0); err != nil {
+		if err := state.SetGlobal(ctx, "x"); err != nil {
 			t.Fatal(err)
 		}
 		const source = "local y = 2\nreturn x + y"
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -70,6 +73,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("AddConstant", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -78,14 +82,14 @@ func TestVM(t *testing.T) {
 		}()
 
 		state.PushInteger(2)
-		if err := state.SetGlobal("x", 0); err != nil {
+		if err := state.SetGlobal(ctx, "x"); err != nil {
 			t.Fatal(err)
 		}
 		const source = "return x + 129"
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -98,6 +102,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("SetListSmall", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -109,7 +114,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsTable(-1) {
@@ -139,6 +144,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("SetListLarge", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -151,7 +157,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsTable(-1) {
@@ -170,6 +176,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("LenString", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -181,7 +188,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -194,6 +201,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("LenTable", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -205,7 +213,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -218,6 +226,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("Concat2", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -226,7 +235,7 @@ func TestVM(t *testing.T) {
 		}()
 
 		state.PushString("World")
-		if err := state.SetGlobal("x", 0); err != nil {
+		if err := state.SetGlobal(ctx, "x"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -234,7 +243,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		const want = "Hello, World"
@@ -244,6 +253,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("Concat3", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -252,7 +262,7 @@ func TestVM(t *testing.T) {
 		}()
 
 		state.PushString("World")
-		if err := state.SetGlobal("x", 0); err != nil {
+		if err := state.SetGlobal(ctx, "x"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -260,7 +270,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		const want = "Hello, World!"
@@ -270,6 +280,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("Vararg", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -278,7 +289,7 @@ func TestVM(t *testing.T) {
 		}()
 
 		var got []int64
-		state.PushClosure(0, func(state *State) (int, error) {
+		state.PushClosure(0, func(ctx context.Context, state *State) (int, error) {
 			for i := range state.Top() {
 				n, ok := state.ToInteger(1 + i)
 				if !ok {
@@ -288,7 +299,7 @@ func TestVM(t *testing.T) {
 			}
 			return 0, nil
 		})
-		if err := state.SetGlobal("emit", 0); err != nil {
+		if err := state.SetGlobal(ctx, "emit"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -300,7 +311,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 0, 0); err != nil {
+		if err := state.Call(ctx, 0, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -311,6 +322,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("TBC", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -318,7 +330,7 @@ func TestVM(t *testing.T) {
 			}
 		}()
 
-		state.PushClosure(0, func(state *State) (int, error) {
+		state.PushClosure(0, func(ctx context.Context, state *State) (int, error) {
 			state.SetTop(2)
 			if got := state.Type(1); got != TypeTable {
 				return 0, fmt.Errorf("setmetatable: first argument must be a table (got %v)", got)
@@ -329,18 +341,18 @@ func TestVM(t *testing.T) {
 			state.SetMetatable(1)
 			return 1, nil
 		})
-		if err := state.SetGlobal("setmetatable", 0); err != nil {
+		if err := state.SetGlobal(ctx, "setmetatable"); err != nil {
 			t.Fatal(err)
 		}
 
 		var got []int64
-		state.PushClosure(0, func(state *State) (int, error) {
+		state.PushClosure(0, func(ctx context.Context, state *State) (int, error) {
 			state.SetTop(1)
 			i, _ := state.ToInteger(1)
 			got = append(got, i)
 			return 0, nil
 		})
-		if err := state.SetGlobal("emit", 0); err != nil {
+		if err := state.SetGlobal(ctx, "emit"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -360,7 +372,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 0, 0); err != nil {
+		if err := state.Call(ctx, 0, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -371,6 +383,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("Upvalues", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -379,7 +392,7 @@ func TestVM(t *testing.T) {
 		}()
 
 		var got []int64
-		state.PushClosure(0, func(state *State) (int, error) {
+		state.PushClosure(0, func(ctx context.Context, state *State) (int, error) {
 			state.SetTop(1)
 			i, ok := state.ToInteger(1)
 			if !ok {
@@ -388,7 +401,7 @@ func TestVM(t *testing.T) {
 			got = append(got, i)
 			return 0, nil
 		})
-		if err := state.SetGlobal("emit", 0); err != nil {
+		if err := state.SetGlobal(ctx, "emit"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -403,7 +416,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 0, 0); err != nil {
+		if err := state.Call(ctx, 0, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -414,6 +427,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("NumericForLoop", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -422,7 +436,7 @@ func TestVM(t *testing.T) {
 		}()
 
 		var got []int64
-		state.PushClosure(0, func(state *State) (int, error) {
+		state.PushClosure(0, func(ctx context.Context, state *State) (int, error) {
 			state.SetTop(1)
 			i, ok := state.ToInteger(1)
 			if !ok {
@@ -431,7 +445,7 @@ func TestVM(t *testing.T) {
 			got = append(got, i)
 			return 0, nil
 		})
-		if err := state.SetGlobal("emit", 0); err != nil {
+		if err := state.SetGlobal(ctx, "emit"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -441,7 +455,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 0, 0); err != nil {
+		if err := state.Call(ctx, 0, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -452,6 +466,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("NumericForLoopWithExplicitStep", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -460,7 +475,7 @@ func TestVM(t *testing.T) {
 		}()
 
 		var got []int64
-		state.PushClosure(0, func(state *State) (int, error) {
+		state.PushClosure(0, func(ctx context.Context, state *State) (int, error) {
 			state.SetTop(1)
 			i, ok := state.ToInteger(1)
 			if !ok {
@@ -469,7 +484,7 @@ func TestVM(t *testing.T) {
 			got = append(got, i)
 			return 0, nil
 		})
-		if err := state.SetGlobal("emit", 0); err != nil {
+		if err := state.SetGlobal(ctx, "emit"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -479,7 +494,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 0, 0); err != nil {
+		if err := state.Call(ctx, 0, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -490,6 +505,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("GenericForLoop", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -498,7 +514,7 @@ func TestVM(t *testing.T) {
 		}()
 
 		var got []float64
-		state.PushClosure(0, func(state *State) (int, error) {
+		state.PushClosure(0, func(ctx context.Context, state *State) (int, error) {
 			state.SetTop(2)
 			i, ok := state.ToInteger(1)
 			if !ok {
@@ -513,22 +529,22 @@ func TestVM(t *testing.T) {
 			got = append(got, v)
 			return 0, nil
 		})
-		if err := state.SetGlobal("emit", 0); err != nil {
+		if err := state.SetGlobal(ctx, "emit"); err != nil {
 			t.Fatal(err)
 		}
 
 		// Very light-weight copy of ipairs.
-		state.PushClosure(0, func(state *State) (int, error) {
+		state.PushClosure(0, func(ctx context.Context, state *State) (int, error) {
 			state.SetTop(1)
 
-			f := func(state *State) (int, error) {
+			f := Function(func(ctx context.Context, state *State) (int, error) {
 				i, ok := state.ToInteger(2)
 				if !ok {
 					return 0, fmt.Errorf("ipairs iterator function arg #2 not an integer (got %v)", state.Type(2))
 				}
 				i++
 				state.PushInteger(i)
-				tp, err := state.Index(1, i, 0)
+				tp, err := state.Index(ctx, 1, i)
 				if err != nil {
 					return 0, err
 				}
@@ -536,14 +552,14 @@ func TestVM(t *testing.T) {
 					return 1, nil
 				}
 				return 2, nil
-			}
+			})
 
 			state.PushClosure(0, f)
 			state.PushValue(1)
 			state.PushInteger(0)
 			return 3, nil
 		})
-		if err := state.SetGlobal("ipairs", 0); err != nil {
+		if err := state.SetGlobal(ctx, "ipairs"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -554,7 +570,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 0, 0); err != nil {
+		if err := state.Call(ctx, 0, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -565,6 +581,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("TailCall", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -581,7 +598,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -594,6 +611,7 @@ func TestVM(t *testing.T) {
 	})
 
 	t.Run("SetTable", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -608,11 +626,11 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 
-		if got, err := Len(state, -1); got != 1 || err != nil {
+		if got, err := Len(ctx, state, -1); got != 1 || err != nil {
 			t.Errorf("Len(state, -1) = %d, %v; want 1, <nil>", got, err)
 		}
 		if got, want := state.RawIndex(-1, 1), TypeString; got != want {

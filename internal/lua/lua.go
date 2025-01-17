@@ -7,6 +7,7 @@ package lua
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -86,21 +87,6 @@ var errMissingArguments = errors.New("not enough elements in stack")
 // A State is a Lua execution environment.
 // The zero value is a ready-to-use environment
 // with an empty stack and and an empty global table.
-//
-// # Error Handling
-//
-// If the msgHandler argument to a [State] method is 0,
-// then errors are returned as a Go error value.
-// (This is in contrast to the C Lua API which pushes an error object onto the stack.)
-// Otherwise, msgHandler is the stack index of a message handler.
-// (This index cannot be a pseudo-index.)
-// In case of runtime errors, this handler will be called with the error object
-// and its return value will be returned on the stack by the [State] method being called.
-// The return value's string value will be used as a Go error returned by the [State] method.
-// Typically, the message handler is used to add more debug information to the error object,
-// such as a stack traceback.
-// Such information cannot be gathered after the return of a [State] method,
-// since by then the stack will have been unwound.
 type State struct {
 	stack            []value
 	registry         table
@@ -687,11 +673,8 @@ func (l *State) ID(idx int) uint64 {
 // and pushes the result of the operation.
 // The function follows the semantics of the corresponding Lua operator
 // (that is, it may call metamethods).
-func (l *State) Arithmetic(op luacode.ArithmeticOperator, msgHandler int) error {
-	if msgHandler != 0 {
-		return fmt.Errorf("TODO(someday): support message handlers")
-	}
-
+// If there is an error, Arithmetic does not push anything onto the stack.
+func (l *State) Arithmetic(ctx context.Context, op luacode.ArithmeticOperator) error {
 	var v1, v2 value
 	switch {
 	case op.IsUnary():
@@ -737,7 +720,7 @@ func (l *State) Arithmetic(op luacode.ArithmeticOperator, msgHandler int) error 
 		return fmt.Errorf("unhandled arithmetic operator %v", op)
 	}
 
-	result, err := l.arithmeticMetamethod(op.TagMethod(), v1, v2)
+	result, err := l.callArithmeticMetamethod(ctx, op.TagMethod(), v1, v2)
 	if err != nil {
 		return err
 	}
@@ -772,7 +755,12 @@ const (
 	LessOrEqual                           // <=
 )
 
-func (l *State) Compare(idx1, idx2 int, op ComparisonOperator, msgHandler int) (bool, error) {
+// Compare reports if the value at idx1 satisfies op
+// when compared with the value at index idx2,
+// following the semantics of the corresponding Lua operator
+// (that is, it may call metamethods).
+// If either of the indices are invalid, Compare returns false and an error.
+func (l *State) Compare(ctx context.Context, idx1, idx2 int, op ComparisonOperator) (bool, error) {
 	l.init()
 	v1, _, err := l.valueByIndex(idx1)
 	if err != nil {
@@ -782,18 +770,15 @@ func (l *State) Compare(idx1, idx2 int, op ComparisonOperator, msgHandler int) (
 	if err != nil {
 		return false, err
 	}
-	if msgHandler != 0 {
-		return false, fmt.Errorf("TODO(someday): support message handlers")
-	}
-	return l.compare(op, v1, v2)
+	return l.compare(ctx, op, v1, v2)
 }
 
 // compare returns the result of comparing v1 and v2 with the given operator
 // according to Lua's full comparison rules (including metamethods).
-func (l *State) compare(op ComparisonOperator, v1, v2 value) (bool, error) {
+func (l *State) compare(ctx context.Context, op ComparisonOperator, v1, v2 value) (bool, error) {
 	switch op {
 	case Equal:
-		return l.equal(v1, v2)
+		return l.equal(ctx, v1, v2)
 	case Less, LessOrEqual:
 		t1, t2 := valueType(v1), valueType(v2)
 		if t1 == TypeNumber && t2 == TypeNumber || t1 == TypeString && t2 == TypeString {
@@ -819,7 +804,7 @@ func (l *State) compare(op ComparisonOperator, v1, v2 value) (bool, error) {
 			}
 			return false, fmt.Errorf("attempt to compare %s with %s", tn1, tn2)
 		}
-		result, err := l.call1(f, v1, v2)
+		result, err := l.call1(ctx, f, v1, v2)
 		if err != nil {
 			return false, err
 		}
@@ -830,7 +815,7 @@ func (l *State) compare(op ComparisonOperator, v1, v2 value) (bool, error) {
 }
 
 // equal reports whether v1 == v2 according to Lua's full equality rules (including metamethods).
-func (l *State) equal(v1, v2 value) (bool, error) {
+func (l *State) equal(ctx context.Context, v1, v2 value) (bool, error) {
 	// Values of different types are never equal.
 	t1, t2 := valueType(v1), valueType(v2)
 	if t1 != t2 {
@@ -849,7 +834,7 @@ func (l *State) equal(v1, v2 value) (bool, error) {
 		// Neither value has an __eq metamethod.
 		return false, nil
 	}
-	result, err := l.call1(f, v1, v2)
+	result, err := l.call1(ctx, f, v1, v2)
 	if err != nil {
 		return false, err
 	}
@@ -943,15 +928,10 @@ func (l *State) PushClosure(n int, f Function) {
 //
 // As in Lua, this function may trigger a metamethod on the globals table
 // for the "index" event.
-// If there is any error, Global catches it,
-// pushes nil or the error object (see Error Handling in [State]) onto the stack,
-// and returns an error with [TypeNil].
-func (l *State) Global(name string, msgHandler int) (Type, error) {
-	if msgHandler != 0 {
-		return TypeNil, fmt.Errorf("TODO(someday): support message handlers")
-	}
+// If there is any error, Global pushes nil, then returns [TypeNil] and the error.
+func (l *State) Global(ctx context.Context, name string) (Type, error) {
 	l.init()
-	v, err := l.index(l.registry.get(integerValue(RegistryIndexGlobals)), stringValue{s: name})
+	v, err := l.index(ctx, l.registry.get(integerValue(RegistryIndexGlobals)), stringValue{s: name})
 	if err != nil {
 		l.push(nil)
 		return TypeNil, err
@@ -969,14 +949,9 @@ func (l *State) Global(name string, msgHandler int) (Type, error) {
 // pushing the resulting value in its place.
 //
 // As in Lua, this function may trigger a metamethod for the "index" event.
-// If there is any error, Table catches it,
-// pushes nil or the error object (see Error Handling in [State]) onto the stack,
-// and returns an error with [TypeNil].
+// If there is any error, Table pushes nil, then returns [TypeNil] and the error.
 // Table always removes the key from the stack.
-func (l *State) Table(idx, msgHandler int) (Type, error) {
-	if msgHandler != 0 {
-		return TypeNil, fmt.Errorf("TODO(someday): support message handlers")
-	}
+func (l *State) Table(ctx context.Context, idx int) (Type, error) {
 	if l.Top() == 0 {
 		return TypeNil, errMissingArguments
 	}
@@ -988,7 +963,7 @@ func (l *State) Table(idx, msgHandler int) (Type, error) {
 		l.push(nil)
 		return TypeNil, err
 	}
-	v, err := l.index(t, k)
+	v, err := l.index(ctx, t, k)
 	if err != nil {
 		l.push(nil)
 		return TypeNil, err
@@ -999,7 +974,7 @@ func (l *State) Table(idx, msgHandler int) (Type, error) {
 
 // index gets the value from a table for the given key,
 // calling an __index metamethod if present.
-func (l *State) index(t, k value) (value, error) {
+func (l *State) index(ctx context.Context, t, k value) (value, error) {
 	if t, ok := t.(*table); ok {
 		if v := t.get(k); v != nil {
 			return v, nil
@@ -1018,7 +993,7 @@ func (l *State) index(t, k value) (value, error) {
 				return v, nil
 			}
 		case luaFunction, goFunction:
-			return l.call1(tm, t, k)
+			return l.call1(ctx, tm, t, k)
 		}
 
 		t = tm
@@ -1030,17 +1005,14 @@ func (l *State) index(t, k value) (value, error) {
 // Field pushes onto the stack the value t[k],
 // where t is the value at the given index.
 // See [State.Table] for further information.
-func (l *State) Field(idx int, k string, msgHandler int) (Type, error) {
-	if msgHandler != 0 {
-		return TypeNil, fmt.Errorf("TODO(someday): support message handlers")
-	}
+func (l *State) Field(ctx context.Context, idx int, k string) (Type, error) {
 	l.init()
 	t, _, err := l.valueByIndex(idx)
 	if err != nil {
 		l.push(nil)
 		return TypeNil, err
 	}
-	v, err := l.index(t, stringValue{s: k})
+	v, err := l.index(ctx, t, stringValue{s: k})
 	if err != nil {
 		l.push(nil)
 		return TypeNil, err
@@ -1052,17 +1024,14 @@ func (l *State) Field(idx int, k string, msgHandler int) (Type, error) {
 // Index pushes onto the stack the value t[i],
 // where t is the value at the given index.
 // See [State.Table] for further information.
-func (l *State) Index(idx int, i int64, msgHandler int) (Type, error) {
-	if msgHandler != 0 {
-		return TypeNil, fmt.Errorf("TODO(someday): support message handlers")
-	}
+func (l *State) Index(ctx context.Context, idx int, i int64) (Type, error) {
 	l.init()
 	t, _, err := l.valueByIndex(idx)
 	if err != nil {
 		l.push(nil)
 		return TypeNil, err
 	}
-	v, err := l.index(t, integerValue(i))
+	v, err := l.index(ctx, t, integerValue(i))
 	if err != nil {
 		l.push(nil)
 		return TypeNil, err
@@ -1116,7 +1085,7 @@ func (l *State) RawIndex(idx int, n int64) Type {
 // where t is the value at the given index.
 //
 // RawField does a raw access (i.e. without metamethods).
-// The value at idx must be a table.
+// RawField panics if the value at idx is not a table.
 func (l *State) RawField(idx int, k string) Type {
 	l.init()
 	t, _, err := l.valueByIndex(idx)
@@ -1224,21 +1193,14 @@ func (l *State) UserValue(idx int, n int) Type {
 //
 // As in Lua, this function may trigger a metamethod on the globals table
 // for the "newindex" event.
-// If there is an error and msgHandler is not 0,
-// SetGlobal pushes the error onto the stack and returns an error.
-// (See Error Handling in [State].)
-// SetGlobal always removes the value from the stack.
-func (l *State) SetGlobal(name string, msgHandler int) error {
-	if msgHandler != 0 {
-		return fmt.Errorf("TODO(someday): support message handlers")
-	}
+func (l *State) SetGlobal(ctx context.Context, name string) error {
 	if l.Top() < 1 {
 		return errMissingArguments
 	}
 	l.init()
 	v := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1)
-	if err := l.setIndex(l.registry.get(integerValue(RegistryIndexGlobals)), stringValue{s: name}, v); err != nil {
+	if err := l.setIndex(ctx, l.registry.get(integerValue(RegistryIndexGlobals)), stringValue{s: name}, v); err != nil {
 		return err
 	}
 	return nil
@@ -1251,14 +1213,7 @@ func (l *State) SetGlobal(name string, msgHandler int) error {
 // This function pops both the key and the value from the stack.
 //
 // As in Lua, this function may trigger a metamethod for the "newindex" event.
-// If there is an error and msgHandler is not 0,
-// SetTable pushes the error onto the stack and returns an error.
-// (See Error Handling in [State].)
-// SetTable always removes the key and value from the stack.
-func (l *State) SetTable(idx, msgHandler int) error {
-	if msgHandler != 0 {
-		return fmt.Errorf("TODO(someday): support message handlers")
-	}
+func (l *State) SetTable(ctx context.Context, idx int) error {
 	if l.Top() < 2 {
 		return errMissingArguments
 	}
@@ -1270,7 +1225,7 @@ func (l *State) SetTable(idx, msgHandler int) error {
 	if err != nil {
 		return err
 	}
-	if err := l.setIndex(t, k, v); err != nil {
+	if err := l.setIndex(ctx, t, k, v); err != nil {
 		return err
 	}
 	return nil
@@ -1278,7 +1233,7 @@ func (l *State) SetTable(idx, msgHandler int) error {
 
 // setIndex sets the value in a table for the given key,
 // calling a __newindex metamethod if appropriate.
-func (l *State) setIndex(t, k, v value) error {
+func (l *State) setIndex(ctx context.Context, t, k, v value) error {
 	// If there's an existing table entry, we don't search metatable.
 	if t, _ := t.(*table); t.setExisting(k, v) {
 		return nil
@@ -1298,7 +1253,7 @@ func (l *State) setIndex(t, k, v value) error {
 				return nil
 			}
 		case luaFunction, goFunction:
-			if err := l.call(0, tm, t, k, v); err != nil {
+			if err := l.call(ctx, 0, tm, t, k, v); err != nil {
 				return err
 			}
 			return nil
@@ -1316,10 +1271,7 @@ func (l *State) setIndex(t, k, v value) error {
 // and k is the given string.
 // This function pops the value from the stack.
 // See [State.SetTable] for more information.
-func (l *State) SetField(idx int, k string, msgHandler int) error {
-	if msgHandler != 0 {
-		return fmt.Errorf("TODO(someday): support message handlers")
-	}
+func (l *State) SetField(ctx context.Context, idx int, k string) error {
 	if l.Top() < 1 {
 		return errMissingArguments
 	}
@@ -1330,7 +1282,7 @@ func (l *State) SetField(idx int, k string, msgHandler int) error {
 	if err != nil {
 		return err
 	}
-	if err := l.setIndex(t, stringValue{s: k}, v); err != nil {
+	if err := l.setIndex(ctx, t, stringValue{s: k}, v); err != nil {
 		return err
 	}
 	return nil
@@ -1341,10 +1293,7 @@ func (l *State) SetField(idx int, k string, msgHandler int) error {
 // and v is the value on the top of the stack.
 // This function pops the value from the stack.
 // See [State.SetTable] for more information.
-func (l *State) SetIndex(idx int, i int64, msgHandler int) error {
-	if msgHandler != 0 {
-		return fmt.Errorf("TODO(someday): support message handlers")
-	}
+func (l *State) SetIndex(ctx context.Context, idx int, i int64) error {
 	if l.Top() < 1 {
 		return errMissingArguments
 	}
@@ -1355,7 +1304,7 @@ func (l *State) SetIndex(idx int, i int64, msgHandler int) error {
 	if err != nil {
 		return err
 	}
-	if err := l.setIndex(t, integerValue(i), v); err != nil {
+	if err := l.setIndex(ctx, t, integerValue(i), v); err != nil {
 		return err
 	}
 	return nil
@@ -1366,9 +1315,12 @@ func (l *State) SetIndex(idx int, i int64, msgHandler int) error {
 // v is the value on the top of the stack,
 // and k is the value just below the top.
 // This function pops both the key and the value from the stack.
+// If the key from the stack cannot be used as a table key
+// (i.e. it is nil or NaN),
+// then RawSet returns an error.
 func (l *State) RawSet(idx int) error {
 	if l.Top() < 2 {
-		panic(errMissingArguments)
+		return errMissingArguments
 	}
 	l.init()
 	t, _, err := l.valueByIndex(idx)
@@ -1376,7 +1328,7 @@ func (l *State) RawSet(idx int) error {
 	v := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 2) // Always pop key and value.
 	if err != nil {
-		panic(err)
+		return err
 	}
 	return t.(*table).set(k, v)
 }
@@ -1496,12 +1448,25 @@ func (l *State) SetUserValue(idx int, n int) bool {
 // The function results are pushed onto the stack in direct order
 // (the first result is pushed first),
 // so that after the call the last result is on the top of the stack.
-//
 // Call always removes the function and its arguments from the stack.
-// If an error occurs and msgHandler is not zero,
-// then Call will push an error object to the stack.
-// (See Error Handling in [State] for details.)
-func (l *State) Call(nArgs, nResults, msgHandler int) error {
+//
+// # Error Handling
+//
+// If the msgHandler argument is 0,
+// then if an error occurs during the function call,
+// it is returned as a Go error value.
+// (This is in contrast to the C Lua API which pushes an error object onto the stack.)
+// Otherwise, msgHandler is the stack index of a message handler.
+// (This index cannot be a pseudo-index.)
+// In case of runtime errors, this handler will be called with the error object
+// and Call will push its return value onto the stack.
+// The return value's string value will be used as a Go error returned by Call.
+//
+// Typically, the message handler is used to add more debug information to the error object,
+// such as a stack traceback.
+// Such information cannot be gathered after the return of a [State] method,
+// since by then the stack will have been unwound.
+func (l *State) Call(ctx context.Context, nArgs, nResults, msgHandler int) error {
 	if l.Top() < nArgs+1 {
 		return errMissingArguments
 	}
@@ -1513,12 +1478,12 @@ func (l *State) Call(nArgs, nResults, msgHandler int) error {
 		return fmt.Errorf("TODO(someday): support message handlers")
 	}
 
-	isLua, err := l.prepareCall(len(l.stack)-nArgs-1, nResults, false)
+	isLua, err := l.prepareCall(ctx, len(l.stack)-nArgs-1, nResults, false)
 	if err != nil {
 		return err
 	}
 	if isLua {
-		if err := l.exec(); err != nil {
+		if err := l.exec(ctx); err != nil {
 			return err
 		}
 	}
@@ -1529,19 +1494,19 @@ func (l *State) Call(nArgs, nResults, msgHandler int) error {
 // f and args are temporarily pushed onto the stack,
 // thus placing an upper bound on recursion.
 // Results will be pushed on the stack.
-func (l *State) call(numResults int, f value, args ...value) error {
+func (l *State) call(ctx context.Context, numResults int, f value, args ...value) error {
 	if !l.grow(len(l.stack) + max(1+len(args), numResults)) {
 		return errStackOverflow
 	}
 	functionIndex := len(l.stack)
 	l.stack = append(l.stack, f)
 	l.stack = append(l.stack, args...)
-	isLua, err := l.prepareCall(functionIndex, numResults, false)
+	isLua, err := l.prepareCall(ctx, functionIndex, numResults, false)
 	if err != nil {
 		return err
 	}
 	if isLua {
-		if err := l.exec(); err != nil {
+		if err := l.exec(ctx); err != nil {
 			return err
 		}
 	}
@@ -1551,8 +1516,8 @@ func (l *State) call(numResults int, f value, args ...value) error {
 // call1 calls a function and returns its single result.
 // f and args are temporarily pushed onto the stack,
 // thus placing an upper bound on recursion.
-func (l *State) call1(f value, args ...value) (value, error) {
-	if err := l.call(1, f, args...); err != nil {
+func (l *State) call1(ctx context.Context, f value, args ...value) (value, error) {
+	if err := l.call(ctx, 1, f, args...); err != nil {
 		return nil, err
 	}
 	v := l.stack[len(l.stack)-1]
@@ -1579,7 +1544,7 @@ func (l *State) call1(f value, args ...value) (value, error) {
 // then after the function returns will pop both the new frame and the current frame.
 // This matches the behavior of the upstream Lua interpreter
 // and permits Go functions to always get traceback on their immediate caller.
-func (l *State) prepareCall(functionIndex, numResults int, isTailCall bool) (isLua bool, err error) {
+func (l *State) prepareCall(ctx context.Context, functionIndex, numResults int, isTailCall bool) (isLua bool, err error) {
 	defer func() {
 		if err != nil {
 			if isTailCall {
@@ -1640,7 +1605,7 @@ func (l *State) prepareCall(functionIndex, numResults int, isTailCall bool) (isL
 				functionIndex: functionIndex,
 				numResults:    numResults,
 			})
-			n, err := f.cb(l)
+			n, err := f.cb(ctx, l)
 			if err != nil {
 				l.popCallStack()
 				return false, err
@@ -1779,29 +1744,25 @@ func (l *State) Next(idx int) bool {
 // if n is 0, the result is the empty string.
 // Concatenation is performed following the usual semantics of Lua.
 //
-// If there is any error, Concat catches it,
-// leaves nil or the error object (see Error Handling in [State]) on the top of the stack,
-// and returns an error.
-func (l *State) Concat(n, msgHandler int) error {
+// If there is an error, Concat removes the n values from the top of the stack
+// and returns the error.
+func (l *State) Concat(ctx context.Context, n int) error {
 	if n < 0 {
 		return errors.New("lua concat: negative argument length")
 	}
 	if n > l.Top() {
 		return errMissingArguments
 	}
-	if msgHandler != 0 {
-		return fmt.Errorf("TODO(someday): support message handlers")
-	}
 
 	l.init()
-	if err := l.concat(n); err != nil {
+	if err := l.concat(ctx, n); err != nil {
 		l.push(nil)
 		return err
 	}
 	return nil
 }
 
-func (l *State) concat(n int) error {
+func (l *State) concat(ctx context.Context, n int) error {
 	if n == 0 {
 		l.push(stringValue{})
 		return nil
@@ -1823,7 +1784,7 @@ func (l *State) concat(n int) error {
 		vs2, isStringer2 := v2.(valueStringer)
 		switch {
 		case !isStringer1 || !isStringer2:
-			if err := l.concatMetamethod(); err != nil {
+			if err := l.concatMetamethod(ctx); err != nil {
 				l.setTop(firstArg)
 				return err
 			}
@@ -1864,7 +1825,7 @@ func (l *State) concat(n int) error {
 
 // concatMetamethod attempts to call the __concat metamethod
 // with the two values on the top of the stack.
-func (l *State) concatMetamethod() error {
+func (l *State) concatMetamethod(ctx context.Context) error {
 	arg1 := l.stack[len(l.stack)-2]
 	arg2 := l.stack[len(l.stack)-1]
 	f := l.binaryMetamethod(arg1, arg2, luacode.TagMethodConcat)
@@ -1881,12 +1842,12 @@ func (l *State) concatMetamethod() error {
 	rotate(l.stack[len(l.stack)-3:], 1)
 
 	// Call metamethod.
-	isLua, err := l.prepareCall(len(l.stack)-3, 1, false)
+	isLua, err := l.prepareCall(ctx, len(l.stack)-3, 1, false)
 	if err != nil {
 		return err
 	}
 	if isLua {
-		if err := l.exec(); err != nil {
+		if err := l.exec(ctx); err != nil {
 			return err
 		}
 	}
@@ -1924,23 +1885,18 @@ func minConcatSize(values []value) (n int, hasContext bool) {
 // It is equivalent to the ['#' operator in Lua]
 // and may trigger a [metamethod] for the "length" event.
 //
-// If there is any error, Len catches it,
-// pushes nil or the error object (see Error Handling in [State]) onto the stack,
-// and returns an error.
+// If there is any error, Len pushes nil, then returns the error.
 //
 // ['#' operator in Lua]: https://www.lua.org/manual/5.4/manual.html#3.4.7
 // [metamethod]: https://www.lua.org/manual/5.4/manual.html#2.4
-func (l *State) Len(idx, msgHandler int) error {
+func (l *State) Len(ctx context.Context, idx int) error {
 	l.init()
 	v, _, err := l.valueByIndex(idx)
 	if err != nil {
 		panic(err)
 	}
-	if msgHandler != 0 {
-		return fmt.Errorf("TODO(someday): support message handlers")
-	}
 
-	result, err := l.len(v)
+	result, err := l.len(ctx, v)
 	if err != nil {
 		return err
 	}
@@ -1948,14 +1904,14 @@ func (l *State) Len(idx, msgHandler int) error {
 	return nil
 }
 
-func (l *State) len(v value) (value, error) {
+func (l *State) len(ctx context.Context, v value) (value, error) {
 	// Strings always return their byte length.
 	if v, ok := v.(stringValue); ok {
 		return v.len(), nil
 	}
 
 	if mm := l.metamethod(v, luacode.TagMethodLen); mm != nil {
-		return l.call1(mm, v)
+		return l.call1(ctx, mm, v)
 	}
 	lv, ok := v.(lenValue)
 	if !ok {

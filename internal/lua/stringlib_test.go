@@ -4,6 +4,7 @@
 package lua
 
 import (
+	"context"
 	"slices"
 	"testing"
 
@@ -256,7 +257,7 @@ func TestStringGSub(t *testing.T) {
 			push: func(l *State) {
 				l.PushString("home = $HOME, user = $USER")
 				l.PushString("%$(%w+)")
-				l.PushClosure(0, func(l *State) (int, error) {
+				l.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
 					switch name, _ := l.ToString(1); name {
 					case "HOME":
 						l.PushString("/home/roberto")
@@ -290,25 +291,26 @@ func TestStringGSub(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
 			state := new(State)
 			defer func() {
 				if err := state.Close(); err != nil {
 					t.Error("Close:", err)
 				}
 			}()
-			if err := Require(state, StringLibraryName, true, OpenString); err != nil {
+			if err := Require(ctx, state, StringLibraryName, true, OpenString); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := state.Global(StringLibraryName, 0); err != nil {
+			if _, err := state.Global(ctx, StringLibraryName); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := state.Field(-1, "gsub", 0); err != nil {
+			if _, err := state.Field(ctx, -1, "gsub"); err != nil {
 				t.Fatal(err)
 			}
 			funcIndex := state.Top()
 
 			test.push(state)
-			if err := state.Call(state.Top()-funcIndex, 2, 0); err != nil {
+			if err := state.Call(ctx, state.Top()-funcIndex, 2, 0); err != nil {
 				t.Fatal("gsub:", err)
 			}
 

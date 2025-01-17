@@ -25,7 +25,7 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.State) (nResults int, err error) {
+func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int, err error) {
 	var p string
 	var pcontext sets.Set[string]
 	var name string
@@ -34,25 +34,25 @@ func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.S
 		p, _ = l.ToString(1)
 		pcontext = l.StringContext(1)
 	case lua.TypeTable:
-		typ, err := l.Field(1, "path", 0)
+		typ, err := l.Field(ctx, 1, "path")
 		if err != nil {
 			return 0, fmt.Errorf("path: %v", err)
 		}
 		if typ == lua.TypeNil {
 			return 0, lua.NewArgError(l, 1, "missing path")
 		}
-		p, pcontext, err = lua.ToString(l, -1)
+		p, pcontext, err = lua.ToString(ctx, l, -1)
 		if err != nil {
 			return 0, fmt.Errorf("path: %v", err)
 		}
 		l.Pop(1)
 
-		typ, err = l.Field(1, "name", 0)
+		typ, err = l.Field(ctx, 1, "name")
 		if err != nil {
 			return 0, fmt.Errorf("path: %v", err)
 		}
 		if typ != lua.TypeNil {
-			name, _, _ = lua.ToString(l, -1)
+			name, _, _ = lua.ToString(ctx, l, -1)
 		}
 		l.Pop(1)
 	default:
@@ -66,6 +66,14 @@ func (eval *Eval) pathFunction(ctx context.Context, cache *sqlite.Conn, l *lua.S
 	if name == "" {
 		name = filepath.Base(p)
 	}
+
+	l.RawField(lua.RegistryIndex, cacheConnRegistryKey)
+	cacheUserdata, _ := l.ToUserdata(-1)
+	cache, ok := cacheUserdata.(*sqlite.Conn)
+	if !ok {
+		return 0, fmt.Errorf("internal error: cache connection is %T", cacheUserdata)
+	}
+	l.Pop(1)
 
 	if err := walkPath(ctx, cache, p); err != nil {
 		return 0, fmt.Errorf("path: %v", err)

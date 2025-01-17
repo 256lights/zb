@@ -4,6 +4,7 @@
 package lua
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -22,8 +23,8 @@ const TableLibraryName = "table"
 // This function is intended to be used as an argument to [Require].
 //
 // [table manipulation library]: https://www.lua.org/manual/5.4/manual.html#6.6
-func OpenTable(l *State) (int, error) {
-	err := NewLib(l, map[string]Function{
+func OpenTable(ctx context.Context, l *State) (int, error) {
+	NewLib(l, map[string]Function{
 		"concat": tableConcat,
 		"insert": tableInsert,
 		"move":   tableMove,
@@ -32,17 +33,14 @@ func OpenTable(l *State) (int, error) {
 		"sort":   tableSort,
 		"unpack": tableUnpack,
 	})
-	if err != nil {
-		return 0, err
-	}
 	return 1, nil
 }
 
-func tableConcat(l *State) (int, error) {
+func tableConcat(ctx context.Context, l *State) (int, error) {
 	if err := checkTable(l, 1, luacode.TagMethodIndex, luacode.TagMethodLen); err != nil {
 		return 0, err
 	}
-	last, err := Len(l, 1)
+	last, err := Len(ctx, l, 1)
 	if err != nil {
 		return 0, err
 	}
@@ -79,7 +77,7 @@ func tableConcat(l *State) (int, error) {
 	sb := new(strings.Builder)
 	add := func(i int64) error {
 		defer l.SetTop(l.Top())
-		tp, err := l.Index(1, i, 0)
+		tp, err := l.Index(ctx, 1, i)
 		if err != nil {
 			return err
 		}
@@ -112,12 +110,12 @@ func tableConcat(l *State) (int, error) {
 	return 1, nil
 }
 
-func tableInsert(l *State) (int, error) {
+func tableInsert(ctx context.Context, l *State) (int, error) {
 	err := checkTable(l, 1, luacode.TagMethodIndex, luacode.TagMethodNewIndex, luacode.TagMethodLen)
 	if err != nil {
 		return 0, err
 	}
-	last, err := Len(l, 1)
+	last, err := Len(ctx, l, 1)
 	if err != nil {
 		return 0, err
 	}
@@ -137,10 +135,10 @@ func tableInsert(l *State) (int, error) {
 		}
 		// Move up elements.
 		for i := firstEmpty; i > position; i-- {
-			if _, err := l.Index(1, i-1, 0); err != nil {
+			if _, err := l.Index(ctx, 1, i-1); err != nil {
 				return 0, err
 			}
-			if err := l.SetIndex(1, i, 0); err != nil {
+			if err := l.SetIndex(ctx, 1, i); err != nil {
 				return 0, err
 			}
 		}
@@ -148,13 +146,13 @@ func tableInsert(l *State) (int, error) {
 		return 0, fmt.Errorf("%swrong number of arguments to 'insert'", Where(l, 1))
 	}
 
-	if err := l.SetIndex(1, position, 0); err != nil {
+	if err := l.SetIndex(ctx, 1, position); err != nil {
 		return 0, err
 	}
 	return 0, nil
 }
 
-func tableMove(l *State) (int, error) {
+func tableMove(ctx context.Context, l *State) (int, error) {
 	f, err := CheckInteger(l, 2)
 	if err != nil {
 		return 0, err
@@ -186,25 +184,25 @@ func tableMove(l *State) (int, error) {
 		if t > math.MaxInt64-n+1 {
 			return 0, NewArgError(l, 3, "destination wrap around")
 		}
-		useAscending, err := tableMoveCanUseAscendingLoop(l, f, e, t, dstTableArg)
+		useAscending, err := tableMoveCanUseAscendingLoop(ctx, l, f, e, t, dstTableArg)
 		if err != nil {
 			return 0, err
 		}
 		if useAscending {
 			for i := range n {
-				if _, err := l.Index(1, f+i, 0); err != nil {
+				if _, err := l.Index(ctx, 1, f+i); err != nil {
 					return 0, err
 				}
-				if err := l.SetIndex(dstTableArg, t+i, 0); err != nil {
+				if err := l.SetIndex(ctx, dstTableArg, t+i); err != nil {
 					return 0, err
 				}
 			}
 		} else {
 			for i := n - 1; i >= 0; i-- {
-				if _, err := l.Index(1, f+i, 0); err != nil {
+				if _, err := l.Index(ctx, 1, f+i); err != nil {
 					return 0, err
 				}
-				if err := l.SetIndex(dstTableArg, t+i, 0); err != nil {
+				if err := l.SetIndex(ctx, dstTableArg, t+i); err != nil {
 					return 0, err
 				}
 			}
@@ -215,21 +213,21 @@ func tableMove(l *State) (int, error) {
 	return 1, nil
 }
 
-func tableMoveCanUseAscendingLoop(l *State, f, e, t int64, dstTableArg int) (bool, error) {
+func tableMoveCanUseAscendingLoop(ctx context.Context, l *State, f, e, t int64, dstTableArg int) (bool, error) {
 	if t > e || t <= f {
 		return true, nil
 	}
 	if dstTableArg != 1 {
 		return false, nil
 	}
-	eq, err := l.Compare(1, dstTableArg, Equal, 0)
+	eq, err := l.Compare(ctx, 1, dstTableArg, Equal)
 	if err != nil {
 		return false, err
 	}
 	return !eq, nil
 }
 
-func tablePack(l *State) (int, error) {
+func tablePack(ctx context.Context, l *State) (int, error) {
 	n := l.Top()
 	l.CreateTable(n, 1)
 	l.Insert(1)
@@ -241,12 +239,12 @@ func tablePack(l *State) (int, error) {
 	return 1, nil
 }
 
-func tableRemove(l *State) (int, error) {
+func tableRemove(ctx context.Context, l *State) (int, error) {
 	err := checkTable(l, 1, luacode.TagMethodIndex, luacode.TagMethodNewIndex, luacode.TagMethodLen)
 	if err != nil {
 		return 0, err
 	}
-	size, err := Len(l, 1)
+	size, err := Len(ctx, l, 1)
 	if err != nil {
 		return 0, err
 	}
@@ -263,28 +261,28 @@ func tableRemove(l *State) (int, error) {
 	}
 
 	// Push the removed element onto the stack to be returned later.
-	if _, err := l.Index(1, position, 0); err != nil {
+	if _, err := l.Index(ctx, 1, position); err != nil {
 		return 0, err
 	}
 	// Move elements downward.
 	for ; position < size; position++ {
-		if _, err := l.Index(1, position+1, 0); err != nil {
+		if _, err := l.Index(ctx, 1, position+1); err != nil {
 			return 0, err
 		}
-		if err := l.SetIndex(1, position, 0); err != nil {
+		if err := l.SetIndex(ctx, 1, position); err != nil {
 			return 0, err
 		}
 	}
 	// Clear last element.
 	l.PushNil()
-	if err := l.SetIndex(1, position, 0); err != nil {
+	if err := l.SetIndex(ctx, 1, position); err != nil {
 		return 0, nil
 	}
 	// Return the removed element (pushed at the beginning).
 	return 1, nil
 }
 
-func tableUnpack(l *State) (int, error) {
+func tableUnpack(ctx context.Context, l *State) (int, error) {
 	i := int64(1)
 	if !l.IsNoneOrNil(2) {
 		var err error
@@ -302,7 +300,7 @@ func tableUnpack(l *State) (int, error) {
 		}
 	} else {
 		var err error
-		e, err = Len(l, 1)
+		e, err = Len(ctx, l, 1)
 		if err != nil {
 			return 0, err
 		}
@@ -316,24 +314,24 @@ func tableUnpack(l *State) (int, error) {
 	}
 
 	for ; i < e; i++ {
-		if _, err := l.Index(1, i, 0); err != nil {
+		if _, err := l.Index(ctx, 1, i); err != nil {
 			return 0, err
 		}
 	}
 	// Split last iteration of loop to avoid overflows.
-	if _, err := l.Index(1, e, 0); err != nil {
+	if _, err := l.Index(ctx, 1, e); err != nil {
 		return 0, err
 	}
 
 	return int(n), nil
 }
 
-func tableSort(l *State) (int, error) {
+func tableSort(ctx context.Context, l *State) (int, error) {
 	err := checkTable(l, 1, luacode.TagMethodIndex, luacode.TagMethodNewIndex, luacode.TagMethodLen)
 	if err != nil {
 		return 0, err
 	}
-	n, err := Len(l, 1)
+	n, err := Len(ctx, l, 1)
 	if err != nil {
 		return 0, err
 	}
@@ -349,8 +347,9 @@ func tableSort(l *State) (int, error) {
 	l.SetTop(2)
 
 	sorter := &tableSorter{
-		l: l,
-		n: int(n),
+		ctx: ctx,
+		l:   l,
+		n:   int(n),
 	}
 	sort.Sort(sorter)
 	return 0, sorter.err
@@ -359,6 +358,7 @@ func tableSort(l *State) (int, error) {
 // tableSorter is the helper type that implements [sort.Interface]
 // for [tableSort].
 type tableSorter struct {
+	ctx context.Context
 	l   *State
 	n   int
 	err error
@@ -378,21 +378,21 @@ func (ts *tableSorter) Less(i, j int) bool {
 	if hasCompareFunction {
 		ts.l.PushValue(2)
 	}
-	if _, ts.err = ts.l.Index(1, int64(i), 0); ts.err != nil {
+	if _, ts.err = ts.l.Index(ts.ctx, 1, int64(i)); ts.err != nil {
 		return i < j
 	}
-	if _, ts.err = ts.l.Index(1, int64(j), 0); ts.err != nil {
+	if _, ts.err = ts.l.Index(ts.ctx, 1, int64(j)); ts.err != nil {
 		return i < j
 	}
 	if hasCompareFunction {
-		ts.err = ts.l.Call(2, 1, 0)
+		ts.err = ts.l.Call(ts.ctx, 2, 1, 0)
 		if ts.err != nil {
 			return i < j
 		}
 		return ts.l.ToBoolean(-1)
 	}
 	var less bool
-	less, ts.err = ts.l.Compare(-2, -1, Less, 0)
+	less, ts.err = ts.l.Compare(ts.ctx, -2, -1, Less)
 	if ts.err != nil {
 		return i < j
 	}
@@ -404,16 +404,16 @@ func (ts *tableSorter) Swap(i, j int) {
 		return
 	}
 	defer ts.l.SetTop(ts.l.Top())
-	if _, ts.err = ts.l.Index(1, int64(i), 0); ts.err != nil {
+	if _, ts.err = ts.l.Index(ts.ctx, 1, int64(i)); ts.err != nil {
 		return
 	}
-	if _, ts.err = ts.l.Index(1, int64(j), 0); ts.err != nil {
+	if _, ts.err = ts.l.Index(ts.ctx, 1, int64(j)); ts.err != nil {
 		return
 	}
-	if ts.err = ts.l.SetIndex(1, int64(i), 0); ts.err != nil {
+	if ts.err = ts.l.SetIndex(ts.ctx, 1, int64(i)); ts.err != nil {
 		return
 	}
-	if ts.err = ts.l.SetIndex(1, int64(j), 0); ts.err != nil {
+	if ts.err = ts.l.SetIndex(ts.ctx, 1, int64(j)); ts.err != nil {
 		return
 	}
 }

@@ -4,6 +4,7 @@
 package lua
 
 import (
+	"context"
 	"fmt"
 	"slices"
 
@@ -23,7 +24,7 @@ import (
 // Like a Lua function, a Go function called by Lua can also return many results.
 // To raise an error, return a Go error
 // and the string result of its Error() method will be used as the error object.
-type Function func(*State) (int, error)
+type Function func(ctx context.Context, l *State) (int, error)
 
 type function interface {
 	value
@@ -87,7 +88,7 @@ func (l *State) markTBC(i int) error {
 // and finally moves the stack's top to bottom before returning.
 // closeTBCSlots returns the last error raised during execution of the metamethods,
 // or the original error object if no errors were raised.
-func (l *State) closeTBCSlots(bottom int, preserveTop bool, err error) error {
+func (l *State) closeTBCSlots(ctx context.Context, bottom int, preserveTop bool, err error) error {
 	for tbc := range l.tbc.Reversed() {
 		if tbc < uint(bottom) {
 			break
@@ -100,7 +101,7 @@ func (l *State) closeTBCSlots(bottom int, preserveTop bool, err error) error {
 			clear(l.stack[newTop:])
 			l.stack = l.stack[:newTop]
 		}
-		newError := l.call(0, l.metamethod(v, luacode.TagMethodClose), v, errorToValue(err))
+		newError := l.call(ctx, 0, l.metamethod(v, luacode.TagMethodClose), v, errorToValue(err))
 		if newError != nil {
 			err = newError
 		}

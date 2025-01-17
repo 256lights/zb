@@ -4,6 +4,7 @@
 package lua_test
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -12,11 +13,13 @@ import (
 )
 
 func Example() {
+	ctx := context.Background()
+
 	// Create an execution environment
 	// and make the standard libraries available.
 	state := new(lua.State)
 	defer state.Close()
-	if err := lua.OpenLibraries(state); err != nil {
+	if err := lua.OpenLibraries(ctx, state); err != nil {
 		log.Fatal(err)
 	}
 
@@ -26,7 +29,7 @@ func Example() {
 	if err := state.Load(strings.NewReader(luaSource), luaSource, "t"); err != nil {
 		log.Fatal(err)
 	}
-	if err := state.Call(0, 0, 0); err != nil {
+	if err := state.Call(ctx, 0, 0, 0); err != nil {
 		log.Fatal(err)
 	}
 	// Output:
@@ -34,6 +37,8 @@ func Example() {
 }
 
 func ExampleState_Next() {
+	ctx := context.Background()
+
 	// Create an execution environment.
 	state := new(lua.State)
 	defer state.Close()
@@ -53,11 +58,11 @@ func ExampleState_Next() {
 		// since state.ToString may change the value on the stack.
 		// We clone the value here to be safe.
 		state.PushValue(-2)
-		k, _, _ := lua.ToString(state, -1)
+		k, _, _ := lua.ToString(ctx, state, -1)
 		state.Pop(1)
 
 		// Format the value at index -1.
-		v, _, _ := lua.ToString(state, -1)
+		v, _, _ := lua.ToString(ctx, state, -1)
 
 		fmt.Printf("%s - %s\n", k, v)
 

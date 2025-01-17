@@ -4,6 +4,7 @@
 package lua
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -24,14 +25,14 @@ const MathLibraryName = "math"
 //
 // The resulting function is intended to be used as an argument to [Require].
 func NewOpenMath(src RandomSource) Function {
-	return func(l *State) (int, error) {
+	return func(ctx context.Context, l *State) (int, error) {
 		src := src
 		if src == nil {
 			src = new(pcgRandomSource)
 			src.Seed(weakSeed(l))
 		}
 
-		err := NewLib(l, map[string]Function{
+		NewLib(l, map[string]Function{
 			"abs":       mathAbs,
 			"acos":      mathAcos,
 			"asin":      mathAsin,
@@ -61,9 +62,6 @@ func NewOpenMath(src RandomSource) Function {
 			"maxinteger": nil,
 			"mininteger": nil,
 		})
-		if err != nil {
-			return 0, err
-		}
 
 		l.PushNumber(math.Pi)
 		l.RawSetField(-2, "pi")
@@ -74,12 +72,12 @@ func NewOpenMath(src RandomSource) Function {
 		l.PushInteger(math.MinInt64)
 		l.RawSetField(-2, "mininteger")
 
-		l.PushClosure(0, func(l *State) (int, error) {
-			return mathRandom(l, src)
+		l.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			return mathRandom(ctx, l, src)
 		})
 		l.RawSetField(-2, "random")
-		l.PushClosure(0, func(l *State) (int, error) {
-			return mathRandomSeed(l, src)
+		l.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			return mathRandomSeed(ctx, l, src)
 		})
 		l.RawSetField(-2, "randomseed")
 
@@ -87,7 +85,7 @@ func NewOpenMath(src RandomSource) Function {
 	}
 }
 
-func mathAbs(l *State) (int, error) {
+func mathAbs(ctx context.Context, l *State) (int, error) {
 	if l.IsInteger(1) {
 		n, _ := l.ToInteger(1)
 		if n < 0 {
@@ -104,7 +102,7 @@ func mathAbs(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathSin(l *State) (int, error) {
+func mathSin(ctx context.Context, l *State) (int, error) {
 	x, err := CheckNumber(l, 1)
 	if err != nil {
 		return 0, err
@@ -113,7 +111,7 @@ func mathSin(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathCos(l *State) (int, error) {
+func mathCos(ctx context.Context, l *State) (int, error) {
 	x, err := CheckNumber(l, 1)
 	if err != nil {
 		return 0, err
@@ -122,7 +120,7 @@ func mathCos(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathTan(l *State) (int, error) {
+func mathTan(ctx context.Context, l *State) (int, error) {
 	x, err := CheckNumber(l, 1)
 	if err != nil {
 		return 0, err
@@ -131,7 +129,7 @@ func mathTan(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathAsin(l *State) (int, error) {
+func mathAsin(ctx context.Context, l *State) (int, error) {
 	x, err := CheckNumber(l, 1)
 	if err != nil {
 		return 0, err
@@ -140,7 +138,7 @@ func mathAsin(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathAcos(l *State) (int, error) {
+func mathAcos(ctx context.Context, l *State) (int, error) {
 	x, err := CheckNumber(l, 1)
 	if err != nil {
 		return 0, err
@@ -149,7 +147,7 @@ func mathAcos(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathAtan(l *State) (int, error) {
+func mathAtan(ctx context.Context, l *State) (int, error) {
 	y, err := CheckNumber(l, 1)
 	if err != nil {
 		return 0, err
@@ -165,7 +163,7 @@ func mathAtan(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathToInteger(l *State) (int, error) {
+func mathToInteger(ctx context.Context, l *State) (int, error) {
 	n, ok := l.ToInteger(1)
 	if !ok {
 		if l.IsNone(1) {
@@ -178,7 +176,7 @@ func mathToInteger(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathFloor(l *State) (int, error) {
+func mathFloor(ctx context.Context, l *State) (int, error) {
 	if l.IsInteger(1) {
 		l.SetTop(1)
 		return 1, nil
@@ -196,7 +194,7 @@ func mathFloor(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathCeil(l *State) (int, error) {
+func mathCeil(ctx context.Context, l *State) (int, error) {
 	if l.IsInteger(1) {
 		l.SetTop(1)
 		return 1, nil
@@ -214,7 +212,7 @@ func mathCeil(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathFmod(l *State) (int, error) {
+func mathFmod(ctx context.Context, l *State) (int, error) {
 	if l.IsInteger(1) && l.IsInteger(2) {
 		y, _ := l.ToInteger(2)
 		switch y {
@@ -241,7 +239,7 @@ func mathFmod(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathModf(l *State) (int, error) {
+func mathModf(ctx context.Context, l *State) (int, error) {
 	if l.IsInteger(1) {
 		l.SetTop(1)
 		l.PushNumber(0) // No fractional part.
@@ -273,7 +271,7 @@ func mathModf(l *State) (int, error) {
 	return 2, nil
 }
 
-func mathSqrt(l *State) (int, error) {
+func mathSqrt(ctx context.Context, l *State) (int, error) {
 	x, err := CheckNumber(l, 1)
 	if err != nil {
 		return 0, err
@@ -282,7 +280,7 @@ func mathSqrt(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathULT(l *State) (int, error) {
+func mathULT(ctx context.Context, l *State) (int, error) {
 	x, err := CheckInteger(l, 1)
 	if err != nil {
 		return 0, err
@@ -295,7 +293,7 @@ func mathULT(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathLog(l *State) (int, error) {
+func mathLog(ctx context.Context, l *State) (int, error) {
 	x, err := CheckNumber(l, 1)
 	if err != nil {
 		return 0, err
@@ -321,7 +319,7 @@ func mathLog(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathExp(l *State) (int, error) {
+func mathExp(ctx context.Context, l *State) (int, error) {
 	x, err := CheckNumber(l, 1)
 	if err != nil {
 		return 0, err
@@ -330,7 +328,7 @@ func mathExp(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathDeg(l *State) (int, error) {
+func mathDeg(ctx context.Context, l *State) (int, error) {
 	x, err := CheckNumber(l, 1)
 	if err != nil {
 		return 0, err
@@ -339,7 +337,7 @@ func mathDeg(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathRad(l *State) (int, error) {
+func mathRad(ctx context.Context, l *State) (int, error) {
 	x, err := CheckNumber(l, 1)
 	if err != nil {
 		return 0, err
@@ -348,14 +346,14 @@ func mathRad(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathMin(l *State) (int, error) {
+func mathMin(ctx context.Context, l *State) (int, error) {
 	n := l.Top()
 	if n < 1 {
 		return 0, NewArgError(l, 1, "value expected")
 	}
 	iMin := 1
 	for i := 2; i <= n; i++ {
-		isLess, err := l.Compare(i, iMin, Less, 0)
+		isLess, err := l.Compare(ctx, i, iMin, Less)
 		if err != nil {
 			return 0, err
 		}
@@ -367,14 +365,14 @@ func mathMin(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathMax(l *State) (int, error) {
+func mathMax(ctx context.Context, l *State) (int, error) {
 	n := l.Top()
 	if n < 1 {
 		return 0, NewArgError(l, 1, "value expected")
 	}
 	iMax := 1
 	for i := 2; i <= n; i++ {
-		isGreater, err := l.Compare(iMax, i, Less, 0)
+		isGreater, err := l.Compare(ctx, iMax, i, Less)
 		if err != nil {
 			return 0, err
 		}
@@ -386,7 +384,7 @@ func mathMax(l *State) (int, error) {
 	return 1, nil
 }
 
-func mathType(l *State) (int, error) {
+func mathType(ctx context.Context, l *State) (int, error) {
 	switch l.Type(1) {
 	case TypeNumber:
 		if l.IsInteger(1) {
@@ -424,7 +422,7 @@ func (p *pcgRandomSource) Seed(seed RandomSeed) RandomSeed {
 	return seed
 }
 
-func mathRandom(l *State, src RandomSource) (int, error) {
+func mathRandom(ctx context.Context, l *State, src RandomSource) (int, error) {
 	r := rand.New(src)
 	var lowerLimit, upperLimit int64
 	switch l.Top() {
@@ -481,7 +479,7 @@ func weakSeed(l *State) RandomSeed {
 	}
 }
 
-func mathRandomSeed(l *State, src RandomSource) (int, error) {
+func mathRandomSeed(ctx context.Context, l *State, src RandomSource) (int, error) {
 	var seed RandomSeed
 	if l.IsNone(1) {
 		seed = weakSeed(l)

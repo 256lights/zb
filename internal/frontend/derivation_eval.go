@@ -18,9 +18,9 @@ import (
 
 const derivationTypeName = "derivation"
 
-func registerDerivationMetatable(l *lua.State) {
+func registerDerivationMetatable(ctx context.Context, l *lua.State) {
 	lua.NewMetatable(l, derivationTypeName)
-	err := lua.SetFuncs(l, 0, map[string]lua.Function{
+	err := lua.SetFuncs(ctx, l, 0, map[string]lua.Function{
 		"__index":     indexDerivation,
 		"__pairs":     derivationPairs,
 		"__tostring":  derivationToString,
@@ -135,7 +135,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 			if typ := l.Type(-1); typ != lua.TypeTable {
 				return 0, fmt.Errorf("args argument: %v expected, got %v", lua.TypeTable, typ)
 			}
-			err := ipairs(l, -1, func(i int64) error {
+			err := ipairs(ctx, l, -1, func(i int64) error {
 				arg, err := stringToEnvVar(l, drv, -1)
 				if err != nil {
 					return fmt.Errorf("#%d: %v", i, err)
@@ -148,7 +148,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 			}
 		}
 
-		v, err := toEnvVar(l, drv, -1, true)
+		v, err := toEnvVar(ctx, l, drv, -1, true)
 		if err != nil {
 			return 0, fmt.Errorf("%s: %v", k, err)
 		}
@@ -178,7 +178,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 	}
 
 	pushStorePath(l, drvPath)
-	if err := l.SetField(tableCopyIndex, "drvPath", 0); err != nil {
+	if err := l.SetField(ctx, tableCopyIndex, "drvPath"); err != nil {
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
 	for outputName, outType := range drv.Outputs {
@@ -202,7 +202,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 			OutputName: outputName,
 		}
 		l.PushStringContext(placeholder, sets.New(contextValue{outputReference: ref}.String()))
-		if err := l.SetField(tableCopyIndex, outputName, 0); err != nil {
+		if err := l.SetField(ctx, tableCopyIndex, outputName); err != nil {
 			return 0, fmt.Errorf("derivation: %v", err)
 		}
 	}
@@ -216,7 +216,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 	return 1, nil
 }
 
-func toEnvVar(l *lua.State, drv *zbstore.Derivation, idx int, allowLists bool) (string, error) {
+func toEnvVar(ctx context.Context, l *lua.State, drv *zbstore.Derivation, idx int, allowLists bool) (string, error) {
 	idx = l.AbsIndex(idx)
 	switch typ := l.Type(idx); typ {
 	case lua.TypeNil:
@@ -229,7 +229,7 @@ func toEnvVar(l *lua.State, drv *zbstore.Derivation, idx int, allowLists bool) (
 	case lua.TypeString, lua.TypeNumber:
 		return stringToEnvVar(l, drv, idx)
 	default:
-		if hasMethod, err := lua.CallMeta(l, idx, "__tostring"); err != nil {
+		if hasMethod, err := lua.CallMeta(ctx, l, idx, "__tostring"); err != nil {
 			return "", err
 		} else if hasMethod {
 			s, err := stringToEnvVar(l, drv, -1)
@@ -248,11 +248,11 @@ func toEnvVar(l *lua.State, drv *zbstore.Derivation, idx int, allowLists bool) (
 			return "", fmt.Errorf("sub-tables not permitted as environment variable values")
 		}
 		sb := new(strings.Builder)
-		err := ipairs(l, idx, func(i int64) error {
+		err := ipairs(ctx, l, idx, func(i int64) error {
 			if i > 1 {
 				sb.WriteString(" ")
 			}
-			s, err := toEnvVar(l, drv, -1, false)
+			s, err := toEnvVar(ctx, l, drv, -1, false)
 			if err != nil {
 				return fmt.Errorf("#%d: %v", i, err)
 			}
@@ -361,20 +361,20 @@ func testDerivation(l *lua.State, idx int) *zbstore.Derivation {
 }
 
 // indexDerivation handles the __index metamethod on derivations.
-func indexDerivation(l *lua.State) (int, error) {
+func indexDerivation(ctx context.Context, l *lua.State) (int, error) {
 	if _, err := toDerivation(l); err != nil {
 		return 0, err
 	}
 	l.UserValue(1, 1) // Push derivation argument table.
 	l.PushValue(2)    // Copy key argument.
-	if _, err := l.Table(-2, 0); err != nil {
+	if _, err := l.Table(ctx, -2); err != nil {
 		return 0, err
 	}
 	return 1, nil
 }
 
 // derivationPairs handles the __pairs metamethod on derivations.
-func derivationPairs(l *lua.State) (int, error) {
+func derivationPairs(ctx context.Context, l *lua.State) (int, error) {
 	if _, err := toDerivation(l); err != nil {
 		return 0, err
 	}
@@ -386,7 +386,7 @@ func derivationPairs(l *lua.State) (int, error) {
 }
 
 // derivationPairNext is the iterator function returned by the derivation __pairs metamethod.
-func derivationPairNext(l *lua.State) (int, error) {
+func derivationPairNext(ctx context.Context, l *lua.State) (int, error) {
 	l.PushValue(2) // Move control value to top of stack.
 	if !l.Next(lua.UpvalueIndex(1)) {
 		l.PushNil()
@@ -396,23 +396,23 @@ func derivationPairNext(l *lua.State) (int, error) {
 }
 
 // derivationToString handles the __tostring metamethod on derivations.
-func derivationToString(l *lua.State) (int, error) {
+func derivationToString(ctx context.Context, l *lua.State) (int, error) {
 	if _, err := toDerivation(l); err != nil {
 		return 0, err
 	}
 	l.UserValue(1, 1) // Push derivation argument table.
-	if _, err := l.Field(-1, "out", 0); err != nil {
+	if _, err := l.Field(ctx, -1, "out"); err != nil {
 		return 0, err
 	}
 	return 1, nil
 }
 
 // concatDerivation handles the __concat metamethod on derivations.
-func concatDerivation(l *lua.State) (int, error) {
+func concatDerivation(ctx context.Context, l *lua.State) (int, error) {
 	l.SetTop(2)
 	if testDerivation(l, 1) != nil {
 		l.UserValue(1, 1) // Push derivation argument table.
-		if _, err := l.Field(-1, "out", 0); err != nil {
+		if _, err := l.Field(ctx, -1, "out"); err != nil {
 			return 0, err
 		}
 		l.Replace(1)
@@ -420,13 +420,13 @@ func concatDerivation(l *lua.State) (int, error) {
 	}
 	if testDerivation(l, 2) != nil {
 		l.UserValue(2, 1) // Push derivation argument table.
-		if _, err := l.Field(-1, "out", 0); err != nil {
+		if _, err := l.Field(ctx, -1, "out"); err != nil {
 			return 0, err
 		}
 		l.Replace(2)
 		l.Pop(1)
 	}
-	if err := l.Concat(2, 0); err != nil {
+	if err := l.Concat(ctx, 2); err != nil {
 		return 0, err
 	}
 	return 1, nil

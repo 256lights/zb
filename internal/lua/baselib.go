@@ -6,6 +6,7 @@ package lua
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -37,7 +38,7 @@ func NewOpenBase(opts *BaseOptions) Function {
 	if opts == nil {
 		opts = new(BaseOptions)
 	}
-	return func(l *State) (int, error) {
+	return func(ctx context.Context, l *State) (int, error) {
 		// Open library into global table.
 		l.RawIndex(RegistryIndex, RegistryIndexGlobals)
 
@@ -47,7 +48,7 @@ func NewOpenBase(opts *BaseOptions) Function {
 		}
 
 		const versionGlobalName = "_VERSION"
-		err := SetFuncs(l, 0, map[string]Function{
+		err := SetFuncs(ctx, l, 0, map[string]Function{
 			"assert":       baseAssert,
 			"dofile":       newBaseDofile(loadfile),
 			"error":        baseError,
@@ -80,13 +81,13 @@ func NewOpenBase(opts *BaseOptions) Function {
 
 		// Set global _G.
 		l.PushValue(-1)
-		if err := l.SetField(-2, GName, 0); err != nil {
+		if err := l.SetField(ctx, -2, GName); err != nil {
 			return 0, err
 		}
 
 		// Set global _VERSION.
 		l.PushString(Version)
-		if err := l.SetField(-2, versionGlobalName, 0); err != nil {
+		if err := l.SetField(ctx, -2, versionGlobalName); err != nil {
 			return 0, err
 		}
 
@@ -94,7 +95,7 @@ func NewOpenBase(opts *BaseOptions) Function {
 	}
 }
 
-func baseAssert(l *State) (int, error) {
+func baseAssert(ctx context.Context, l *State) (int, error) {
 	if !l.ToBoolean(1) {
 		if l.Type(1) == TypeNone {
 			return 0, NewArgError(l, 1, "value expected")
@@ -102,13 +103,13 @@ func baseAssert(l *State) (int, error) {
 		l.Remove(1)
 		l.PushString("assertion failed!") // default message
 		l.SetTop(1)
-		return baseError(l)
+		return baseError(ctx, l)
 	}
 	return l.Top(), nil
 }
 
 func newBaseDofile(loadfile Function) Function {
-	return func(l *State) (int, error) {
+	return func(ctx context.Context, l *State) (int, error) {
 		if tp := l.Type(1); tp != TypeNone && tp != TypeNil && tp != TypeString {
 			return 0, NewTypeError(l, 1, TypeString.String())
 		}
@@ -117,24 +118,24 @@ func newBaseDofile(loadfile Function) Function {
 		// loadfile(filename)
 		l.PushClosure(0, loadfile)
 		l.Insert(1)
-		if err := l.Call(1, 2, 0); err != nil {
+		if err := l.Call(ctx, 1, 2, 0); err != nil {
 			return 0, err
 		}
 		if l.IsNil(-2) {
-			msg, _, _ := ToString(l, -1)
+			msg, _, _ := ToString(ctx, l, -1)
 			return 0, fmt.Errorf("dofile: %s", msg)
 		}
 		l.Pop(1)
 
 		// Call the loaded function.
-		if err := l.Call(0, MultipleReturns, 0); err != nil {
+		if err := l.Call(ctx, 0, MultipleReturns, 0); err != nil {
 			return 0, err
 		}
 		return l.Top(), nil
 	}
 }
 
-func baseError(l *State) (int, error) {
+func baseError(ctx context.Context, l *State) (int, error) {
 	level := int64(1)
 	if !l.IsNoneOrNil(2) {
 		var err error
@@ -148,7 +149,7 @@ func baseError(l *State) (int, error) {
 	if l.Type(1) == TypeString && level > 0 {
 		l.PushString(Where(l, int(level)))
 		l.PushValue(1)
-		if err := l.Concat(2, 0); err != nil {
+		if err := l.Concat(ctx, 2); err != nil {
 			return 0, err
 		}
 	}
@@ -157,7 +158,7 @@ func baseError(l *State) (int, error) {
 	return 0, errors.New(msg)
 }
 
-func baseGetMetatable(l *State) (int, error) {
+func baseGetMetatable(ctx context.Context, l *State) (int, error) {
 	if l.Type(1) == TypeNone {
 		return 0, NewArgError(l, 1, "value expected")
 	}
@@ -169,7 +170,7 @@ func baseGetMetatable(l *State) (int, error) {
 	return 1, nil
 }
 
-func baseSetMetatable(l *State) (int, error) {
+func baseSetMetatable(ctx context.Context, l *State) (int, error) {
 	if got, want := l.Type(1), TypeTable; got != want {
 		return 0, NewTypeError(l, 1, want.String())
 	}
@@ -185,19 +186,19 @@ func baseSetMetatable(l *State) (int, error) {
 	return 1, nil
 }
 
-func baseIPairs(l *State) (int, error) {
+func baseIPairs(ctx context.Context, l *State) (int, error) {
 	if l.Type(1) == TypeNone {
 		return 0, NewArgError(l, 1, "value expected")
 	}
 
-	f := Function(func(l *State) (int, error) {
+	f := Function(func(ctx context.Context, l *State) (int, error) {
 		i, err := CheckInteger(l, 2)
 		if err != nil {
 			return 0, err
 		}
 		i++
 		l.PushInteger(i)
-		if tp, err := l.Index(1, i, 0); err != nil {
+		if tp, err := l.Index(ctx, 1, i); err != nil {
 			return 0, err
 		} else if tp == TypeNil {
 			return 1, nil
@@ -211,7 +212,7 @@ func baseIPairs(l *State) (int, error) {
 	return 3, nil
 }
 
-func baseLoad(l *State) (int, error) {
+func baseLoad(ctx context.Context, l *State) (int, error) {
 	chunk, chunkIsString := l.ToString(1)
 	var source Source
 	hasSource := !l.IsNoneOrNil(2)
@@ -239,7 +240,7 @@ func baseLoad(l *State) (int, error) {
 			source = LiteralSource(chunk)
 		}
 	} else if tp := l.Type(1); tp == TypeFunction {
-		r = newLuaFunctionReader(l, 1)
+		r = newLuaFunctionReader(ctx, l, 1)
 		if !hasSource {
 			source = AbstractSource("(load)")
 		}
@@ -261,7 +262,7 @@ func baseLoad(l *State) (int, error) {
 	return 1, nil
 }
 
-func baseLoadfile(l *State) (int, error) {
+func baseLoadfile(ctx context.Context, l *State) (int, error) {
 	var fname string
 	if !l.IsNoneOrNil(1) {
 		var err error
@@ -339,7 +340,7 @@ func skipFileComment(br *bufio.Reader) {
 	}
 }
 
-func baseNext(l *State) (int, error) {
+func baseNext(ctx context.Context, l *State) (int, error) {
 	if got, want := l.Type(1), TypeTable; got != want {
 		return 0, NewTypeError(l, 1, want.String())
 	}
@@ -351,13 +352,13 @@ func baseNext(l *State) (int, error) {
 	return 2, nil
 }
 
-func basePairs(l *State) (int, error) {
+func basePairs(ctx context.Context, l *State) (int, error) {
 	if l.IsNone(1) {
 		return 0, NewArgError(l, 1, "value expected")
 	}
 	if Metafield(l, 1, "__pairs") != TypeNil {
 		l.PushValue(1) // self for metamethod
-		if err := l.Call(1, 3, 0); err != nil {
+		if err := l.Call(ctx, 1, 3, 0); err != nil {
 			return 0, err
 		}
 		return 3, nil
@@ -368,7 +369,7 @@ func basePairs(l *State) (int, error) {
 	return 3, nil
 }
 
-func basePCall(l *State) (int, error) {
+func basePCall(ctx context.Context, l *State) (int, error) {
 	if l.IsNone(1) {
 		return 0, NewArgError(l, 1, "value expected")
 	}
@@ -377,7 +378,7 @@ func basePCall(l *State) (int, error) {
 	l.PushBoolean(true)
 	l.Insert(1)
 
-	if err := l.Call(l.Top()-2, MultipleReturns, 0); err != nil {
+	if err := l.Call(ctx, l.Top()-2, MultipleReturns, 0); err != nil {
 		l.PushBoolean(false)
 		// TODO(someday): Push error object from err.
 		l.PushString(err.Error())
@@ -390,10 +391,10 @@ func newBasePrint(out io.Writer) Function {
 	if out == nil {
 		out = os.Stdout
 	}
-	return func(l *State) (int, error) {
+	return func(ctx context.Context, l *State) (int, error) {
 		n := l.Top()
 		for i := 1; i <= n; i++ {
-			s, _, err := ToString(l, i)
+			s, _, err := ToString(ctx, l, i)
 			if err != nil {
 				return 0, err
 			}
@@ -407,7 +408,7 @@ func newBasePrint(out io.Writer) Function {
 	}
 }
 
-func baseRawEqual(l *State) (int, error) {
+func baseRawEqual(ctx context.Context, l *State) (int, error) {
 	if l.IsNone(1) {
 		return 0, NewArgError(l, 1, "value expected")
 	}
@@ -418,7 +419,7 @@ func baseRawEqual(l *State) (int, error) {
 	return 1, nil
 }
 
-func baseRawLen(l *State) (int, error) {
+func baseRawLen(ctx context.Context, l *State) (int, error) {
 	if tp := l.Type(1); tp != TypeTable && tp != TypeString {
 		return 0, NewTypeError(l, 1, "table or string")
 	}
@@ -426,7 +427,7 @@ func baseRawLen(l *State) (int, error) {
 	return 1, nil
 }
 
-func baseRawGet(l *State) (int, error) {
+func baseRawGet(ctx context.Context, l *State) (int, error) {
 	if got, want := l.Type(1), TypeTable; got != want {
 		return 0, NewTypeError(l, 1, want.String())
 	}
@@ -438,7 +439,7 @@ func baseRawGet(l *State) (int, error) {
 	return 1, nil
 }
 
-func baseRawSet(l *State) (int, error) {
+func baseRawSet(ctx context.Context, l *State) (int, error) {
 	if got, want := l.Type(1), TypeTable; got != want {
 		return 0, NewTypeError(l, 1, want.String())
 	}
@@ -455,7 +456,7 @@ func baseRawSet(l *State) (int, error) {
 	return 1, nil
 }
 
-func baseSelect(l *State) (int, error) {
+func baseSelect(ctx context.Context, l *State) (int, error) {
 	n := int64(l.Top())
 	if l.Type(1) == TypeString {
 		if s, _ := l.ToString(1); s == "#" {
@@ -478,7 +479,7 @@ func baseSelect(l *State) (int, error) {
 	return int(n - i), nil
 }
 
-func baseToNumber(l *State) (int, error) {
+func baseToNumber(ctx context.Context, l *State) (int, error) {
 	if !l.IsNoneOrNil(2) {
 		// Parse integer by given base.
 		base, err := CheckInteger(l, 2)
@@ -528,11 +529,11 @@ func baseToNumber(l *State) (int, error) {
 	return 1, nil
 }
 
-func baseToString(l *State) (int, error) {
+func baseToString(ctx context.Context, l *State) (int, error) {
 	if l.IsNone(1) {
 		return 0, NewArgError(l, 1, "value expected")
 	}
-	s, sctx, err := ToString(l, 1)
+	s, sctx, err := ToString(ctx, l, 1)
 	if err != nil {
 		return 0, err
 	}
@@ -540,7 +541,7 @@ func baseToString(l *State) (int, error) {
 	return 1, nil
 }
 
-func baseType(l *State) (int, error) {
+func baseType(ctx context.Context, l *State) (int, error) {
 	tp := l.Type(1)
 	if tp == TypeNone {
 		return 0, NewArgError(l, 1, "value expected")
@@ -566,7 +567,7 @@ func (f WarnFunc) Warn(msg string, toBeContinued bool) {
 }
 
 func newBaseWarn(w Warner) Function {
-	return func(l *State) (int, error) {
+	return func(ctx context.Context, l *State) (int, error) {
 		n := l.Top()
 		for i := range max(n, 1) { // At least one argument.
 			if _, err := CheckString(l, i+1); err != nil {
@@ -584,6 +585,7 @@ func newBaseWarn(w Warner) Function {
 }
 
 type luaFunctionReader struct {
+	ctx       context.Context
 	l         *State
 	funcIndex int
 
@@ -592,8 +594,9 @@ type luaFunctionReader struct {
 	err error
 }
 
-func newLuaFunctionReader(l *State, i int) *luaFunctionReader {
+func newLuaFunctionReader(ctx context.Context, l *State, i int) *luaFunctionReader {
 	return &luaFunctionReader{
+		ctx:       ctx,
 		l:         l,
 		funcIndex: i,
 	}
@@ -614,7 +617,7 @@ func (r *luaFunctionReader) ReadByte() (byte, error) {
 	}
 	r.s, r.i = "", 0 // Prevent unreading.
 	r.l.PushValue(1)
-	r.err = r.l.Call(0, 1, 0)
+	r.err = r.l.Call(r.ctx, 0, 1, 0)
 	if r.err != nil {
 		return 0, r.err
 	}

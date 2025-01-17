@@ -17,9 +17,9 @@ functions in this package are generally equivalent to C functions that start wit
 However, there are some differences:
 
   - Error handling is handled using the standard Go error type.
-    This is documented in more depth on [State],
+    This is documented in more depth on [*State.Call],
     but importantly, note that [*State.Call] and other functions that can call Lua code
-    will not push an error object on the stack.
+    will generally not push an error object on the stack.
   - This package does not provide to-be-closed slots to functions implemented in Go.
     It is assumed that such functions will use “defer” to handle cleanup.
     This eliminates the need to check for errors in functions like [*State.Pop].

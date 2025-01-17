@@ -6,6 +6,7 @@ package lua
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"math"
@@ -25,6 +26,7 @@ import (
 )
 
 func TestClose(t *testing.T) {
+	ctx := context.Background()
 	state := new(State)
 	defer func() {
 		if err := state.Close(); err != nil {
@@ -36,10 +38,10 @@ func TestClose(t *testing.T) {
 	state.PushInteger(42)
 	state.PushString("hello")
 	state.PushValue(-1)
-	if err := state.SetGlobal("x", 0); err != nil {
+	if err := state.SetGlobal(ctx, "x"); err != nil {
 		t.Error(err)
 	}
-	if tp, err := state.Global("x", 0); err != nil {
+	if tp, err := state.Global(ctx, "x"); err != nil {
 		t.Error(err)
 	} else if tp != TypeString {
 		t.Errorf("type(_G.x) = %v; want %v", tp, TypeString)
@@ -57,7 +59,7 @@ func TestClose(t *testing.T) {
 	if got, want := state.Top(), 0; got != want {
 		t.Errorf("after close, state.Top() = %d; want %d", got, want)
 	}
-	if tp, err := state.Global("x", 0); err != nil {
+	if tp, err := state.Global(ctx, "x"); err != nil {
 		t.Error(err)
 	} else if tp != TypeNil {
 		t.Errorf("type(_G.x) = %v; want %v", tp, TypeNil)
@@ -67,6 +69,7 @@ func TestClose(t *testing.T) {
 
 func TestLoad(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -78,7 +81,7 @@ func TestLoad(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -91,6 +94,7 @@ func TestLoad(t *testing.T) {
 	})
 
 	t.Run("Binary", func(t *testing.T) {
+		ctx := context.Background()
 		state := new(State)
 		defer func() {
 			if err := state.Close(); err != nil {
@@ -111,7 +115,7 @@ func TestLoad(t *testing.T) {
 		if err := state.Load(bytes.NewReader(chunk), "", "b"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -143,6 +147,7 @@ func TestLoad(t *testing.T) {
 
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
+				ctx := context.Background()
 				state := new(State)
 				defer func() {
 					if err := state.Close(); err != nil {
@@ -153,7 +158,7 @@ func TestLoad(t *testing.T) {
 				if err := state.Load(bytes.NewReader(test.data), source, "bt"); err != nil {
 					t.Fatal(err)
 				}
-				if err := state.Call(0, 1, 0); err != nil {
+				if err := state.Call(ctx, 0, 1, 0); err != nil {
 					t.Fatal(err)
 				}
 				if !state.IsNumber(-1) {
@@ -420,6 +425,7 @@ func TestCompare(t *testing.T) {
 	t.Run("StateMethod", func(t *testing.T) {
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
+				ctx := context.Background()
 				state := new(State)
 				defer func() {
 					if err := state.Close(); err != nil {
@@ -433,7 +439,7 @@ func TestCompare(t *testing.T) {
 
 				for opIndex, want := range test.want {
 					op := ComparisonOperator(opIndex)
-					got, err := state.Compare(-2, -1, op, 0)
+					got, err := state.Compare(ctx, -2, -1, op)
 					if got != (want == 1) || (err != nil) != (want == bad) {
 						wantError := "<nil>"
 						if want == bad {
@@ -465,6 +471,7 @@ func TestCompare(t *testing.T) {
 
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
+				ctx := context.Background()
 				state := new(State)
 				defer func() {
 					if err := state.Close(); err != nil {
@@ -487,7 +494,7 @@ func TestCompare(t *testing.T) {
 					state.PushValue(-3)
 					state.PushValue(-3)
 
-					if err := state.Call(2, 1, 0); err != nil {
+					if err := state.Call(ctx, 2, 1, 0); err != nil {
 						t.Logf("(%s %v %s): %v", s1, op, s2, err)
 						if want != bad {
 							t.Fail()
@@ -613,6 +620,7 @@ func TestConcat(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
 			state := new(State)
 			defer func() {
 				if err := state.Close(); err != nil {
@@ -622,7 +630,7 @@ func TestConcat(t *testing.T) {
 			test.push(state)
 
 			n := state.Top()
-			if err := state.Concat(n, 0); err != nil {
+			if err := state.Concat(ctx, n); err != nil {
 				t.Errorf("state.Concat(%d, 0): %v", n, err)
 			}
 
@@ -715,17 +723,18 @@ func TestSuite(t *testing.T) {
 
 	for _, name := range names {
 		t.Run(strings.ToUpper(name[:1])+name[1:], func(t *testing.T) {
+			ctx := context.Background()
 			l := new(State)
 			defer func() {
 				if err := l.Close(); err != nil {
 					t.Error("Close:", err)
 				}
 			}()
-			if err := OpenLibraries(l); err != nil {
+			if err := OpenLibraries(ctx, l); err != nil {
 				t.Fatal(err)
 			}
 			l.PushBoolean(true)
-			if err := l.SetGlobal("_port", 0); err != nil {
+			if err := l.SetGlobal(ctx, "_port"); err != nil {
 				t.Fatal(err)
 			}
 
@@ -738,7 +747,7 @@ func TestSuite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := l.Call(0, 0, 0); err != nil {
+			if err := l.Call(ctx, 0, 0, 0); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -746,6 +755,7 @@ func TestSuite(t *testing.T) {
 }
 
 func BenchmarkExec(b *testing.B) {
+	ctx := context.Background()
 	state := new(State)
 	defer func() {
 		if err := state.Close(); err != nil {
@@ -758,7 +768,7 @@ func BenchmarkExec(b *testing.B) {
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			b.Fatal(err)
 		}
-		if err := state.Call(0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
 			b.Fatal(err)
 		}
 		state.Pop(1)

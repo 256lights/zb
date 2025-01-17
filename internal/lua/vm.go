@@ -4,6 +4,7 @@
 package lua
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -53,7 +54,7 @@ func (l *State) findLuaFunction() luaFunction {
 	return l.stack[l.frame().functionIndex].(luaFunction)
 }
 
-func (l *State) exec() (err error) {
+func (l *State) exec(ctx context.Context) (err error) {
 	if len(l.callStack) == 0 {
 		panic("exec called on empty call stack")
 	}
@@ -67,7 +68,7 @@ func (l *State) exec() (err error) {
 		for len(l.callStack) > callerDepth {
 			base := l.frame().registerStart()
 			l.closeUpvalues(base)
-			err = l.closeTBCSlots(base, false, err)
+			err = l.closeTBCSlots(ctx, base, false, err)
 			fp := l.frame().framePointer()
 			for i := uint(fp); i < uint(base); i++ {
 				if l.tbc.Has(i) {
@@ -299,7 +300,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.index(*ub, importConstant(kc))
+			result, err := l.index(ctx, *ub, importConstant(kc))
 			if err != nil {
 				return err
 			}
@@ -323,7 +324,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.index(*rb, *rc)
+			result, err := l.index(ctx, *rb, *rc)
 			if err != nil {
 				return err
 			}
@@ -343,7 +344,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.index(*rb, integerValue(i.ArgC()))
+			result, err := l.index(ctx, *rb, integerValue(i.ArgC()))
 			if err != nil {
 				return err
 			}
@@ -367,7 +368,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.index(*rb, importConstant(kc))
+			result, err := l.index(ctx, *rb, importConstant(kc))
 			if err != nil {
 				return err
 			}
@@ -391,7 +392,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			if err := l.setIndex(*ua, importConstant(kb), c); err != nil {
+			if err := l.setIndex(ctx, *ua, importConstant(kb), c); err != nil {
 				return err
 			}
 		case luacode.OpSetTable:
@@ -408,7 +409,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			if err := l.setIndex(*ra, *rb, c); err != nil {
+			if err := l.setIndex(ctx, *ra, *rb, c); err != nil {
 				return err
 			}
 		case luacode.OpSetI:
@@ -421,7 +422,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			if err := l.setIndex(*ra, integerValue(i.ArgB()), c); err != nil {
+			if err := l.setIndex(ctx, *ra, integerValue(i.ArgB()), c); err != nil {
 				return err
 			}
 		case luacode.OpSetField:
@@ -438,7 +439,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			if err := l.setIndex(*ra, importConstant(kb), c); err != nil {
+			if err := l.setIndex(ctx, *ra, importConstant(kb), c); err != nil {
 				return err
 			}
 		case luacode.OpNewTable:
@@ -479,7 +480,7 @@ func (l *State) exec() (err error) {
 			}
 
 			*ra1 = *rb
-			result, err := l.index(*rb, c)
+			result, err := l.index(ctx, *rb, c)
 			if err != nil {
 				return err
 			}
@@ -637,7 +638,7 @@ func (l *State) exec() (err error) {
 				return err
 			}
 
-			result, err := l.arithmeticMetamethod(prevOperator.TagMethod(), *ra, *rb)
+			result, err := l.callArithmeticMetamethod(ctx, prevOperator.TagMethod(), *ra, *rb)
 			if err != nil {
 				return err
 			}
@@ -661,7 +662,8 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.arithmeticMetamethod(
+			result, err := l.callArithmeticMetamethod(
+				ctx,
 				prevOperator.TagMethod(),
 				*ra,
 				integerValue(luacode.SignedArg(i.ArgB())),
@@ -693,7 +695,8 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.arithmeticMetamethod(
+			result, err := l.callArithmeticMetamethod(
+				ctx,
 				prevOperator.TagMethod(),
 				*ra,
 				importConstant(kb),
@@ -725,7 +728,7 @@ func (l *State) exec() (err error) {
 			} else if nb, ok := toNumber(*rb); ok {
 				*ra = -nb
 			} else {
-				result, err := l.arithmeticMetamethod(luacode.TagMethodUNM, *rb, *rb)
+				result, err := l.callArithmeticMetamethod(ctx, luacode.TagMethodUNM, *rb, *rb)
 				if err != nil {
 					return err
 				}
@@ -757,7 +760,7 @@ func (l *State) exec() (err error) {
 				}
 				*ra = importConstant(result)
 			} else {
-				result, err := l.arithmeticMetamethod(luacode.TagMethodBNot, *rb, *rb)
+				result, err := l.callArithmeticMetamethod(ctx, luacode.TagMethodBNot, *rb, *rb)
 				if err != nil {
 					return err
 				}
@@ -789,7 +792,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.len(*rb)
+			result, err := l.len(ctx, *rb)
 			if err != nil {
 				return err
 			}
@@ -812,7 +815,7 @@ func (l *State) exec() (err error) {
 				)
 			}
 			l.setTop(l.frame().registerStart() + top)
-			if err := l.concat(int(b)); err != nil {
+			if err := l.concat(ctx, int(b)); err != nil {
 				return err
 			}
 		case luacode.OpClose:
@@ -827,7 +830,7 @@ func (l *State) exec() (err error) {
 			}
 			bottom := l.frame().registerStart() + int(a)
 			l.closeUpvalues(bottom)
-			if err := l.closeTBCSlots(bottom, true, nil); err != nil {
+			if err := l.closeTBCSlots(ctx, bottom, true, nil); err != nil {
 				return err
 			}
 		case luacode.OpTBC:
@@ -855,7 +858,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.equal(*ra, *rb)
+			result, err := l.equal(ctx, *ra, *rb)
 			if err != nil {
 				return err
 			}
@@ -871,7 +874,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.equal(*ra, importConstant(kb))
+			result, err := l.equal(ctx, *ra, importConstant(kb))
 			if err != nil {
 				return err
 			}
@@ -883,7 +886,7 @@ func (l *State) exec() (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.equal(*ra, integerValue(luacode.SignedArg(i.ArgB())))
+			result, err := l.equal(ctx, *ra, integerValue(luacode.SignedArg(i.ArgB())))
 			if err != nil {
 				return err
 			}
@@ -904,7 +907,7 @@ func (l *State) exec() (err error) {
 			if opCode == luacode.OpLE {
 				op = LessOrEqual
 			}
-			result, err := l.compare(op, *ra, *rb)
+			result, err := l.compare(ctx, op, *ra, *rb)
 			if err != nil {
 				return err
 			}
@@ -920,7 +923,7 @@ func (l *State) exec() (err error) {
 			if opCode == luacode.OpLEI {
 				op = LessOrEqual
 			}
-			result, err := l.compare(op, *ra, integerValue(luacode.SignedArg(i.ArgB())))
+			result, err := l.compare(ctx, op, *ra, integerValue(luacode.SignedArg(i.ArgB())))
 			if err != nil {
 				return err
 			}
@@ -939,7 +942,7 @@ func (l *State) exec() (err error) {
 			if opCode == luacode.OpGEI {
 				op = LessOrEqual
 			}
-			result, err := l.compare(op, integerValue(luacode.SignedArg(i.ArgB())), *ra)
+			result, err := l.compare(ctx, op, integerValue(luacode.SignedArg(i.ArgB())), *ra)
 			if err != nil {
 				return err
 			}
@@ -979,7 +982,7 @@ func (l *State) exec() (err error) {
 			if numArguments >= 0 {
 				l.setTop(functionIndex + 1 + numArguments)
 			}
-			isLua, err := l.prepareCall(functionIndex, numResults, false)
+			isLua, err := l.prepareCall(ctx, functionIndex, numResults, false)
 			if err != nil {
 				return err
 			}
@@ -1008,7 +1011,7 @@ func (l *State) exec() (err error) {
 			clear(l.stack[registerStart:functionIndex])
 			varargStart, varargEnd := frame.extraArgumentsRange()
 			clear(l.stack[varargStart:varargEnd])
-			isLua, err := l.prepareCall(functionIndex, numResults, true)
+			isLua, err := l.prepareCall(ctx, functionIndex, numResults, true)
 			if err != nil {
 				return err
 			}
@@ -1027,7 +1030,7 @@ func (l *State) exec() (err error) {
 			}
 			// We ignore the K hint and close locals regardless.
 			l.closeUpvalues(registerStart)
-			if err := l.closeTBCSlots(registerStart, true, nil); err != nil {
+			if err := l.closeTBCSlots(ctx, registerStart, true, nil); err != nil {
 				return err
 			}
 
@@ -1042,7 +1045,7 @@ func (l *State) exec() (err error) {
 			// but for safety, we do it anyway.
 			registerStart := l.frame().registerStart()
 			l.closeUpvalues(registerStart)
-			if err := l.closeTBCSlots(registerStart, false, nil); err != nil {
+			if err := l.closeTBCSlots(ctx, registerStart, false, nil); err != nil {
 				return err
 			}
 
@@ -1056,7 +1059,7 @@ func (l *State) exec() (err error) {
 			// but for safety, we do it anyway.
 			registerStart := l.frame().registerStart()
 			l.closeUpvalues(registerStart)
-			if err := l.closeTBCSlots(registerStart, true, nil); err != nil {
+			if err := l.closeTBCSlots(ctx, registerStart, true, nil); err != nil {
 				return err
 			}
 
@@ -1209,12 +1212,12 @@ func (l *State) exec() (err error) {
 			}
 			l.setTop(newTop)
 			copy(l.stack[stateEnd:], l.stack[stateStart:])
-			isLua, err := l.prepareCall(stateEnd, c, false)
+			isLua, err := l.prepareCall(ctx, stateEnd, c, false)
 			if err != nil {
 				return err
 			}
 			if isLua {
-				if err := l.exec(); err != nil {
+				if err := l.exec(ctx); err != nil {
 					return err
 				}
 			}
@@ -1362,14 +1365,14 @@ func (l *State) finishCall(numResults int) {
 	l.popCallStack()
 }
 
-func (l *State) arithmeticMetamethod(event luacode.TagMethod, arg1, arg2 value) (value, error) {
+func (l *State) callArithmeticMetamethod(ctx context.Context, event luacode.TagMethod, arg1, arg2 value) (value, error) {
 	op, isArithmetic := event.ArithmeticOperator()
 	if !isArithmetic {
 		return nil, fmt.Errorf("%v is not an arithmetic metamethod", event)
 	}
 
 	if f := l.binaryMetamethod(arg1, arg2, event); f != nil {
-		return l.call1(f, arg1, arg2)
+		return l.call1(ctx, f, arg1, arg2)
 	}
 
 	kind := "arithmetic"
