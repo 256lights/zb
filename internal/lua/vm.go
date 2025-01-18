@@ -1011,15 +1011,14 @@ func (l *State) exec(ctx context.Context) (err error) {
 			clear(l.stack[registerStart:functionIndex])
 			varargStart, varargEnd := frame.extraArgumentsRange()
 			clear(l.stack[varargStart:varargEnd])
-			isLua, err := l.prepareCall(ctx, functionIndex, numResults, true)
-			if err != nil {
+			if _, err := l.prepareCall(ctx, functionIndex, numResults, true); err != nil {
 				return err
 			}
-			if isLua {
-				currFunction = l.findLuaFunction()
-			} else if len(l.callStack) <= callerDepth {
+			if len(l.callStack) <= callerDepth {
+				// Calling a Go function may have popped the stack.
 				return nil
 			}
+			currFunction = l.findLuaFunction()
 		case luacode.OpReturn:
 			// TODO(soon): Validate ArgA+numResults.
 			registerStart := l.frame().registerStart()

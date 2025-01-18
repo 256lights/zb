@@ -610,6 +610,84 @@ func TestVM(t *testing.T) {
 		}
 	})
 
+	t.Run("TailCallGoFunction", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const wantResult = "hello world"
+		state.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			l.PushString(wantResult)
+			return 1, nil
+		})
+		if err := state.SetGlobal(ctx, "foo"); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `return foo()` + "\n"
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := state.Type(-1), TypeString; got != want {
+			t.Fatalf("state.Type(-1) = %v; want %v", got, want)
+		} else if got, ok := state.ToString(-1); got != wantResult || !ok {
+			t.Errorf("state.ToString(-1) = %q, %t; want %q, true", got, ok, wantResult)
+		}
+	})
+
+	// Regression test for tail calls with Go functions.
+	// VM would keep the old function cached,
+	// so despite the call stack being correct,
+	// the VM would claim that resuming execution of the top-level script
+	// was an out-of-bounds instruction.
+	t.Run("TailCallGoOutOfBounds", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			l.SetTop(1)
+			return 1, nil
+		})
+		if err := state.SetGlobal(ctx, "foo"); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `local function wrapper(x)` + "\n" +
+			`return foo(x)` + "\n" +
+			`end` + "\n" +
+			// Waste a couple instructions here so our top-level PC is outside the length of wrapper.
+			`local y = 42` + "\n" +
+			`foo(0)` + "\n" +
+			// Now perform the tail call.
+			`local z = wrapper(y)` + "\n" +
+			`y = y + 1` + "\n" +
+			`return y + z` + "\n"
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(ctx, 0, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+		const wantResult = 85
+		if got, want := state.Type(-1), TypeNumber; got != want {
+			t.Fatalf("state.Type(-1) = %v; want %v", got, want)
+		} else if got, ok := state.ToInteger(-1); got != wantResult || !ok {
+			t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, wantResult)
+		}
+	})
+
 	t.Run("SetTable", func(t *testing.T) {
 		ctx := context.Background()
 		state := new(State)
