@@ -692,6 +692,271 @@ func TestFullUserdata(t *testing.T) {
 	}
 }
 
+func TestMessageHandler(t *testing.T) {
+	t.Run("DivideByZero", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		// Message handler.
+		const handledMessage = "uwu"
+		messageHandlerCallCount := 0
+		state.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			messageHandlerCallCount++
+
+			if got, want := l.Top(), 1; got != want {
+				t.Errorf("l.Top() = %d; want %d", got, want)
+			}
+			wantMessage := luacode.ErrDivideByZero.Error()
+			if got, want := l.Type(1), TypeString; got != want {
+				t.Errorf("l.Type(1) = %v; want %v", got, want)
+			} else if got, ok := l.ToString(1); !strings.Contains(got, wantMessage) || !ok {
+				t.Errorf("l.ToString(1) = %q, %t; want to contain %q", got, ok, wantMessage)
+			}
+
+			scriptDebug := l.Info(1)
+			if scriptDebug == nil {
+				t.Error("l.Info(1) = nil")
+			} else {
+				if got, want := scriptDebug.What, "main"; got != want {
+					t.Errorf("l.Info(1).What = %q; want %q", got, want)
+				}
+				if got, want := scriptDebug.CurrentLine, 2; got != want {
+					t.Errorf("l.Info(1).CurrentLine = %d; want %d", got, want)
+				}
+			}
+
+			l.PushString(handledMessage)
+			return 1, nil
+		})
+
+		const source = `-- Comment here to advance line number.` + "\n" +
+			`return 5 // 0` + "\n"
+		if err := state.Load(strings.NewReader(source), LiteralSource(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := state.Call(ctx, 0, 0, -2); err == nil {
+			t.Error("Running script did not return an error")
+		} else if got, want := err.Error(), handledMessage; got != want {
+			t.Errorf("state.Call(...).Error() = %q; want %q", got, want)
+		}
+		if messageHandlerCallCount != 1 {
+			t.Errorf("message handler called %d times; want 1", messageHandlerCallCount)
+		}
+
+		const errorObjectIndex = 2
+		if got, want := state.Top(), errorObjectIndex; got != want {
+			t.Errorf("after state.Call(...), state.Top() = %d; want %d", got, want)
+		}
+		if state.Top() >= errorObjectIndex {
+			if got, want := state.Type(errorObjectIndex), TypeString; got != want {
+				t.Errorf("after state.Call(...), state.Type(%d) = %v; want %v", errorObjectIndex, got, want)
+			} else {
+				got, ok := state.ToString(errorObjectIndex)
+				want := handledMessage
+				if !ok || got != want {
+					t.Errorf("after state.Call(...), state.ToString(%d) = %q, %t; want %q, true", errorObjectIndex, got, ok, want)
+				}
+			}
+		}
+	})
+
+	t.Run("FromGo", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		// Stripped down version of _G.error.
+		state.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			msg, _ := l.ToString(1)
+			return 0, errors.New(msg)
+		})
+		if err := state.SetGlobal(ctx, "error"); err != nil {
+			t.Fatal(err)
+		}
+
+		// Message handler.
+		const originalMessage = "bork"
+		const handledMessage = "uwu"
+		messageHandlerCallCount := 0
+		state.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			messageHandlerCallCount++
+
+			if got, want := l.Top(), 1; got != want {
+				t.Errorf("l.Top() = %d; want %d", got, want)
+			}
+			if got, want := l.Type(1), TypeString; got != want {
+				t.Errorf("l.Type(1) = %v; want %v", got, want)
+			} else if got, ok := l.ToString(1); got != originalMessage || !ok {
+				t.Errorf("l.ToString(1) = %q, %t; want %q, true", got, ok, originalMessage)
+			}
+
+			errFuncDebug := l.Info(1)
+			if errFuncDebug == nil {
+				t.Error("l.Info(1) = nil")
+			} else {
+				if got, want := errFuncDebug.What, "Go"; got != want {
+					t.Errorf("l.Info(1).What = %q; want %q", got, want)
+				}
+			}
+
+			scriptDebug := l.Info(2)
+			if scriptDebug == nil {
+				t.Error("l.Info(2) = nil")
+			} else {
+				if got, want := scriptDebug.What, "main"; got != want {
+					t.Errorf("l.Info(2).What = %q; want %q", got, want)
+				}
+				if got, want := scriptDebug.CurrentLine, 2; got != want {
+					t.Errorf("l.Info(2).CurrentLine = %d; want %d", got, want)
+				}
+			}
+
+			l.PushString(handledMessage)
+			return 1, nil
+		})
+
+		const source = `-- Comment here to advance line number.` + "\n" +
+			`error("bork")` + "\n"
+		if err := state.Load(strings.NewReader(source), LiteralSource(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := state.Call(ctx, 0, 0, -2); err == nil {
+			t.Error("Running script did not return an error")
+		} else if got, want := err.Error(), handledMessage; got != want {
+			t.Errorf("state.Call(...).Error() = %q; want %q", got, want)
+		}
+		if messageHandlerCallCount != 1 {
+			t.Errorf("message handler called %d times; want 1", messageHandlerCallCount)
+		}
+
+		const errorObjectIndex = 2
+		if got, want := state.Top(), errorObjectIndex; got != want {
+			t.Errorf("after state.Call(...), state.Top() = %d; want %d", got, want)
+		}
+		if state.Top() >= errorObjectIndex {
+			if got, want := state.Type(errorObjectIndex), TypeString; got != want {
+				t.Errorf("after state.Call(...), state.Type(%d) = %v; want %v", errorObjectIndex, got, want)
+			} else {
+				got, ok := state.ToString(errorObjectIndex)
+				want := handledMessage
+				if !ok || got != want {
+					t.Errorf("after state.Call(...), state.ToString(%d) = %q, %t; want %q, true", errorObjectIndex, got, ok, want)
+				}
+			}
+		}
+	})
+
+	t.Run("ErrorDuringMessageHandler", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		// Message handler.
+		const firstHandleErrorMessage = "O_O"
+		const handledMessage = "uwu"
+		messageHandlerCallCount := 0
+		state.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			messageHandlerCallCount++
+
+			if got, want := l.Top(), 1; got != want {
+				t.Errorf("l.Top() = %d; want %d", got, want)
+			}
+
+			if messageHandlerCallCount == 1 {
+				scriptDebug := l.Info(1)
+				if scriptDebug == nil {
+					t.Error("l.Info(1) = nil")
+				} else {
+					if got, want := scriptDebug.What, "main"; got != want {
+						t.Errorf("l.Info(1).What = %q; want %q", got, want)
+					}
+					if got, want := scriptDebug.CurrentLine, 2; got != want {
+						t.Errorf("l.Info(1).CurrentLine = %d; want %d", got, want)
+					}
+				}
+				return 0, errors.New(firstHandleErrorMessage)
+			}
+
+			// On subsequent calls, handle the error.
+			if got, want := l.Type(1), TypeString; got != want {
+				t.Errorf("l.Type(1) = %v; want %v", got, want)
+			} else if got, ok := l.ToString(1); got != firstHandleErrorMessage || !ok {
+				t.Errorf("l.ToString(1) = %q, %t; want %q, true", got, ok, firstHandleErrorMessage)
+			}
+
+			errFuncDebug := l.Info(1)
+			if errFuncDebug == nil {
+				t.Error("l.Info(1) = nil")
+			} else {
+				if got, want := errFuncDebug.What, "Go"; got != want {
+					t.Errorf("l.Info(1).What = %q; want %q", got, want)
+				}
+			}
+
+			scriptDebug := l.Info(2)
+			if scriptDebug == nil {
+				t.Error("l.Info(2) = nil")
+			} else {
+				if got, want := scriptDebug.What, "main"; got != want {
+					t.Errorf("l.Info(2).What = %q; want %q", got, want)
+				}
+				if got, want := scriptDebug.CurrentLine, 2; got != want {
+					t.Errorf("l.Info(2).CurrentLine = %d; want %d", got, want)
+				}
+			}
+
+			l.PushString(handledMessage)
+			return 1, nil
+		})
+
+		const source = `-- Comment here to advance line number.` + "\n" +
+			`return 5 // 0` + "\n"
+		if err := state.Load(strings.NewReader(source), LiteralSource(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := state.Call(ctx, 0, 0, -2); err == nil {
+			t.Error("Running script did not return an error")
+		} else if got, want := err.Error(), handledMessage; got != want {
+			t.Errorf("state.Call(...).Error() = %q; want %q", got, want)
+		}
+		if messageHandlerCallCount != 2 {
+			t.Errorf("message handler called %d times; want 2", messageHandlerCallCount)
+		}
+
+		const errorObjectIndex = 2
+		if got, want := state.Top(), errorObjectIndex; got != want {
+			t.Errorf("after state.Call(...), state.Top() = %d; want %d", got, want)
+		}
+		if state.Top() >= errorObjectIndex {
+			if got, want := state.Type(errorObjectIndex), TypeString; got != want {
+				t.Errorf("after state.Call(...), state.Type(%d) = %v; want %v", errorObjectIndex, got, want)
+			} else {
+				got, ok := state.ToString(errorObjectIndex)
+				want := handledMessage
+				if !ok || got != want {
+					t.Errorf("after state.Call(...), state.ToString(%d) = %q, %t; want %q, true", errorObjectIndex, got, ok, want)
+				}
+			}
+		}
+	})
+}
+
 func TestRotate(t *testing.T) {
 	tests := []struct {
 		s    []int

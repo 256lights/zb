@@ -154,6 +154,26 @@ func (l *State) Info(level int) *Debug {
 	return newDebug(f, frame)
 }
 
+// FunctionForLevel pushes the function executing at the given level onto the stack.
+// Level 0 is the current running function,
+// whereas level n+1 is the function that has called level n
+// (except for tail calls, which do not count in the stack).
+// When called with a level greater than the call stack depth,
+// FunctionForLevel returns false and pushes nothing.
+func (l *State) FunctionForLevel(level int) bool {
+	if level < 0 {
+		return false
+	}
+	l.init()
+
+	level = len(l.callStack) - 1 - level
+	if level < 0 {
+		return false
+	}
+	l.push(l.stack[l.callStack[level].functionIndex])
+	return true
+}
+
 // Upvalue gets information about the i'th upvalue of the closure at funcIndex.
 // Upvalue pushes the upvalue's value onto the stack
 // and returns its name.

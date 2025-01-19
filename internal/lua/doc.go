@@ -28,6 +28,9 @@ However, there are some differences:
     Full userdata holds an “any” value, which is more flexible in Go.
   - There is no lua_topointer, but you can use [*State.ID] for similar purposes.
   - [State] does not have to be closed: the Go garbage collector fully manages its resources.
+  - The “lua_getinfo” interface is simplified:
+    [*State.Info] only takes a level and fills all fields.
+    [*State.FunctionForLevel] takes the place of calling “lua_getinfo” with the ‘f’ option.
 
 # Differences from de facto C implementation
 

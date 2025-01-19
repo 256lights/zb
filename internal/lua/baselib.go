@@ -70,7 +70,7 @@ func NewOpenBase(opts *BaseOptions) Function {
 			"tostring":     baseToString,
 			"type":         baseType,
 			"warn":         newBaseWarn(opts.Warner),
-			// TODO(someday): xpcall
+			"xpcall":       baseXPCall,
 
 			GName:             nil,
 			versionGlobalName: nil,
@@ -385,6 +385,36 @@ func basePCall(ctx context.Context, l *State) (int, error) {
 		return 2, nil
 	}
 	return l.Top(), nil
+}
+
+func baseXPCall(ctx context.Context, l *State) (int, error) {
+	if got, want := l.Type(2), TypeFunction; got != want {
+		return 0, NewTypeError(l, 2, want.String())
+	}
+
+	// Stack layout at this point:
+	//
+	// 1: function
+	// 2: message handler
+	// 3 → top: arguments
+	numArgs := l.Top() - 2
+
+	// Stack layout after these calls:
+	//
+	// 1: message handler
+	// 2: true
+	// 3: function
+	// 4 → top: arguments
+	l.PushBoolean(true)
+	l.Rotate(3, 1)
+
+	if err := l.Call(ctx, numArgs, MultipleReturns, 1); err != nil {
+		l.PushBoolean(false)
+		// TODO(someday): Push error object from err.
+		l.PushString(err.Error())
+		return 2, nil
+	}
+	return l.Top() - 1, nil
 }
 
 func newBasePrint(out io.Writer) Function {

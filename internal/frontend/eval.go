@@ -202,10 +202,11 @@ func (eval *Eval) File(ctx context.Context, exprFile string, attrPaths []string)
 		eval.l.RawSetField(lua.RegistryIndex, cacheConnRegistryKey)
 	}()
 
+	eval.l.PushClosure(0, messageHandler)
 	if err := loadFile(&eval.l, exprFile); err != nil {
 		return nil, err
 	}
-	if err := eval.l.Call(ctx, 0, 1, 0); err != nil {
+	if err := eval.l.Call(ctx, 0, 1, -2); err != nil {
 		return nil, err
 	}
 	return eval.attrPaths(ctx, attrPaths)
@@ -227,10 +228,11 @@ func (eval *Eval) Expression(ctx context.Context, expr string, attrPaths []strin
 		eval.l.RawSetField(lua.RegistryIndex, cacheConnRegistryKey)
 	}()
 
+	eval.l.PushClosure(0, messageHandler)
 	if err := loadExpression(&eval.l, expr); err != nil {
 		return nil, err
 	}
-	if err := eval.l.Call(ctx, 0, 1, 0); err != nil {
+	if err := eval.l.Call(ctx, 0, 1, -2); err != nil {
 		return nil, err
 	}
 	return eval.attrPaths(ctx, attrPaths)
@@ -349,7 +351,6 @@ func loadFile(l *lua.State, path string) error {
 	defer f.Close()
 
 	if err := l.Load(bufio.NewReader(f), lua.FilenameSource(path), "t"); err != nil {
-		l.Pop(1)
 		return fmt.Errorf("load file %s: %w", path, err)
 	}
 	return nil
@@ -359,9 +360,7 @@ func loadExpression(l *lua.State, expr string) error {
 	if err := l.Load(strings.NewReader("return "+expr+";"), lua.LiteralSource(expr), "t"); err == nil {
 		return nil
 	}
-	l.Pop(1)
 	if err := l.Load(strings.NewReader(expr), lua.LiteralSource(expr), "t"); err != nil {
-		l.Pop(1)
 		return err
 	}
 	return nil
@@ -547,6 +546,24 @@ func dofileFunction(ctx context.Context, l *lua.State) (int, error) {
 		return 0, fmt.Errorf("dofile %s: %v", resolved, err)
 	}
 	return l.Top(), nil
+}
+
+func messageHandler(ctx context.Context, l *lua.State) (int, error) {
+	msg, ok := l.ToString(1)
+	sctx := l.StringContext(1)
+	if !ok {
+		hasMeta, err := lua.CallMeta(ctx, l, 1, "__tostring")
+		if err != nil {
+			return 0, err
+		}
+		if hasMeta && l.Type(-1) == lua.TypeString {
+			return 1, nil
+		}
+		msg = fmt.Sprintf("(error object is a %v value)", l.Type(1))
+	}
+
+	l.PushStringContext(lua.Traceback(l, msg, 1), sctx)
+	return 1, nil
 }
 
 //go:embed cache_sql

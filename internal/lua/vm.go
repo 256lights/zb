@@ -60,11 +60,19 @@ func (l *State) exec(ctx context.Context) (err error) {
 	}
 	callerDepth := len(l.callStack) - 1
 	defer func() {
+		// Call message handler, if present.
 		if err != nil {
-			// TODO(someday): Message handler.
+			if mhState := l.messageHandlerStateFromContext(ctx); mhState != nil {
+				var errValue value
+				errValue, err = l.call1(ctx, mhState.messageHandler, l.errorToValue(err))
+				mhState.markCalled()
+				if err == nil {
+					err = newErrorObject(l, errValue)
+				}
+			}
 		}
 
-		// Unwind stack.
+		// Unwind call stack.
 		for len(l.callStack) > callerDepth {
 			base := l.frame().registerStart()
 			l.closeUpvalues(base)

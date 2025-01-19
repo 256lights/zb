@@ -13,6 +13,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 
 	"zb.256lights.llc/pkg/internal/luacode"
 	"zb.256lights.llc/pkg/sets"
@@ -1459,7 +1460,6 @@ func (l *State) SetUserValue(idx int, n int) bool {
 // it is returned as a Go error value.
 // (This is in contrast to the C Lua API which pushes an error object onto the stack.)
 // Otherwise, msgHandler is the stack index of a message handler.
-// (This index cannot be a pseudo-index.)
 // In case of runtime errors, this handler will be called with the error object
 // and Call will push its return value onto the stack.
 // The return value's string value will be used as a Go error returned by Call.
@@ -1474,18 +1474,35 @@ func (l *State) Call(ctx context.Context, nArgs, nResults, msgHandler int) error
 	}
 	l.init()
 	if nResults != MultipleReturns && cap(l.stack)-len(l.stack) < nResults-nArgs {
+		l.Pop(nArgs + 1)
 		return fmt.Errorf("results from function overflow current stack size")
 	}
+
 	if msgHandler != 0 {
-		return fmt.Errorf("TODO(someday): support message handlers")
+		msgHandlerValue, _, err := l.valueByIndex(msgHandler)
+		if err != nil {
+			l.Pop(nArgs + 1)
+			return err
+		}
+		msgHandlerFunction, ok := msgHandlerValue.(function)
+		if !ok {
+			return fmt.Errorf("error handler must be a function (got %v)", valueType(msgHandlerValue))
+		}
+		ctx = withMessageHandler(ctx, l, msgHandlerFunction)
 	}
 
 	isLua, err := l.prepareCall(ctx, len(l.stack)-nArgs-1, nResults, false)
 	if err != nil {
+		if msgHandler != 0 {
+			l.push(l.errorToValue(err))
+		}
 		return err
 	}
 	if isLua {
 		if err := l.exec(ctx); err != nil {
+			if msgHandler != 0 {
+				l.push(l.errorToValue(err))
+			}
 			return err
 		}
 	}
@@ -1546,23 +1563,22 @@ func (l *State) call1(ctx context.Context, f value, args ...value) (value, error
 // then after the function returns will pop both the new frame and the current frame.
 // This matches the behavior of the upstream Lua interpreter
 // and permits Go functions to always get traceback on their immediate caller.
+//
+// If prepareCall fails before starting a call
+// (e.g. the value is not callable or there is not enough stack space),
+// the function and its arguments will be popped off the stack.
+// The call stack will be untouched
+// so any subsequent message handlers will receive the most precise information.
+//
+// If prepareCall calls a Go function and it returns an error,
+// it will call the message handler (if any)
+// before popping the Go function's frame off the call stack.
 func (l *State) prepareCall(ctx context.Context, functionIndex, numResults int, isTailCall bool) (isLua bool, err error) {
-	defer func() {
-		if err != nil {
-			if isTailCall {
-				fp := l.frame().framePointer()
-				l.popCallStack()
-				l.setTop(fp)
-			} else {
-				l.setTop(functionIndex)
-			}
-		}
-	}()
-
 	for range maxMetaDepth {
 		switch f := l.stack[functionIndex].(type) {
 		case luaFunction:
 			if err := l.checkUpvalues(functionIndex, f.upvalues); err != nil {
+				l.setTop(functionIndex)
 				return true, err
 			}
 			newFrame := callFrame{
@@ -1571,6 +1587,7 @@ func (l *State) prepareCall(ctx context.Context, functionIndex, numResults int, 
 				isTailCall:    isTailCall,
 			}
 			if !l.grow(newFrame.registerStart() + int(f.proto.MaxStackSize)) {
+				l.setTop(functionIndex)
 				return true, errStackOverflow
 			}
 			if f.proto.IsVararg {
@@ -1598,21 +1615,47 @@ func (l *State) prepareCall(ctx context.Context, functionIndex, numResults int, 
 			return true, nil
 		case goFunction:
 			if err := l.checkUpvalues(functionIndex, f.upvalues); err != nil {
+				l.setTop(functionIndex)
 				return false, err
 			}
 			if !l.grow(len(l.stack) + minStack) {
+				l.setTop(functionIndex)
 				return false, errStackOverflow
 			}
+
 			l.callStack = append(l.callStack, callFrame{
 				functionIndex: functionIndex,
 				numResults:    numResults,
 			})
 			n, err := f.cb(ctx, l)
 			if err != nil {
-				l.popCallStack()
+				// Go function raised an error.
+				// Before unwinding call stack, invoke the message handler.
+				if mhState := l.messageHandlerStateFromContext(ctx); mhState != nil {
+					var errValue value
+					errValue, err = l.call1(ctx, mhState.messageHandler, l.errorToValue(err))
+					mhState.markCalled()
+					if err == nil {
+						err = newErrorObject(l, errValue)
+					}
+				}
+
+				// Move results to correct location on stack
+				// and pop call frames.
+				newStackTop := functionIndex
+				newCallStackTop := len(l.callStack) - 1
+				if isTailCall {
+					newCallStackTop--
+					newStackTop = l.callStack[newStackTop].framePointer()
+				}
+				clear(l.callStack[newCallStackTop:])
+				l.callStack = l.callStack[:newCallStackTop]
 				return false, err
 			}
+
 			if isTailCall {
+				// Pop the Go function stack frame
+				// so that finishCall will move the results to the caller's caller's frame.
 				l.popCallStack()
 			}
 			l.finishCall(n)
@@ -1620,9 +1663,11 @@ func (l *State) prepareCall(ctx context.Context, functionIndex, numResults int, 
 		default:
 			tm := l.metamethod(f, luacode.TagMethodCall)
 			if tm == nil {
+				l.setTop(functionIndex)
 				return false, fmt.Errorf("function is a %v", valueType(f))
 			}
 			if !l.grow(len(l.stack) + 1) {
+				l.setTop(functionIndex)
 				return false, errStackOverflow
 			}
 			// Move original function object into first argument position.
@@ -1630,6 +1675,7 @@ func (l *State) prepareCall(ctx context.Context, functionIndex, numResults int, 
 		}
 	}
 
+	l.setTop(functionIndex)
 	return false, fmt.Errorf("exceeded depth for %v", luacode.TagMethodCall)
 }
 
@@ -1935,6 +1981,53 @@ func (l *State) typeName(v value) string {
 		}
 	}
 	return valueType(v).String()
+}
+
+type messageHandlerContextKey struct {
+	state *State
+}
+
+type messageHandlerState struct {
+	generation     uint64
+	messageHandler function
+
+	// Even though State should not be used concurrently,
+	// Context values can be accessed concurrently.
+	// Out of caution, we protect the mutable state with a mutex.
+	mu     sync.RWMutex
+	called bool
+}
+
+func (mhState *messageHandlerState) markCalled() {
+	mhState.mu.Lock()
+	mhState.called = true
+	mhState.mu.Unlock()
+}
+
+func withMessageHandler(ctx context.Context, l *State, f function) context.Context {
+	key := messageHandlerContextKey{state: l}
+	value := &messageHandlerState{
+		generation:     l.generation,
+		messageHandler: f,
+	}
+	return context.WithValue(ctx, key, value)
+}
+
+func (l *State) messageHandlerStateFromContext(ctx context.Context) *messageHandlerState {
+	state, _ := ctx.Value(messageHandlerContextKey{state: l}).(*messageHandlerState)
+	if state != nil {
+		if l.generation != state.generation {
+			state = nil
+		} else {
+			state.mu.RLock()
+			called := state.called
+			state.mu.RUnlock()
+			if called {
+				state = nil
+			}
+		}
+	}
+	return state
 }
 
 func readFull(r io.ByteReader, buf []byte) (n int, err error) {

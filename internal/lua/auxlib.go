@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"zb.256lights.llc/pkg/internal/luacode"
 	"zb.256lights.llc/pkg/sets"
@@ -451,4 +453,131 @@ func OpenLibraries(ctx context.Context, l *State) error {
 	}
 
 	return nil
+}
+
+// Traceback creates a traceback of the call stack starting at the given level.
+// Level 0 is the current running function,
+// whereas level n+1 is the function that has called level n
+// (except for tail calls, which do not count in the stack).
+// msg is prepended to the traceback.
+func Traceback(l *State, msg string, level int) string {
+	const levels1 = 10
+	const levels2 = 11
+
+	last := lastLevel(l)
+	limitToShow := -1
+	if last-level > levels1+levels2 {
+		limitToShow = levels1
+	}
+
+	sb := new(strings.Builder)
+	if msg != "" {
+		sb.WriteString(msg)
+		sb.WriteByte('\n')
+	}
+	sb.WriteString("stack traceback:")
+	for {
+		ar := l.Info(level)
+		if ar == nil {
+			break
+		}
+		level++
+
+		if limitToShow == 0 {
+			n := last - level - levels2 + 1
+			fmt.Fprintf(sb, "\n\t...\t(skipping %d levels)", n)
+			level += n
+		} else if limitToShow > 0 {
+			limitToShow--
+		}
+
+		if ar.CurrentLine > 0 {
+			fmt.Fprintf(sb, "\n\t%v:%d: in ", ar.Source, ar.CurrentLine)
+		} else {
+			fmt.Fprintf(sb, "\n\t%v: in ", ar.Source)
+		}
+		switch name, _ := globalFunctionName(l, level-1); {
+		case name != "":
+			sb.WriteString("function '")
+			sb.WriteString(name)
+			sb.WriteString("'")
+		case ar.NameWhat != "":
+			sb.WriteString(ar.NameWhat)
+			sb.WriteString(" '")
+			sb.WriteString(ar.Name)
+			sb.WriteString("'")
+		case ar.What == "main":
+			sb.WriteString("main chunk")
+		case ar.What == "Lua":
+			fmt.Fprintf(sb, "function <%s:%d>", ar.Source, ar.LineDefined)
+		default:
+			sb.WriteString("?")
+		}
+		if ar.IsTailCall {
+			sb.WriteString("\n\t(...tail calls...)")
+		}
+	}
+	return sb.String()
+}
+
+func globalFunctionName(l *State, level int) (string, error) {
+	defer l.SetTop(l.Top())
+
+	if !l.FunctionForLevel(level) {
+		return "", nil
+	}
+	funcIndex := l.Top()
+	l.RawField(RegistryIndex, LoadedTable)
+	if !l.CheckStack(6) {
+		return "", errStackOverflow
+	}
+	name, ok := fieldNameOfObject(l, funcIndex, 2)
+	if !ok {
+		return "", nil
+	}
+	return strings.TrimPrefix(name, GName+"."), nil
+}
+
+// fieldNameOfObject searches a table recursively (up to depth levels)
+// to see if it has a value that equals the value at objIndex,
+// and if so, it returns the keys used to get to that value separated by dots.
+func fieldNameOfObject(l *State, objIndex int, depth int) (string, bool) {
+	if depth <= 0 || !l.IsTable(-1) {
+		return "", false
+	}
+
+	defer l.SetTop(l.Top())
+	l.PushNil()
+	for l.Next(-2) {
+		if l.Type(-2) != TypeString {
+			// Ignore non-string keys.
+			l.Pop(1)
+			continue
+		}
+
+		if l.RawEqual(objIndex, -1) {
+			key, _ := l.ToString(-2)
+			return key, true
+		}
+
+		if subkey, found := fieldNameOfObject(l, objIndex, depth-1); found {
+			key, _ := l.ToString(-2)
+			return key + "." + subkey, true
+		}
+		l.Pop(1)
+	}
+
+	return "", false
+}
+
+func lastLevel(l *State) int {
+	lowerLimit, upperLimit := 1, 1
+	for l.Info(upperLimit) != nil {
+		lowerLimit = upperLimit
+		upperLimit *= 2
+	}
+	i := sort.Search(upperLimit-lowerLimit, func(i int) bool {
+		return l.Info(lowerLimit+i) == nil
+	})
+	return lowerLimit + i
 }
