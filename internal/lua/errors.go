@@ -3,17 +3,25 @@
 
 package lua
 
-import "errors"
+import (
+	"fmt"
+
+	"zb.256lights.llc/pkg/internal/luacode"
+)
 
 // errorToValue converts a Go error to a Lua [value].
-// If there is an [errorObject] in the error chain,
+// If the error is an [*errorObject]
+// and it came from the same generation of *State,
 // then errorToValue returns its value.
 // errorToValue(nil) returns nil.
-func errorToValue(err error) value {
+func (l *State) errorToValue(err error) value {
 	if err == nil {
 		return nil
 	}
-	if obj := (errorObject{}); errors.As(err, &obj) {
+	// We test for identity instead of using errors.As
+	// because any wrapping could have a different message,
+	// and thus lead to confusing results.
+	if obj, ok := err.(*errorObject); ok && obj.state == l && obj.generation == l.generation {
 		return obj.value
 	}
 	// TODO(maybe): Use a userdata instead (so errors can be round-tripped)?
@@ -22,16 +30,44 @@ func errorToValue(err error) value {
 
 // errorObject wraps a [value] as an [error].
 type errorObject struct {
-	value value
+	state      *State
+	generation uint64
+	value      value
 }
 
-func (obj errorObject) Error() string {
-	if obj.value == nil {
-		return "<lua nil>"
+func newErrorObject(l *State, value value) *errorObject {
+	return &errorObject{
+		state:      l,
+		generation: l.generation,
+		value:      value,
 	}
-	s, ok := toString(obj.value)
-	if !ok {
-		return "<" + obj.value.valueType().String() + ">"
+}
+
+// Error performs a reduced version of [ToString]
+// that does not call functions.
+func (obj *errorObject) Error() string {
+	switch v := obj.value.(type) {
+	case nil:
+		return "nil"
+	case booleanValue:
+		s, _ := luacode.BoolValue(bool(v)).Unquoted()
+		return s
+	case valueStringer:
+		return v.stringValue().s
+	case function:
+		return formatObject(v.valueType().String(), v.functionID())
+	case *table:
+		if name, ok := v.meta.get(stringValue{s: typeNameMetafield}).(stringValue); ok {
+			return formatObject(name.s, v.id)
+		}
+		return formatObject(v.valueType().String(), v.id)
+	case *userdata:
+		if name, ok := v.meta.get(stringValue{s: typeNameMetafield}).(stringValue); ok {
+			return formatObject(name.s, v.id)
+		}
+		return formatObject(v.valueType().String(), v.id)
+	default:
+		// Unhandled type (should not occur in practice).
+		return fmt.Sprintf("(error object is a %v value)", v.valueType())
 	}
-	return s.s
 }

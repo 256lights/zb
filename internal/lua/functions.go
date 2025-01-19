@@ -101,7 +101,7 @@ func (l *State) closeTBCSlots(ctx context.Context, bottom int, preserveTop bool,
 			clear(l.stack[newTop:])
 			l.stack = l.stack[:newTop]
 		}
-		newError := l.call(ctx, 0, l.metamethod(v, luacode.TagMethodClose), v, errorToValue(err))
+		newError := l.call(ctx, 0, l.metamethod(v, luacode.TagMethodClose), v, l.errorToValue(err))
 		if newError != nil {
 			err = newError
 		}

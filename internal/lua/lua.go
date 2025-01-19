@@ -82,12 +82,13 @@ func isPseudo(i int) bool {
 	return i <= RegistryIndex
 }
 
-var errMissingArguments = errors.New("not enough elements in stack")
-
 // A State is a Lua execution environment.
 // The zero value is a ready-to-use environment
 // with an empty stack and and an empty global table.
 type State struct {
+	// generation counts how many times [*State.Close] has been called successfully.
+	generation uint64
+
 	stack            []value
 	registry         table
 	callStack        []callFrame
@@ -122,13 +123,14 @@ func (l *State) initRegistry() {
 // Close returns an error and does nothing if any function calls are in-progress.
 // After a successful call to Close:
 //
-//   - The stack will be empty
-//   - The registry will be initialized to its original state
-//   - Type-wide metatables are removed
+//   - The stack will be empty.
+//   - The registry will be initialized to its original state.
+//   - Type-wide metatables are removed.
 //
 // Unlike the Lua C API, calling Close is not necessary to clean up resources.
 // States and their associated values are garbage-collected like other Go values.
 func (l *State) Close() error {
+	l.generation++
 	if len(l.callStack) > 1 {
 		return errors.New("close lua state: in use")
 	}
@@ -1920,10 +1922,15 @@ func (l *State) len(ctx context.Context, v value) (value, error) {
 	return lv.len(), nil
 }
 
+// typeNameMetafield is the metatable key that stores the name of a metatable.
+// This is used in error messages and other debugging contexts
+// to indicate a value's type.
+const typeNameMetafield = "__name"
+
 func (l *State) typeName(v value) string {
 	switch v := v.(type) {
 	case *table:
-		if s, ok := v.get(stringValue{s: "__name"}).(stringValue); ok {
+		if s, ok := v.get(stringValue{s: typeNameMetafield}).(stringValue); ok {
 			return s.s
 		}
 	}
@@ -1987,4 +1994,7 @@ func (mbs *multiByteScanner) UnreadByte() error {
 	return mbs.scanners[0].UnreadByte()
 }
 
-var errStackOverflow = errors.New("stack overflow")
+var (
+	errStackOverflow    = errors.New("stack overflow")
+	errMissingArguments = errors.New("not enough elements in stack")
+)

@@ -99,7 +99,7 @@ func ToString(ctx context.Context, l *State, idx int) (string, sets.Set[string],
 	default:
 		var kind string
 		var sctx sets.Set[string]
-		if tt := Metafield(l, idx, "__name"); tt == TypeString {
+		if tt := Metafield(l, idx, typeNameMetafield); tt == TypeString {
 			kind, _ = l.ToString(-1)
 			sctx = l.StringContext(-1)
 			l.Pop(1)
@@ -109,8 +109,12 @@ func ToString(ctx context.Context, l *State, idx int) (string, sets.Set[string],
 			}
 			kind = l.Type(idx).String()
 		}
-		return fmt.Sprintf("%s: %#x", kind, l.ID(idx)), sctx, nil
+		return formatObject(kind, l.ID(idx)), sctx, nil
 	}
+}
+
+func formatObject(kind string, id uint64) string {
+	return fmt.Sprintf("%s: %#x", kind, id)
 }
 
 // ToConstant converts the nil, boolean, number, or string at the given index
@@ -185,7 +189,7 @@ func NewMetatable(l *State, tname string) bool {
 	l.Pop(1)
 	l.CreateTable(0, 2)
 	l.PushString(tname)
-	l.RawSetField(-2, "__name") // metatable.__name = tname
+	l.RawSetField(-2, typeNameMetafield) // metatable.__name = tname
 	l.PushValue(-1)
 	l.RawSetField(RegistryIndex, tname)
 	return true
@@ -411,7 +415,7 @@ func NewArgError(l *State, arg int, msg string) error {
 // tname is a "name" for the expected type.
 func NewTypeError(l *State, arg int, tname string) error {
 	var typeArg string
-	if Metafield(l, arg, "__name") == TypeString {
+	if Metafield(l, arg, typeNameMetafield) == TypeString {
 		typeArg, _ = l.ToString(-1)
 	} else if tp := l.Type(arg); tp == TypeLightUserdata {
 		typeArg = "light userdata"
