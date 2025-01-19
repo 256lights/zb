@@ -378,10 +378,10 @@ func (ts *tableSorter) Less(i, j int) bool {
 	if hasCompareFunction {
 		ts.l.PushValue(2)
 	}
-	if _, ts.err = ts.l.Index(ts.ctx, 1, int64(i)); ts.err != nil {
+	if _, ts.err = ts.l.Index(ts.ctx, 1, int64(1+i)); ts.err != nil {
 		return i < j
 	}
-	if _, ts.err = ts.l.Index(ts.ctx, 1, int64(j)); ts.err != nil {
+	if _, ts.err = ts.l.Index(ts.ctx, 1, int64(1+j)); ts.err != nil {
 		return i < j
 	}
 	if hasCompareFunction {
@@ -404,16 +404,16 @@ func (ts *tableSorter) Swap(i, j int) {
 		return
 	}
 	defer ts.l.SetTop(ts.l.Top())
-	if _, ts.err = ts.l.Index(ts.ctx, 1, int64(i)); ts.err != nil {
+	if _, ts.err = ts.l.Index(ts.ctx, 1, int64(1+i)); ts.err != nil {
 		return
 	}
-	if _, ts.err = ts.l.Index(ts.ctx, 1, int64(j)); ts.err != nil {
+	if _, ts.err = ts.l.Index(ts.ctx, 1, int64(1+j)); ts.err != nil {
 		return
 	}
-	if ts.err = ts.l.SetIndex(ts.ctx, 1, int64(i)); ts.err != nil {
+	if ts.err = ts.l.SetIndex(ts.ctx, 1, int64(1+i)); ts.err != nil {
 		return
 	}
-	if ts.err = ts.l.SetIndex(ts.ctx, 1, int64(j)); ts.err != nil {
+	if ts.err = ts.l.SetIndex(ts.ctx, 1, int64(1+j)); ts.err != nil {
 		return
 	}
 }

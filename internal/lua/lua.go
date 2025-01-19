@@ -1469,6 +1469,12 @@ func (l *State) SetUserValue(idx int, n int) bool {
 // Such information cannot be gathered after the return of a [State] method,
 // since by then the stack will have been unwound.
 func (l *State) Call(ctx context.Context, nArgs, nResults, msgHandler int) error {
+	if nArgs < 0 {
+		return errors.New("negative argument count")
+	}
+	if nResults < 0 && nResults != MultipleReturns {
+		return errors.New("negative result count")
+	}
 	if l.Top() < nArgs+1 {
 		return errMissingArguments
 	}
