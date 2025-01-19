@@ -260,8 +260,11 @@ func valuesEqual(v1, v2 value) bool {
 	case stringValue:
 		s2, ok := v2.(stringValue)
 		return ok && v1.s == s2.s
-	case *table, function, *userdata:
+	case *table, *userdata:
 		return v1 == v2
+	case function:
+		f2, ok := v2.(function)
+		return ok && v1.functionID() == f2.functionID()
 	default:
 		panic("unhandled type")
 	}
