@@ -1763,6 +1763,27 @@ func (l *State) Load(r io.ByteScanner, chunkName Source, mode string) (err error
 	return nil
 }
 
+// Dump marshals the function at the top of the stack into a binary chunk.
+// If stripDebug is true,
+// the binary representation may not include all debug information about the function,
+// to save space.
+func (l *State) Dump(stripDebug bool) ([]byte, error) {
+	if l.Top() < 1 {
+		return nil, errMissingArguments
+	}
+
+	l.init()
+	top := l.stack[len(l.stack)-1]
+	f, ok := top.(luaFunction)
+	if !ok {
+		if valueType(top) == TypeFunction {
+			return nil, errors.New("cannot dump a Go function")
+		}
+		return nil, fmt.Errorf("cannot dump a %s", l.typeName(top))
+	}
+	return f.proto.MarshalBinary()
+}
+
 // Next pops a key from the stack,
 // and pushes a key–value pair from the table at the given index,
 // the “next” pair after the given key.
@@ -1992,7 +2013,11 @@ const typeNameMetafield = "__name"
 func (l *State) typeName(v value) string {
 	switch v := v.(type) {
 	case *table:
-		if s, ok := v.get(stringValue{s: typeNameMetafield}).(stringValue); ok {
+		if s, ok := v.meta.get(stringValue{s: typeNameMetafield}).(stringValue); ok {
+			return s.s
+		}
+	case *userdata:
+		if s, ok := v.meta.get(stringValue{s: typeNameMetafield}).(stringValue); ok {
 			return s.s
 		}
 	}

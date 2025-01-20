@@ -39,9 +39,9 @@ const StringLibraryName = "string"
 // [string manipulation library]: https://www.lua.org/manual/5.4/manual.html#6.4
 func OpenString(ctx context.Context, l *State) (int, error) {
 	NewLib(l, map[string]Function{
-		"byte": stringByte,
-		"char": stringChar,
-		// "dump":     stringDump,
+		"byte":     stringByte,
+		"char":     stringChar,
+		"dump":     stringDump,
 		"find":     stringFind,
 		"format":   stringFormat,
 		"gmatch":   stringGMatch,
@@ -141,6 +141,20 @@ func stringChar(ctx context.Context, l *State) (int, error) {
 		sb.WriteByte(byte(c))
 	}
 	l.PushString(sb.String())
+	return 1, nil
+}
+
+func stringDump(ctx context.Context, l *State) (int, error) {
+	stripDebug := l.ToBoolean(2)
+	if got, want := l.Type(1), TypeFunction; got != want {
+		return 0, NewTypeError(l, 1, want.String())
+	}
+	l.SetTop(1)
+	chunk, err := l.Dump(stripDebug)
+	if err != nil {
+		return 0, err
+	}
+	l.PushString(string(chunk))
 	return 1, nil
 }
 
