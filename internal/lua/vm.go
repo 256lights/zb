@@ -34,6 +34,8 @@ type callFrame struct {
 	pc int
 
 	isTailCall bool
+
+	messageHandler *messageHandlerState
 }
 
 // framePointer returns the top of the value stack for the calling function.
@@ -62,10 +64,10 @@ func (l *State) exec(ctx context.Context) (err error) {
 	defer func() {
 		// Call message handler, if present.
 		if err != nil {
-			if mhState := l.messageHandlerStateFromContext(ctx); mhState != nil {
+			if mhState := l.frame().messageHandler; mhState != nil && !mhState.called {
 				var errValue value
-				errValue, err = l.call1(ctx, mhState.messageHandler, l.errorToValue(err))
-				mhState.markCalled()
+				errValue, err = l.call1(ctx, mhState.function, l.errorToValue(err))
+				mhState.called = true
 				if err == nil {
 					err = newErrorObject(l, errValue)
 				}
@@ -85,9 +87,7 @@ func (l *State) exec(ctx context.Context) (err error) {
 			}
 			l.setTop(fp)
 
-			n := len(l.callStack) - 1
-			l.callStack[n] = callFrame{}
-			l.callStack = l.callStack[:n]
+			l.popCallStack()
 		}
 	}()
 	currFunction := l.findLuaFunction()
@@ -990,7 +990,7 @@ func (l *State) exec(ctx context.Context) (err error) {
 			if numArguments >= 0 {
 				l.setTop(functionIndex + 1 + numArguments)
 			}
-			isLua, err := l.prepareCall(ctx, functionIndex, numResults, false)
+			isLua, err := l.prepareCall(ctx, functionIndex, numResults, false, nil)
 			if err != nil {
 				return err
 			}
@@ -1019,7 +1019,7 @@ func (l *State) exec(ctx context.Context) (err error) {
 			clear(l.stack[registerStart:functionIndex])
 			varargStart, varargEnd := frame.extraArgumentsRange()
 			clear(l.stack[varargStart:varargEnd])
-			if _, err := l.prepareCall(ctx, functionIndex, numResults, true); err != nil {
+			if _, err := l.prepareCall(ctx, functionIndex, numResults, true, nil); err != nil {
 				return err
 			}
 			if len(l.callStack) <= callerDepth {
@@ -1219,7 +1219,7 @@ func (l *State) exec(ctx context.Context) (err error) {
 			}
 			l.setTop(newTop)
 			copy(l.stack[stateEnd:], l.stack[stateStart:])
-			isLua, err := l.prepareCall(ctx, stateEnd, c, false)
+			isLua, err := l.prepareCall(ctx, stateEnd, c, false, nil)
 			if err != nil {
 				return err
 			}
