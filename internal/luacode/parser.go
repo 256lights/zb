@@ -1804,9 +1804,11 @@ func (p *parser) constructor(fs *funcState) (expressionDescriptor, error) {
 			}
 			// Do not count last expression (unknown number of elements).
 			toStore--
-		} else if lastListItem.kind != expressionKindVoid {
-			if _, _, err := p.toNextRegister(fs, lastListItem); err != nil {
-				return voidExpression(), err
+		} else {
+			if lastListItem.kind != expressionKindVoid {
+				if _, _, err := p.toNextRegister(fs, lastListItem); err != nil {
+					return voidExpression(), err
+				}
 			}
 			if err := p.codeSetList(fs, tableRegister, arraySize, toStore); err != nil {
 				return voidExpression(), err
@@ -1824,11 +1826,11 @@ func (p *parser) constructor(fs *funcState) (expressionDescriptor, error) {
 	return tableExpression, nil
 }
 
-// recordField parses a field production.
+// recordField parses the first two forms of a field production.
 //
 //	field ::= ‘[’ exp ‘]’ ‘=’ exp | Name ‘=’ exp | exp
 //
-// Roughly equivalent to `recfield` in upstream Lua.
+// Equivalent to `recfield` in upstream Lua.
 func (p *parser) recordField(fs *funcState, table expressionDescriptor) error {
 	// Free temporary registers used.
 	defer func(original registerIndex) {
