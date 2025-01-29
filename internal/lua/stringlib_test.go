@@ -310,7 +310,7 @@ func TestStringGSub(t *testing.T) {
 			funcIndex := state.Top()
 
 			test.push(state)
-			if err := state.Call(ctx, state.Top()-funcIndex, 2, 0); err != nil {
+			if err := state.Call(ctx, state.Top()-funcIndex, 2); err != nil {
 				t.Fatal("gsub:", err)
 			}
 

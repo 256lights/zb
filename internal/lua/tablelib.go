@@ -385,7 +385,7 @@ func (ts *tableSorter) Less(i, j int) bool {
 		return i < j
 	}
 	if hasCompareFunction {
-		ts.err = ts.l.Call(ts.ctx, 2, 1, 0)
+		ts.err = ts.l.Call(ts.ctx, 2, 1)
 		if ts.err != nil {
 			return i < j
 		}

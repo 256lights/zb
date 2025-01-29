@@ -118,7 +118,7 @@ func newBaseDofile(loadfile Function) Function {
 		// loadfile(filename)
 		l.PushClosure(0, loadfile)
 		l.Insert(1)
-		if err := l.Call(ctx, 1, 2, 0); err != nil {
+		if err := l.Call(ctx, 1, 2); err != nil {
 			return 0, err
 		}
 		if l.IsNil(-2) {
@@ -128,7 +128,7 @@ func newBaseDofile(loadfile Function) Function {
 		l.Pop(1)
 
 		// Call the loaded function.
-		if err := l.Call(ctx, 0, MultipleReturns, 0); err != nil {
+		if err := l.Call(ctx, 0, MultipleReturns); err != nil {
 			return 0, err
 		}
 		return l.Top(), nil
@@ -358,7 +358,7 @@ func basePairs(ctx context.Context, l *State) (int, error) {
 	}
 	if Metafield(l, 1, "__pairs") != TypeNil {
 		l.PushValue(1) // self for metamethod
-		if err := l.Call(ctx, 1, 3, 0); err != nil {
+		if err := l.Call(ctx, 1, 3); err != nil {
 			return 0, err
 		}
 		return 3, nil
@@ -378,7 +378,7 @@ func basePCall(ctx context.Context, l *State) (int, error) {
 	l.PushBoolean(true)
 	l.Insert(1)
 
-	if err := l.Call(ctx, l.Top()-2, MultipleReturns, 0); err != nil {
+	if err := l.PCall(ctx, l.Top()-2, MultipleReturns, 0); err != nil {
 		l.PushBoolean(false)
 		// TODO(someday): Push error object from err.
 		l.PushString(err.Error())
@@ -408,7 +408,7 @@ func baseXPCall(ctx context.Context, l *State) (int, error) {
 	l.PushBoolean(true)
 	l.Rotate(3, 1)
 
-	if err := l.Call(ctx, numArgs, MultipleReturns, 1); err != nil {
+	if err := l.PCall(ctx, numArgs, MultipleReturns, 1); err != nil {
 		l.PushBoolean(false)
 		// TODO(someday): Push error object from err.
 		l.PushString(err.Error())
@@ -647,7 +647,7 @@ func (r *luaFunctionReader) ReadByte() (byte, error) {
 	}
 	r.s, r.i = "", 0 // Prevent unreading.
 	r.l.PushValue(1)
-	r.err = r.l.Call(r.ctx, 0, 1, 0)
+	r.err = r.l.Call(r.ctx, 0, 1)
 	if r.err != nil {
 		return 0, r.err
 	}

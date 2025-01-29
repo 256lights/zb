@@ -53,7 +53,7 @@ func CallMeta(ctx context.Context, l *State, obj int, event string) (bool, error
 		return false, nil
 	}
 	l.PushValue(obj)
-	if err := l.Call(ctx, 1, 1, 0); err != nil {
+	if err := l.Call(ctx, 1, 1); err != nil {
 		return true, fmt.Errorf("lua: call metafield %q: %w", event, err)
 	}
 	return true, nil
@@ -371,7 +371,7 @@ func Require(ctx context.Context, l *State, modName string, global bool, openf F
 		l.Pop(1) // remove field
 		l.PushClosure(0, openf)
 		l.PushString(modName)
-		if err := l.Call(ctx, 1, 1, 0); err != nil {
+		if err := l.Call(ctx, 1, 1); err != nil {
 			return fmt.Errorf("lua: require %q: %w", modName, err)
 		}
 		l.PushValue(-1)

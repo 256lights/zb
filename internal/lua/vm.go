@@ -990,7 +990,7 @@ func (l *State) exec(ctx context.Context) (err error) {
 			if numArguments >= 0 {
 				l.setTop(functionIndex + 1 + numArguments)
 			}
-			isLua, err := l.prepareCall(ctx, functionIndex, numResults, false, nil)
+			isLua, err := l.prepareCall(ctx, functionIndex, callOptions{numResults: numResults})
 			if err != nil {
 				return err
 			}
@@ -1019,7 +1019,11 @@ func (l *State) exec(ctx context.Context) (err error) {
 			clear(l.stack[registerStart:functionIndex])
 			varargStart, varargEnd := frame.extraArgumentsRange()
 			clear(l.stack[varargStart:varargEnd])
-			if _, err := l.prepareCall(ctx, functionIndex, numResults, true, nil); err != nil {
+			_, err := l.prepareCall(ctx, functionIndex, callOptions{
+				numResults: numResults,
+				isTailCall: true,
+			})
+			if err != nil {
 				return err
 			}
 			if len(l.callStack) <= callerDepth {
@@ -1219,7 +1223,7 @@ func (l *State) exec(ctx context.Context) (err error) {
 			}
 			l.setTop(newTop)
 			copy(l.stack[stateEnd:], l.stack[stateStart:])
-			isLua, err := l.prepareCall(ctx, stateEnd, c, false, nil)
+			isLua, err := l.prepareCall(ctx, stateEnd, callOptions{numResults: c})
 			if err != nil {
 				return err
 			}

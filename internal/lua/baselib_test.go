@@ -27,7 +27,7 @@ func TestAssert(t *testing.T) {
 		}
 
 		state.PushBoolean(true)
-		if err := state.Call(ctx, 1, MultipleReturns, 0); err != nil {
+		if err := state.Call(ctx, 1, MultipleReturns); err != nil {
 			t.Fatal(err)
 		}
 
@@ -57,7 +57,7 @@ func TestAssert(t *testing.T) {
 		}
 
 		state.PushBoolean(false)
-		if err := state.Call(ctx, 1, MultipleReturns, 0); err == nil {
+		if err := state.Call(ctx, 1, MultipleReturns); err == nil {
 			t.Error("state.Call(ctx, 1, MultipleReturns, 0) did not return an error")
 		} else if got, want := err.Error(), "assertion failed!"; got != want {
 			t.Errorf("state.Call(ctx, 1, MultipleReturns, 0) error = %q; want %q", got, want)
@@ -82,7 +82,7 @@ func TestAssert(t *testing.T) {
 		}
 
 		state.PushNil()
-		if err := state.Call(ctx, 1, MultipleReturns, 0); err == nil {
+		if err := state.Call(ctx, 1, MultipleReturns); err == nil {
 			t.Error("state.Call(ctx, 1, MultipleReturns, 0) did not return an error")
 		} else if got, want := err.Error(), "assertion failed!"; got != want {
 			t.Errorf("state.Call(ctx, 1, MultipleReturns, 0) error = %q; want %q", got, want)
@@ -109,7 +109,7 @@ func TestAssert(t *testing.T) {
 		state.PushBoolean(false)
 		const msg = "bork bork bork"
 		state.PushString(msg)
-		if err := state.Call(ctx, 2, MultipleReturns, 0); err == nil {
+		if err := state.Call(ctx, 2, MultipleReturns); err == nil {
 			t.Error("state.Call(ctx, 1, MultipleReturns, 0) did not return an error")
 		} else if got, want := err.Error(), msg; got != want {
 			t.Errorf("state.Call(ctx, 1, MultipleReturns, 0) error = %q; want %q", got, want)

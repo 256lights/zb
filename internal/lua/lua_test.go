@@ -81,7 +81,7 @@ func TestLoad(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -115,7 +115,7 @@ func TestLoad(t *testing.T) {
 		if err := state.Load(bytes.NewReader(chunk), "", "b"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -158,7 +158,7 @@ func TestLoad(t *testing.T) {
 				if err := state.Load(bytes.NewReader(test.data), source, "bt"); err != nil {
 					t.Fatal(err)
 				}
-				if err := state.Call(ctx, 0, 1, 0); err != nil {
+				if err := state.Call(ctx, 0, 1); err != nil {
 					t.Fatal(err)
 				}
 				if !state.IsNumber(-1) {
@@ -494,7 +494,7 @@ func TestCompare(t *testing.T) {
 					state.PushValue(-3)
 					state.PushValue(-3)
 
-					if err := state.Call(ctx, 2, 1, 0); err != nil {
+					if err := state.Call(ctx, 2, 1); err != nil {
 						t.Logf("(%s %v %s): %v", s1, op, s2, err)
 						if want != bad {
 							t.Fail()
@@ -740,7 +740,7 @@ func TestMessageHandler(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := state.Call(ctx, 0, 0, -2); err == nil {
+		if err := state.PCall(ctx, 0, 0, -2); err == nil {
 			t.Error("Running script did not return an error")
 		} else if got, want := err.Error(), handledMessage; got != want {
 			t.Errorf("state.Call(...).Error() = %q; want %q", got, want)
@@ -831,7 +831,7 @@ func TestMessageHandler(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := state.Call(ctx, 0, 0, -2); err == nil {
+		if err := state.PCall(ctx, 0, 0, -2); err == nil {
 			t.Error("Running script did not return an error")
 		} else if got, want := err.Error(), handledMessage; got != want {
 			t.Errorf("state.Call(...).Error() = %q; want %q", got, want)
@@ -930,13 +930,216 @@ func TestMessageHandler(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := state.Call(ctx, 0, 0, -2); err == nil {
+		if err := state.PCall(ctx, 0, 0, -2); err == nil {
 			t.Error("Running script did not return an error")
 		} else if got, want := err.Error(), handledMessage; got != want {
 			t.Errorf("state.Call(...).Error() = %q; want %q", got, want)
 		}
 		if messageHandlerCallCount != 2 {
 			t.Errorf("message handler called %d times; want 2", messageHandlerCallCount)
+		}
+
+		const errorObjectIndex = 2
+		if got, want := state.Top(), errorObjectIndex; got != want {
+			t.Errorf("after state.Call(...), state.Top() = %d; want %d", got, want)
+		}
+		if state.Top() >= errorObjectIndex {
+			if got, want := state.Type(errorObjectIndex), TypeString; got != want {
+				t.Errorf("after state.Call(...), state.Type(%d) = %v; want %v", errorObjectIndex, got, want)
+			} else {
+				got, ok := state.ToString(errorObjectIndex)
+				want := handledMessage
+				if !ok || got != want {
+					t.Errorf("after state.Call(...), state.ToString(%d) = %q, %t; want %q, true", errorObjectIndex, got, ok, want)
+				}
+			}
+		}
+	})
+
+	t.Run("CrossesCall", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const originalMessage = "bork"
+		state.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			// Call a Go function using the Lua API that raises an error.
+			l.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+				return 0, errors.New(originalMessage)
+			})
+			if err := l.Call(ctx, 0, 0); err != nil {
+				return 0, err
+			}
+			t.Error("Calling error-raising function did not raise an error.")
+			return 0, nil
+		})
+		if err := state.SetGlobal(ctx, "foo"); err != nil {
+			t.Fatal(err)
+		}
+
+		// Message handler.
+		const handledMessage = "uwu"
+		messageHandlerCallCount := 0
+		state.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			messageHandlerCallCount++
+
+			if got, want := l.Top(), 1; got != want {
+				t.Errorf("l.Top() = %d; want %d", got, want)
+			}
+			if got, want := l.Type(1), TypeString; got != want {
+				t.Errorf("l.Type(1) = %v; want %v", got, want)
+			} else if got, ok := l.ToString(1); got != originalMessage || !ok {
+				t.Errorf("l.ToString(1) = %q, %t; want %q, true", got, ok, originalMessage)
+			}
+
+			errFuncDebug := l.Info(1)
+			if errFuncDebug == nil {
+				t.Error("l.Info(1) = nil")
+			} else {
+				if got, want := errFuncDebug.What, "Go"; got != want {
+					t.Errorf("l.Info(1).What = %q; want %q", got, want)
+				}
+			}
+
+			goFuncDebug := l.Info(2)
+			if goFuncDebug == nil {
+				t.Error("l.Info(2) = nil")
+			} else {
+				if got, want := goFuncDebug.What, "Go"; got != want {
+					t.Errorf("l.Info(2).What = %q; want %q", got, want)
+				}
+			}
+
+			scriptDebug := l.Info(3)
+			if scriptDebug == nil {
+				t.Error("l.Info(3) = nil")
+			} else {
+				if got, want := scriptDebug.What, "main"; got != want {
+					t.Errorf("l.Info(3).What = %q; want %q", got, want)
+				}
+				if got, want := scriptDebug.CurrentLine, 2; got != want {
+					t.Errorf("l.Info(3).CurrentLine = %d; want %d", got, want)
+				}
+			}
+
+			l.PushString(handledMessage)
+			return 1, nil
+		})
+
+		const source = `-- Comment here to advance line number.` + "\n" +
+			`foo()` + "\n"
+		if err := state.Load(strings.NewReader(source), LiteralSource(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := state.PCall(ctx, 0, 0, -2); err == nil {
+			t.Error("Running script did not return an error")
+		} else if got, want := err.Error(), handledMessage; got != want {
+			t.Errorf("state.Call(...).Error() = %q; want %q", got, want)
+		}
+		if messageHandlerCallCount != 1 {
+			t.Errorf("message handler called %d times; want 1", messageHandlerCallCount)
+		}
+
+		const errorObjectIndex = 2
+		if got, want := state.Top(), errorObjectIndex; got != want {
+			t.Errorf("after state.Call(...), state.Top() = %d; want %d", got, want)
+		}
+		if state.Top() >= errorObjectIndex {
+			if got, want := state.Type(errorObjectIndex), TypeString; got != want {
+				t.Errorf("after state.Call(...), state.Type(%d) = %v; want %v", errorObjectIndex, got, want)
+			} else {
+				got, ok := state.ToString(errorObjectIndex)
+				want := handledMessage
+				if !ok || got != want {
+					t.Errorf("after state.Call(...), state.ToString(%d) = %q, %t; want %q, true", errorObjectIndex, got, ok, want)
+				}
+			}
+		}
+	})
+
+	t.Run("DoesNotCrossPCall", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const originalMessage = "bork"
+		state.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			// Call a Go function using the Lua API that raises an error.
+			l.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+				return 0, errors.New(originalMessage)
+			})
+			if err := l.PCall(ctx, 0, 0, 0); err != nil {
+				return 0, err
+			}
+			t.Error("Calling error-raising function did not raise an error.")
+			return 0, nil
+		})
+		if err := state.SetGlobal(ctx, "foo"); err != nil {
+			t.Fatal(err)
+		}
+
+		// Message handler.
+		const handledMessage = "uwu"
+		messageHandlerCallCount := 0
+		state.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			messageHandlerCallCount++
+
+			if got, want := l.Top(), 1; got != want {
+				t.Errorf("l.Top() = %d; want %d", got, want)
+			}
+			if got, want := l.Type(1), TypeString; got != want {
+				t.Errorf("l.Type(1) = %v; want %v", got, want)
+			} else if got, ok := l.ToString(1); got != originalMessage || !ok {
+				t.Errorf("l.ToString(1) = %q, %t; want %q, true", got, ok, originalMessage)
+			}
+
+			errFuncDebug := l.Info(1)
+			if errFuncDebug == nil {
+				t.Error("l.Info(1) = nil")
+			} else {
+				if got, want := errFuncDebug.What, "Go"; got != want {
+					t.Errorf("l.Info(1).What = %q; want %q", got, want)
+				}
+			}
+
+			scriptDebug := l.Info(2)
+			if scriptDebug == nil {
+				t.Error("l.Info(2) = nil")
+			} else {
+				if got, want := scriptDebug.What, "main"; got != want {
+					t.Errorf("l.Info(2).What = %q; want %q", got, want)
+				}
+				if got, want := scriptDebug.CurrentLine, 2; got != want {
+					t.Errorf("l.Info(2).CurrentLine = %d; want %d", got, want)
+				}
+			}
+
+			l.PushString(handledMessage)
+			return 1, nil
+		})
+
+		const source = `-- Comment here to advance line number.` + "\n" +
+			`foo()` + "\n"
+		if err := state.Load(strings.NewReader(source), LiteralSource(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := state.PCall(ctx, 0, 0, -2); err == nil {
+			t.Error("Running script did not return an error")
+		} else if got, want := err.Error(), handledMessage; got != want {
+			t.Errorf("state.Call(...).Error() = %q; want %q", got, want)
+		}
+		if messageHandlerCallCount != 1 {
+			t.Errorf("message handler called %d times; want 1", messageHandlerCallCount)
 		}
 
 		const errorObjectIndex = 2
@@ -1012,7 +1215,7 @@ func TestSuite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := l.Call(ctx, 0, 0, 0); err != nil {
+			if err := l.Call(ctx, 0, 0); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -1033,7 +1236,7 @@ func BenchmarkExec(b *testing.B) {
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			b.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			b.Fatal(err)
 		}
 		state.Pop(1)

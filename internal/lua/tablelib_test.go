@@ -93,7 +93,7 @@ func TestTableSort(t *testing.T) {
 				state.PushClosure(0, test.compare)
 			}
 
-			if err := state.Call(ctx, state.Top()-funcIndex, 0, 0); err != nil {
+			if err := state.Call(ctx, state.Top()-funcIndex, 0); err != nil {
 				t.Error("table.sort:", err)
 			}
 

@@ -132,7 +132,7 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 	if err := eval.l.Load(strings.NewReader(preludeSource), lua.AbstractSource("(prelude)"), "t"); err != nil {
 		return nil, err
 	}
-	if err := eval.l.Call(ctx, 0, 0, 0); err != nil {
+	if err := eval.l.Call(ctx, 0, 0); err != nil {
 		return nil, err
 	}
 
@@ -206,7 +206,7 @@ func (eval *Eval) File(ctx context.Context, exprFile string, attrPaths []string)
 	if err := loadFile(&eval.l, exprFile); err != nil {
 		return nil, err
 	}
-	if err := eval.l.Call(ctx, 0, 1, -2); err != nil {
+	if err := eval.l.PCall(ctx, 0, 1, -2); err != nil {
 		return nil, err
 	}
 	return eval.attrPaths(ctx, attrPaths)
@@ -232,7 +232,7 @@ func (eval *Eval) Expression(ctx context.Context, expr string, attrPaths []strin
 	if err := loadExpression(&eval.l, expr); err != nil {
 		return nil, err
 	}
-	if err := eval.l.Call(ctx, 0, 1, -2); err != nil {
+	if err := eval.l.PCall(ctx, 0, 1, -2); err != nil {
 		return nil, err
 	}
 	return eval.attrPaths(ctx, attrPaths)
@@ -261,7 +261,7 @@ func (eval *Eval) attrPaths(ctx context.Context, paths []string) ([]any, error) 
 			return result, fmt.Errorf("%s: %v", p, err)
 		}
 		eval.l.PushValue(-2)
-		if err := eval.l.Call(ctx, 1, 1, 0); err != nil {
+		if err := eval.l.Call(ctx, 1, 1); err != nil {
 			return result, fmt.Errorf("%s: %v", p, err)
 		}
 		x, err := luaToGo(ctx, &eval.l)
@@ -411,7 +411,7 @@ func loadFunction(ctx context.Context, l *lua.State) (int, error) {
 	}
 	l.PushValue(lua.UpvalueIndex(1))
 	l.Insert(1)
-	if err := l.Call(ctx, maxLoadArgs, lua.MultipleReturns, 0); err != nil {
+	if err := l.Call(ctx, maxLoadArgs, lua.MultipleReturns); err != nil {
 		return 0, err
 	}
 	return l.Top(), nil
@@ -532,7 +532,7 @@ func dofileFunction(ctx context.Context, l *lua.State) (int, error) {
 	// loadfile(filename)
 	l.PushValue(lua.UpvalueIndex(1))
 	l.Insert(1)
-	if err := l.Call(ctx, 1, 2, 0); err != nil {
+	if err := l.Call(ctx, 1, 2); err != nil {
 		return 0, fmt.Errorf("dofile: %v", err)
 	}
 	if l.IsNil(-2) {
@@ -542,7 +542,7 @@ func dofileFunction(ctx context.Context, l *lua.State) (int, error) {
 	l.Pop(1)
 
 	// Call the loaded function.
-	if err := l.Call(ctx, 0, lua.MultipleReturns, 0); err != nil {
+	if err := l.Call(ctx, 0, lua.MultipleReturns); err != nil {
 		return 0, fmt.Errorf("dofile %s: %v", resolved, err)
 	}
 	return l.Top(), nil

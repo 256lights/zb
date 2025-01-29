@@ -31,7 +31,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -60,7 +60,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -89,7 +89,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -114,7 +114,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), source, "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsTable(-1) {
@@ -157,7 +157,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsTable(-1) {
@@ -188,7 +188,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -213,7 +213,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -243,7 +243,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		const want = "Hello, World"
@@ -270,7 +270,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		const want = "Hello, World!"
@@ -311,7 +311,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 0, 0); err != nil {
+		if err := state.Call(ctx, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -372,7 +372,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 0, 0); err != nil {
+		if err := state.Call(ctx, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -416,7 +416,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 0, 0); err != nil {
+		if err := state.Call(ctx, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -455,7 +455,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 0, 0); err != nil {
+		if err := state.Call(ctx, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -494,7 +494,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 0, 0); err != nil {
+		if err := state.Call(ctx, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -570,7 +570,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 0, 0); err != nil {
+		if err := state.Call(ctx, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -598,7 +598,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		if !state.IsNumber(-1) {
@@ -632,7 +632,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		if got, want := state.Type(-1), TypeString; got != want {
@@ -677,7 +677,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 		const wantResult = 85
@@ -704,7 +704,7 @@ func TestVM(t *testing.T) {
 		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Call(ctx, 0, 1, 0); err != nil {
+		if err := state.Call(ctx, 0, 1); err != nil {
 			t.Fatal(err)
 		}
 

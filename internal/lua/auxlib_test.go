@@ -73,7 +73,7 @@ func TestWhere(t *testing.T) {
 			if err := state.Load(strings.NewReader(test.luaCode), chunkName, "t"); err != nil {
 				t.Fatal(err)
 			}
-			if err := state.Call(ctx, 0, 1, 0); err != nil {
+			if err := state.Call(ctx, 0, 1); err != nil {
 				t.Fatal(err)
 			}
 

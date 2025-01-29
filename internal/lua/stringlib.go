@@ -683,7 +683,7 @@ func gsubFunction(ctx context.Context, l *State, state *gsubState, match []int) 
 	if err != nil {
 		return false, err
 	}
-	if err := l.Call(ctx, n, 1, 0); err != nil {
+	if err := l.Call(ctx, n, 1); err != nil {
 		return false, err
 	}
 	if !l.ToBoolean(-1) {
@@ -1562,7 +1562,7 @@ func stringArithmetic(ctx context.Context, l *State, op luacode.ArithmeticOperat
 			Where(l, 1), mtName[2:], l.Type(-2), l.Type(-1))
 	}
 	l.Insert(-3)
-	if err := l.Call(ctx, 2, 1, 0); err != nil {
+	if err := l.Call(ctx, 2, 1); err != nil {
 		return 0, err
 	}
 	return 1, nil

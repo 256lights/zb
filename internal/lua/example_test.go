@@ -29,7 +29,7 @@ func Example() {
 	if err := state.Load(strings.NewReader(luaSource), luaSource, "t"); err != nil {
 		log.Fatal(err)
 	}
-	if err := state.Call(ctx, 0, 0, 0); err != nil {
+	if err := state.Call(ctx, 0, 0); err != nil {
 		log.Fatal(err)
 	}
 	// Output:

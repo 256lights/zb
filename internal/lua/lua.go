@@ -1431,7 +1431,7 @@ func (l *State) SetUserValue(idx int, n int) bool {
 	return true
 }
 
-// Call calls a function (or callable object) in protected mode.
+// Call calls a function (or callable object).
 //
 // To do a call you must use the following protocol:
 // first, the function to be called is pushed onto the stack;
@@ -1454,20 +1454,79 @@ func (l *State) SetUserValue(idx int, n int) bool {
 //
 // # Error Handling
 //
+// If an error occurs during the function call,
+// it is returned as a Go error value.
+// (This is in contrast to the C Lua API, which longjmps to the last protected call.)
+// If a caller used [*State.PCall] to set a message handler,
+// then the message handler is called before unwinding the stack
+// and before Call returns.
+func (l *State) Call(ctx context.Context, nArgs, nResults int) error {
+	if nArgs < 0 {
+		return errors.New("negative argument count")
+	}
+	if nResults < 0 && nResults != MultipleReturns {
+		return errors.New("negative result count")
+	}
+	if l.Top() < nArgs+1 {
+		return errMissingArguments
+	}
+	l.init()
+	if nResults != MultipleReturns && cap(l.stack)-len(l.stack) < nResults-nArgs {
+		l.Pop(nArgs + 1)
+		return fmt.Errorf("results from function overflow current stack size")
+	}
+
+	isLua, err := l.prepareCall(ctx, len(l.stack)-nArgs-1, callOptions{
+		numResults: nResults,
+	})
+	if err != nil {
+		return err
+	}
+	if isLua {
+		if err := l.exec(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PCall calls a function (or callable object) in protected mode.
+//
+// To do a call you must use the following protocol:
+// first, the function to be called is pushed onto the stack;
+// then, the arguments to the call are pushed in direct order;
+// that is, the first argument is pushed first.
+// Finally you call PCall;
+// nArgs is the number of arguments that you pushed onto the stack.
+// When the function returns,
+// all arguments and the function value are popped
+// and the call results are pushed onto the stack.
+// The number of results is adjusted to nResults,
+// unless nResults is [MultipleReturns].
+// In this case, all results from the function are pushed;
+// Lua takes care that the returned values fit into the stack space,
+// but it does not ensure any extra space in the stack.
+// The function results are pushed onto the stack in direct order
+// (the first result is pushed first),
+// so that after the call the last result is on the top of the stack.
+// PCall always removes the function and its arguments from the stack.
+//
+// # Error Handling
+//
 // If the msgHandler argument is 0,
 // then if an error occurs during the function call,
 // it is returned as a Go error value.
 // (This is in contrast to the C Lua API which pushes an error object onto the stack.)
 // Otherwise, msgHandler is the stack index of a message handler.
 // In case of runtime errors, this handler will be called with the error object
-// and Call will push its return value onto the stack.
-// The return value's string value will be used as a Go error returned by Call.
+// and PCall will push its return value onto the stack.
+// The return value's string value will be used as a Go error returned by PCall.
 //
 // Typically, the message handler is used to add more debug information to the error object,
 // such as a stack traceback.
 // Such information cannot be gathered after the return of a [State] method,
 // since by then the stack will have been unwound.
-func (l *State) Call(ctx context.Context, nArgs, nResults, msgHandler int) error {
+func (l *State) PCall(ctx context.Context, nArgs, nResults, msgHandler int) error {
 	if nArgs < 0 {
 		return errors.New("negative argument count")
 	}
@@ -1497,7 +1556,11 @@ func (l *State) Call(ctx context.Context, nArgs, nResults, msgHandler int) error
 		}
 	}
 
-	isLua, err := l.prepareCall(ctx, len(l.stack)-nArgs-1, nResults, false, msgHandlerFunction)
+	isLua, err := l.prepareCall(ctx, len(l.stack)-nArgs-1, callOptions{
+		numResults:     nResults,
+		protected:      true,
+		messageHandler: msgHandlerFunction,
+	})
 	if err != nil {
 		if msgHandler != 0 {
 			l.push(l.errorToValue(err))
@@ -1526,7 +1589,7 @@ func (l *State) call(ctx context.Context, numResults int, f value, args ...value
 	functionIndex := len(l.stack)
 	l.stack = append(l.stack, f)
 	l.stack = append(l.stack, args...)
-	isLua, err := l.prepareCall(ctx, functionIndex, numResults, false, nil)
+	isLua, err := l.prepareCall(ctx, functionIndex, callOptions{numResults: numResults})
 	if err != nil {
 		return err
 	}
@@ -1548,6 +1611,14 @@ func (l *State) call1(ctx context.Context, f value, args ...value) (value, error
 	v := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1)
 	return v, nil
+}
+
+// callOptions holds optional arguments to [*State.prepareCall].
+type callOptions struct {
+	numResults     int
+	isTailCall     bool
+	protected      bool
+	messageHandler function
 }
 
 // prepareCall pushes a new [callFrame] onto l.callStack
@@ -1579,11 +1650,14 @@ func (l *State) call1(ctx context.Context, f value, args ...value) (value, error
 // If prepareCall calls a Go function and it returns an error,
 // it will call the message handler (if any)
 // before popping the Go function's frame off the call stack.
-func (l *State) prepareCall(ctx context.Context, functionIndex, numResults int, isTailCall bool, messageHandler function) (isLua bool, err error) {
+func (l *State) prepareCall(ctx context.Context, functionIndex int, opts callOptions) (isLua bool, err error) {
 	var nextMessageHandler *messageHandlerState
-	if messageHandler != nil {
-		nextMessageHandler = &messageHandlerState{function: messageHandler}
-	} else {
+	switch {
+	case opts.messageHandler != nil:
+		nextMessageHandler = &messageHandlerState{function: opts.messageHandler}
+	case opts.protected:
+		nextMessageHandler = nil
+	default:
 		nextMessageHandler = l.frame().messageHandler
 	}
 
@@ -1596,8 +1670,8 @@ func (l *State) prepareCall(ctx context.Context, functionIndex, numResults int, 
 			}
 			newFrame := callFrame{
 				functionIndex:  functionIndex,
-				numResults:     numResults,
-				isTailCall:     isTailCall,
+				numResults:     opts.numResults,
+				isTailCall:     opts.isTailCall,
 				messageHandler: nextMessageHandler,
 			}
 			if !l.grow(newFrame.registerStart() + int(f.proto.MaxStackSize)) {
@@ -1613,7 +1687,7 @@ func (l *State) prepareCall(ctx context.Context, functionIndex, numResults int, 
 					newFrame.numExtraArguments = numExtraArguments
 				}
 			}
-			if isTailCall {
+			if opts.isTailCall {
 				// Move function and arguments up to the frame pointer.
 				frame := l.frame()
 				fp := frame.framePointer()
@@ -1639,7 +1713,7 @@ func (l *State) prepareCall(ctx context.Context, functionIndex, numResults int, 
 
 			l.callStack = append(l.callStack, callFrame{
 				functionIndex:  functionIndex,
-				numResults:     numResults,
+				numResults:     opts.numResults,
 				messageHandler: nextMessageHandler,
 			})
 			n, err := f.cb(ctx, l)
@@ -1659,7 +1733,7 @@ func (l *State) prepareCall(ctx context.Context, functionIndex, numResults int, 
 				// and pop call frames.
 				newStackTop := functionIndex
 				newCallStackTop := len(l.callStack) - 1
-				if isTailCall {
+				if opts.isTailCall {
 					newCallStackTop--
 					newStackTop = l.callStack[newStackTop].framePointer()
 				}
@@ -1668,7 +1742,7 @@ func (l *State) prepareCall(ctx context.Context, functionIndex, numResults int, 
 				return false, err
 			}
 
-			if isTailCall {
+			if opts.isTailCall {
 				// Pop the Go function stack frame
 				// so that finishCall will move the results to the caller's caller's frame.
 				l.popCallStack()
@@ -1927,7 +2001,7 @@ func (l *State) concatMetamethod(ctx context.Context) error {
 	rotate(l.stack[len(l.stack)-3:], 1)
 
 	// Call metamethod.
-	isLua, err := l.prepareCall(ctx, len(l.stack)-3, 1, false, nil)
+	isLua, err := l.prepareCall(ctx, len(l.stack)-3, callOptions{numResults: 1})
 	if err != nil {
 		return err
 	}
