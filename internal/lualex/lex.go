@@ -388,7 +388,7 @@ func (s *Scanner) shortLiteralString(end byte) (string, error) {
 				}
 				r = r<<4 | rune(nibble)
 			}
-			sb.WriteRune(r)
+			writeRune(sb, r)
 		default:
 			if !isDigit(b) {
 				return sb.String(), fmt.Errorf("%v: invalid escape sequence", s.prev)
@@ -805,6 +805,30 @@ func hexDigit(c byte) (byte, error) {
 	default:
 		return 0, fmt.Errorf("unexpected %q (want hex digit)", c)
 	}
+}
+
+// writeRune encodes a rune as UTF-8,
+// permitting runes up to 1<<31 - 1.
+func writeRune(sb *strings.Builder, c rune) {
+	if 0 <= c && c < 0x80 {
+		sb.WriteByte(byte(c))
+		return
+	}
+
+	var buf [6]byte
+	firstByteMax := byte(0x3f)
+	n := 1
+	for {
+		buf[len(buf)-n] = byte(0x80 | (c & 0x3f))
+		n++
+		c >>= 6
+		firstByteMax >>= 1
+		if c <= rune(firstByteMax) {
+			break
+		}
+	}
+	buf[len(buf)-n] = (^firstByteMax << 1) | byte(c)
+	sb.Write(buf[len(buf)-n:])
 }
 
 type longLiteralWriter struct {

@@ -337,6 +337,56 @@ func TestScanner(t *testing.T) {
 	}
 }
 
+func TestUnquote(t *testing.T) {
+	tests := []struct {
+		s    string
+		want string
+		err  bool
+	}{
+		{
+			s:    `""`,
+			want: "",
+		},
+		{
+			s:    `''`,
+			want: "",
+		},
+		{
+			s:    `"abc"`,
+			want: "abc",
+		},
+		{
+			s:    `'abc'`,
+			want: "abc",
+		},
+
+		// Invalid UTF-8 code points.
+		{
+			s:    `"\u{110000}"`,
+			want: "\xf4\x90\x80\x80",
+		},
+		{
+			s:    `"\u{7FFFFFFF}"`,
+			want: "\xfd\xbf\xbf\xbf\xbf\xbf",
+		},
+		{
+			s:   `"\u{80000000}"`,
+			err: true,
+		},
+	}
+
+	for _, test := range tests {
+		got, err := Unquote(test.s)
+		if got != test.want || (err != nil) != test.err {
+			errString := "<nil>"
+			if test.err {
+				errString = "<error>"
+			}
+			t.Errorf("Unquote(%q) = %q, %v; want %q, %s", test.s, got, err, test.want, errString)
+		}
+	}
+}
+
 func FuzzQuote(f *testing.F) {
 	f.Add("")
 	f.Add("abc")
