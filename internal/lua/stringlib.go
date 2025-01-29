@@ -203,7 +203,7 @@ func stringFind(ctx context.Context, l *State) (int, error) {
 		return 1, nil
 	}
 	l.PushInteger(int64(init) + int64(matches[0]) + 1)
-	l.PushInteger(int64(init) + int64(matches[1]) + 1)
+	l.PushInteger(int64(init) + int64(matches[1]))
 	n, err := pushSubmatches(l, init, matches[2:], positionCaptures)
 	if err != nil {
 		return 0, fmt.Errorf("%s%v", Where(l, 1), err)

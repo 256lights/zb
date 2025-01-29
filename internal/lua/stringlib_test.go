@@ -105,6 +105,12 @@ var patternTests []patternTest = []patternTest{
 			{"1 2 3 4 5", []int{0, 1}},
 		},
 	},
+	{
+		pattern: "%l*",
+		tests: []submatchIndexTest{
+			{"aloALO", []int{0, 3}},
+		},
+	},
 }
 
 var badPatternTests = []string{
