@@ -32,6 +32,18 @@ func TestStringFind(t *testing.T) {
 			want:    []any{int64(1), int64(0)},
 		},
 		{
+			s:       "aaa",
+			pattern: "^a",
+			init:    1,
+			want:    []any{int64(1), int64(1)},
+		},
+		{
+			s:       "aaa",
+			pattern: "^a",
+			init:    2,
+			want:    []any{int64(2), int64(2)},
+		},
+		{
 			s:       "alo",
 			pattern: "",
 			init:    1,
@@ -305,7 +317,7 @@ func TestStringFind(t *testing.T) {
 			s:       "]]]áb",
 			pattern: "[^]]+",
 			init:    1,
-			want:    []any{int64(1), int64(3)},
+			want:    []any{int64(4), int64(6)},
 		},
 		{
 			s:       "0alo alo",
