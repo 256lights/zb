@@ -245,6 +245,7 @@ func (p *pattern) find(s string, pos int) []int {
 				curr.state = curr.state.out[0]
 			case curr.state != nil && curr.state.item == patternStateSplit:
 				capturesCopy := append(make([]int, 0, capturesCap), curr.captures...)
+				// TODO(soon): Remove recursive call or check depth.
 				addState(matchState{
 					state:    curr.state.out[0],
 					captures: curr.captures,
