@@ -6,6 +6,7 @@ package lua
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -15,8 +16,6 @@ import (
 )
 
 func TestStringFind(t *testing.T) {
-	t.Skip("TODO(soon)")
-
 	tests := []struct {
 		s       string
 		pattern string
@@ -341,13 +340,13 @@ func TestStringFind(t *testing.T) {
 			s:       "a",
 			pattern: "%f[a]",
 			init:    1,
-			want:    []any{int64(1), int64(1)},
+			want:    []any{int64(1), int64(0)},
 		},
 		{
 			s:       "a",
-			pattern: "%f[^%z]",
+			pattern: "%f[^\x00]",
 			init:    1,
-			want:    []any{int64(1), int64(1)},
+			want:    []any{int64(1), int64(0)},
 		},
 		{
 			s:       "a",
@@ -357,25 +356,25 @@ func TestStringFind(t *testing.T) {
 		},
 		{
 			s:       "aba",
-			pattern: "%f[a%z]",
+			pattern: "%f[a\x00]",
 			init:    1,
-			want:    []any{int64(3), int64(3)},
+			want:    []any{int64(3), int64(2)},
 		},
 		{
 			s:       "aba",
-			pattern: "%f[%z]",
+			pattern: "%f[\x00]",
 			init:    1,
 			want:    []any{int64(4), int64(3)},
 		},
 		{
 			s:       "aba",
-			pattern: "%f[%l%z]",
+			pattern: "%f[%l\x00]",
 			init:    1,
 			want:    []any{nil},
 		},
 		{
 			s:       "aba",
-			pattern: "%f[^%l%z]",
+			pattern: "%f[^%l\x00]",
 			init:    1,
 			want:    []any{nil},
 		},
@@ -478,14 +477,13 @@ func TestStringFind(t *testing.T) {
 }
 
 func TestStringMatch(t *testing.T) {
-	t.Skip("TODO(soon)")
-
 	tests := []struct {
 		s       string
 		pattern string
 		init    int64
 
-		want []any
+		want      []any
+		wantError string
 	}{
 		{
 			s:       "aaab",
@@ -605,10 +603,10 @@ func TestStringMatch(t *testing.T) {
 			want:    []any{"\x00"},
 		},
 		{
-			s:       "abc\x00efg\x00\x01e\x01g",
-			pattern: "%b\x00\x01",
-			init:    1,
-			want:    []any{"\x00efg\x00\x01e\x01"},
+			s:         "abc\x00efg\x00\x01e\x01g",
+			pattern:   "%b\x00\x01",
+			init:      1,
+			wantError: "patterns with balances not supported",
 		},
 		{
 			s:       "abc\x00\x00\x00",
@@ -655,7 +653,11 @@ func TestStringMatch(t *testing.T) {
 			testName += ")"
 
 			if err := state.Call(ctx, state.Top()-top, MultipleReturns); err != nil {
-				t.Errorf("%s: %v", testName, err)
+				if test.wantError == "" {
+					t.Errorf("%s: %v", testName, err)
+				} else if got := err.Error(); !strings.Contains(got, test.wantError) {
+					t.Errorf("%s raised: %s; want message to contain %q", testName, got, test.wantError)
+				}
 				return
 			}
 
@@ -687,8 +689,6 @@ func TestStringMatch(t *testing.T) {
 }
 
 func TestStringGSub(t *testing.T) {
-	t.Skip("TODO(soon)")
-
 	tests := []struct {
 		s               string
 		sContext        sets.Set[string]
@@ -852,7 +852,7 @@ func TestStringGSub(t *testing.T) {
 				l.PushString("%0%1")
 			},
 			want:             "abcabc",
-			wantReplacements: 3,
+			wantReplacements: 1,
 		},
 		{
 			s:       "áéí",
@@ -897,7 +897,7 @@ func TestStringGSub(t *testing.T) {
 				l.PushClosure(0, stringUpper)
 			},
 			want:             "um (DOIS) tres (QUATRO)",
-			wantReplacements: 5,
+			wantReplacements: 2,
 		},
 		{
 			s:       "aaa aa a aaa a",

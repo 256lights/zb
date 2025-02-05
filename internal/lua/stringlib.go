@@ -9,11 +9,9 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"zb.256lights.llc/pkg/internal/luacode"
 	"zb.256lights.llc/pkg/internal/lualex"
@@ -193,18 +191,18 @@ func stringFind(ctx context.Context, l *State) (int, error) {
 		return 2, nil
 	}
 
-	re, positionCaptures, err := patternToRegexp(pattern)
+	p, err := parsePattern(pattern)
 	if err != nil {
 		return 0, fmt.Errorf("%s%v", Where(l, 1), err)
 	}
-	matches := re.FindStringSubmatchIndex(s[init:])
-	if len(matches) == 0 {
+	captures := p.find(s[init:], 0)
+	if len(captures) == 0 {
 		l.PushNil()
 		return 1, nil
 	}
-	l.PushInteger(int64(init) + int64(matches[0]) + 1)
-	l.PushInteger(int64(init) + int64(matches[1]))
-	n, err := pushSubmatches(l, init, matches[2:], positionCaptures)
+	l.PushInteger(int64(init) + int64(captures[0]) + 1)
+	l.PushInteger(int64(init) + int64(captures[1]))
+	n, err := pushSubmatches(l, init, captures[2:], &p.positionCaptures)
 	if err != nil {
 		return 0, fmt.Errorf("%s%v", Where(l, 1), err)
 	}
@@ -465,22 +463,28 @@ func stringGMatch(ctx context.Context, l *State) (int, error) {
 		return 1, nil
 	}
 
-	re, positionCaptures, err := patternToRegexp(pattern)
+	p, err := parsePattern(pattern)
 	if err != nil {
 		return 0, fmt.Errorf("%s%v", Where(l, 1), err)
 	}
-	matches := re.FindAllStringSubmatchIndex(s[init:], -1)
 
+	pos := 0
+	s = s[init:]
 	l.PushValue(1)
 	l.PushClosure(1, func(ctx context.Context, l *State) (int, error) {
-		if len(matches) == 0 {
+		if pos > len(s) || p.isPrefixAnchored() && pos > 0 {
 			return 0, nil
 		}
 
-		m := matches[0]
-		matches = matches[1:]
+		m := p.find(s, pos)
+		if len(m) == 0 {
+			pos = len(s) + 1
+			return 0, nil
+		}
+		// Always advance at least one character.
+		pos = max(m[1], pos+1)
 
-		positionCapturesArg := positionCaptures
+		positionCapturesArg := &p.positionCaptures
 		if len(m) > 2 {
 			// Only return captures.
 			m = m[2:]
@@ -496,6 +500,7 @@ func stringGMatch(ctx context.Context, l *State) (int, error) {
 		}
 		return n, nil
 	})
+
 	return 1, nil
 }
 
@@ -538,7 +543,7 @@ func stringGSub(ctx context.Context, l *State) (int, error) {
 		return 0, NewTypeError(l, 3, "string/function/table")
 	}
 
-	re, positionCaptures, err := patternToRegexp(pattern)
+	p, err := parsePattern(pattern)
 	if err != nil {
 		return 0, fmt.Errorf("%s%v", Where(l, 1), err)
 	}
@@ -546,31 +551,38 @@ func stringGSub(ctx context.Context, l *State) (int, error) {
 	state := &gsubState{
 		src:              src,
 		srcContext:       srcContext,
-		positionCaptures: positionCaptures,
+		positionCaptures: &p.positionCaptures,
 		result:           new(strings.Builder),
 		resultContext:    make(sets.Set[string]),
 	}
-	// TODO(https://go.dev/issue/61902): Iterate over matches instead of allocating.
-	matches := re.FindAllStringSubmatchIndex(src, maxReplacements)
-	lastMatchEnd := 0
+	lastMatchEnd := -1
 	changed := false
-	for _, match := range matches {
-		state.copySource(lastMatchEnd, match[0])
+	n := 0
+	for match := range p.findAll(src) {
+		if match[1] == lastMatchEnd {
+			continue
+		}
+		state.copySource(max(lastMatchEnd, 0), match[0])
 		lastMatchEnd = match[1]
 		changedByMatch, err := replace(ctx, l, state, match)
 		if err != nil {
 			return 0, err
 		}
 		changed = changed || changedByMatch
+
+		n++
+		if maxReplacements >= 0 && n >= maxReplacements {
+			break
+		}
 	}
-	state.copySource(lastMatchEnd, len(src))
+	state.copySource(max(lastMatchEnd, 0), len(src))
 
 	if !changed {
 		l.PushValue(1)
 	} else {
 		l.PushStringContext(state.result.String(), state.resultContext)
 	}
-	l.PushInteger(int64(len(matches)))
+	l.PushInteger(int64(n))
 	return 2, nil
 }
 
@@ -630,12 +642,17 @@ func gsubString(l *State) gsubReplaceFunc {
 				state.copySource(match[0], match[1])
 			case '1' <= b && b <= '9':
 				i := int(b - '0')
-				if i*2 > len(match) {
+				var start, end int
+				switch {
+				case i == 1 && len(match) == 2:
+					start, end = match[0], match[1]
+				case i*2+1 >= len(match):
 					return false, fmt.Errorf("%sinvalid capture index %%%d", Where(l, 1), i)
+				default:
+					start, end = match[i*2], match[i*2+1]
 				}
-				start, end := match[i*2], match[i*2+1]
 				if state.positionCaptures.Has(uint(i - 1)) {
-					s, _ := luacode.IntegerValue(int64(start)).Unquoted()
+					s, _ := luacode.IntegerValue(int64(start) + 1).Unquoted()
 					state.result.WriteString(s)
 				} else {
 					state.copySource(start, end)
@@ -741,18 +758,18 @@ func stringMatch(ctx context.Context, l *State) (int, error) {
 		return 1, nil
 	}
 
-	re, positionCaptures, err := patternToRegexp(pattern)
+	p, err := parsePattern(pattern)
 	if err != nil {
 		return 0, fmt.Errorf("%s%v", Where(l, 1), err)
 	}
-	matches := re.FindStringSubmatchIndex(s[init:])
+	matches := p.find(s[init:], 0)
 	switch {
 	case len(matches) == 0:
 		l.PushNil()
 		return 1, nil
 	case len(matches) > 2:
 		// Only return captures.
-		n, err := pushSubmatches(l, init, matches[2:], positionCaptures)
+		n, err := pushSubmatches(l, init, matches[2:], &p.positionCaptures)
 		if err != nil {
 			return 0, fmt.Errorf("%s%v", Where(l, 1), err)
 		}
@@ -854,241 +871,6 @@ func stringUpper(ctx context.Context, l *State) (int, error) {
 	sctx := l.StringContext(1)
 	l.PushStringContext(strings.ToUpper(s), sctx)
 	return 1, nil
-}
-
-func patternToRegexp(pattern string) (re *regexp.Regexp, positionCaptures *sets.Bit, err error) {
-	sb := new(strings.Builder)
-	sb.Grow(len(pattern))
-
-	pattern, anchorStart := strings.CutPrefix(pattern, "^")
-	if anchorStart {
-		sb.WriteByte('^')
-	}
-
-	for i, capture := 0, 0; i < len(pattern); {
-		// Character class.
-		switch pattern[i] {
-		case '%':
-			runeStart := i + 1
-			c, runeSize := utf8.DecodeRuneInString(pattern[runeStart:])
-			if runeSize == 0 {
-				return nil, nil, errors.New("malformed pattern (ends with '%')")
-			}
-			runeEnd := runeStart + runeSize
-			if c == utf8.RuneError {
-				sb.WriteString(pattern[runeStart:runeEnd])
-			} else if '0' <= c && c <= '9' {
-				return nil, nil, errors.New("patterns with backreferences not supported")
-			} else if c == 'b' {
-				return nil, nil, errors.New("patterns with balances not supported")
-			} else if c == 'f' {
-				return nil, nil, errors.New("patterns with frontiers not supported")
-			} else if cre := characterClasses[c]; cre != "" {
-				sb.WriteString("[")
-				sb.WriteString(cre)
-				sb.WriteString("]")
-			} else if cre = characterClasses[toLowerASCII(c)]; cre != "" {
-				sb.WriteString("[^")
-				sb.WriteString(cre)
-				sb.WriteString("]")
-			} else {
-				if isRegexpSpecial(c) {
-					sb.WriteByte('\\')
-				}
-				sb.WriteString(pattern[runeStart:runeEnd])
-			}
-			i = runeEnd
-		case '(':
-			sb.WriteByte(pattern[i])
-			i++
-			if i < len(pattern) && pattern[i] == ')' {
-				// Position capture. Go ahead and process.
-				sb.WriteByte(')')
-				i++
-				if positionCaptures == nil {
-					positionCaptures = new(sets.Bit)
-				}
-				positionCaptures.Add(uint(capture))
-			}
-			capture++
-			// Captures are not character classes,
-			// so no modifiers.
-			continue
-		case ')':
-			sb.WriteByte(pattern[i])
-			i++
-			// Captures are not character classes,
-			// so no modifiers.
-			continue
-		case '.':
-			sb.WriteByte(pattern[i])
-			i++
-		case '[':
-			n, err := characterSet(sb, pattern[i:])
-			if err != nil {
-				return nil, nil, err
-			}
-			i += n
-		case '$':
-			if i == len(pattern)-1 {
-				sb.WriteByte('$')
-				i++
-				continue
-			}
-			fallthrough
-		default:
-			c, runeSize := utf8.DecodeRuneInString(pattern[i:])
-			if isRegexpSpecial(c) {
-				sb.WriteByte('\\')
-			}
-			sb.WriteString(pattern[i : i+runeSize])
-			i += runeSize
-		}
-
-		// Modifier.
-		if i < len(pattern) {
-			switch pattern[i] {
-			case '*', '+', '?':
-				sb.WriteByte(pattern[i])
-				i++
-			case '-':
-				sb.WriteString("*?")
-				i++
-			}
-		}
-	}
-
-	re, err = regexp.Compile(sb.String())
-	return re, positionCaptures, err
-}
-
-var characterClasses = map[rune]string{
-	'a': `\pL`,             // letters
-	'A': `\PL`,             // not letters
-	'c': `\p{Cc}`,          // control characters
-	'C': `\P{Cc}`,          // not control characters
-	'd': `\p{Nd}`,          // digits
-	'D': `\P{Nd}`,          // not digits
-	'g': `\pL\pM\pN\pP\pS`, // printable characters except space
-	'l': `\p{Ll}`,          // lowercase letters
-	'L': `\P{Ll}`,          // not lowercase letters
-	'p': `\pP`,             // punctuation
-	'P': `\PP`,             // not punctuation
-	's': `\pZ\t\n\r`,       // space
-	'u': `\p{Lu}`,          // uppercase letters
-	'U': `\P{Lu}`,          // not uppercase letters
-	'w': `\pL\pN`,          // alphanumeric characters
-	'x': `0-9a-fA-F`,       // hexadecimal digits
-}
-
-func characterSet(sb *strings.Builder, pattern string) (end int, err error) {
-	pattern, ok := strings.CutPrefix(pattern, "[")
-	if !ok {
-		return end, errors.New("character set must start with '['")
-	}
-	end += len("[")
-	pattern, negate := strings.CutPrefix(pattern, "^")
-	if negate {
-		end += len("^")
-	}
-
-	// Scan through pattern once to validate and to determine structure to use.
-	setLen := 0
-	var alternatives *strings.Builder
-	// Patterns starting with an end bracket treat that character as a normal character.
-	for setLen < len(pattern) && (pattern[setLen] != ']' || setLen == 0) {
-		switch pattern[setLen] {
-		case '%':
-			setLen++
-			c, runeSize := utf8.DecodeRuneInString(pattern[setLen:])
-			setLen += runeSize
-			if runeSize == 0 {
-				return end + setLen, errors.New("malformed pattern (ends with '%')")
-			}
-			if characterClasses[c] == "" && characterClasses[toLowerASCII(c)] != "" {
-				// There isn't a single character class that maps to the Lua class.
-				// For non-negated sets, we can represent this as [...]|[^class]...
-				if negate {
-					// ... unless this is a negated set.
-					// Because other items in the set are subtractive,
-					// we can't use this trick.
-					return end + setLen, fmt.Errorf("cannot use %%%c in negated set", c)
-				}
-				if alternatives == nil {
-					alternatives = new(strings.Builder)
-				}
-			}
-			if strings.HasPrefix(pattern[setLen:], "-") {
-				return end + setLen + 1, fmt.Errorf("malformed pattern (%%%c used in range)", c)
-			}
-		default:
-			_, runeSize := utf8.DecodeRuneInString(pattern[setLen:])
-			setLen += runeSize
-			if strings.HasPrefix(pattern[setLen:], "-%") {
-				classStart := setLen + len("-%")
-				c, runeSize := utf8.DecodeRuneInString(pattern[classStart:])
-				if runeSize == 0 {
-					return end + classStart, errors.New("malformed pattern ('%' used in range)")
-				}
-				return end + classStart + runeSize, fmt.Errorf("malformed pattern (%%%c used in range)", c)
-			}
-		}
-	}
-	if !strings.HasPrefix(pattern[setLen:], "]") {
-		return end, errors.New("malformed pattern (missing ']')")
-	}
-	end += setLen + len("]")
-
-	// Now write the regular expression.
-	if alternatives != nil {
-		sb.WriteString("(?:")
-	}
-	sb.WriteString("[")
-	if negate {
-		sb.WriteString("^")
-	}
-	for i := 0; i < setLen; {
-		switch pattern[i] {
-		case '[', ']', '\\':
-			sb.WriteByte('\\')
-			sb.WriteByte(pattern[i])
-			i++
-		case '%':
-			i++
-			c, runeSize := utf8.DecodeRuneInString(pattern[i:])
-			if cre := characterClasses[c]; cre != "" {
-				sb.WriteString(cre)
-			} else if cre = characterClasses[toLowerASCII(c)]; cre != "" {
-				alternatives.WriteString("|[^")
-				alternatives.WriteString(cre)
-				alternatives.WriteString("]")
-			} else {
-				if c == '\\' || c == '[' || c == ']' || c == '-' {
-					sb.WriteByte('\\')
-				}
-				sb.WriteString(pattern[i : i+runeSize])
-			}
-			i += runeSize
-		default:
-			// Hyphens are already validated for character classes,
-			// so they aren't escaped.
-			_, runeSize := utf8.DecodeRuneInString(pattern[i:])
-			runeEnd := i + runeSize
-			sb.WriteString(pattern[i:runeEnd])
-			i = runeEnd
-		}
-	}
-	sb.WriteString("]")
-	if alternatives != nil {
-		sb.WriteString(alternatives.String())
-		sb.WriteString(")")
-	}
-
-	return end, nil
-}
-
-func isRegexpSpecial(c rune) bool {
-	return strings.ContainsRune(`\.+*?()|[]{}^$`, c)
 }
 
 func pushSubmatches(l *State, init int, submatches []int, positionCaptures *sets.Bit) (int, error) {
@@ -1596,13 +1378,6 @@ func stringEndArg(l *State, arg int, defaultValue int64, n int) (int, error) {
 	default:
 		return int(min(i, int64(n))), nil
 	}
-}
-
-func toLowerASCII(c rune) rune {
-	if 'A' <= c && c <= 'Z' {
-		return c - 'A' + 'a'
-	}
-	return c
 }
 
 func numBytesToPad(n, align int) (_ int, isPowerOfTwo bool) {
