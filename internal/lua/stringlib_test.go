@@ -660,6 +660,10 @@ func TestStringMatch(t *testing.T) {
 				}
 				return
 			}
+			if test.wantError != "" {
+				t.Errorf("%s did not raise an error", testName)
+				return
+			}
 
 			var got []any
 			for i, n := top, state.Top(); i <= n; i++ {
@@ -688,6 +692,165 @@ func TestStringMatch(t *testing.T) {
 	}
 }
 
+func TestStringGMatch(t *testing.T) {
+	tests := []struct {
+		s       string
+		pattern string
+		init    int64
+
+		want      [][]any
+		wantError string
+	}{
+		{
+			s:       "hello world from lua",
+			pattern: "%a+",
+			init:    1,
+
+			want: [][]any{
+				{"hello"},
+				{"world"},
+				{"from"},
+				{"lua"},
+			},
+		},
+		{
+			s:       "from=world, to=Lua",
+			pattern: "(%w+)=(%w+)",
+			init:    1,
+
+			want: [][]any{
+				{"from", "world"},
+				{"to", "Lua"},
+			},
+		},
+		{
+			s:       "a  \nbc\t\td",
+			pattern: "()%s*()",
+			init:    1,
+
+			want: [][]any{
+				{int64(1), int64(1)},
+				{int64(2), int64(5)},
+				{int64(6), int64(6)},
+				{int64(7), int64(9)},
+				{int64(10), int64(10)},
+			},
+		},
+		{
+			s:       "xuxx uu ppar r",
+			pattern: "()(.)%2",
+			init:    1,
+
+			wantError: "backreferences not supported",
+		},
+		{
+			s:       "11 21 31",
+			pattern: "%w*",
+			init:    9,
+
+			want: [][]any{
+				{""},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	for _, test := range tests {
+		func() {
+			state := new(State)
+			defer func() {
+				if err := state.Close(); err != nil {
+					t.Error("Close:", err)
+				}
+			}()
+
+			state.PushClosure(0, OpenString)
+			if err := state.Call(ctx, 0, 1); err != nil {
+				t.Error(err)
+				return
+			}
+			if _, err := state.Field(ctx, -1, "gmatch"); err != nil {
+				t.Error(err)
+				return
+			}
+			gmatchIndex := state.Top()
+
+			testName := fmt.Sprintf("string.gmatch(%s, %s", lualex.Quote(test.s), lualex.Quote(test.pattern))
+			state.PushString(test.s)
+			state.PushString(test.pattern)
+			if test.init != 1 {
+				state.PushInteger(test.init)
+				testName = fmt.Sprintf("%s, %d", testName, test.init)
+			}
+			testName += ")"
+
+			if err := state.Call(ctx, state.Top()-gmatchIndex, 4); err != nil {
+				if test.wantError == "" {
+					t.Errorf("%s: %v", testName, err)
+				} else if got := err.Error(); !strings.Contains(got, test.wantError) {
+					t.Errorf("%s raised: %s; want message to contain %q", testName, got, test.wantError)
+				}
+				return
+			}
+			if test.wantError != "" {
+				t.Errorf("%s did not raise an error", testName)
+				return
+			}
+
+			if got, want := state.Type(-4), TypeFunction; got != want {
+				t.Errorf("type((%s)) = %v; want %v", testName, got, want)
+			}
+			for i := range 3 {
+				if got, want := state.Type(-3+i), TypeNil; got != want {
+					t.Errorf("type(select(%d, %s)) = %v; want %v", 2+i, testName, got, want)
+				}
+			}
+			state.Pop(3)
+
+			var got [][]any
+			for {
+				initTop := state.Top()
+				state.PushValue(-1)
+				if err := state.Call(ctx, 0, MultipleReturns); err != nil {
+					t.Errorf("%s() on iteration %d: %v", testName, len(got), err)
+					return
+				}
+				n := state.Top()
+				if n == initTop {
+					break
+				}
+
+				var m []any
+				for i := initTop + 1; i <= n; i++ {
+					switch tp := state.Type(i); tp {
+					case TypeNil:
+						m = append(m, nil)
+					case TypeNumber:
+						if x, ok := state.ToInteger(i); ok {
+							m = append(m, x)
+						} else {
+							t.Errorf("%s return %d is not an integer", testName, i-initTop)
+						}
+					case TypeString:
+						x, _ := state.ToString(i)
+						m = append(m, x)
+					default:
+						t.Errorf("%s return %d is a %v", testName, i-initTop, tp)
+						m = append(m, nil)
+					}
+				}
+				got = append(got, m)
+
+				state.SetTop(initTop)
+			}
+
+			if diff := cmp.Diff(test.want, got); diff != "" {
+				t.Errorf("%s (-want +got):\n%s", testName, diff)
+			}
+		}()
+	}
+}
+
 func TestStringGSub(t *testing.T) {
 	tests := []struct {
 		s               string
@@ -701,6 +864,7 @@ func TestStringGSub(t *testing.T) {
 		want             string
 		wantContext      sets.Set[string]
 		wantReplacements int64
+		wantError        string
 	}{
 		{
 			s:       "hello world",
@@ -953,6 +1117,49 @@ func TestStringGSub(t *testing.T) {
 			want:             "function.",
 			wantReplacements: 1,
 		},
+		{
+			s:       "alo",
+			pattern: "(%0)",
+			pushReplacement: func(l *State) {
+				l.PushString("a")
+			},
+			wantError: "backreferences not supported",
+		},
+		{
+			s:       "alo",
+			pattern: ".",
+			pushReplacement: func(l *State) {
+				l.PushString("%x")
+			},
+			wantError: "invalid use of '%'",
+		},
+		{
+			s:       "alo alo",
+			pattern: "().",
+			pushReplacement: func(l *State) {
+				l.CreateTable(3, 0)
+				l.PushString("x")
+				l.RawSetIndex(-2, 1)
+				l.PushString("yy")
+				l.RawSetIndex(-2, 2)
+				l.PushString("zzz")
+				l.RawSetIndex(-2, 3)
+			},
+			want:             "xyyzzz alo",
+			wantReplacements: 7,
+		},
+		{
+			s:       "first second word",
+			pattern: "%w+",
+			pushReplacement: func(l *State) {
+				l.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+					return 0, nil
+				})
+			},
+			n:                2,
+			want:             "first second word",
+			wantReplacements: 2,
+		},
 	}
 
 	ctx := context.Background()
@@ -993,7 +1200,15 @@ func TestStringGSub(t *testing.T) {
 			testName += ")"
 
 			if err := state.Call(ctx, state.Top()-funcIndex, 2); err != nil {
-				t.Errorf("%s: %v", testName, err)
+				if test.wantError == "" {
+					t.Errorf("%s: %v", testName, err)
+				} else if got := err.Error(); !strings.Contains(got, test.wantError) {
+					t.Errorf("%s raised: %s; want message to contain %q", testName, got, test.wantError)
+				}
+				return
+			}
+			if test.wantError != "" {
+				t.Errorf("%s did not raise an error", testName)
 				return
 			}
 

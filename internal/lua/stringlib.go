@@ -457,11 +457,13 @@ func stringGMatch(ctx context.Context, l *State) (int, error) {
 			return 0, err
 		}
 	}
-	init, initOK := stringIndexArg(initArg, len(s))
-	if !initOK {
-		l.PushNil()
+	if initArg > int64(len(s))+1 {
+		l.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+			return 0, nil
+		})
 		return 1, nil
 	}
+	init, _ := stringIndexArg(initArg, len(s))
 
 	p, err := parsePattern(pattern)
 	if err != nil {
@@ -469,6 +471,7 @@ func stringGMatch(ctx context.Context, l *State) (int, error) {
 	}
 
 	pos := 0
+	lastMatchEnd := -1
 	s = s[init:]
 	l.PushValue(1)
 	l.PushClosure(1, func(ctx context.Context, l *State) (int, error) {
@@ -476,13 +479,21 @@ func stringGMatch(ctx context.Context, l *State) (int, error) {
 			return 0, nil
 		}
 
-		m := p.find(s, pos)
-		if len(m) == 0 {
-			pos = len(s) + 1
-			return 0, nil
+		var m []int
+		for {
+			m = p.find(s, pos)
+			if len(m) == 0 {
+				pos = len(s) + 1
+				return 0, nil
+			}
+			if m[1] > lastMatchEnd {
+				pos = m[1]
+				lastMatchEnd = pos
+				break
+			}
+			// Always advance at least one character.
+			pos++
 		}
-		// Always advance at least one character.
-		pos = max(m[1], pos+1)
 
 		positionCapturesArg := &p.positionCaptures
 		if len(m) > 2 {
@@ -658,7 +669,7 @@ func gsubString(l *State) gsubReplaceFunc {
 					state.copySource(start, end)
 				}
 			default:
-				return false, fmt.Errorf("%sinvalid use of %% in replacement string", Where(l, 1))
+				return false, fmt.Errorf("%sinvalid use of '%%' in replacement string", Where(l, 1))
 			}
 		}
 
@@ -672,7 +683,11 @@ func gsubTable(ctx context.Context, l *State, state *gsubState, match []int) (ch
 	if len(match) > 2 {
 		match = match[2:]
 	}
-	l.PushStringContext(state.src[match[0]:match[1]], state.srcContext)
+	if state.positionCaptures.Has(0) {
+		l.PushInteger(int64(1 + match[0]))
+	} else {
+		l.PushStringContext(state.src[match[0]:match[1]], state.srcContext)
+	}
 	if _, err := l.Table(ctx, gsubReplacementArg); err != nil {
 		return false, err
 	}
@@ -696,7 +711,7 @@ func gsubFunction(ctx context.Context, l *State, state *gsubState, match []int) 
 		match = match[2:]
 	}
 	l.PushValue(gsubReplacementArg)
-	n, err := pushSubmatches(l, 0, match, nil)
+	n, err := pushSubmatches(l, 0, match, state.positionCaptures)
 	if err != nil {
 		return false, err
 	}

@@ -100,7 +100,7 @@ func parsePattern(p string) (*pattern, error) {
 			p = p[1:]
 		case strings.HasPrefix(p, "%b"):
 			return nil, errors.New("patterns with balances not supported")
-		case len(p) > 2 && p[0] == '%' && isASCIIDigit(rune(p[1])):
+		case len(p) >= 2 && p[0] == '%' && isASCIIDigit(rune(p[1])):
 			return nil, errors.New("patterns with backreferences not supported")
 		case strings.HasPrefix(p, "%f"):
 			afterEscape := p[len("%f"):]
@@ -223,6 +223,10 @@ func (p *pattern) find(s string, pos int) []int {
 	type matchState struct {
 		state    *patternState
 		captures []int
+	}
+
+	if pos > len(s) {
+		return nil
 	}
 
 	capturesCap := (p.numCaptures + 1) * 2
