@@ -451,22 +451,11 @@ func TestStringFind(t *testing.T) {
 
 			var got []any
 			for i, n := top, state.Top(); i <= n; i++ {
-				switch tp := state.Type(i); tp {
-				case TypeNil:
-					got = append(got, nil)
-				case TypeNumber:
-					if x, ok := state.ToInteger(i); ok {
-						got = append(got, x)
-					} else {
-						t.Errorf("%s return %d is not an integer", testName, i-top)
+				x, err := valueToGo(state, i)
+				if err != nil {
+					t.Errorf("%s return %d: %v", testName, i-top, err)
 					}
-				case TypeString:
-					x, _ := state.ToString(i)
 					got = append(got, x)
-				default:
-					t.Errorf("%s return %d is a %v", testName, i-top, tp)
-					got = append(got, nil)
-				}
 			}
 
 			if diff := cmp.Diff(test.want, got); diff != "" {
@@ -667,22 +656,11 @@ func TestStringMatch(t *testing.T) {
 
 			var got []any
 			for i, n := top, state.Top(); i <= n; i++ {
-				switch tp := state.Type(i); tp {
-				case TypeNil:
-					got = append(got, nil)
-				case TypeNumber:
-					if x, ok := state.ToInteger(i); ok {
-						got = append(got, x)
-					} else {
-						t.Errorf("%s return %d is not an integer", testName, i-top)
+				x, err := valueToGo(state, i)
+				if err != nil {
+					t.Errorf("%s return %d: %v", testName, i-top, err)
 					}
-				case TypeString:
-					x, _ := state.ToString(i)
 					got = append(got, x)
-				default:
-					t.Errorf("%s return %d is a %v", testName, i-top, tp)
-					got = append(got, nil)
-				}
 			}
 
 			if diff := cmp.Diff(test.want, got); diff != "" {
@@ -822,22 +800,11 @@ func TestStringGMatch(t *testing.T) {
 
 				var m []any
 				for i := initTop + 1; i <= n; i++ {
-					switch tp := state.Type(i); tp {
-					case TypeNil:
-						m = append(m, nil)
-					case TypeNumber:
-						if x, ok := state.ToInteger(i); ok {
-							m = append(m, x)
-						} else {
-							t.Errorf("%s return %d is not an integer", testName, i-initTop)
+					x, err := valueToGo(state, i)
+					if err != nil {
+						t.Errorf("%s return %d: %v", testName, i-initTop, err)
 						}
-					case TypeString:
-						x, _ := state.ToString(i)
 						m = append(m, x)
-					default:
-						t.Errorf("%s return %d is a %v", testName, i-initTop, tp)
-						m = append(m, nil)
-					}
 				}
 				got = append(got, m)
 

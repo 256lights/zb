@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -1240,6 +1241,43 @@ func BenchmarkExec(b *testing.B) {
 			b.Fatal(err)
 		}
 		state.Pop(1)
+	}
+}
+
+func pushValue(l *State, x any) {
+	switch x := x.(type) {
+	case nil:
+		l.PushNil()
+	case bool:
+		l.PushBoolean(x)
+	case string:
+		l.PushString(x)
+	case int64:
+		l.PushInteger(x)
+	case float64:
+		l.PushNumber(x)
+	default:
+		panic(fmt.Errorf("unsupported value type %T", x))
+	}
+}
+
+func valueToGo(l *State, idx int) (any, error) {
+	switch tp := l.Type(idx); tp {
+	case TypeNil:
+		return nil, nil
+	case TypeBoolean:
+		return l.ToBoolean(idx), nil
+	case TypeString:
+		x, _ := l.ToString(idx)
+		return x, nil
+	case TypeNumber:
+		if x, ok := l.ToInteger(idx); ok {
+			return x, nil
+		}
+		x, _ := l.ToNumber(idx)
+		return x, nil
+	default:
+		return nil, fmt.Errorf("value is a %v", tp)
 	}
 }
 

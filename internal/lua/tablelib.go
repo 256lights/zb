@@ -323,7 +323,7 @@ func tableUnpack(ctx context.Context, l *State) (int, error) {
 		return 0, err
 	}
 
-	return int(n), nil
+	return int(n + 1), nil
 }
 
 func tableSort(ctx context.Context, l *State) (int, error) {

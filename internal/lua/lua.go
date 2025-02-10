@@ -2057,6 +2057,7 @@ func (l *State) Len(ctx context.Context, idx int) error {
 
 	result, err := l.len(ctx, v)
 	if err != nil {
+		l.push(nil)
 		return err
 	}
 	l.push(result)
