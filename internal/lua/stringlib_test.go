@@ -15,6 +15,92 @@ import (
 	"zb.256lights.llc/pkg/sets"
 )
 
+func TestStringByte(t *testing.T) {
+	tests := []struct {
+		s    string
+		i    int64
+		j    int64
+		want []int64
+	}{
+		{
+			s:    "",
+			i:    1,
+			j:    1,
+			want: []int64{},
+		},
+		{
+			s:    "\x00",
+			i:    1,
+			j:    1,
+			want: []int64{0},
+		},
+		{
+			s:    "a",
+			i:    1,
+			j:    1,
+			want: []int64{'a'},
+		},
+		{
+			s:    "hello World",
+			i:    1,
+			j:    -1,
+			want: []int64{'h', 'e', 'l', 'l', 'o', ' ', 'W', 'o', 'r', 'l', 'd'},
+		},
+	}
+
+	ctx := context.Background()
+	for _, test := range tests {
+		func() {
+			state := new(State)
+			defer func() {
+				if err := state.Close(); err != nil {
+					t.Error("Close:", err)
+				}
+			}()
+
+			state.PushClosure(0, OpenString)
+			if err := state.Call(ctx, 0, 1); err != nil {
+				t.Error(err)
+				return
+			}
+			if _, err := state.Field(ctx, -1, "byte"); err != nil {
+				t.Error(err)
+				return
+			}
+
+			testName := fmt.Sprintf("string.byte(%s", lualex.Quote(test.s))
+			funcIndex := state.Top()
+			state.PushString(test.s)
+			if test.i != 1 || test.i != test.j {
+				state.PushInteger(test.i)
+				testName = fmt.Sprintf("%s, %d", testName, test.i)
+				if test.i != test.j {
+					state.PushInteger(test.j)
+					testName = fmt.Sprintf("%s, %d", testName, test.j)
+				}
+			}
+			testName += ")"
+
+			if err := state.Call(ctx, state.Top()-funcIndex, MultipleReturns); err != nil {
+				t.Errorf("%s: %v", testName, err)
+				return
+			}
+
+			var got []int64
+			for i, n := funcIndex, state.Top(); i <= n; i++ {
+				if got, want := state.Type(i), TypeNumber; got != want || !state.IsInteger(i) {
+					t.Errorf("type(select(%d, %s)) = %v; want integer", i-funcIndex+1, testName, got)
+				}
+				n, _ := state.ToInteger(i)
+				got = append(got, n)
+			}
+			if diff := cmp.Diff(test.want, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("%s (-want +got):\n%s", testName, diff)
+			}
+		}()
+	}
+}
+
 func TestStringFind(t *testing.T) {
 	tests := []struct {
 		s       string
@@ -454,8 +540,8 @@ func TestStringFind(t *testing.T) {
 				x, err := valueToGo(state, i)
 				if err != nil {
 					t.Errorf("%s return %d: %v", testName, i-top, err)
-					}
-					got = append(got, x)
+				}
+				got = append(got, x)
 			}
 
 			if diff := cmp.Diff(test.want, got); diff != "" {
@@ -659,8 +745,8 @@ func TestStringMatch(t *testing.T) {
 				x, err := valueToGo(state, i)
 				if err != nil {
 					t.Errorf("%s return %d: %v", testName, i-top, err)
-					}
-					got = append(got, x)
+				}
+				got = append(got, x)
 			}
 
 			if diff := cmp.Diff(test.want, got); diff != "" {
@@ -803,8 +889,8 @@ func TestStringGMatch(t *testing.T) {
 					x, err := valueToGo(state, i)
 					if err != nil {
 						t.Errorf("%s return %d: %v", testName, i-initTop, err)
-						}
-						m = append(m, x)
+					}
+					m = append(m, x)
 				}
 				got = append(got, m)
 
