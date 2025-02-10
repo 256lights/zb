@@ -517,7 +517,9 @@ const (
 	OpLFalseSkip OpCode = 6 // LFALSESKIP
 	// A R[A] := true
 	OpLoadTrue OpCode = 7 // LOADTRUE
-	// A B R[A], R[A+1], ..., R[A+B] := nil
+	// OpLoadNil sets registers R[A] through R[A+B] (inclusive) to nil.
+	//
+	//	A B R[A], R[A+1], ..., R[A+B] := nil
 	OpLoadNil OpCode = 8 // LOADNIL
 	// A B R[A] := UpValue[B]
 	OpGetUpval OpCode = 9 // GETUPVAL

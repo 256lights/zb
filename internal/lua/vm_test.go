@@ -718,4 +718,29 @@ func TestVM(t *testing.T) {
 		}
 		state.Pop(1)
 	})
+
+	t.Run("LoadNil", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const source = `local x = 1` + "\n" +
+			`x = nil` + "\n" +
+			"return x\n"
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(ctx, 0, 1); err != nil {
+			t.Fatal(err)
+		}
+
+		if got, want := state.Type(-1), TypeNil; got != want {
+			t.Errorf("type(a[1]) = %v; want %v", got, want)
+		}
+		state.Pop(1)
+	})
 }

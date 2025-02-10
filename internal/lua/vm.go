@@ -269,13 +269,18 @@ func (l *State) exec(ctx context.Context) (err error) {
 		case luacode.OpLoadNil:
 			start := i.ArgA()
 			end := start + i.ArgB()
-			if end > start {
-				r := registers()
-				if _, err := register(r, end-1); err != nil {
-					return err
-				}
-				clear(r[start:end])
+			if start > end {
+				return fmt.Errorf(
+					"%s: decode instruction: register %d out-of-bounds",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+					int(start)+int(i.ArgB()),
+				)
 			}
+			r := registers()
+			if _, err := register(r, end); err != nil {
+				return err
+			}
+			clear(r[start : int(end)+1])
 		case luacode.OpGetUpval:
 			ra, err := register(registers(), i.ArgA())
 			if err != nil {
