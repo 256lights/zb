@@ -124,9 +124,28 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 	eval.l.Pop(1)
 
 	// Load other standard libraries.
+	if err := lua.Require(ctx, &eval.l, lua.MathLibraryName, true, lua.NewOpenMath(nil)); err != nil {
+		return nil, err
+	}
+	eval.l.PushNil()
+	eval.l.RawSetField(-2, "random")
+	eval.l.PushNil()
+	eval.l.RawSetField(-2, "randomseed")
+	eval.l.Pop(1)
+	if err := lua.Require(ctx, &eval.l, lua.StringLibraryName, true, lua.OpenString); err != nil {
+		return nil, err
+	}
+	eval.l.PushNil()
+	eval.l.RawSetField(-2, "dump")
+	eval.l.Pop(1)
 	if err := lua.Require(ctx, &eval.l, lua.TableLibraryName, true, lua.OpenTable); err != nil {
 		return nil, err
 	}
+	eval.l.Pop(1)
+	if err := lua.Require(ctx, &eval.l, lua.UTF8LibraryName, true, lua.OpenUTF8); err != nil {
+		return nil, err
+	}
+	eval.l.Pop(1)
 
 	// Run prelude.
 	if err := eval.l.Load(strings.NewReader(preludeSource), lua.AbstractSource("(prelude)"), "t"); err != nil {
