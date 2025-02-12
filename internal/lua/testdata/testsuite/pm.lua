@@ -115,10 +115,11 @@ local function f1 (s, p)
   return string.sub(s, t[1], t[#t] - 1)
 end
 
-assert(f1('alo alx 123 b\0o b\0o', '(..*) %1') == "b\0o b\0o")
-assert(f1('axz123= 4= 4 34', '(.+)=(.*)=%2 %1') == '3= 4= 4 3')
-assert(f1('=======', '^(=*)=%1$') == '=======')
-assert(not string.match('==========', '^([=]*)=%1$'))
+-- XXX: Backreferences not supported.
+-- assert(f1('alo alx 123 b\0o b\0o', '(..*) %1') == "b\0o b\0o")
+-- assert(f1('axz123= 4= 4 34', '(.+)=(.*)=%2 %1') == '3= 4= 4 3')
+-- assert(f1('=======', '^(=*)=%1$') == '=======')
+-- assert(not string.match('==========', '^([=]*)=%1$'))
 
 local function range (i, j)
   if i <= j then
@@ -145,8 +146,9 @@ assert(strset('[^%W]') == strset('[%w]'))
 assert(strset('[]%%]') == '%]')
 assert(strset('[a%-z]') == '-az')
 assert(strset('[%^%[%-a%]%-b]') == '-[]^ab')
-assert(strset('%Z') == strset('[\1-\255]'))
-assert(strset('.') == strset('[\1-\255%z]'))
+-- XXX: Undocumented %z not supported.
+-- assert(strset('%Z') == strset('[\1-\255]'))
+assert(strset('.') == strset('[\0-\255]'))
 print('+');
 
 assert(string.match("alo xyzK", "(%w+)K") == "xyz")
@@ -227,13 +229,14 @@ local r = string.gsub(s, '()(%w+)()', function (a,w,b)
 assert(s == r and t[1] == 1 and t[3] == 3 and t[7] == 4 and t[13] == 4)
 
 
-local function isbalanced (s)
-  return not string.find(string.gsub(s, "%b()", ""), "[()]")
-end
+-- XXX: Balances not supported.
+-- local function isbalanced (s)
+--   return not string.find(string.gsub(s, "%b()", ""), "[()]")
+-- end
 
-assert(isbalanced("(9 ((8))(\0) 7) \0\0 a b ()(c)() a"))
-assert(not isbalanced("(9 ((8) 7) a b (\0 c) a"))
-assert(string.gsub("alo 'oi' alo", "%b''", '"') == 'alo " alo')
+-- assert(isbalanced("(9 ((8))(\0) 7) \0\0 a b ()(c)() a"))
+-- assert(not isbalanced("(9 ((8) 7) a b (\0 c) a"))
+-- assert(string.gsub("alo 'oi' alo", "%b''", '"') == 'alo " alo')
 
 
 local t = {"apple", "orange", "lime"; n=0}
@@ -252,8 +255,9 @@ assert(t[1] == "first" and t[2] == "second" and t[3] == undef)
 checkerror("invalid replacement value %(a table%)",
             string.gsub, "alo", ".", {a = {}})
 checkerror("invalid capture index %%2", string.gsub, "alo", ".", "%2")
-checkerror("invalid capture index %%0", string.gsub, "alo", "(%0)", "a")
-checkerror("invalid capture index %%1", string.gsub, "alo", "(%1)", "a")
+-- XXX: Backreferences not supported.
+-- checkerror("invalid capture index %%0", string.gsub, "alo", "(%0)", "a")
+-- checkerror("invalid capture index %%1", string.gsub, "alo", "(%1)", "a")
 checkerror("invalid use of '%%'", string.gsub, "alo", ".", "%x")
 
 
@@ -301,11 +305,12 @@ for w in string.gmatch("first second word", "%w+") do
 end
 assert(t[1] == "first" and t[2] == "second" and t[3] == "word")
 
-t = {3, 6, 9}
-for i in string.gmatch ("xuxx uu ppar r", "()(.)%2") do
-  assert(i == table.remove(t, 1))
-end
-assert(#t == 0)
+-- XXX: Backreferences not supported.
+-- t = {3, 6, 9}
+-- for i in string.gmatch ("xuxx uu ppar r", "()(.)%2") do
+--   assert(i == table.remove(t, 1))
+-- end
+-- assert(#t == 0)
 
 t = {}
 for i,j in string.gmatch("13 14 10 = 11, 15= 16, 22=23", "(%d+)%s*=%s*(%d+)") do
@@ -355,12 +360,14 @@ assert(string.gsub("function", "%f[\1-\255]%w", ".") == ".unction")
 assert(string.gsub("function", "%f[^\1-\255]", ".") == "function.")
 
 assert(string.find("a", "%f[a]") == 1)
-assert(string.find("a", "%f[^%z]") == 1)
+-- XXX: Undocumented %z not supported.
+assert(string.find("a", "%f[^\0]") == 1)
 assert(string.find("a", "%f[^%l]") == 2)
-assert(string.find("aba", "%f[a%z]") == 3)
-assert(string.find("aba", "%f[%z]") == 4)
-assert(not string.find("aba", "%f[%l%z]"))
-assert(not string.find("aba", "%f[^%l%z]"))
+-- XXX: Undocumented %z not supported.
+assert(string.find("aba", "%f[a\0]") == 3)
+assert(string.find("aba", "%f[\0]") == 4)
+assert(not string.find("aba", "%f[%l\0]"))
+assert(not string.find("aba", "%f[^%l\0]"))
 
 local i, e = string.find(" alo aalo allo", "%f[%S].-%f[%s].-%f[%S]")
 assert(i == 2 and e == 5)
@@ -388,8 +395,8 @@ malform("[]")
 malform("[^]")
 malform("[a%]")
 malform("[a%")
-malform("%b")
-malform("%ba")
+malform("%b", "balances not supported")
+malform("%ba", "balances not supported")
 malform("%")
 malform("%f", "missing")
 
@@ -398,7 +405,8 @@ assert(string.match("ab\0\1\2c", "[\0-\2]+") == "\0\1\2")
 assert(string.match("ab\0\1\2c", "[\0-\0]+") == "\0")
 assert(string.find("b$a", "$\0?") == 2)
 assert(string.find("abc\0efg", "%\0") == 4)
-assert(string.match("abc\0efg\0\1e\1g", "%b\0\1") == "\0efg\0\1e\1")
+-- XXX: Balances not supported.
+-- assert(string.match("abc\0efg\0\1e\1g", "%b\0\1") == "\0efg\0\1e\1")
 assert(string.match("abc\0\0\0", "%\0+") == "\0\0\0")
 assert(string.match("abc\0\0\0", "%\0%\0?") == "\0\0")
 
@@ -407,34 +415,35 @@ assert(string.find("abc\0\0","\0.") == 4)
 assert(string.find("abcx\0\0abc\0abc","x\0\0abc\0a.") == 4)
 
 
-do   -- test reuse of original string in gsub
-  local s = string.rep("a", 100)
-  local r = string.gsub(s, "b", "c")   -- no match
-  assert(string.format("%p", s) == string.format("%p", r))
+-- XXX: Strings do not have a pointer address in our implementation.
+-- do   -- test reuse of original string in gsub
+--   local s = string.rep("a", 100)
+--   local r = string.gsub(s, "b", "c")   -- no match
+--   assert(string.format("%p", s) == string.format("%p", r))
 
-  r = string.gsub(s, ".", {x = "y"})   -- no substitutions
-  assert(string.format("%p", s) == string.format("%p", r))
+--   r = string.gsub(s, ".", {x = "y"})   -- no substitutions
+--   assert(string.format("%p", s) == string.format("%p", r))
 
-  local count = 0
-  r = string.gsub(s, ".", function (x)
-                            assert(x == "a")
-                            count = count + 1
-                            return nil    -- no substitution
-                          end)
-  r = string.gsub(r, ".", {b = 'x'})   -- "a" is not a key; no subst.
-  assert(count == 100)
-  assert(string.format("%p", s) == string.format("%p", r))
+--   local count = 0
+--   r = string.gsub(s, ".", function (x)
+--                             assert(x == "a")
+--                             count = count + 1
+--                             return nil    -- no substitution
+--                           end)
+--   r = string.gsub(r, ".", {b = 'x'})   -- "a" is not a key; no subst.
+--   assert(count == 100)
+--   assert(string.format("%p", s) == string.format("%p", r))
 
-  count = 0
-  r = string.gsub(s, ".", function (x)
-                            assert(x == "a")
-                            count = count + 1
-                            return x    -- substitution...
-                          end)
-  assert(count == 100)
-  -- no reuse in this case
-  assert(r == s and string.format("%p", s) ~= string.format("%p", r))
-end
+--   count = 0
+--   r = string.gsub(s, ".", function (x)
+--                             assert(x == "a")
+--                             count = count + 1
+--                             return x    -- substitution...
+--                           end)
+--   assert(count == 100)
+--   -- no reuse in this case
+--   assert(r == s and string.format("%p", s) ~= string.format("%p", r))
+-- end
 
 print('OK')
 

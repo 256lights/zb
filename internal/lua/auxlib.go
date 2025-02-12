@@ -438,9 +438,9 @@ func OpenLibraries(ctx context.Context, l *State) error {
 		{TableLibraryName, OpenTable},
 		{StringLibraryName, OpenString},
 		{MathLibraryName, NewOpenMath(nil)},
+		{UTF8LibraryName, OpenUTF8},
 		// {IOLibraryName, NewIOLibrary().OpenLibrary},
 		// {OSLibraryName, NewOSLibrary().OpenLibrary},
-		// {UTF8LibraryName, OpenUTF8},
 		// {DebugLibraryName, OpenDebug},
 		// {PackageLibraryName, OpenPackage},
 	}

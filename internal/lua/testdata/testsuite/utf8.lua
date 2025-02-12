@@ -5,7 +5,8 @@
 
 print "testing UTF-8 library"
 
-local utf8 = require'utf8'
+-- XXX: utf8 library available as a global instead of being required.
+local utf8 = utf8
 
 
 local function checkerror (msg, f, ...)

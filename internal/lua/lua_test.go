@@ -1187,7 +1187,9 @@ func TestRotate(t *testing.T) {
 func TestSuite(t *testing.T) {
 	names := []string{
 		"math",
+		"pm",
 		"strings",
+		"utf8",
 	}
 
 	for _, name := range names {
@@ -1207,6 +1209,13 @@ func TestSuite(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			// Message handler.
+			l.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+				msg, _ := l.ToString(1)
+				l.PushStringContext(Traceback(l, msg, 1), l.StringContext(1))
+				return 1, nil
+			})
+
 			sourcePath := filepath.Join("testdata", "testsuite", name+".lua")
 			sourceData, err := os.ReadFile(sourcePath)
 			if err != nil {
@@ -1216,7 +1225,7 @@ func TestSuite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := l.Call(ctx, 0, 0); err != nil {
+			if err := l.PCall(ctx, 0, 0, -2); err != nil {
 				t.Fatal(err)
 			}
 		})
