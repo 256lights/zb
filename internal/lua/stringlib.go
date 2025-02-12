@@ -52,7 +52,6 @@ func OpenString(ctx context.Context, l *State) (int, error) {
 		"rep":      stringRepeat,
 		"reverse":  stringReverse,
 		"sub":      stringSub,
-		"unpack":   stringUnpack,
 		"upper":    stringUpper,
 	})
 
@@ -1082,69 +1081,6 @@ func packInteger(b []byte, x uint64, bigEndian bool) {
 			x >>= 8
 		}
 	}
-}
-
-func stringUnpack(ctx context.Context, l *State) (int, error) {
-	format, err := CheckString(l, 1)
-	if err != nil {
-		return 0, err
-	}
-	data, err := CheckString(l, 2)
-	if err != nil {
-		return 0, err
-	}
-	sctx := l.StringContext(2)
-	posArg := int64(1)
-	if !l.IsNoneOrNil(3) {
-		posArg, err = CheckInteger(l, 3)
-		if err != nil {
-			return 0, err
-		}
-	}
-	pos, posInBounds := stringIndexArg(posArg, len(data))
-	if !posInBounds {
-		return 0, NewArgError(l, 3, "initial position out of string")
-	}
-
-	p := newPackParser(format)
-	resultCount := 0
-	for {
-		opt, size, pad, _, err := p.next(pos)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return 0, NewArgError(l, 1, err.Error())
-		}
-		if pad+size > len(data)-pos {
-			return 0, NewArgError(l, 2, "data string too short")
-		}
-		if !l.CheckStack(2) {
-			return 0, fmt.Errorf("%sstack overflow (too many results)", Where(l, 1))
-		}
-
-		pos += pad
-		resultCount++
-		// TODO(now)
-		switch opt {
-		case 'c':
-			l.PushStringContext(data[pos:pos+size], sctx)
-			pos += size
-		case 'z':
-			n := strings.IndexByte(data[pos:], 0)
-			if n == -1 {
-				return 0, NewArgError(l, 2, "unfinished string for format 'z'")
-			}
-			l.PushStringContext(data[pos:pos+n], sctx)
-			pos += n + 1
-		default:
-			// Padding.
-			pos += size
-		}
-	}
-
-	l.PushInteger(int64(pos) + 1)
-	return resultCount + 1, nil
 }
 
 const isBigEndianNative = runtime.GOARCH == "armbe" ||
