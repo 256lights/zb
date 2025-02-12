@@ -108,7 +108,8 @@ func TestStringFind(t *testing.T) {
 		init    int64
 		plain   bool
 
-		want []any
+		want      []any
+		wantError string
 	}{
 		{
 			s:       "",
@@ -494,6 +495,18 @@ func TestStringFind(t *testing.T) {
 			init:    1,
 			want:    []any{int64(4), int64(12)},
 		},
+		{
+			s:         "abc",
+			pattern:   "[%a-z]",
+			init:      1,
+			wantError: "character class used in range",
+		},
+		{
+			s:       "a^c",
+			pattern: "[%]-`]",
+			init:    1,
+			want:    []any{int64(2), int64(2)},
+		},
 	}
 
 	ctx := context.Background()
@@ -531,7 +544,15 @@ func TestStringFind(t *testing.T) {
 			testName += ")"
 
 			if err := state.Call(ctx, state.Top()-top, MultipleReturns); err != nil {
-				t.Errorf("%s: %v", testName, err)
+				if test.wantError == "" {
+					t.Errorf("%s: %v", testName, err)
+				} else if got := err.Error(); !strings.Contains(got, test.wantError) {
+					t.Errorf("%s raised: %s; want message to contain %q", testName, got, test.wantError)
+				}
+				return
+			}
+			if test.wantError != "" {
+				t.Errorf("%s did not raise an error", testName)
 				return
 			}
 

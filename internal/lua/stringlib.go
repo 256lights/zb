@@ -28,11 +28,13 @@ const StringLibraryName = "string"
 //
 // # Differences from de facto C implementation
 //
-//   - Patterns do not support backreferences (i.e. %0 - %9),
-//     balances (i.e. %b), or frontiers (%f).
-//     Attempting to use any of these pattern items will raise an error.
-//   - Character sets with classes in ranges (e.g. [%a-z]) raise an error
-//     instead of silently exhibiting undefined behavior.
+//   - Patterns do not support backreferences (i.e. %0 - %9) or balances (i.e. %b).
+//     Attempting to use either of these pattern items will raise an error.
+//   - In patterns, character sets with classes in ranges (e.g. [%a-z])
+//     raise an error instead of silently exhibiting undefined behavior.
+//     However, ranges using escapes (e.g. [%]-`]) are well-defined in this implementation.
+//   - string.unpack is currently missing.
+//     (https://github.com/256lights/zb/issues/79)
 //
 // [string manipulation library]: https://www.lua.org/manual/5.4/manual.html#6.4
 func OpenString(ctx context.Context, l *State) (int, error) {
@@ -67,7 +69,8 @@ func OpenString(ctx context.Context, l *State) (int, error) {
 		luacode.UnaryMinus,
 	}
 	metaMethods := make(map[string]Function, len(operators)+1)
-	metaMethods[luacode.TagMethodIndex.String()] = nil
+	indexMethod := luacode.TagMethodIndex.String()
+	metaMethods[indexMethod] = nil
 	for _, op := range operators {
 		op := op // Capture constant instead of loop variable.
 		metaMethods[op.TagMethod().String()] = func(ctx context.Context, l *State) (int, error) {
@@ -77,7 +80,7 @@ func OpenString(ctx context.Context, l *State) (int, error) {
 
 	NewLib(l, metaMethods)
 	l.PushValue(-2)
-	l.RawSetField(-2, "__index")
+	l.RawSetField(-2, indexMethod)
 
 	// Set string metatable.
 	l.PushString("")

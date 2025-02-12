@@ -5,6 +5,7 @@ package lua
 
 import (
 	"errors"
+	"fmt"
 	"iter"
 	"strings"
 
@@ -340,32 +341,92 @@ func matchByte(b byte, characterClass string) bool {
 // For example, matchBracketClass(b, "^abc") checks whether b matches "[^abc]".
 func matchBracketClass(b byte, set string) bool {
 	set, invert := strings.CutPrefix(set, "^")
-	for i := 0; i < len(set); i++ {
-		switch p := set[i]; {
-		case p == '%':
-			// Escaped class.
-			i++
-			if i >= len(set) {
-				return false
-			}
-			if matchEscapedClass(b, set[i]) {
-				return !invert
-			}
-		case i+2 < len(set) && set[i+1] == '-':
-			// Range.
-			if p <= b && b <= set[i+2] {
-				return !invert
-			}
-			i += 2
-		case b == p:
+	for len(set) > 0 {
+		curr, next, err := cutBracketClassItem(set)
+		if err != nil {
+			return false
+		}
+		matched := false
+		switch {
+		case curr[1] != "":
+			lo := curr[0][len(curr[0])-1]
+			hi := curr[1][len(curr[1])-1]
+			matched = lo <= b && b <= hi
+		case curr[0][0] == '%':
+			matched = matchEscapedClass(b, curr[0][1])
+		default:
+			matched = b == curr[0][0]
+		}
+		if matched {
 			return !invert
 		}
+		set = next
 	}
 	return invert
 }
 
+// cutBracketClassItem returns set without the leading character class or range.
+// If charRange[1] != "", then the leading item is a range.
+func cutBracketClassItem(set string) (charRange [2]string, rest string, err error) {
+	if len(set) == 0 {
+		return [2]string{}, "", nil
+	}
+	end1, err := bracketCharacterClassEnd(set)
+	if err != nil {
+		return [2]string{}, set, err
+	}
+
+	// If a hyphen immediately follows the character class
+	// and the hyphen is not the last character of the set,
+	// then this is a range.
+	start2 := end1 + 1
+	if start2 >= len(set) || set[end1] != '-' {
+		return [2]string{set[:end1]}, set[end1:], nil
+	}
+	if len(set) >= 2 && set[0] == '%' && isKnownEscapedClass(set[1]) {
+		return [2]string{}, set, errors.New("malformed pattern (character class used in range)")
+	}
+	end2, err := characterClassEnd(set[start2:])
+	if err != nil {
+		return [2]string{}, set, err
+	}
+	end2 += start2
+	if len(set) >= start2+2 && set[start2] == '%' && isKnownEscapedClass(set[start2+1]) {
+		return [2]string{}, set, errors.New("malformed pattern (character class used in range)")
+	}
+	return [2]string{set[:end1], set[start2:end2]}, set[end2:], nil
+}
+
+// bracketCharacterClassEnd returns the length of the Lua pattern character class
+// at the start of the given set.
+// bracketCharacterClassEnd returns 0 if and only if set is empty.
+//
+// Character classes recognized by bracketCharacterClassEnd
+// are bytes or escapes indicating sets of characters.
+func bracketCharacterClassEnd(set string) (int, error) {
+	switch {
+	case len(set) == 0:
+		return 0, nil
+	case set[0] == '%':
+		if len(set) < 2 {
+			return -1, errors.New("malformed pattern (ends with '%')")
+		}
+		if isASCIIDigit(rune(set[1])) {
+			return -1, errors.New("patterns with backreferences not supported")
+		}
+		if isASCIILetter(rune(set[1])) && !isKnownEscapedClass(set[1]) {
+			return -1, fmt.Errorf("malformed pattern (unknown character class %q)", set[:2])
+		}
+		return 2, nil
+	default:
+		return 1, nil
+	}
+}
+
 // matchEscapedClass reports whether b matches the Lua pattern character class
 // written as a percent sign followed by the byte p.
+//
+// If you change this function, update [isKnownEscapedClass].
 func matchEscapedClass(b byte, p byte) bool {
 	var matched bool
 	switch toLowerASCII(rune(p)) {
@@ -395,26 +456,34 @@ func matchEscapedClass(b byte, p byte) bool {
 	return matched == isASCIILowercase(rune(p))
 }
 
+// isKnownEscapedClass reports whether the given byte
+// forms a character class that is not a direct escape of the byte
+// when preceded by a '%'.
+// For example, isKnownEscapedClass('a') reports true
+// and isKnownEscapedClass('[') reports false.
+func isKnownEscapedClass(p byte) bool {
+	if !isASCII(rune(p)) {
+		return false
+	}
+	p = byte(toLowerASCII(rune(p)))
+	return strings.IndexByte("acdglpsuwx", p) != -1
+}
+
 // characterClassEnd returns the length of the Lua pattern character class
 // at the start of pattern.
 // characterClassEnd returns 0 if and only if pattern is empty.
 //
 // Character classes are a byte, an escape indicating a set of characters,
 // or a bracketed character class.
+// characterClassEnd is largely the same as [bracketCharacterClassEnd],
+// but parses bracketed character classes.
 func characterClassEnd(pattern string) (end int, err error) {
-	switch {
-	case len(pattern) == 0:
-		return 0, nil
-	case pattern[0] == '%':
-		if len(pattern) < 2 {
-			return -1, errors.New("malformed pattern (ends with '%')")
-		}
-		return 2, nil
-	case pattern[0] == '[':
+	if len(pattern) > 0 && pattern[0] == '[' {
 		end := 1
 		if strings.HasPrefix(pattern[end:], "^") {
 			end++
 		}
+		start := end
 		if strings.HasPrefix(pattern[end:], "]") {
 			// Don't let ']' in first position terminate class.
 			end++
@@ -425,13 +494,20 @@ func characterClassEnd(pattern string) (end int, err error) {
 				// Skip escape.
 				end++
 			case ']':
+				for set := pattern[start:end]; len(set) > 0; {
+					_, rest, err := cutBracketClassItem(set)
+					if err != nil {
+						return -1, err
+					}
+					set = rest
+				}
 				return end + 1, nil
 			}
 		}
 		return -1, errors.New("malformed pattern (missing ']')")
-	default:
-		return 1, nil
 	}
+
+	return bracketCharacterClassEnd(pattern)
 }
 
 func isASCIILetter(c rune) bool {
