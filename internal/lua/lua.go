@@ -1855,7 +1855,11 @@ func (l *State) Dump(stripDebug bool) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("cannot dump a %s", l.typeName(top))
 	}
-	return f.proto.MarshalBinary()
+	proto := f.proto
+	if stripDebug {
+		proto = proto.StripDebug()
+	}
+	return proto.MarshalBinary()
 }
 
 // Next pops a key from the stack,
