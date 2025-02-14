@@ -118,6 +118,12 @@ func TestStringFind(t *testing.T) {
 			want:    []any{int64(1), int64(0)},
 		},
 		{
+			s:       "abc",
+			pattern: "",
+			init:    1,
+			want:    []any{int64(1), int64(0)},
+		},
+		{
 			s:       "aaa",
 			pattern: "^a",
 			init:    1,
@@ -569,6 +575,101 @@ func TestStringFind(t *testing.T) {
 				t.Errorf("%s (-want +got):\n%s", testName, diff)
 			}
 		}()
+	}
+}
+
+func BenchmarkStringFind(b *testing.B) {
+	ctx := context.Background()
+	state := new(State)
+	defer func() {
+		if err := state.Close(); err != nil {
+			b.Error("Close:", err)
+		}
+	}()
+
+	state.PushClosure(0, OpenString)
+	if err := state.Call(ctx, 0, 1); err != nil {
+		b.Fatal(err)
+	}
+	if _, err := state.Field(ctx, -1, "find"); err != nil {
+		b.Fatal(err)
+	}
+
+	benchmarks := []struct {
+		name      string
+		s         string
+		pattern   string
+		wantStart int64
+		wantEnd   int64
+	}{
+		{
+			name:      "SingleByte",
+			s:         "abc",
+			pattern:   "b",
+			wantStart: 2,
+			wantEnd:   2,
+		},
+		{
+			name:      "Word",
+			s:         "aaabbbccc",
+			pattern:   "bbb",
+			wantStart: 4,
+			wantEnd:   6,
+		},
+		{
+			name:      "SpaceSeparatedFields",
+			s:         "foo bar baz quux xyzzy",
+			pattern:   ".* .* .* .* .*",
+			wantStart: 1,
+			wantEnd:   22,
+		},
+		{
+			name:      "SpaceSeparatedCaptures",
+			s:         "foo bar baz quux xyzzy",
+			pattern:   "(.*) (.*) (.*) (.*) (.*)",
+			wantStart: 1,
+			wantEnd:   22,
+		},
+		// Test case presented in introduction of https://swtch.com/~rsc/regexp/regexp1.html
+		{
+			name:      "WorstCase",
+			s:         strings.Repeat("a", 30),
+			pattern:   strings.Repeat("a?", 30) + strings.Repeat("a", 30),
+			wantStart: 1,
+			wantEnd:   30,
+		},
+	}
+
+	for _, benchmark := range benchmarks {
+		b.Run(benchmark.name, func(b *testing.B) {
+			defer state.SetTop(state.Top())
+
+			b.SetBytes(int64(len(benchmark.s)))
+			for range b.N {
+				state.PushValue(-1)
+				state.PushString(benchmark.s)
+				state.PushString(benchmark.pattern)
+				if err := state.Call(ctx, 2, 2); err != nil {
+					b.Fatal(err)
+				}
+
+				start, startOK := state.ToInteger(-2)
+				end, endOK := state.ToInteger(-1)
+				if !startOK {
+					b.Errorf("type(select(1, string.find(%s, %s))) = %v; want integer",
+						lualex.Quote(benchmark.s), lualex.Quote(benchmark.pattern), state.Type(-2))
+				}
+				if !endOK {
+					b.Errorf("type(select(2, string.find(%s, %s))) = %v; want integer",
+						lualex.Quote(benchmark.s), lualex.Quote(benchmark.pattern), state.Type(-1))
+				}
+				if startOK && endOK && (start != benchmark.wantStart || end != benchmark.wantEnd) {
+					b.Errorf("string.find(%s, %s) = %d, %d; want %d, %d",
+						lualex.Quote(benchmark.s), lualex.Quote(benchmark.pattern), start, end, benchmark.wantStart, benchmark.wantEnd)
+				}
+				state.Pop(2)
+			}
+		})
 	}
 }
 
