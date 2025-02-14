@@ -604,7 +604,7 @@ func newBaseWarn(w Warner) Function {
 				return 0, err
 			}
 		}
-		if w == nil {
+		if w != nil {
 			for i := range n {
 				s, _ := l.ToString(i + 1)
 				w.Warn(s, i < n-1)
