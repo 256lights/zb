@@ -1546,6 +1546,177 @@ func TestFreeze(t *testing.T) {
 	})
 }
 
+func TestXMove(t *testing.T) {
+	t.Run("SameState", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("state1.Close:", err)
+			}
+		}()
+
+		state.PushInteger(555)
+		state.PushInteger(123)
+		state.CreateTable(2, 0)
+		tableID := state.ID(-1)
+		state.PushInteger(456)
+		if err := state.RawSetIndex(-2, 1); err != nil {
+			t.Fatal("t[1] = 456 raised", err)
+		}
+		state.PushInteger(789)
+		if err := state.RawSetIndex(-2, 2); err != nil {
+			t.Fatal("t[2] = 789 raised", err)
+		}
+		if got, want := state.Top(), 3; got != want {
+			t.Errorf("before XMove, state.Top() = %d; want %d", got, want)
+		}
+
+		if err := state.XMove(state, 2); err != nil {
+			t.Error("XMove:", err)
+		}
+
+		if got, want := state.Top(), 3; got != want {
+			t.Errorf("after XMove, state.Top() = %d; want %d", got, want)
+		}
+		if got, err := valueToGo(state, 1); err != nil {
+			t.Errorf("after XMove, state.stack[1] %v", err)
+		} else if want := int64(555); !cmp.Equal(got, want) {
+			t.Errorf("after XMove, state.stack[1] = %v; want %v", got, want)
+		}
+		if got, err := valueToGo(state, 2); err != nil {
+			t.Errorf("after XMove, state.stack[2] %v", err)
+		} else if want := int64(123); !cmp.Equal(got, want) {
+			t.Errorf("after XMove, state.stack[2] = %v; want %v", got, want)
+		}
+		if got, want := state.Type(3), TypeTable; got != want {
+			t.Errorf("after XMove, state.Type(3) = %v; want %v", got, want)
+		} else if got, want := state.ID(3), tableID; got != want {
+			t.Errorf("after XMove, state.ID(3) = %d; want %d", got, want)
+		}
+	})
+
+	t.Run("DifferentStates", func(t *testing.T) {
+		state1 := new(State)
+		state2 := new(State)
+		defer func() {
+			if err := state1.Close(); err != nil {
+				t.Error("state1.Close:", err)
+			}
+			if err := state2.Close(); err != nil {
+				t.Error("state2.Close:", err)
+			}
+		}()
+
+		state1.PushInteger(555)
+		state1.PushInteger(123)
+		state1.CreateTable(2, 0)
+		tableID := state1.ID(-1)
+		state1.PushInteger(456)
+		if err := state1.RawSetIndex(-2, 1); err != nil {
+			t.Fatal("t[1] = 456 raised", err)
+		}
+		state1.PushInteger(789)
+		if err := state1.RawSetIndex(-2, 2); err != nil {
+			t.Fatal("t[2] = 789 raised", err)
+		}
+		if err := state1.Freeze(-1); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := state1.Top(), 3; got != want {
+			t.Errorf("before XMove, state1.Top() = %d; want %d", got, want)
+		}
+		if got, want := state2.Top(), 0; got != want {
+			t.Errorf("before XMove, state2.Top() = %d; want %d", got, want)
+		}
+
+		if err := state2.XMove(state1, 2); err != nil {
+			t.Error("XMove:", err)
+		}
+
+		if got, want := state1.Top(), 1; got != want {
+			t.Errorf("after XMove, state1.Top() = %d; want %d", got, want)
+		}
+		if got, err := valueToGo(state1, 1); err != nil {
+			t.Errorf("after XMove, state1.stack[1] %v", err)
+		} else if want := int64(555); !cmp.Equal(got, want) {
+			t.Errorf("after XMove, state1.stack[1] = %v; want %v", got, want)
+		}
+
+		if got, want := state2.Top(), 2; got != want {
+			t.Errorf("after XMove, state2.Top() = %d; want %d", got, want)
+		}
+		if got, err := valueToGo(state2, 1); err != nil {
+			t.Errorf("after XMove, state2.stack[1] %v", err)
+		} else if want := int64(123); !cmp.Equal(got, want) {
+			t.Errorf("after XMove, state2.stack[1] = %v; want %v", got, want)
+		}
+		if got, want := state2.Type(2), TypeTable; got != want {
+			t.Errorf("after XMove, state2.Type(2) = %v; want %v", got, want)
+		} else if got, want := state2.ID(2), tableID; got != want {
+			t.Errorf("after XMove, state2.ID(2) = %d; want %d", got, want)
+		}
+	})
+
+	t.Run("DifferentStatesWithoutFreeze", func(t *testing.T) {
+		state1 := new(State)
+		state2 := new(State)
+		defer func() {
+			if err := state1.Close(); err != nil {
+				t.Error("state1.Close:", err)
+			}
+			if err := state2.Close(); err != nil {
+				t.Error("state2.Close:", err)
+			}
+		}()
+
+		state1.PushInteger(555)
+		state1.PushInteger(123)
+		state1.CreateTable(2, 0)
+		tableID := state1.ID(-1)
+		state1.PushInteger(456)
+		if err := state1.RawSetIndex(-2, 1); err != nil {
+			t.Fatal("t[1] = 456 raised", err)
+		}
+		state1.PushInteger(789)
+		if err := state1.RawSetIndex(-2, 2); err != nil {
+			t.Fatal("t[2] = 789 raised", err)
+		}
+		if got, want := state1.Top(), 3; got != want {
+			t.Errorf("before XMove, state1.Top() = %d; want %d", got, want)
+		}
+		if got, want := state2.Top(), 0; got != want {
+			t.Errorf("before XMove, state2.Top() = %d; want %d", got, want)
+		}
+
+		if err := state2.XMove(state1, 2); err == nil {
+			t.Error("XMove did not return an error")
+		}
+
+		if got, want := state1.Top(), 3; got != want {
+			t.Errorf("after XMove, state1.Top() = %d; want %d", got, want)
+		}
+		if got, err := valueToGo(state1, 1); err != nil {
+			t.Errorf("after XMove, state1.stack[1] %v", err)
+		} else if want := int64(555); !cmp.Equal(got, want) {
+			t.Errorf("after XMove, state1.stack[1] = %v; want %v", got, want)
+		}
+		if got, err := valueToGo(state1, 2); err != nil {
+			t.Errorf("after XMove, state1.stack[2] %v", err)
+		} else if want := int64(123); !cmp.Equal(got, want) {
+			t.Errorf("after XMove, state1.stack[2] = %v; want %v", got, want)
+		}
+		if got, want := state1.Type(3), TypeTable; got != want {
+			t.Errorf("after XMove, state1.Type(3) = %v; want %v", got, want)
+		} else if got, want := state1.ID(3), tableID; got != want {
+			t.Errorf("after XMove, state1.ID(3) = %d; want %d", got, want)
+		}
+
+		if got, want := state2.Top(), 0; got != want {
+			t.Errorf("after XMove, state2.Top() = %d; want %d", got, want)
+		}
+	})
+}
+
 func TestRotate(t *testing.T) {
 	tests := []struct {
 		s    []int

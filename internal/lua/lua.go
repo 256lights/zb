@@ -394,6 +394,44 @@ func (l *State) grow(wantTop int) bool {
 	return true
 }
 
+// XMove exchanges values between states:
+// n values are popped from src,
+// then pushed onto the stack of l.
+// If l and src are different states
+// and the top n values of src's stack are not frozen using [*State.Freeze],
+// then XMove returns an error.
+func (l *State) XMove(src *State, n int) error {
+	if n < 0 {
+		return errors.New("negative count to move")
+	}
+	if n == 0 {
+		return nil
+	}
+	if src.Top() < n {
+		return errMissingArguments
+	}
+	if src == l {
+		// No-op on same state.
+		return nil
+	}
+
+	src.init()
+	l.init()
+	if len(l.stack)+n > cap(l.stack) {
+		return errStackOverflow
+	}
+	newTop := len(src.stack) - n
+	elems := src.stack[newTop:]
+	for _, v := range elems {
+		if !isFrozen(v) {
+			return errors.New("moving unfrozen values between independent states")
+		}
+	}
+	l.stack = append(l.stack, elems...)
+	src.setTop(newTop)
+	return nil
+}
+
 // IsNumber reports if the value at the given index is a number
 // or a string convertible to a number.
 func (l *State) IsNumber(idx int) bool {
