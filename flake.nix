@@ -15,10 +15,10 @@
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.delve
-            pkgs.go_1_23
+            pkgs.go_1_24
             pkgs.gotools  # stringer, etc.
             (pkgs.gopls.override {
-              buildGoModule = pkgs.buildGo123Module;
+              buildGoModule = pkgs.buildGo124Module;
             })
           ];
 

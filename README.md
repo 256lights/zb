@@ -50,7 +50,7 @@ Other examples:
 Prerequisites:
 
 - Knowledge of using the command-line for your OS (e.g. Terminal.app, Command Prompt, etc.)
-- [Go](https://go.dev/dl/) 1.23.2 or later.
+- [Go](https://go.dev/dl/) 1.24.0 or later.
 
 ### Linux
 

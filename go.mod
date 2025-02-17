@@ -1,6 +1,6 @@
 module zb.256lights.llc/pkg
 
-go 1.23.2
+go 1.24.0
 
 require (
 	github.com/google/go-cmp v0.5.9
