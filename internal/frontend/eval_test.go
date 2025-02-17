@@ -54,6 +54,83 @@ func TestImportFromDerivation(t *testing.T) {
 	}
 }
 
+func TestNewState(t *testing.T) {
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+
+	realStoreDir := t.TempDir()
+	storeDir, err := zbstore.CleanDirectory(realStoreDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
+	eval, err := NewEval(storeDir, store, filepath.Join(t.TempDir(), "cache.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := eval.Close(); err != nil {
+			t.Error("eval.Close:", err)
+		}
+	}()
+	cacheConn, err := eval.cachePool.Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eval.cachePool.Put(cacheConn)
+
+	l, err := eval.newState(ctx, cacheConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := l.Close(); err != nil {
+			t.Error("Close:", err)
+		}
+	}()
+
+	if got, want := l.Top(), 0; got != want {
+		t.Errorf("l.Top() = %d; want %d", got, want)
+	}
+}
+
+// BenchmarkNewState measures the performance of spinning up a new interpreter.
+func BenchmarkNewState(b *testing.B) {
+	ctx, cancel := testcontext.New(b)
+	defer cancel()
+
+	realStoreDir := b.TempDir()
+	storeDir, err := zbstore.CleanDirectory(realStoreDir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	store := newTestServer(b, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
+	eval, err := NewEval(storeDir, store, filepath.Join(b.TempDir(), "cache.db"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		if err := eval.Close(); err != nil {
+			b.Error("eval.Close:", err)
+		}
+	}()
+	cacheConn, err := eval.cachePool.Get(ctx)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer eval.cachePool.Put(cacheConn)
+
+	for b.Loop() {
+		l, err := eval.newState(ctx, cacheConn)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := l.Close(); err != nil {
+			b.Error(err)
+		}
+	}
+}
+
 // newTestServer creates a new [Server] suitable for testing
 // and returns a client connected to it.
 // newTestServer must be called from the goroutine running the test or benchmark.

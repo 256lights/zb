@@ -18,7 +18,7 @@ import (
 
 const derivationTypeName = "derivation"
 
-func registerDerivationMetatable(ctx context.Context, l *lua.State) {
+func registerDerivationMetatable(ctx context.Context, l *lua.State) error {
 	lua.NewMetatable(l, derivationTypeName)
 	err := lua.SetPureFunctions(ctx, l, 0, map[string]lua.Function{
 		"__index":     indexDerivation,
@@ -28,9 +28,10 @@ func registerDerivationMetatable(ctx context.Context, l *lua.State) {
 		"__metatable": nil, // prevent Lua access to metatable
 	})
 	if err != nil {
-		panic(err)
+		return err
 	}
 	l.Pop(1)
+	return nil
 }
 
 func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, error) {

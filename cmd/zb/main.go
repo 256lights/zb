@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/luac"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
@@ -78,13 +79,16 @@ func main() {
 		return nil
 	}
 
+	luacCommand := luac.New()
+	luacCommand.Hidden = true
+
 	rootCommand.AddCommand(
 		newBuildCommand(g),
 		newDerivationCommand(g),
 		newEvalCommand(g),
 		newServeCommand(g),
 		newStoreCommand(g),
-		newLuacCommand(g),
+		luacCommand,
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), interruptSignals...)

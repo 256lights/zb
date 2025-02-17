@@ -1,12 +1,15 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-package main
+// Package luac provides a Cobra command for a Lua compiler.
+// Its command-line options and behavior are roughly the same as [luac(1)].
+//
+// [luac(1)]: https://www.lua.org/manual/5.4/luac.html
+package luac
 
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -15,8 +18,9 @@ import (
 	"zb.256lights.llc/pkg/internal/luacode"
 )
 
-type luacOptions struct {
+type options struct {
 	inputFilename  string
+	source         string
 	outputFilename string
 	list           int
 	parseOnly      bool
@@ -24,37 +28,45 @@ type luacOptions struct {
 	rawPC          bool
 }
 
-func newLuacCommand(g *globalConfig) *cobra.Command {
+// New returns a new luac command.
+func New() *cobra.Command {
 	c := &cobra.Command{
 		Use:                   "luac FILE",
 		Short:                 "luac",
 		Args:                  cobra.ExactArgs(1),
-		Hidden:                true,
 		DisableFlagsInUseLine: true,
 		SilenceErrors:         true,
 		SilenceUsage:          true,
 	}
-	opts := new(luacOptions)
+	opts := new(options)
 	c.Flags().CountVarP(&opts.list, "list", "l", "produce a listing of compiled bytecode")
 	c.Flags().StringVarP(&opts.outputFilename, "output", "o", "luac.out", "output to `filename`")
 	c.Flags().BoolVarP(&opts.parseOnly, "parse-only", "p", false, "do not write bytecode")
 	c.Flags().BoolVarP(&opts.stripDebug, "strip-debug", "s", false, "strip debug information")
 	c.Flags().BoolVarP(&opts.rawPC, "raw-pc", "0", false, "show literal PC values")
+	c.Flags().StringVar(&opts.source, "source", "", "source `name` to show in debug information instead of filename")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.inputFilename = args[0]
-		return runLuac(cmd.Context(), g, opts)
+		return run(opts)
 	}
 	return c
 }
 
-func runLuac(ctx context.Context, g *globalConfig, opts *luacOptions) error {
+func run(opts *options) error {
 	f, err := os.Open(opts.inputFilename)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	proto, err := luacode.Parse(luacode.FilenameSource(opts.inputFilename), bufio.NewReader(f))
+	var sourceName luacode.Source
+	if opts.source != "" {
+		sourceName = luacode.Source(opts.source)
+	} else {
+		sourceName = luacode.FilenameSource(opts.inputFilename)
+	}
+
+	proto, err := luacode.Parse(sourceName, bufio.NewReader(f))
 	if err != nil {
 		return err
 	}

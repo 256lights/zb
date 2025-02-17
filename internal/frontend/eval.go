@@ -1,10 +1,13 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
+//go:generate go run ../../cmd/zb-luac --source =(prelude) -o prelude.luac prelude.lua
+
 package frontend
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"embed"
 	"errors"
@@ -28,11 +31,10 @@ import (
 
 const cacheConnRegistryKey = "zb.256lights.llc/pkg/internal/frontend cacheConn"
 
-//go:embed prelude.lua
-var preludeSource string
+//go:embed prelude.luac
+var preludeSource []byte
 
 type Eval struct {
-	l         lua.State
 	store     *jsonrpc.Client
 	storeDir  zbstore.Directory
 	cachePool *sqlitemigration.Pool
@@ -54,7 +56,7 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 		schema.Migrations = append(schema.Migrations, string(migration))
 	}
 
-	eval := &Eval{
+	return &Eval{
 		store:    store,
 		storeDir: storeDir,
 		cachePool: sqlitemigration.NewPool(cacheDB, schema, sqlitemigration.Options{
@@ -62,22 +64,19 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 			PoolSize:    1,
 			PrepareConn: prepareCache,
 		}),
-	}
-	defer func() {
-		if err != nil {
-			eval.l.Close()
-			eval.cachePool.Close()
-			err = fmt.Errorf("zb: new eval: %v", err)
-		}
-	}()
+	}, nil
+}
 
-	ctx := context.TODO()
-	registerDerivationMetatable(ctx, &eval.l)
+func (eval *Eval) newState(ctx context.Context, cache *sqlite.Conn) (*lua.State, error) {
+	l := new(lua.State)
+	if err := registerDerivationMetatable(ctx, l); err != nil {
+		return nil, err
+	}
 
 	base := lua.NewOpenBase(&lua.BaseOptions{
 		Output: io.Discard,
 	})
-	if err := lua.Require(ctx, &eval.l, lua.GName, true, base); err != nil {
+	if err := lua.Require(ctx, l, lua.GName, true, base); err != nil {
 		return nil, err
 	}
 
@@ -100,62 +99,68 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 		"toFile":     eval.toFileFunction,
 		"path":       eval.pathFunction,
 	}
-	if err := lua.SetFunctions(ctx, &eval.l, 0, extraBaseFunctions); err != nil {
+	if err := lua.SetFunctions(ctx, l, 0, extraBaseFunctions); err != nil {
 		return nil, err
 	}
-	eval.l.PushString(string(storeDir))
-	if err := eval.l.SetField(ctx, -2, "storeDir"); err != nil {
+	l.PushString(string(eval.storeDir))
+	if err := l.SetField(ctx, -2, "storeDir"); err != nil {
 		return nil, err
 	}
 
 	// Wrap load function.
-	if tp := eval.l.RawField(-1, "load"); tp != lua.TypeFunction {
+	if tp := l.RawField(-1, "load"); tp != lua.TypeFunction {
 		return nil, fmt.Errorf("load is not a function")
 	}
-	eval.l.PushClosure(1, loadFunction)
-	eval.l.RawSetField(-2, "load")
+	l.PushClosure(1, loadFunction)
+	l.RawSetField(-2, "load")
 
 	// dofile needs loadfile as its first upvalue.
-	eval.l.RawField(-1, "loadfile")
-	eval.l.PushClosure(1, dofileFunction)
-	eval.l.RawSetField(-2, "dofile")
+	l.RawField(-1, "loadfile")
+	l.PushClosure(1, dofileFunction)
+	l.RawSetField(-2, "dofile")
 
 	// Pop base library.
-	eval.l.Pop(1)
+	l.Pop(1)
 
 	// Load other standard libraries.
-	if err := lua.Require(ctx, &eval.l, lua.MathLibraryName, true, lua.NewOpenMath(nil)); err != nil {
+	if err := lua.Require(ctx, l, lua.MathLibraryName, true, lua.NewOpenMath(nil)); err != nil {
 		return nil, err
 	}
-	eval.l.PushNil()
-	eval.l.RawSetField(-2, "random")
-	eval.l.PushNil()
-	eval.l.RawSetField(-2, "randomseed")
-	eval.l.Pop(1)
-	if err := lua.Require(ctx, &eval.l, lua.StringLibraryName, true, lua.OpenString); err != nil {
+	l.PushNil()
+	l.RawSetField(-2, "random")
+	l.PushNil()
+	l.RawSetField(-2, "randomseed")
+	l.Pop(1)
+	if err := lua.Require(ctx, l, lua.StringLibraryName, true, lua.OpenString); err != nil {
 		return nil, err
 	}
-	eval.l.PushNil()
-	eval.l.RawSetField(-2, "dump")
-	eval.l.Pop(1)
-	if err := lua.Require(ctx, &eval.l, lua.TableLibraryName, true, lua.OpenTable); err != nil {
+	l.PushNil()
+	l.RawSetField(-2, "dump")
+	l.Pop(1)
+	if err := lua.Require(ctx, l, lua.TableLibraryName, true, lua.OpenTable); err != nil {
 		return nil, err
 	}
-	eval.l.Pop(1)
-	if err := lua.Require(ctx, &eval.l, lua.UTF8LibraryName, true, lua.OpenUTF8); err != nil {
+	l.Pop(1)
+	if err := lua.Require(ctx, l, lua.UTF8LibraryName, true, lua.OpenUTF8); err != nil {
 		return nil, err
 	}
-	eval.l.Pop(1)
+	l.Pop(1)
 
 	// Run prelude.
-	if err := eval.l.Load(strings.NewReader(preludeSource), lua.AbstractSource("(prelude)"), "t"); err != nil {
+	if err := l.Load(bytes.NewReader(preludeSource), lua.UnknownSource, "b"); err != nil {
 		return nil, err
 	}
-	if err := eval.l.Call(ctx, 0, 0); err != nil {
+	if err := l.Call(ctx, 0, 0); err != nil {
 		return nil, err
 	}
 
-	return eval, nil
+	// Stash cache connection.
+	l.NewUserdata(cache, 0)
+	if err := l.RawSetField(lua.RegistryIndex, cacheConnRegistryKey); err != nil {
+		return nil, err
+	}
+
+	return l, nil
 }
 
 func prepareCache(conn *sqlite.Conn) error {
@@ -194,15 +199,7 @@ func prepareCache(conn *sqlite.Conn) error {
 }
 
 func (eval *Eval) Close() error {
-	var errors [2]error
-	errors[0] = eval.l.Close()
-	errors[1] = eval.cachePool.Close()
-	for _, err := range errors {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return eval.cachePool.Close()
 }
 
 func (eval *Eval) File(ctx context.Context, exprFile string, attrPaths []string) ([]any, error) {
@@ -212,23 +209,20 @@ func (eval *Eval) File(ctx context.Context, exprFile string, attrPaths []string)
 	}
 	defer eval.cachePool.Put(cache)
 
-	defer eval.l.SetTop(0)
-
-	eval.l.NewUserdata(cache, 0)
-	eval.l.RawSetField(lua.RegistryIndex, cacheConnRegistryKey)
-	defer func() {
-		eval.l.PushNil()
-		eval.l.RawSetField(lua.RegistryIndex, cacheConnRegistryKey)
-	}()
-
-	eval.l.PushClosure(0, messageHandler)
-	if err := loadFile(&eval.l, exprFile); err != nil {
+	l, err := eval.newState(ctx, cache)
+	if err != nil {
 		return nil, err
 	}
-	if err := eval.l.PCall(ctx, 0, 1, -2); err != nil {
+	defer l.Close()
+
+	l.PushClosure(0, messageHandler)
+	if err := loadFile(l, exprFile); err != nil {
 		return nil, err
 	}
-	return eval.attrPaths(ctx, attrPaths)
+	if err := l.PCall(ctx, 0, 1, -2); err != nil {
+		return nil, err
+	}
+	return evalAttrPaths(ctx, l, attrPaths)
 }
 
 func (eval *Eval) Expression(ctx context.Context, expr string, attrPaths []string) ([]any, error) {
@@ -238,30 +232,27 @@ func (eval *Eval) Expression(ctx context.Context, expr string, attrPaths []strin
 	}
 	defer eval.cachePool.Put(cache)
 
-	defer eval.l.SetTop(0)
-
-	eval.l.NewUserdata(cache, 0)
-	eval.l.RawSetField(lua.RegistryIndex, cacheConnRegistryKey)
-	defer func() {
-		eval.l.PushNil()
-		eval.l.RawSetField(lua.RegistryIndex, cacheConnRegistryKey)
-	}()
-
-	eval.l.PushPureFunction(0, messageHandler)
-	if err := loadExpression(&eval.l, expr); err != nil {
+	l, err := eval.newState(ctx, cache)
+	if err != nil {
 		return nil, err
 	}
-	if err := eval.l.PCall(ctx, 0, 1, -2); err != nil {
+	defer l.Close()
+
+	l.PushPureFunction(0, messageHandler)
+	if err := loadExpression(l, expr); err != nil {
 		return nil, err
 	}
-	return eval.attrPaths(ctx, attrPaths)
+	if err := l.PCall(ctx, 0, 1, -2); err != nil {
+		return nil, err
+	}
+	return evalAttrPaths(ctx, l, attrPaths)
 }
 
-// attrPaths evaluates all the attribute paths given
+// evalAttrPaths evaluates all the attribute paths given
 // against the value on the top of the stack.
-func (eval *Eval) attrPaths(ctx context.Context, paths []string) ([]any, error) {
+func evalAttrPaths(ctx context.Context, l *lua.State, paths []string) ([]any, error) {
 	if len(paths) == 0 {
-		x, err := luaToGo(ctx, &eval.l)
+		x, err := luaToGo(ctx, l)
 		if err != nil {
 			return nil, err
 		}
@@ -275,16 +266,16 @@ func (eval *Eval) attrPaths(ctx context.Context, paths []string) ([]any, error) 
 			expr += "."
 		}
 		expr += p + ";"
-		if err := eval.l.Load(strings.NewReader(expr), lua.LiteralSource(expr), "t"); err != nil {
-			eval.l.Pop(1)
+		if err := l.Load(strings.NewReader(expr), lua.LiteralSource(expr), "t"); err != nil {
+			l.Pop(1)
 			return result, fmt.Errorf("%s: %v", p, err)
 		}
-		eval.l.PushValue(-2)
-		if err := eval.l.Call(ctx, 1, 1); err != nil {
+		l.PushValue(-2)
+		if err := l.Call(ctx, 1, 1); err != nil {
 			return result, fmt.Errorf("%s: %v", p, err)
 		}
-		x, err := luaToGo(ctx, &eval.l)
-		eval.l.Pop(1)
+		x, err := luaToGo(ctx, l)
+		l.Pop(1)
 		if err != nil {
 			return result, fmt.Errorf("%s: %v", p, err)
 		}
@@ -390,8 +381,7 @@ func ipairs(ctx context.Context, l *lua.State, idx int, f func(i int64) error) e
 	top := l.Top()
 	defer l.SetTop(top)
 	for i := int64(1); ; i++ {
-		l.PushInteger(i)
-		typ, err := l.Table(ctx, idx)
+		typ, err := l.Index(ctx, idx, i)
 		if err != nil {
 			return fmt.Errorf("#%d: %w", i, err)
 		}
