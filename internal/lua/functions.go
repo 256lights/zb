@@ -6,6 +6,7 @@ package lua
 import (
 	"context"
 	"fmt"
+	"iter"
 	"slices"
 
 	"zb.256lights.llc/pkg/internal/luacode"
@@ -26,26 +27,36 @@ import (
 // and the string result of its Error() method will be used as the error object.
 type Function func(ctx context.Context, l *State) (int, error)
 
-type function interface {
-	value
-	functionID() uint64
+type functionValue interface {
+	referenceValue
 	upvaluesSlice() []*upvalue
 }
 
 var (
-	_ function = goFunction{}
-	_ function = luaFunction{}
+	_ functionValue = goFunction{}
+	_ functionValue = luaFunction{}
 )
 
 type goFunction struct {
 	id       uint64
 	cb       Function
 	upvalues []*upvalue
+	pure     bool
 }
 
 func (f goFunction) valueType() Type           { return TypeFunction }
-func (f goFunction) functionID() uint64        { return f.id }
+func (f goFunction) valueID() uint64           { return f.id }
 func (f goFunction) upvaluesSlice() []*upvalue { return f.upvalues }
+
+func (f goFunction) references(l *State) iter.Seq[referenceValue] {
+	return func(yield func(referenceValue) bool) {
+		for _, uv := range f.upvalues {
+			if rv, ok := (*l.resolveUpvalue(uv)).(referenceValue); ok && !yield(rv) {
+				return
+			}
+		}
+	}
+}
 
 type luaFunction struct {
 	id       uint64
@@ -54,8 +65,18 @@ type luaFunction struct {
 }
 
 func (f luaFunction) valueType() Type           { return TypeFunction }
-func (f luaFunction) functionID() uint64        { return f.id }
+func (f luaFunction) valueID() uint64           { return f.id }
 func (f luaFunction) upvaluesSlice() []*upvalue { return f.upvalues }
+
+func (f luaFunction) references(l *State) iter.Seq[referenceValue] {
+	return func(yield func(referenceValue) bool) {
+		for _, uv := range f.upvalues {
+			if rv, ok := (*l.resolveUpvalue(uv)).(referenceValue); ok && !yield(rv) {
+				return
+			}
+		}
+	}
+}
 
 // markTBC marks the given index in l.stack as “to be closed”.
 // When the stack element is popped (or explicitly closed),
@@ -118,6 +139,7 @@ func (l *State) closeTBCSlots(ctx context.Context, bottom int, preserveTop bool,
 type upvalue struct {
 	stackIndex int
 	storage    value
+	frozen     bool
 }
 
 // closedUpvalue returns an [upvalue] with the given value

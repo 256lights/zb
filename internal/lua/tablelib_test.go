@@ -159,7 +159,10 @@ func TestTableUnpack(t *testing.T) {
 			state.CreateTable(len(test.list), 0)
 			for i, x := range test.list {
 				state.PushInteger(x)
-				state.RawSetIndex(-2, int64(1+i))
+				if err := state.RawSetIndex(-2, int64(1+i)); err != nil {
+					t.Error(err)
+					return
+				}
 				if i == 0 {
 					testName = fmt.Sprintf("%s%d", testName, x)
 				} else {

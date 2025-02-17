@@ -24,6 +24,9 @@ const MathLibraryName = "math"
 // then it is used for random number generation.
 //
 // The resulting function is intended to be used as an argument to [Require].
+//
+// All functions in the math library are pure (as per [*State.PushPureFunction])
+// except random and randomseed.
 func NewOpenMath(src RandomSource) Function {
 	return func(ctx context.Context, l *State) (int, error) {
 		src := src
@@ -32,7 +35,7 @@ func NewOpenMath(src RandomSource) Function {
 			src.Seed(weakSeed(l))
 		}
 
-		NewLib(l, map[string]Function{
+		NewPureLib(l, map[string]Function{
 			"abs":       mathAbs,
 			"acos":      mathAcos,
 			"asin":      mathAsin,
@@ -64,22 +67,34 @@ func NewOpenMath(src RandomSource) Function {
 		})
 
 		l.PushNumber(math.Pi)
-		l.RawSetField(-2, "pi")
+		if err := l.RawSetField(-2, "pi"); err != nil {
+			return 0, err
+		}
 		l.PushNumber(math.Inf(1))
-		l.RawSetField(-2, "huge")
+		if err := l.RawSetField(-2, "huge"); err != nil {
+			return 0, err
+		}
 		l.PushInteger(math.MaxInt64)
-		l.RawSetField(-2, "maxinteger")
+		if err := l.RawSetField(-2, "maxinteger"); err != nil {
+			return 0, err
+		}
 		l.PushInteger(math.MinInt64)
-		l.RawSetField(-2, "mininteger")
+		if err := l.RawSetField(-2, "mininteger"); err != nil {
+			return 0, err
+		}
 
 		l.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
 			return mathRandom(ctx, l, src)
 		})
-		l.RawSetField(-2, "random")
+		if err := l.RawSetField(-2, "random"); err != nil {
+			return 0, err
+		}
 		l.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
 			return mathRandomSeed(ctx, l, src)
 		})
-		l.RawSetField(-2, "randomseed")
+		if err := l.RawSetField(-2, "randomseed"); err != nil {
+			return 0, err
+		}
 
 		return 1, nil
 	}

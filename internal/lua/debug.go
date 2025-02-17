@@ -4,6 +4,7 @@
 package lua
 
 import (
+	"errors"
 	"fmt"
 
 	"zb.256lights.llc/pkg/internal/luacode"
@@ -83,7 +84,7 @@ type Debug struct {
 	IsTailCall bool
 }
 
-func newDebug(f function, info *callFrame) *Debug {
+func newDebug(f functionValue, info *callFrame) *Debug {
 	db := &Debug{
 		Source:          UnknownSource,
 		CurrentLine:     -1,
@@ -147,7 +148,7 @@ func (l *State) Info(level int) *Debug {
 		v = l.stack[frame.functionIndex]
 	}
 
-	f, ok := v.(function)
+	f, ok := v.(functionValue)
 	if !ok {
 		return nil
 	}
@@ -181,7 +182,11 @@ func (l *State) FunctionForLevel(level int) bool {
 // The first upvalue is accessed with an i of 1.
 func (l *State) Upvalue(funcIndex int, i int) (upvalueName string, ok bool) {
 	l.init()
-	upvalueName, ptr := l.upvalue(funcIndex, i)
+	v, _, err := l.valueByIndex(funcIndex)
+	if err != nil {
+		return "", false
+	}
+	upvalueName, _, ptr := l.upvalue(v, i)
 	if ptr == nil {
 		return "", false
 	}
@@ -189,33 +194,29 @@ func (l *State) Upvalue(funcIndex int, i int) (upvalueName string, ok bool) {
 	return upvalueName, true
 }
 
-func (l *State) upvalue(funcIndex int, i int) (upvalueName string, upvalue *value) {
+func (l *State) upvalue(v value, i int) (upvalueName string, frozen bool, upvalue *value) {
 	i-- // Convert to 0-based.
 	if i < 0 {
-		return "", nil
+		return "", false, nil
 	}
 
-	v, _, err := l.valueByIndex(funcIndex)
-	if err != nil {
-		return "", nil
-	}
 	switch f := v.(type) {
 	case luaFunction:
 		if i >= len(f.upvalues) {
-			return "", nil
+			return "", false, nil
 		}
-		if i-1 < len(f.proto.Upvalues) {
+		if i < len(f.proto.Upvalues) {
 			upvalueName = f.proto.Upvalues[i].Name
 		}
-		return upvalueName, l.resolveUpvalue(f.upvalues[i])
-	case function:
+		return upvalueName, f.upvalues[i].frozen, l.resolveUpvalue(f.upvalues[i])
+	case functionValue:
 		upvalues := f.upvaluesSlice()
 		if i >= len(upvalues) {
-			return "", nil
+			return "", false, nil
 		}
-		return "", l.resolveUpvalue(upvalues[i])
+		return "", upvalues[i].frozen, l.resolveUpvalue(upvalues[i])
 	default:
-		return "", nil
+		return "", false, nil
 	}
 }
 
@@ -223,22 +224,36 @@ func (l *State) upvalue(funcIndex int, i int) (upvalueName string, upvalue *valu
 // SetUpvalue assigns the value on the top of the stack to the upvalue,
 // returns the upvalue's name,
 // and also pops the value from the stack.
-// Returns ("", false) when i is greater than the number of upvalues.
+// If SetUpvalue returns an error, the stack is unchanged.
 // The first upvalue is accessed with an i of 1.
-func (l *State) SetUpvalue(funcIndex int, i int) (upvalueName string, ok bool) {
+func (l *State) SetUpvalue(funcIndex int, i int) (upvalueName string, err error) {
 	if l.Top() < 1 {
-		panic(errMissingArguments)
+		return "", errMissingArguments
 	}
 	l.init()
-	upvalueName, ptr := l.upvalue(funcIndex, i)
+
+	fv, _, err := l.valueByIndex(funcIndex)
+	if err != nil {
+		return "", err
+	}
+	f, ok := fv.(functionValue)
+	if !ok {
+		return "", fmt.Errorf("attempt to set upvalue of %s", l.typeName(fv))
+	}
+	upvalueName, isFrozen, ptr := l.upvalue(fv, i)
 	if ptr == nil {
-		return "", false
+		return "", fmt.Errorf("upvalue %d out of range (%d present)", i, len(f.upvaluesSlice()))
+	}
+	if isFrozen {
+		if upvalueName == "" {
+			return "", errors.New("attempt to set frozen upvalue")
+		}
+		return upvalueName, fmt.Errorf("attempt to set frozen upvalue %s", upvalueName)
 	}
 	top := len(l.stack) - 1
-	v := l.stack[top]
+	*ptr = l.stack[top]
 	l.setTop(top)
-	*ptr = v
-	return upvalueName, true
+	return upvalueName, nil
 }
 
 func (l *State) localVariableName(frame *callFrame, i int) string {

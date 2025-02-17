@@ -22,9 +22,11 @@ const maxUTF8 = 0x7fffffff
 // OpenUTF8 is a [Function] that loads the [UTF-8 library].
 // This function is intended to be used as an argument to [Require].
 //
+// All functions in the utf8 library are pure (as per [*State.PushPureFunction]).
+//
 // [UTF-8 library]: https://www.lua.org/manual/5.4/manual.html#6.5
 func OpenUTF8(ctx context.Context, l *State) (int, error) {
-	NewLib(l, map[string]Function{
+	NewPureLib(l, map[string]Function{
 		"char":        utf8Char,
 		"charpattern": nil,
 		"codepoint":   utf8Codepoint,
@@ -33,7 +35,9 @@ func OpenUTF8(ctx context.Context, l *State) (int, error) {
 		"offset":      utf8Offset,
 	})
 	l.PushString("[\x00-\x7F\xC2-\xFD][\x80-\xBF]*")
-	l.RawSetField(-2, "charpattern")
+	if err := l.RawSetField(-2, "charpattern"); err != nil {
+		return 0, err
+	}
 	return 1, nil
 }
 
@@ -62,7 +66,7 @@ func utf8Codes(ctx context.Context, l *State) (int, error) {
 	if len(s) > 0 && !utf8.RuneStart(s[0]) {
 		return 0, NewArgError(l, 1, errInvalidUTF8.Error())
 	}
-	l.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+	l.PushPureFunction(0, func(ctx context.Context, l *State) (int, error) {
 		return utf8CodesNext(ctx, l, lax)
 	})
 	l.PushValue(1)

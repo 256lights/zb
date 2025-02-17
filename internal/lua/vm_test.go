@@ -332,13 +332,9 @@ func TestVM(t *testing.T) {
 
 		state.PushClosure(0, func(ctx context.Context, state *State) (int, error) {
 			state.SetTop(2)
-			if got := state.Type(1); got != TypeTable {
-				return 0, fmt.Errorf("setmetatable: first argument must be a table (got %v)", got)
+			if err := state.SetMetatable(1); err != nil {
+				return 0, err
 			}
-			if got := state.Type(2); got != TypeTable && got != TypeNil {
-				return 0, fmt.Errorf("setmetatable: second argument must be a table or nil (got %v)", got)
-			}
-			state.SetMetatable(1)
 			return 1, nil
 		})
 		if err := state.SetGlobal(ctx, "setmetatable"); err != nil {

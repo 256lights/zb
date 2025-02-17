@@ -28,11 +28,17 @@ func TestEmptyTable(t *testing.T) {
 func TestArrayTable(t *testing.T) {
 	tab := newTable(3)
 	const want1 integerValue = 42
-	tab.set(integerValue(1), want1)
+	if err := tab.set(integerValue(1), want1); err != nil {
+		t.Error(err)
+	}
 	const want2 = "abc"
-	tab.set(integerValue(2), stringValue{s: want2})
+	if err := tab.set(integerValue(2), stringValue{s: want2}); err != nil {
+		t.Error(err)
+	}
 	const want3 floatValue = 3.14
-	tab.set(integerValue(3), want3)
+	if err := tab.set(integerValue(3), want3); err != nil {
+		t.Error(err)
+	}
 
 	if got, want := tab.len(), integerValue(3); got != want {
 		t.Errorf("tab.len() = %d; want %d", got, want)
@@ -69,11 +75,17 @@ func TestArrayTable(t *testing.T) {
 func TestHashTable(t *testing.T) {
 	tab := newTable(3)
 	const wantFoo integerValue = 42
-	tab.set(stringValue{s: "foo"}, wantFoo)
+	if err := tab.set(stringValue{s: "foo"}, wantFoo); err != nil {
+		t.Error(err)
+	}
 	const wantBar = "abc"
-	tab.set(stringValue{s: "bar"}, stringValue{s: wantBar})
+	if err := tab.set(stringValue{s: "bar"}, stringValue{s: wantBar}); err != nil {
+		t.Error(err)
+	}
 	const wantBaz floatValue = 3.14
-	tab.set(stringValue{s: "baz"}, wantBaz)
+	if err := tab.set(stringValue{s: "baz"}, wantBaz); err != nil {
+		t.Error(err)
+	}
 
 	if got, want := tab.len(), integerValue(0); got != want {
 		t.Errorf("tab.len() = %d; want %d", got, want)

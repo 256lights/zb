@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"zb.256lights.llc/pkg/internal/luacode"
+	"zb.256lights.llc/pkg/internal/xslices"
 	"zb.256lights.llc/pkg/sets"
 )
 
@@ -90,7 +91,7 @@ type State struct {
 	generation uint64
 
 	stack            []value
-	registry         table
+	registry         *table
 	callStack        []callFrame
 	typeMetatables   [9]*table
 	pendingVariables []*upvalue
@@ -101,9 +102,11 @@ func (l *State) init() {
 	if cap(l.stack) < minStack {
 		l.stack = slices.Grow(l.stack, minStack*2-len(l.stack))
 	}
-	if l.registry.id == 0 {
-		l.registry = *newTable(1)
-		l.initRegistry()
+	if l.registry == nil {
+		l.registry = newTable(1)
+		if err := l.registry.set(integerValue(RegistryIndexGlobals), newTable(0)); err != nil {
+			panic(err)
+		}
 	}
 	if len(l.callStack) == 0 {
 		l.stack = append(l.stack, goFunction{
@@ -115,16 +118,12 @@ func (l *State) init() {
 	}
 }
 
-func (l *State) initRegistry() {
-	l.registry.set(integerValue(RegistryIndexGlobals), newTable(0))
-}
-
 // Close resets the state,
 // Close returns an error and does nothing if any function calls are in-progress.
 // After a successful call to Close:
 //
 //   - The stack will be empty.
-//   - The registry will be initialized to its original state.
+//   - A new registry table will be created.
 //   - Type-wide metatables are removed.
 //
 // Unlike the Lua C API, calling Close is not necessary to clean up resources.
@@ -138,11 +137,7 @@ func (l *State) Close() error {
 		l.closeUpvalues(1) // Clears l.pendingVariables as well.
 		l.setTop(1)
 	}
-	if l.registry.id != 0 {
-		l.registry.clear()
-		l.registry.meta = nil
-		l.initRegistry()
-	}
+	l.registry = nil
 	clear(l.typeMetatables[:])
 	l.tbc.Clear()
 	return nil
@@ -176,10 +171,10 @@ func (l *State) stackIndex(idx int) (int, error) {
 func (l *State) valueByIndex(idx int) (v value, valid bool, err error) {
 	switch {
 	case idx == RegistryIndex:
-		return &l.registry, true, nil
+		return l.registry, true, nil
 	case isUpvalueIndex(idx):
 		fv := l.stack[l.frame().functionIndex]
-		f, ok := fv.(function)
+		f, ok := fv.(functionValue)
 		if !ok {
 			return nil, false, fmt.Errorf("internal error: call frame missing function (found %T)", fv)
 		}
@@ -328,36 +323,46 @@ func (l *State) Remove(idx int) {
 // Copy copies the element at index fromIdx into the valid index toIdx,
 // replacing the value at that position.
 // Values at other positions are not affected.
-func (l *State) Copy(fromIdx, toIdx int) {
+func (l *State) Copy(fromIdx, toIdx int) error {
 	l.init()
 	v, _, err := l.valueByIndex(fromIdx)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	if i, isUpvalue := upvalueFromIndex(toIdx); isUpvalue {
 		fv := l.stack[l.frame().functionIndex]
-		f, ok := fv.(function)
+		f, ok := fv.(functionValue)
 		if !ok {
-			panic(fmt.Errorf("internal error: call frame missing function (found %T)", fv))
+			return fmt.Errorf("internal error: call frame missing function (found %T)", fv)
 		}
-		*l.resolveUpvalue(f.upvaluesSlice()[i-1]) = v
-		return
+		uv := f.upvaluesSlice()[i-1]
+		if uv.frozen {
+			return errors.New("upvalue is frozen")
+		}
+		*l.resolveUpvalue(uv) = v
+		return nil
 	}
 
 	i, err := l.stackIndex(toIdx)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	l.stack[i] = v
+	return nil
 }
 
 // Replace moves the top element into the given valid index without shifting any element
 // (therefore replacing the value at that given index),
 // and then pops the top element.
-func (l *State) Replace(idx int) {
-	l.Copy(-1, idx)
+// Replace always removes the top element from the stack, even if it returns an error.
+func (l *State) Replace(idx int) error {
+	if l.Top() < 1 {
+		return errMissingArguments
+	}
+	err := l.Copy(-1, idx)
 	l.Pop(1)
+	return err
 }
 
 // CheckStack ensures that the stack has space for at least n extra elements,
@@ -558,15 +563,20 @@ func (l *State) ToBoolean(idx int) bool {
 // If the value is a number, then ToString also changes the actual value in the stack to a string.
 // (This change confuses [State.Next]
 // when ToString is applied to keys during a table traversal.)
+//
+// If a function calls ToString for a frozen upvalue that is a number,
+// ToString does not change the upvalue
+// and returns the number converted to a string with an ok value of false.
 func (l *State) ToString(idx int) (s string, ok bool) {
 	l.init()
 	var p *value
+	frozen := false
 	switch {
 	case idx == RegistryIndex:
 		return "", false
 	case isUpvalueIndex(idx):
 		fv := l.stack[l.frame().functionIndex]
-		f, ok := fv.(function)
+		f, ok := fv.(functionValue)
 		if !ok {
 			return "", false
 		}
@@ -575,7 +585,9 @@ func (l *State) ToString(idx int) (s string, ok bool) {
 		if i > len(upvalues) {
 			return "", false
 		}
-		p = l.resolveUpvalue(upvalues[i-1])
+		uv := upvalues[i-1]
+		p = l.resolveUpvalue(uv)
+		frozen = uv.frozen
 	case isPseudo(idx):
 		return "", false
 	default:
@@ -591,8 +603,10 @@ func (l *State) ToString(idx int) (s string, ok bool) {
 		return v.s, true
 	case valueStringer:
 		sv := v.stringValue()
-		*p = sv
-		return sv.s, true
+		if !frozen {
+			*p = sv
+		}
+		return sv.s, !frozen
 	default:
 		return "", false
 	}
@@ -655,16 +669,11 @@ func (l *State) ID(idx int) uint64 {
 	if err != nil {
 		panic(err)
 	}
-	switch v := v.(type) {
-	case function:
-		return v.functionID()
-	case *table:
-		return v.id
-	case *userdata:
-		return v.id
-	default:
+	rv, ok := v.(referenceValue)
+	if !ok {
 		return 0
 	}
+	return rv.valueID()
 }
 
 // Arithmetic performs an arithmetic or bitwise operation over the two values
@@ -904,7 +913,32 @@ func (l *State) PushBoolean(b bool) {
 // popped off the top of the stack.
 // (When there are multiple upvalues, the first value is pushed first.)
 // If n is negative or greater than 256, then PushClosure panics.
+//
+// Go functions created via PushClosure cannot be frozen.
+// Use [*State.PushPureFunction] if the Go function is safe to be frozen,
+// but see the caveats in PushPureFunction's documentation.
 func (l *State) PushClosure(n int, f Function) {
+	l.pushGoFunction(n, f, false)
+}
+
+// PushPureFunction pushes a Go function with no side effects onto the stack.
+// n is how many upvalues this function will have,
+// popped off the top of the stack.
+// (When there are multiple upvalues, the first value is pushed first.)
+// If n is negative or greater than 256, then PushClosure panics.
+//
+// Unlike [*State.PushClosure],
+// functions pushed via PushPureFunction can be frozen with [*State.Freeze],
+// assuming their upvalues (if any) can be frozen.
+// Functions passed to PushPureFunction
+// should be safe to call from multiple goroutines concurrently,
+// although they need not be deterministic.
+// If in doubt, use [*State.PushClosure].
+func (l *State) PushPureFunction(n int, f Function) {
+	l.pushGoFunction(n, f, true)
+}
+
+func (l *State) pushGoFunction(n int, f Function, pure bool) {
 	if n > maxUpvalues {
 		panic("too many upvalues")
 	}
@@ -922,6 +956,7 @@ func (l *State) PushClosure(n int, f Function) {
 		id:       nextID(),
 		cb:       f,
 		upvalues: upvalues,
+		pure:     pure,
 	})
 }
 
@@ -994,7 +1029,7 @@ func (l *State) index(ctx context.Context, t, k value) (value, error) {
 			if v := tm.get(k); v != nil {
 				return v, nil
 			}
-		case luaFunction, goFunction:
+		case functionValue:
 			return l.call1(ctx, tm, t, k)
 		}
 
@@ -1237,8 +1272,12 @@ func (l *State) SetTable(ctx context.Context, idx int) error {
 // calling a __newindex metamethod if appropriate.
 func (l *State) setIndex(ctx context.Context, t, k, v value) error {
 	// If there's an existing table entry, we don't search metatable.
-	if t, _ := t.(*table); t.setExisting(k, v) {
-		return nil
+	if t, _ := t.(*table); t != nil {
+		if err := t.setExisting(k, v); err == nil {
+			return nil
+		} else if err != errKeyNotFound {
+			return err
+		}
 	}
 
 	for range maxMetaDepth {
@@ -1251,10 +1290,12 @@ func (l *State) setIndex(ctx context.Context, t, k, v value) error {
 			}
 			return tab.set(k, v)
 		case *table:
-			if tm.setExisting(k, v) {
+			if err := tm.setExisting(k, v); err == nil {
 				return nil
+			} else if err != errKeyNotFound {
+				return err
 			}
-		case luaFunction, goFunction:
+		case functionValue:
 			if err := l.call(ctx, 0, tm, t, k, v); err != nil {
 				return err
 			}
@@ -1318,7 +1359,8 @@ func (l *State) SetIndex(ctx context.Context, idx int, i int64) error {
 // and k is the value just below the top.
 // This function pops both the key and the value from the stack.
 // If the key from the stack cannot be used as a table key
-// (i.e. it is nil or NaN),
+// (i.e. it is nil or NaN)
+// or the table is frozen,
 // then RawSet returns an error.
 func (l *State) RawSet(idx int) error {
 	if l.Top() < 2 {
@@ -1340,69 +1382,88 @@ func (l *State) RawSet(idx int) error {
 // and v is the value on the top of the stack.
 // This function pops the value from the stack.
 // The assignment is raw, that is, it does not use the __newindex metavalue.
-func (l *State) RawSetIndex(idx int, n int64) {
+// RawSetIndex returns an error if the stack is empty,
+// the table index is unacceptable,
+// the value at the table index is not a table,
+// or the table is frozen.
+func (l *State) RawSetIndex(idx int, n int64) error {
 	if l.Top() < 1 {
-		panic(errMissingArguments)
+		return errMissingArguments
 	}
 	l.init()
 	t, _, err := l.valueByIndex(idx)
 	v := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1) // Always pop value.
 	if err != nil {
-		panic(err)
+		return err
 	}
-	if err := t.(*table).set(integerValue(n), v); err != nil {
-		panic(err)
+	tab, _ := t.(*table)
+	if tab == nil {
+		return fmt.Errorf("attempt to index a %s", l.typeName(t))
 	}
+	return tab.set(integerValue(n), v)
 }
 
 // RawSetField does the equivalent to t[k] = v,
 // where t is the value at the given index
 // and v is the value on the top of the stack.
 // This function pops the value from the stack.
-func (l *State) RawSetField(idx int, k string) {
+// RawSetField returns an error if the stack is empty,
+// the table index is unacceptable,
+// the value at the table index is not a table,
+// or the table is frozen.
+func (l *State) RawSetField(idx int, k string) error {
 	if l.Top() < 1 {
-		panic(errMissingArguments)
+		return errMissingArguments
 	}
 	l.init()
 	t, _, err := l.valueByIndex(idx)
 	v := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1) // Always pop value.
 	if err != nil {
-		panic(err)
+		return err
 	}
-	if err := t.(*table).set(stringValue{s: k}, v); err != nil {
-		panic(err)
+	tab, _ := t.(*table)
+	if tab == nil {
+		return fmt.Errorf("attempt to index a %s", l.typeName(t))
 	}
+	return tab.set(stringValue{s: k}, v)
 }
 
 // SetMetatable pops a table or nil from the stack
 // and sets that value as the new metatable for the value at the given index.
 // (nil means no metatable.)
-// SetMetatable panics if the top of the stack is not a table or nil.
-func (l *State) SetMetatable(idx int) {
+// SetMetatable returns an error if the top of the stack is not a table or nil.
+func (l *State) SetMetatable(idx int) error {
 	if l.Top() < 1 {
-		panic(errMissingArguments)
+		return errMissingArguments
 	}
 	l.init()
 	v, _, err := l.valueByIndex(idx)
 	mtValue := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1) // Always pop metatable.
 	if err != nil {
-		panic(err)
+		return err
 	}
 	mt, ok := mtValue.(*table)
 	if !ok && mtValue != nil {
-		panic("set metatable: table expected")
+		return errors.New("set metatable: table expected")
 	}
 	switch v := v.(type) {
 	case *table:
+		if v.frozen {
+			return errors.New("set metatable: table frozen")
+		}
 		v.meta = mt
 	case *userdata:
+		if v.frozen {
+			return errors.New("set metatable: userdata frozen")
+		}
 		v.meta = mt
 	default:
 		l.typeMetatables[v.valueType()] = mt
 	}
+	return nil
 }
 
 // SetUserValue pops a value from the stack
@@ -1410,25 +1471,33 @@ func (l *State) SetMetatable(idx int) {
 // associated to the full userdata at the given index,
 // reporting if the userdata has that value.
 // (As with other Lua APIs, the first user value is n=1.)
-// SetUserValue does nothing and returns false
-// if the value at the given index is not a full userdata.
-func (l *State) SetUserValue(idx int, n int) bool {
+func (l *State) SetUserValue(idx int, n int) error {
 	if l.Top() < 1 {
-		panic(errMissingArguments)
+		return errMissingArguments
 	}
 	l.init()
+	if n < 1 {
+		l.setTop(len(l.stack) - 1) // Always pop user value.
+		return fmt.Errorf("user value %d out of range", n)
+	}
 	v, _, err := l.valueByIndex(idx)
 	uv := l.stack[len(l.stack)-1]
 	l.setTop(len(l.stack) - 1) // Always pop user value.
 	if err != nil {
-		panic(err)
+		return err
 	}
-	u, ok := v.(*userdata)
-	if !ok || n > len(u.userValues) {
-		return false
+	u, _ := v.(*userdata)
+	if u == nil {
+		return fmt.Errorf("attempt to set user value on %s", l.typeName(v))
+	}
+	if u.frozen {
+		return errors.New("attempt to set user value on frozen userdata")
+	}
+	if n > len(u.userValues) {
+		return fmt.Errorf("user value %d out of range (%d present)", n, len(u.userValues))
 	}
 	u.userValues[n-1] = uv
-	return true
+	return nil
 }
 
 // Call calls a function (or callable object).
@@ -1542,7 +1611,7 @@ func (l *State) PCall(ctx context.Context, nArgs, nResults, msgHandler int) erro
 		return fmt.Errorf("results from function overflow current stack size")
 	}
 
-	var msgHandlerFunction function
+	var msgHandlerFunction functionValue
 	if msgHandler != 0 {
 		msgHandlerValue, _, err := l.valueByIndex(msgHandler)
 		if err != nil {
@@ -1550,7 +1619,7 @@ func (l *State) PCall(ctx context.Context, nArgs, nResults, msgHandler int) erro
 			return err
 		}
 		var ok bool
-		msgHandlerFunction, ok = msgHandlerValue.(function)
+		msgHandlerFunction, ok = msgHandlerValue.(functionValue)
 		if !ok {
 			return fmt.Errorf("error handler must be a function (got %v)", valueType(msgHandlerValue))
 		}
@@ -1618,7 +1687,7 @@ type callOptions struct {
 	numResults     int
 	isTailCall     bool
 	protected      bool
-	messageHandler function
+	messageHandler functionValue
 }
 
 // prepareCall pushes a new [callFrame] onto l.callStack
@@ -2084,6 +2153,90 @@ func (l *State) len(ctx context.Context, v value) (value, error) {
 	return lv.len(), nil
 }
 
+// Freeze freezes a value at the given index and all values it references,
+// or returns an error if this was not possible.
+// Freezing a value generally causes it to become immutable.
+// The specific behavior depends on each type:
+//
+//   - Freezing immutable values like nil, booleans, numbers, or strings will always succeed:
+//     freezing such values is a no-op.
+//   - Tables can be frozen if their metatables and all their keys and values can be frozen.
+//     Freezing a table prevents its metatable or fields from being set.
+//   - Userdata can be frozen if its Go type implements [Freezer]
+//     and all its user values can be frozen.
+//     Freezing a userdata prevents its user values from being set.
+//   - Functions can be frozen if all their upvalues can be frozen.
+//     Go functions can only be frozen if they were created with [*State.PushPureFunction].
+func (l *State) Freeze(idx int) error {
+	type freezeFrame struct {
+		value  value
+		finish bool
+	}
+
+	l.init()
+	v, _, err := l.valueByIndex(idx)
+	if err != nil {
+		return err
+	}
+
+	stack := []freezeFrame{{v, false}}
+	visited := make(sets.Set[uint64])
+	for len(stack) > 0 {
+		curr := xslices.Last(stack)
+		stack = xslices.Pop(stack, 1)
+		if isFrozen(curr.value) {
+			// This also skips for non-reference values.
+			continue
+		}
+		if curr.finish {
+			switch v := curr.value.(type) {
+			case *table:
+				v.frozen = true
+			case *userdata:
+				v.frozen = true
+			case functionValue:
+				for _, uv := range v.upvaluesSlice() {
+					uv.frozen = true
+				}
+			default:
+				return fmt.Errorf("internal error: freezing %T not implemented", v)
+			}
+			continue
+		}
+		id := curr.value.(referenceValue).valueID()
+		if visited.Has(id) {
+			// Cyclic reference. Ignore.
+			continue
+		}
+		visited.Add(id)
+
+		switch v := v.(type) {
+		case *userdata:
+			if f, ok := v.x.(Freezer); !ok {
+				return fmt.Errorf("cannot freeze %T", v.x)
+			} else if err := f.Freeze(); err != nil {
+				return fmt.Errorf("freeze userdata: %w", err)
+			}
+		case goFunction:
+			if !v.pure {
+				return errors.New("cannot freeze stateful Go function")
+			}
+			// Go functions never have open upvalues, so no need to check.
+		case functionValue:
+			for _, uv := range v.upvaluesSlice() {
+				if uv.isOpen() {
+					return errors.New("cannot freeze function with open upvalues")
+				}
+			}
+		}
+		stack = append(stack, freezeFrame{curr.value, true})
+		for ref := range curr.value.references(l) {
+			stack = append(stack, freezeFrame{ref, false})
+		}
+	}
+	return nil
+}
+
 // typeNameMetafield is the metatable key that stores the name of a metatable.
 // This is used in error messages and other debugging contexts
 // to indicate a value's type.
@@ -2104,7 +2257,7 @@ func (l *State) typeName(v value) string {
 }
 
 type messageHandlerState struct {
-	function function
+	function functionValue
 	called   bool
 }
 

@@ -6,6 +6,7 @@ package lua
 import (
 	"cmp"
 	"fmt"
+	"iter"
 	"math"
 	"sync"
 
@@ -63,6 +64,10 @@ func (tp Type) String() string {
 // value is the internal representation of a Lua value.
 type value interface {
 	valueType() Type
+
+	// references returns an iterator over references this value contains.
+	// This is used for reachability analysis.
+	references(*State) iter.Seq[referenceValue]
 }
 
 // valueType returns the [Type] of a [value].
@@ -168,24 +173,11 @@ func compareValues(v1, v2 value) (_ int, comparedWithNaN bool) {
 			return cmp.Compare(TypeString, valueType(v2)), false
 		}
 		return cmp.Compare(v1.s, s2.s), false
-	case *table:
-		t2, ok := v2.(*table)
-		if !ok {
-			return cmp.Compare(TypeTable, valueType(v2)), false
+	case referenceValue:
+		if tp1, tp2 := v1.valueType(), v2.valueType(); tp1 != tp2 {
+			return cmp.Compare(tp1, tp2), false
 		}
-		return cmp.Compare(v1.id, t2.id), false
-	case function:
-		f2, ok := v2.(function)
-		if !ok {
-			return cmp.Compare(TypeFunction, valueType(v2)), false
-		}
-		return cmp.Compare(v1.functionID(), f2.functionID()), false
-	case *userdata:
-		u2, ok := v2.(*userdata)
-		if !ok {
-			return cmp.Compare(TypeTable, valueType(v2)), false
-		}
-		return cmp.Compare(v1.id, u2.id), false
+		return cmp.Compare(v1.valueID(), v2.(referenceValue).valueID()), false
 	default:
 		panic("unhandled type")
 	}
@@ -260,13 +252,42 @@ func valuesEqual(v1, v2 value) bool {
 	case stringValue:
 		s2, ok := v2.(stringValue)
 		return ok && v1.s == s2.s
-	case *table, *userdata:
-		return v1 == v2
-	case function:
-		f2, ok := v2.(function)
-		return ok && v1.functionID() == f2.functionID()
+	case referenceValue:
+		rv2, ok := v2.(referenceValue)
+		return ok && v1.valueID() == rv2.valueID()
 	default:
 		panic("unhandled type")
+	}
+}
+
+// isFrozen reports whether v has been frozen.
+func isFrozen(v value) bool {
+	switch v := v.(type) {
+	case nil, booleanValue, floatValue, integerValue, stringValue:
+		return true
+	case *table:
+		return v.frozen
+	case *userdata:
+		return v.frozen
+	case goFunction:
+		if !v.pure {
+			return false
+		}
+		for _, uv := range v.upvalues {
+			if !uv.frozen {
+				return false
+			}
+		}
+		return true
+	case functionValue:
+		for _, uv := range v.upvaluesSlice() {
+			if !uv.frozen {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
 	}
 }
 
@@ -344,12 +365,20 @@ type booleanValue bool
 
 func (v booleanValue) valueType() Type { return TypeBoolean }
 
+func (v booleanValue) references(*State) iter.Seq[referenceValue] {
+	return func(yield func(referenceValue) bool) {}
+}
+
 // integerValue is an integer [value].
 type integerValue int64
 
 func (v integerValue) valueType() Type                 { return TypeNumber }
 func (v integerValue) toNumber() (floatValue, bool)    { return floatValue(v), true }
 func (v integerValue) toInteger() (integerValue, bool) { return v, true }
+
+func (v integerValue) references(*State) iter.Seq[referenceValue] {
+	return func(yield func(referenceValue) bool) {}
+}
 
 func (v integerValue) stringValue() stringValue {
 	s, _ := luacode.IntegerValue(int64(v)).Unquoted()
@@ -367,6 +396,10 @@ type floatValue float64
 
 func (v floatValue) valueType() Type              { return TypeNumber }
 func (v floatValue) toNumber() (floatValue, bool) { return v, true }
+
+func (v floatValue) references(*State) iter.Seq[referenceValue] {
+	return func(yield func(referenceValue) bool) {}
+}
 
 func (v floatValue) toInteger() (integerValue, bool) {
 	i, ok := luacode.FloatToInteger(float64(v), luacode.OnlyIntegral)
@@ -391,6 +424,10 @@ type stringValue struct {
 
 func (v stringValue) valueType() Type {
 	return TypeString
+}
+
+func (v stringValue) references(*State) iter.Seq[referenceValue] {
+	return func(yield func(referenceValue) bool) {}
 }
 
 func (v stringValue) len() integerValue {
@@ -425,11 +462,31 @@ func (v stringValue) toInteger() (integerValue, bool) {
 	return integerValue(i), ok
 }
 
+// If a userdata value implements Freezer,
+// then the userdata can be frozen
+// as long as Freeze does not return an error.
+// Frozen userdata should not permit mutations
+// and thus should be safe to use from multiple goroutines.
+//
+// After a successful call to Freeze,
+// subsequent calls to Freeze should do nothing and return nil.
+//
+// An implementation of Freeze does not need to freeze its user values:
+// [*State.Freeze] will take care of that.
+// However, it will not cause harm (other than wasted work) for Freeze to do so.
+//
+// See [*State.Freeze] for a broader explanation of freezing.
+type Freezer interface {
+	Freeze() error
+}
+
+// userdata is a full userdata [value].
 type userdata struct {
 	id         uint64
 	x          any
 	meta       *table
 	userValues []value
+	frozen     bool
 }
 
 func newUserdata(x any, numUserValues int) *userdata {
@@ -443,6 +500,37 @@ func newUserdata(x any, numUserValues int) *userdata {
 func (u *userdata) valueType() Type {
 	return TypeUserdata
 }
+
+func (u *userdata) valueID() uint64 {
+	return u.id
+}
+
+func (u *userdata) references(*State) iter.Seq[referenceValue] {
+	return func(yield func(referenceValue) bool) {
+		if u.meta != nil {
+			if !yield(u.meta) {
+				return
+			}
+		}
+		for _, v := range u.userValues {
+			if rv, ok := v.(referenceValue); ok && !yield(rv) {
+				return
+			}
+		}
+	}
+}
+
+// referenceValue is an interface for [value] types
+// that are references to an underlying data structure.
+type referenceValue interface {
+	value
+	valueID() uint64
+}
+
+var (
+	_ referenceValue = (*table)(nil)
+	_ referenceValue = (*userdata)(nil)
+)
 
 var globalIDs struct {
 	mu sync.Mutex

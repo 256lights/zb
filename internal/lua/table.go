@@ -5,6 +5,7 @@ package lua
 
 import (
 	"errors"
+	"iter"
 	"math"
 	"slices"
 	"sort"
@@ -16,6 +17,7 @@ type table struct {
 	id      uint64
 	entries []tableEntry
 	meta    *table
+	frozen  bool
 }
 
 func newTable(capacity int) *table {
@@ -28,6 +30,28 @@ func newTable(capacity int) *table {
 
 func (tab *table) valueType() Type {
 	return TypeTable
+}
+
+func (tab *table) valueID() uint64 {
+	return tab.id
+}
+
+func (tab *table) references(*State) iter.Seq[referenceValue] {
+	return func(yield func(referenceValue) bool) {
+		if tab.meta != nil {
+			if !yield(tab.meta) {
+				return
+			}
+		}
+		for _, ent := range tab.entries {
+			if k, ok := ent.key.(referenceValue); ok && !yield(k) {
+				return
+			}
+			if v, ok := ent.value.(referenceValue); ok && !yield(v) {
+				return
+			}
+		}
+	}
 }
 
 // len returns a [border in the table].
@@ -85,7 +109,15 @@ func (tab *table) get(key value) value {
 	return tab.entries[i].value
 }
 
+// set sets the value for the given key.
+// If the key cannot be used as a table key, then set returns an error.
+// If the table is frozen, then set returns [errFrozenTable].
+// set panics if tab is nil.
 func (tab *table) set(key, value value) error {
+	if tab.frozen {
+		return errFrozenTable
+	}
+
 	switch k := key.(type) {
 	case nil:
 		return errors.New("table index is nil")
@@ -114,24 +146,24 @@ func (tab *table) set(key, value value) error {
 }
 
 // setExisting looks up a key in the table
-// and changes or removes the value for the key as appropriate
-// if the key was found and returns true.
-// Otherwise, if the key was not found,
-// then setExisting does nothing and returns false.
-func (tab *table) setExisting(k, v value) bool {
-	if tab == nil {
-		return false
+// and changes or removes the value for the key as appropriate.
+// If the key was not found in the table, then setExisting returns [errKeyNotFound].
+// If the table is frozen, then setExisting returns [errFrozenTable].
+// setExisting panics if tab is nil.
+func (tab *table) setExisting(k, v value) error {
+	if tab.frozen {
+		return errFrozenTable
 	}
 	i, found := findEntry(tab.entries, k)
 	if !found {
-		return false
+		return errKeyNotFound
 	}
 	if v == nil {
 		tab.entries = slices.Delete(tab.entries, i, i+1)
 	} else {
 		tab.entries[i].value = v
 	}
-	return true
+	return nil
 }
 
 // next returns the next table entry after the given key
@@ -157,14 +189,6 @@ func (tab *table) next(k value) tableEntry {
 	return tab.entries[i]
 }
 
-// clear removes all entries from the table,
-// but retains the space allocated for the table.
-// It does not remove the table's metatable association.
-func (tab *table) clear() {
-	clear(tab.entries)
-	tab.entries = tab.entries[:0]
-}
-
 type tableEntry struct {
 	key, value value
 }
@@ -175,3 +199,9 @@ func findEntry(entries []tableEntry, key value) (int, bool) {
 		return result
 	})
 }
+
+// Errors returned from [*table.set] and [*table.setExisting].
+var (
+	errKeyNotFound = errors.New("table index not found")
+	errFrozenTable = errors.New("attempt to assign to a frozen table")
+)

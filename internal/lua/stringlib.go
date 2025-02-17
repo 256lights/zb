@@ -26,6 +26,8 @@ const StringLibraryName = "string"
 // OpenString is a [Function] that loads the [string manipulation library].
 // This function is intended to be used as an argument to [Require].
 //
+// All functions in the string library are pure (as per [*State.PushPureFunction]).
+//
 // # Differences from de facto C implementation
 //
 //   - Patterns do not support backreferences (i.e. %0 - %9) or balances (i.e. %b).
@@ -38,7 +40,7 @@ const StringLibraryName = "string"
 //
 // [string manipulation library]: https://www.lua.org/manual/5.4/manual.html#6.4
 func OpenString(ctx context.Context, l *State) (int, error) {
-	NewLib(l, map[string]Function{
+	NewPureLib(l, map[string]Function{
 		"byte":     stringByte,
 		"char":     stringChar,
 		"dump":     stringDump,
@@ -78,14 +80,18 @@ func OpenString(ctx context.Context, l *State) (int, error) {
 		}
 	}
 
-	NewLib(l, metaMethods)
+	NewPureLib(l, metaMethods)
 	l.PushValue(-2)
-	l.RawSetField(-2, indexMethod)
+	if err := l.RawSetField(-2, indexMethod); err != nil {
+		return 0, err
+	}
 
 	// Set string metatable.
 	l.PushString("")
 	l.PushValue(-2)
-	l.SetMetatable(-2)
+	if err := l.SetMetatable(-2); err != nil {
+		return 0, err
+	}
 
 	l.Pop(2) // Pop string and metatable.
 
@@ -460,6 +466,8 @@ func stringGMatch(ctx context.Context, l *State) (int, error) {
 		}
 	}
 	if initArg > int64(len(s))+1 {
+		// While this is pure, we don't want some functions returned by string.gmatch
+		// to be freezable while others are not.
 		l.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
 			return 0, nil
 		})

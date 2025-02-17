@@ -34,6 +34,13 @@ type BaseOptions struct {
 
 // NewOpenBase returns a [Function] that loads the basic library.
 // The resulting function is intended to be used as an argument to [Require].
+//
+// All functions in the basic library are pure (as per [*State.PushPureFunction]) except:
+//
+//   - print
+//   - loadfile (if opts.LoadFile is not nil)
+//   - dofile (if opts.LoadFile is not nil)
+//   - warn (if opts.Warner is not nil)
 func NewOpenBase(opts *BaseOptions) Function {
 	if opts == nil {
 		opts = new(BaseOptions)
@@ -42,24 +49,15 @@ func NewOpenBase(opts *BaseOptions) Function {
 		// Open library into global table.
 		l.RawIndex(RegistryIndex, RegistryIndexGlobals)
 
-		loadfile := opts.LoadFile
-		if loadfile == nil {
-			loadfile = baseLoadfile
-		}
-
-		const versionGlobalName = "_VERSION"
-		err := SetFuncs(ctx, l, 0, map[string]Function{
+		pureFuncs := map[string]Function{
 			"assert":       baseAssert,
-			"dofile":       newBaseDofile(loadfile),
 			"error":        baseError,
 			"getmetatable": baseGetMetatable,
 			"ipairs":       baseIPairs,
 			"load":         baseLoad,
-			"loadfile":     loadfile,
 			"next":         baseNext,
 			"pairs":        basePairs,
 			"pcall":        basePCall,
-			"print":        newBasePrint(opts.Output),
 			"rawequal":     baseRawEqual,
 			"rawget":       baseRawGet,
 			"rawlen":       baseRawLen,
@@ -69,13 +67,30 @@ func NewOpenBase(opts *BaseOptions) Function {
 			"tonumber":     baseToNumber,
 			"tostring":     baseToString,
 			"type":         baseType,
-			"warn":         newBaseWarn(opts.Warner),
 			"xpcall":       baseXPCall,
+		}
+		impureFuncs := map[string]Function{
+			"print": newBasePrint(opts.Output),
+		}
 
-			GName:             nil,
-			versionGlobalName: nil,
-		})
-		if err != nil {
+		if opts.LoadFile == nil {
+			pureFuncs["loadfile"] = baseLoadfile
+			pureFuncs["dofile"] = newBaseDofile(baseLoadfile)
+		} else {
+			impureFuncs["loadfile"] = opts.LoadFile
+			impureFuncs["dofile"] = newBaseDofile(opts.LoadFile)
+		}
+
+		if opts.Warner == nil {
+			pureFuncs["warn"] = newBaseWarn(nil)
+		} else {
+			impureFuncs["warn"] = newBaseWarn(opts.Warner)
+		}
+
+		if err := SetPureFunctions(ctx, l, 0, pureFuncs); err != nil {
+			return 0, err
+		}
+		if err := SetFunctions(ctx, l, 0, impureFuncs); err != nil {
 			return 0, err
 		}
 
@@ -87,7 +102,7 @@ func NewOpenBase(opts *BaseOptions) Function {
 
 		// Set global _VERSION.
 		l.PushString(Version)
-		if err := l.SetField(ctx, -2, versionGlobalName); err != nil {
+		if err := l.SetField(ctx, -2, "_VERSION"); err != nil {
 			return 0, err
 		}
 
@@ -182,7 +197,9 @@ func baseSetMetatable(ctx context.Context, l *State) (int, error) {
 		return 0, fmt.Errorf("%scannot change a protected metatable", Where(l, 1))
 	}
 	l.SetTop(2)
-	l.SetMetatable(1)
+	if err := l.SetMetatable(1); err != nil {
+		return 0, fmt.Errorf("%s%w", Where(l, 1), err)
+	}
 	return 1, nil
 }
 
@@ -206,7 +223,7 @@ func baseIPairs(ctx context.Context, l *State) (int, error) {
 		return 2, nil
 	})
 
-	l.PushClosure(0, f)
+	l.PushPureFunction(0, f)
 	l.PushValue(1)
 	l.PushInteger(0)
 	return 3, nil
@@ -255,7 +272,7 @@ func baseLoad(ctx context.Context, l *State) (int, error) {
 	}
 	if hasEnv {
 		l.PushValue(4)
-		if _, ok := l.SetUpvalue(-2, 1); !ok {
+		if _, err := l.SetUpvalue(-2, 1); err != nil {
 			l.Pop(1)
 		}
 	}
@@ -288,7 +305,7 @@ func baseLoadfile(ctx context.Context, l *State) (int, error) {
 	}
 	if hasEnv {
 		l.PushValue(3)
-		if _, ok := l.SetUpvalue(-2, 1); !ok {
+		if _, err := l.SetUpvalue(-2, 1); err != nil {
 			l.Pop(1)
 		}
 	}
@@ -363,7 +380,7 @@ func basePairs(ctx context.Context, l *State) (int, error) {
 		}
 		return 3, nil
 	}
-	l.PushClosure(0, baseNext)
+	l.PushPureFunction(0, baseNext)
 	l.PushValue(1)
 	l.PushNil()
 	return 3, nil

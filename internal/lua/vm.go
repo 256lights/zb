@@ -152,7 +152,7 @@ func (l *State) exec(ctx context.Context) (err error) {
 		return currFunction.proto.Constants[i], nil
 	}
 
-	fUpvalue := func(i uint8) (*value, error) {
+	fUpvalue := func(i uint8) (value, error) {
 		if int(i) >= len(currFunction.upvalues) {
 			return nil, fmt.Errorf(
 				"%s: decode instruction: upvalue %d out-of-bounds (function has %d upvalues)",
@@ -161,7 +161,7 @@ func (l *State) exec(ctx context.Context) (err error) {
 				len(currFunction.upvalues),
 			)
 		}
-		return l.resolveUpvalue(currFunction.upvalues[i]), nil
+		return *l.resolveUpvalue(currFunction.upvalues[i]), nil
 	}
 
 	rkC := func(r []value, i luacode.Instruction) (value, error) {
@@ -290,17 +290,34 @@ func (l *State) exec(ctx context.Context) (err error) {
 			if err != nil {
 				return err
 			}
-			*ra = *ub
+			*ra = ub
 		case luacode.OpSetUpval:
 			ra, err := register(registers(), i.ArgA())
 			if err != nil {
 				return err
 			}
-			ub, err := fUpvalue(i.ArgB())
-			if err != nil {
-				return err
+			b := int(i.ArgB())
+			if b >= len(currFunction.upvalues) {
+				return fmt.Errorf(
+					"%s: decode instruction: upvalue %d out-of-bounds (function has %d upvalues)",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+					i,
+					len(currFunction.upvalues),
+				)
 			}
-			*ub = *ra
+			uv := currFunction.upvalues[b]
+			if uv.frozen {
+				name := "upvalue"
+				if b < len(currFunction.proto.Upvalues) {
+					name = currFunction.proto.Upvalues[b].Name
+				}
+				return fmt.Errorf(
+					"%s: attempt to assign to frozen %s",
+					sourceLocation(currFunction.proto, l.frame().pc-1),
+					name,
+				)
+			}
+			*l.resolveUpvalue(uv) = *ra
 		case luacode.OpGetTabUp:
 			if _, err := register(registers(), i.ArgA()); err != nil {
 				return err
@@ -313,7 +330,7 @@ func (l *State) exec(ctx context.Context) (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.index(ctx, *ub, importConstant(kc))
+			result, err := l.index(ctx, ub, importConstant(kc))
 			if err != nil {
 				return err
 			}
@@ -405,7 +422,7 @@ func (l *State) exec(ctx context.Context) (err error) {
 			if err != nil {
 				return err
 			}
-			if err := l.setIndex(ctx, *ua, importConstant(kb), c); err != nil {
+			if err := l.setIndex(ctx, ua, importConstant(kb), c); err != nil {
 				return err
 			}
 		case luacode.OpSetTable:
@@ -1295,7 +1312,7 @@ func (l *State) exec(ctx context.Context) (err error) {
 				// TODO(soon): We can do a much more efficient bulk insert here.
 				err := t.set(indexBase+integerValue(idx), l.stack[stackBase+idx])
 				if err != nil {
-					return err
+					return fmt.Errorf("%s: %v", sourceLocation(currFunction.proto, l.frame().pc-1), err)
 				}
 			}
 		case luacode.OpClosure:

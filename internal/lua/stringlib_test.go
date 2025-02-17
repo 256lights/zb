@@ -1095,9 +1095,13 @@ func TestStringGSub(t *testing.T) {
 			pushReplacement: func(l *State) {
 				l.CreateTable(0, 2)
 				l.PushString("lua")
-				l.RawSetField(-2, "name")
+				if err := l.RawSetField(-2, "name"); err != nil {
+					t.Error(err)
+				}
 				l.PushString("5.4")
-				l.RawSetField(-2, "version")
+				if err := l.RawSetField(-2, "version"); err != nil {
+					t.Error(err)
+				}
 			},
 			want:             "lua-5.4.tar.gz",
 			wantReplacements: 2,
@@ -1314,11 +1318,17 @@ func TestStringGSub(t *testing.T) {
 			pushReplacement: func(l *State) {
 				l.CreateTable(3, 0)
 				l.PushString("x")
-				l.RawSetIndex(-2, 1)
+				if err := l.RawSetIndex(-2, 1); err != nil {
+					t.Error(err)
+				}
 				l.PushString("yy")
-				l.RawSetIndex(-2, 2)
+				if err := l.RawSetIndex(-2, 2); err != nil {
+					t.Error(err)
+				}
 				l.PushString("zzz")
-				l.RawSetIndex(-2, 3)
+				if err := l.RawSetIndex(-2, 3); err != nil {
+					t.Error(err)
+				}
 			},
 			want:             "xyyzzz alo",
 			wantReplacements: 7,

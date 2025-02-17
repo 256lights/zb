@@ -20,7 +20,7 @@ const derivationTypeName = "derivation"
 
 func registerDerivationMetatable(ctx context.Context, l *lua.State) {
 	lua.NewMetatable(l, derivationTypeName)
-	err := lua.SetFuncs(ctx, l, 0, map[string]lua.Function{
+	err := lua.SetPureFunctions(ctx, l, 0, map[string]lua.Function{
 		"__index":     indexDerivation,
 		"__pairs":     derivationPairs,
 		"__tostring":  derivationToString,
@@ -209,9 +209,13 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 
 	l.NewUserdata(drv, 1)
 	l.Rotate(-2, -1) // Swap userdata and argument table copy.
-	l.SetUserValue(-2, 1)
+	if err := l.SetUserValue(-2, 1); err != nil {
+		return 0, err
+	}
 
-	lua.SetMetatable(l, derivationTypeName)
+	if err := lua.SetMetatable(l, derivationTypeName); err != nil {
+		return 0, err
+	}
 
 	return 1, nil
 }
@@ -379,7 +383,7 @@ func derivationPairs(ctx context.Context, l *lua.State) (int, error) {
 		return 0, err
 	}
 	l.UserValue(1, 1) // Push derivation argument table.
-	l.PushClosure(1, derivationPairNext)
+	l.PushPureFunction(1, derivationPairNext)
 	l.PushNil()
 	l.PushNil()
 	return 3, nil
@@ -415,7 +419,9 @@ func concatDerivation(ctx context.Context, l *lua.State) (int, error) {
 		if _, err := l.Field(ctx, -1, "out"); err != nil {
 			return 0, err
 		}
-		l.Replace(1)
+		if err := l.Replace(1); err != nil {
+			return 0, err
+		}
 		l.Pop(1)
 	}
 	if testDerivation(l, 2) != nil {
@@ -423,7 +429,9 @@ func concatDerivation(ctx context.Context, l *lua.State) (int, error) {
 		if _, err := l.Field(ctx, -1, "out"); err != nil {
 			return 0, err
 		}
-		l.Replace(2)
+		if err := l.Replace(2); err != nil {
+			return 0, err
+		}
 		l.Pop(1)
 	}
 	if err := l.Concat(ctx, 2); err != nil {

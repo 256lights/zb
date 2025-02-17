@@ -671,8 +671,8 @@ func TestFullUserdata(t *testing.T) {
 
 	const wantUserValue = 42
 	state.PushInteger(wantUserValue)
-	if !state.SetUserValue(-2, 1) {
-		t.Error("Userdata does not have value 1")
+	if err := state.SetUserValue(-2, 1); err != nil {
+		t.Error("state.SetUserValue(-2, 1):", err)
 	}
 	if got, want := state.UserValue(-1, 1), TypeNumber; got != want {
 		t.Errorf("user value 1 type = %v; want %v", got, want)
@@ -1161,6 +1161,391 @@ func TestMessageHandler(t *testing.T) {
 	})
 }
 
+func TestFreeze(t *testing.T) {
+	t.Run("Nil", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.PushNil()
+		if err := state.Freeze(-1); err != nil {
+			t.Error("state.Freeze(-1):", err)
+		}
+		if got, want := state.Top(), 1; got != want {
+			t.Errorf("after Freeze, state.Top() = %d; want %d", got, want)
+		}
+		if got, want := state.Type(1), TypeNil; got != want {
+			t.Errorf("after Freeze, state.Type(1) = %v; want %v", got, want)
+		}
+	})
+
+	t.Run("Number", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.PushInteger(42)
+		if err := state.Freeze(-1); err != nil {
+			t.Error("state.Freeze(-1):", err)
+		}
+		if got, want := state.Top(), 1; got != want {
+			t.Errorf("after Freeze, state.Top() = %d; want %d", got, want)
+		}
+		if got, want := state.Type(1), TypeNumber; got != want {
+			t.Errorf("after Freeze, state.Type(1) = %v; want %v", got, want)
+		}
+	})
+
+	t.Run("TableSet", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.CreateTable(0, 0)
+		tableIndex := state.Top()
+		if err := state.Freeze(tableIndex); err != nil {
+			t.Errorf("state.Freeze(%d): %v", tableIndex, err)
+		}
+		state.PushString("bar")
+		if err := state.SetField(ctx, tableIndex, "foo"); err == nil {
+			t.Error(`x = {}; freeze(x); x.foo = "bar" did not raise error`)
+		} else if got, want := err.Error(), "frozen"; !strings.Contains(got, want) {
+			t.Errorf("x = {}; freeze(x); x.foo = \"bar\" error = %q; want %q", got, want)
+		} else {
+			t.Logf("x = {}; freeze(x); x.foo = \"bar\" raised: %s", got)
+		}
+
+		if tp, err := state.Field(ctx, tableIndex, "foo"); err != nil {
+			t.Error("x.foo:", err)
+		} else if tp != TypeNil {
+			t.Errorf("type(x.foo) = %v; want nil", tp)
+		}
+	})
+
+	t.Run("NestedTable", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.CreateTable(1, 0)
+		table1Index := state.Top()
+		state.CreateTable(0, 1)
+		table2Index := state.Top()
+		state.PushValue(table2Index)
+		if err := state.RawSetIndex(table1Index, 1); err != nil {
+			t.Fatal("table1 = {}; table2 = {}; table1[1] = table2:", err)
+		}
+
+		if err := state.Freeze(table1Index); err != nil {
+			t.Errorf("state.Freeze(%d): %v", table1Index, err)
+		}
+		state.PushString("bar")
+		if err := state.SetField(ctx, table2Index, "foo"); err == nil {
+			t.Error(`x = {}; freeze(x); x.foo = "bar" did not raise error`)
+		} else if got, want := err.Error(), "frozen"; !strings.Contains(got, want) {
+			t.Errorf("x = {}; freeze(x); x.foo = \"bar\" error = %q; want %q", got, want)
+		} else {
+			t.Logf("x = {}; freeze(x); x.foo = \"bar\" raised: %s", got)
+		}
+
+		if tp, err := state.Field(ctx, table2Index, "foo"); err != nil {
+			t.Error("x.foo:", err)
+		} else if tp != TypeNil {
+			t.Errorf("type(x.foo) = %v; want nil", tp)
+		}
+	})
+
+	t.Run("CyclicTable", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.CreateTable(1, 0)
+		tableIndex := state.Top()
+		state.PushValue(tableIndex)
+		if err := state.RawSetIndex(tableIndex, 1); err != nil {
+			t.Fatal("table = {}; table[1] = table:", err)
+		}
+
+		if err := state.Freeze(tableIndex); err != nil {
+			t.Errorf("state.Freeze(%d): %v", tableIndex, err)
+		}
+		state.PushString("bar")
+		if err := state.SetField(ctx, tableIndex, "foo"); err == nil {
+			t.Error(`x = {}; freeze(x); x.foo = "bar" did not raise error`)
+		} else if got, want := err.Error(), "frozen"; !strings.Contains(got, want) {
+			t.Errorf("x = {}; freeze(x); x.foo = \"bar\" error = %q; want %q", got, want)
+		} else {
+			t.Logf("x = {}; freeze(x); x.foo = \"bar\" raised: %s", got)
+		}
+
+		if tp, err := state.Field(ctx, tableIndex, "foo"); err != nil {
+			t.Error("x.foo:", err)
+		} else if tp != TypeNil {
+			t.Errorf("type(x.foo) = %v; want nil", tp)
+		}
+	})
+
+	t.Run("TableRawSet", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.CreateTable(0, 0)
+		tableIndex := state.Top()
+		if err := state.Freeze(tableIndex); err != nil {
+			t.Errorf("state.Freeze(%d): %v", tableIndex, err)
+		}
+		state.PushString("bar")
+		if err := state.RawSetField(tableIndex, "foo"); err == nil {
+			t.Error(`x = {}; freeze(x); rawset(x, "foo", "bar") did not raise error`)
+		} else if got, want := err.Error(), "frozen"; !strings.Contains(got, want) {
+			t.Errorf("x = {}; freeze(x); rawset(x, \"foo\", \"bar\") error = %q; want %q", got, want)
+		} else {
+			t.Logf("x = {}; freeze(x); rawset(x, \"foo\", \"bar\") raised: %s", got)
+		}
+
+		if tp, err := state.Field(ctx, tableIndex, "foo"); err != nil {
+			t.Error("x.foo:", err)
+		} else if tp != TypeNil {
+			t.Errorf("type(x.foo) = %v; want nil", tp)
+		}
+	})
+
+	t.Run("GoClosure", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.PushClosure(0, func(ctx context.Context, l *State) (int, error) { return 0, nil })
+		if err := state.Freeze(-1); err == nil {
+			t.Error("Freeze on impure Go function did not return error")
+		}
+	})
+
+	t.Run("PureFunction", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.PushInteger(42)
+		callCount := 0
+		state.PushPureFunction(1, func(ctx context.Context, l *State) (int, error) {
+			callCount++
+
+			state.PushInteger(-100)
+			if err := state.Replace(UpvalueIndex(1)); err == nil {
+				t.Error("state.Replace(UpvalueIndex(1)) did not return an error")
+			}
+
+			state.PushValue(UpvalueIndex(1))
+			return 1, nil
+		})
+
+		if err := state.Freeze(-1); err != nil {
+			t.Error("Freeze on pure Go function:", err)
+		}
+
+		if err := state.Call(ctx, 0, 1); err != nil {
+			t.Error("Call(...):", err)
+		}
+		if callCount != 1 {
+			t.Errorf("Go callback called %d times; want 1", callCount)
+		}
+		if got, want := state.Type(-1), TypeNumber; got != want {
+			t.Errorf("type(f()) = %v; want %v", got, want)
+		} else if got, ok := state.ToNumber(-1); !ok || got != 42 {
+			t.Errorf("f() = %g; want 42", got)
+		}
+	})
+
+	t.Run("UserdataWithoutFreezer", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.NewUserdata(struct{}{}, 1)
+
+		if err := state.Freeze(-1); err == nil {
+			t.Error("state.Freeze(-1) did not return an error")
+		}
+
+		state.PushBoolean(true)
+		if err := state.SetUserValue(-2, 1); err != nil {
+			t.Error("state.SetUserValue(-2, 1):", err)
+		}
+		if got, want := state.UserValue(-1, 1), TypeBoolean; got != want {
+			t.Errorf("state.UserValue(-1, 1) = %v; want %v", got, want)
+		} else if got := state.ToBoolean(-1); !got {
+			t.Error("user value 1 = false; want true")
+		}
+	})
+
+	t.Run("UserdataWithFreezer", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		freezer := &freezeSpy{}
+		state.NewUserdata(freezer, 1)
+
+		if err := state.Freeze(-1); err != nil {
+			t.Error("state.Freeze(-1):", err)
+		}
+		if freezer.callCount != 1 {
+			t.Errorf("Freeze() called %d times; want 1", freezer.callCount)
+		}
+
+		state.PushBoolean(true)
+		if err := state.SetUserValue(-2, 1); err == nil {
+			t.Error("state.SetUserValue(-2, 1) did not return an error")
+		} else if got, want := err.Error(), "frozen"; !strings.Contains(got, want) {
+			t.Errorf("state.SetUserValue(-2, 1) = %q; want to contain %q", got, want)
+		}
+		if got, want := state.UserValue(-1, 1), TypeNil; got != want {
+			t.Errorf("state.UserValue(-1, 1) = %v; want %v", got, want)
+		}
+	})
+
+	t.Run("UserdataWithFailingFreezer", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		freezer := &freezeSpy{err: errors.New("cannot freeze")}
+		state.NewUserdata(freezer, 1)
+
+		if err := state.Freeze(-1); err == nil {
+			t.Error("state.Freeze(-1) did not return an error")
+		}
+		if freezer.callCount != 1 {
+			t.Errorf("Freeze() called %d times; want 1", freezer.callCount)
+		}
+
+		state.PushBoolean(true)
+		if err := state.SetUserValue(-2, 1); err != nil {
+			t.Error("state.SetUserValue(-2, 1):", err)
+		}
+		if got, want := state.UserValue(-1, 1), TypeBoolean; got != want {
+			t.Errorf("state.UserValue(-1, 1) = %v; want %v", got, want)
+		} else if got := state.ToBoolean(-1); !got {
+			t.Error("user value 1 = false; want true")
+		}
+	})
+
+	t.Run("LuaFunction", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const source = `local x = 1` + "\n" +
+			`return function()` + "\n" +
+			`local y = x` + "\n" +
+			`x = y + 1` + "\n" +
+			`return y` + "\n" +
+			"end\n"
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(ctx, 0, 1); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := state.Freeze(-1); err != nil {
+			t.Error("state.Freeze(-1):", err)
+		}
+		if err := state.Call(ctx, 0, 0); err == nil {
+			t.Error("f = load(...)(); freeze(f); f() did not return an error")
+		} else if got, want := err.Error(), "frozen"; !strings.Contains(got, want) {
+			t.Errorf("f = load(...)(); freeze(f); f() raised %q; want to contain %q", got, want)
+		} else {
+			t.Logf("f = load(...)(); freeze(f); f(): %s", got)
+		}
+	})
+
+	t.Run("SetFrozenUpvalueFromOtherFunction", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		const source = `local x = 1` + "\n" +
+			`return function()` + "\n" +
+			`local y = x` + "\n" +
+			`x = y + 1` + "\n" +
+			`return y` + "\n" +
+			`end, function()` + "\n" +
+			`return x` + "\n" +
+			"end\n"
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(ctx, 0, 2); err != nil {
+			t.Fatal(err)
+		}
+
+		// Freeze the second function.
+		if err := state.Freeze(-1); err != nil {
+			t.Error("state.Freeze(-1):", err)
+		}
+		state.Pop(1)
+
+		// Call the first function.
+		if err := state.Call(ctx, 0, 0); err == nil {
+			t.Error("f1, f2 = load(...)(); freeze(f2); f1() did not return an error")
+		} else if got, want := err.Error(), "frozen"; !strings.Contains(got, want) {
+			t.Errorf("f1, f2 = load(...)(); freeze(f2); f1() raised %q; want to contain %q", got, want)
+		} else {
+			t.Logf("f1, f2 = load(...)(); freeze(f2); f1(): %s", got)
+		}
+	})
+}
+
 func TestRotate(t *testing.T) {
 	tests := []struct {
 		s    []int
@@ -1322,4 +1707,15 @@ func describeValue(l *State, idx int) string {
 	default:
 		return "<unknown>"
 	}
+}
+
+// freezeSpy is a test double for the [Freezer] interface.
+type freezeSpy struct {
+	callCount int
+	err       error
+}
+
+func (spy *freezeSpy) Freeze() error {
+	spy.callCount++
+	return spy.err
 }

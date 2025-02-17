@@ -25,7 +25,9 @@ func TestLen(t *testing.T) {
 	state.CreateTable(len(want), 0)
 	for i, n := range want {
 		state.PushNumber(n)
-		state.RawSetIndex(-2, int64(1+i))
+		if err := state.RawSetIndex(-2, int64(1+i)); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	got, err := Len(ctx, state, -1)

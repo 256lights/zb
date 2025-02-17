@@ -190,10 +190,16 @@ func NewMetatable(l *State, tname string) bool {
 	}
 	l.Pop(1)
 	l.CreateTable(0, 2)
+	// metatable.__name = tname
 	l.PushString(tname)
-	l.RawSetField(-2, typeNameMetafield) // metatable.__name = tname
+	if err := l.RawSetField(-2, typeNameMetafield); err != nil {
+		panic(err)
+	}
+
 	l.PushValue(-1)
-	l.RawSetField(RegistryIndex, tname)
+	if err := l.RawSetField(RegistryIndex, tname); err != nil {
+		panic(err)
+	}
 	return true
 }
 
@@ -208,9 +214,9 @@ func Metatable(l *State, tname string) Type {
 // SetMetatable sets the metatable of the object on the top of the stack
 // as the metatable associated with name tname in the registry.
 // [NewMetatable] can be used to create such a metatable.
-func SetMetatable(l *State, tname string) {
+func SetMetatable(l *State, tname string) error {
 	Metatable(l, tname)
-	l.SetMetatable(-2)
+	return l.SetMetatable(-2)
 }
 
 // TestUserdata returns a copy of the Go value
@@ -279,18 +285,29 @@ func Len(ctx context.Context, l *State, idx int) (int64, error) {
 }
 
 // NewLib creates a new table and registers there the functions in the map reg.
+//
+// Functions in the created table cannot be frozen.
+// If this is important, see [NewPureLib].
 func NewLib(l *State, reg map[string]Function) {
 	l.CreateTable(0, len(reg))
-	err := setFuncs(l, 0, reg, func(l *State, idx int, k string) error {
-		l.RawSetField(idx, k)
-		return nil
-	})
+	err := setFuncs(l, 0, reg, (*State).PushClosure, (*State).RawSetField)
 	if err != nil {
 		panic(err)
 	}
 }
 
-// SetFuncs registers all functions the map reg
+// NewPureLib creates a new table and registers there the functions in the map reg.
+// Unlike [NewLib], functions are pushed using [*State.PushPureFunction]
+// and must be safe to be frozen.
+func NewPureLib(l *State, reg map[string]Function) {
+	l.CreateTable(0, len(reg))
+	err := setFuncs(l, 0, reg, (*State).PushPureFunction, (*State).RawSetField)
+	if err != nil {
+		panic(err)
+	}
+}
+
+// SetFunctions registers all functions the map reg
 // into the table on the top of the stack
 // (below optional upvalues, see next).
 // Any nils are registered as false.
@@ -299,13 +316,29 @@ func NewLib(l *State, reg map[string]Function) {
 // initialized with copies of the nUp values previously pushed on the stack
 // on top of the library table.
 // These values are popped from the stack after the registration.
-func SetFuncs(ctx context.Context, l *State, nUp int, reg map[string]Function) error {
-	return setFuncs(l, 0, reg, func(l *State, idx int, k string) error {
+//
+// Functions registered in the table cannot be frozen.
+// If this is important, see [SetPureFunctions].
+func SetFunctions(ctx context.Context, l *State, nUp int, reg map[string]Function) error {
+	return setFuncs(l, nUp, reg, (*State).PushClosure, func(l *State, idx int, k string) error {
 		return l.SetField(ctx, idx, k)
 	})
 }
 
-func setFuncs(l *State, nUp int, reg map[string]Function, setField func(l *State, idx int, k string) error) error {
+// SetPureFunctions registers all functions the map reg
+// into the table on the top of the stack
+// (below optional upvalues).
+// Any nils are registered as false.
+// This is largely the same as [SetFunctions],
+// but functions are pushed using [*State.PushPureFunction]
+// and must be safe to be frozen.
+func SetPureFunctions(ctx context.Context, l *State, nUp int, reg map[string]Function) error {
+	return setFuncs(l, nUp, reg, (*State).PushPureFunction, func(l *State, idx int, k string) error {
+		return l.SetField(ctx, idx, k)
+	})
+}
+
+func setFuncs(l *State, nUp int, reg map[string]Function, pushFunction func(l *State, n int, f Function), setField func(l *State, idx int, k string) error) error {
 	if !l.CheckStack(nUp) {
 		l.Pop(nUp)
 		return errors.New("too many upvalues")
@@ -317,7 +350,7 @@ func setFuncs(l *State, nUp int, reg map[string]Function, setField func(l *State
 			for i := 0; i < nUp; i++ {
 				l.PushValue(-nUp)
 			}
-			l.PushClosure(nUp, f)
+			pushFunction(l, nUp, f)
 		}
 		if err := setField(l, -(nUp + 2), name); err != nil {
 			l.Pop(nUp)
@@ -329,7 +362,8 @@ func setFuncs(l *State, nUp int, reg map[string]Function, setField func(l *State
 }
 
 // Subtable ensures that the value t[fname],
-// where t is the value at index idx, is a table,
+// where t is the value at index idx,
+// is a table,
 // and pushes that table onto the stack.
 // Returns true if it finds a previous table there
 // and false if it creates a new table.

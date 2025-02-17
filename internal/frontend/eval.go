@@ -100,7 +100,7 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 		"toFile":     eval.toFileFunction,
 		"path":       eval.pathFunction,
 	}
-	if err := lua.SetFuncs(ctx, &eval.l, 0, extraBaseFunctions); err != nil {
+	if err := lua.SetFunctions(ctx, &eval.l, 0, extraBaseFunctions); err != nil {
 		return nil, err
 	}
 	eval.l.PushString(string(storeDir))
@@ -247,7 +247,7 @@ func (eval *Eval) Expression(ctx context.Context, expr string, attrPaths []strin
 		eval.l.RawSetField(lua.RegistryIndex, cacheConnRegistryKey)
 	}()
 
-	eval.l.PushClosure(0, messageHandler)
+	eval.l.PushPureFunction(0, messageHandler)
 	if err := loadExpression(&eval.l, expr); err != nil {
 		return nil, err
 	}
@@ -416,7 +416,9 @@ func loadFunction(ctx context.Context, l *lua.State) (int, error) {
 	switch l.Type(modeArg) {
 	case lua.TypeNil:
 		l.PushString("t")
-		l.Replace(modeArg)
+		if err := l.Replace(modeArg); err != nil {
+			return 0, err
+		}
 	case lua.TypeString:
 		if s, _ := l.ToString(modeArg); s != "t" {
 			l.PushNil()
@@ -518,7 +520,7 @@ func (eval *Eval) loadfileFunction(ctx context.Context, l *lua.State) (int, erro
 
 	if hasEnv {
 		l.PushValue(envArg)
-		if _, ok := l.SetUpvalue(-2, 1); !ok {
+		if _, err := l.SetUpvalue(-2, 1); err != nil {
 			// Remove env if not used.
 			l.Pop(1)
 		}
@@ -545,7 +547,9 @@ func dofileFunction(ctx context.Context, l *lua.State) (int, error) {
 	if resolved != filename {
 		// Relative paths will not be store paths.
 		l.PushString(resolved)
-		l.Replace(1)
+		if err := l.Replace(1); err != nil {
+			return 0, err
+		}
 	}
 
 	// loadfile(filename)

@@ -54,8 +54,6 @@ func (obj *errorObject) Error() string {
 		return s
 	case valueStringer:
 		return v.stringValue().s
-	case function:
-		return formatObject(v.valueType().String(), v.functionID())
 	case *table:
 		if name, ok := v.meta.get(stringValue{s: typeNameMetafield}).(stringValue); ok {
 			return formatObject(name.s, v.id)
@@ -66,6 +64,8 @@ func (obj *errorObject) Error() string {
 			return formatObject(name.s, v.id)
 		}
 		return formatObject(v.valueType().String(), v.id)
+	case referenceValue:
+		return formatObject(v.valueType().String(), v.valueID())
 	default:
 		// Unhandled type (should not occur in practice).
 		return fmt.Sprintf("(error object is a %v value)", v.valueType())

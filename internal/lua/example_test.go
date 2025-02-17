@@ -46,7 +46,9 @@ func ExampleState_Next() {
 	// Create a table with a single pair to print.
 	state.CreateTable(0, 1)
 	state.PushString("bar")
-	state.RawSetField(-2, "foo")
+	if err := state.RawSetField(-2, "foo"); err != nil {
+		panic(err)
+	}
 
 	// Iterate over table.
 	tableIndex := state.AbsIndex(-1)

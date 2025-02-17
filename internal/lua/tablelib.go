@@ -22,9 +22,11 @@ const TableLibraryName = "table"
 // OpenTable is a [Function] that loads the [table manipulation library].
 // This function is intended to be used as an argument to [Require].
 //
+// All functions in the table library are pure (as per [*State.PushPureFunction]).
+//
 // [table manipulation library]: https://www.lua.org/manual/5.4/manual.html#6.6
 func OpenTable(ctx context.Context, l *State) (int, error) {
-	NewLib(l, map[string]Function{
+	NewPureLib(l, map[string]Function{
 		"concat": tableConcat,
 		"insert": tableInsert,
 		"move":   tableMove,
@@ -232,10 +234,14 @@ func tablePack(ctx context.Context, l *State) (int, error) {
 	l.CreateTable(n, 1)
 	l.Insert(1)
 	for i := n; i >= 1; i-- {
-		l.RawSetIndex(1, int64(i))
+		if err := l.RawSetIndex(1, int64(i)); err != nil {
+			return 0, err
+		}
 	}
 	l.PushInteger(int64(n))
-	l.RawSetField(1, "n")
+	if err := l.RawSetField(1, "n"); err != nil {
+		return 0, err
+	}
 	return 1, nil
 }
 
