@@ -934,10 +934,11 @@ func (l *State) PushString(s string) {
 // with the given context arguments.
 func (l *State) PushStringContext(s string, context sets.Set[string]) {
 	l.init()
-	l.push(stringValue{
-		s:       s,
-		context: context.Clone(),
-	})
+	v := stringValue{s: s}
+	if len(context) > 0 {
+		v.context = context.Clone()
+	}
+	l.push(v)
 }
 
 // PushBoolean pushes a boolean onto the stack.
@@ -984,12 +985,15 @@ func (l *State) pushGoFunction(n int, f Function, pure bool) {
 		panic(errMissingArguments)
 	}
 	l.init()
-	upvalueStart := len(l.stack) - n
-	upvalues := make([]*upvalue, 0, n)
-	for _, v := range l.stack[upvalueStart:] {
-		upvalues = append(upvalues, closedUpvalue(v))
+	var upvalues []*upvalue
+	if n > 0 {
+		upvalueStart := len(l.stack) - n
+		upvalues = make([]*upvalue, 0, n)
+		for _, v := range l.stack[upvalueStart:] {
+			upvalues = append(upvalues, closedUpvalue(v))
+		}
+		l.setTop(upvalueStart)
 	}
-	l.setTop(upvalueStart)
 	l.push(goFunction{
 		id:       nextID(),
 		cb:       f,
