@@ -19,7 +19,6 @@ import (
 	"zb.256lights.llc/pkg/internal/luac"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
-	"zombiezen.com/go/nix"
 )
 
 type globalConfig struct {
@@ -225,18 +224,13 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 
 	// TODO(soon): Batch.
 	for _, result := range results {
-		drv, _ := result.(*zbstore.Derivation)
+		drv, _ := result.(*frontend.Derivation)
 		if drv == nil {
 			return fmt.Errorf("%v is not a derivation", result)
 		}
-		// TODO(someday): Evaluation should store the path of the exported result.
-		drvInfo, _, _, err := drv.Export(nix.SHA256)
-		if err != nil {
-			return err
-		}
 		resp := new(zbstore.RealizeResponse)
 		err = jsonrpc.Do(ctx, storeClient, zbstore.RealizeMethod, resp, &zbstore.RealizeRequest{
-			DrvPath: drvInfo.StorePath,
+			DrvPath: drv.Path,
 		})
 		if err != nil {
 			return err

@@ -18,6 +18,7 @@ import (
 	slashpath "path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
@@ -29,7 +30,10 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-const cacheConnRegistryKey = "zb.256lights.llc/pkg/internal/frontend cacheConn"
+const (
+	cacheConnRegistryKey = "zb.256lights.llc/pkg/internal/frontend cacheConn"
+	stdlibRegistryKey    = "zb.256lights.llc/pkg/internal/frontend stdlib"
+)
 
 //go:embed prelude.luac
 var preludeSource []byte
@@ -38,6 +42,11 @@ type Eval struct {
 	store     *jsonrpc.Client
 	storeDir  zbstore.Directory
 	cachePool *sqlitemigration.Pool
+
+	mu sync.Mutex
+	// zygote is a Lua state that populates its registry in [*Eval.initZygote].
+	// New states are created by copying the registry into their own tables.
+	zygote lua.State
 }
 
 func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) (_ *Eval, err error) {
@@ -51,12 +60,12 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("zb new eval: read migrations: %v", err)
+			return nil, fmt.Errorf("zb: new eval: read migrations: %v", err)
 		}
 		schema.Migrations = append(schema.Migrations, string(migration))
 	}
 
-	return &Eval{
+	eval := &Eval{
 		store:    store,
 		storeDir: storeDir,
 		cachePool: sqlitemigration.NewPool(cacheDB, schema, sqlitemigration.Options{
@@ -64,20 +73,26 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 			PoolSize:    1,
 			PrepareConn: prepareCache,
 		}),
-	}, nil
+	}
+	if err := eval.initZygote(); err != nil {
+		return nil, fmt.Errorf("zb: new eval: %v", err)
+	}
+	return eval, nil
 }
 
-func (eval *Eval) newState(ctx context.Context, cache *sqlite.Conn) (*lua.State, error) {
-	l := new(lua.State)
+func (eval *Eval) initZygote() error {
+	ctx := context.Background()
+	l := &eval.zygote
+
 	if err := registerDerivationMetatable(ctx, l); err != nil {
-		return nil, err
+		return err
 	}
 
 	base := lua.NewOpenBase(&lua.BaseOptions{
 		Output: io.Discard,
 	})
 	if err := lua.Require(ctx, l, lua.GName, true, base); err != nil {
-		return nil, err
+		return err
 	}
 
 	// Set other built-ins.
@@ -95,64 +110,154 @@ func (eval *Eval) newState(ctx context.Context, cache *sqlite.Conn) (*lua.State,
 			return 1, nil
 		},
 		"derivation": eval.derivationFunction,
-		"loadfile":   eval.loadfileFunction,
+		"import":     eval.importFunction,
 		"toFile":     eval.toFileFunction,
 		"path":       eval.pathFunction,
 	}
-	if err := lua.SetFunctions(ctx, l, 0, extraBaseFunctions); err != nil {
-		return nil, err
+	if err := lua.SetPureFunctions(ctx, l, 0, extraBaseFunctions); err != nil {
+		return err
 	}
 	l.PushString(string(eval.storeDir))
 	if err := l.SetField(ctx, -2, "storeDir"); err != nil {
-		return nil, err
+		return err
 	}
 
 	// Wrap load function.
 	if tp := l.RawField(-1, "load"); tp != lua.TypeFunction {
-		return nil, fmt.Errorf("load is not a function")
+		return fmt.Errorf("load is not a function")
 	}
-	l.PushClosure(1, loadFunction)
-	l.RawSetField(-2, "load")
+	l.PushPureFunction(1, loadFunction)
+	if err := l.RawSetField(-2, "load"); err != nil {
+		return err
+	}
 
-	// dofile needs loadfile as its first upvalue.
-	l.RawField(-1, "loadfile")
-	l.PushClosure(1, dofileFunction)
-	l.RawSetField(-2, "dofile")
+	// Remove unwanted base functions.
+	if err := clearFields(l, "print", "loadfile", "dofile", "collectgarbage"); err != nil {
+		return err
+	}
 
 	// Pop base library.
 	l.Pop(1)
 
 	// Load other standard libraries.
 	if err := lua.Require(ctx, l, lua.MathLibraryName, true, lua.NewOpenMath(nil)); err != nil {
-		return nil, err
+		return err
 	}
-	l.PushNil()
-	l.RawSetField(-2, "random")
-	l.PushNil()
-	l.RawSetField(-2, "randomseed")
+	if err := clearFields(l, "random", "randomseed"); err != nil {
+		return err
+	}
 	l.Pop(1)
 	if err := lua.Require(ctx, l, lua.StringLibraryName, true, lua.OpenString); err != nil {
-		return nil, err
+		return err
 	}
-	l.PushNil()
-	l.RawSetField(-2, "dump")
+	if err := clearFields(l, "dump"); err != nil {
+		return err
+	}
 	l.Pop(1)
 	if err := lua.Require(ctx, l, lua.TableLibraryName, true, lua.OpenTable); err != nil {
-		return nil, err
+		return err
 	}
 	l.Pop(1)
 	if err := lua.Require(ctx, l, lua.UTF8LibraryName, true, lua.OpenUTF8); err != nil {
-		return nil, err
+		return err
 	}
 	l.Pop(1)
 
 	// Run prelude.
 	if err := l.Load(bytes.NewReader(preludeSource), lua.UnknownSource, "b"); err != nil {
-		return nil, err
+		return err
 	}
 	if err := l.Call(ctx, 0, 0); err != nil {
+		return err
+	}
+
+	// Copy globals to stdlib key.
+	l.RawIndex(lua.RegistryIndex, lua.RegistryIndexGlobals)
+	if err := l.RawSetField(lua.RegistryIndex, stdlibRegistryKey); err != nil {
+		return err
+	}
+
+	// Freeze everything.
+	if err := l.Freeze(lua.RegistryIndex); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func clearFields(l *lua.State, fieldNames ...string) error {
+	for _, k := range fieldNames {
+		l.PushNil()
+		if err := l.RawSetField(-2, k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (eval *Eval) newState(cache *sqlite.Conn) (*lua.State, error) {
+	l := new(lua.State)
+
+	eval.mu.Lock()
+	eval.zygote.PushValue(lua.RegistryIndex)
+	err := l.XMove(&eval.zygote, 1)
+	eval.mu.Unlock()
+	if err != nil {
 		return nil, err
 	}
+
+	tableIndex := l.Top()
+	l.PushNil()
+	for l.Next(tableIndex) {
+		if l.IsInteger(-2) {
+			if i, _ := l.ToInteger(-2); i == lua.RegistryIndexGlobals {
+				l.Pop(1)
+				continue
+			}
+		}
+		l.PushValue(-2)
+		l.Insert(-2)
+
+		if err := l.RawSet(lua.RegistryIndex); err != nil {
+			return nil, err
+		}
+	}
+	l.Pop(1) // Pop the zygote registry.
+
+	// Set up globals metatable.
+	// Any unknown names will be looked up in the standard library registry key.
+	// We don't set it to the standard library table directly
+	// because if this value gets moved to a different state,
+	// we want to respect the state's registry key.
+	l.RawIndex(lua.RegistryIndex, lua.RegistryIndexGlobals)
+	lua.NewPureLib(l, map[string]lua.Function{
+		"__metatable": nil,
+		"__index": func(ctx context.Context, l *lua.State) (int, error) {
+			if l.Type(2) == lua.TypeString {
+				if s, _ := l.ToString(2); s == lua.GName {
+					l.SetTop(1)
+					return 1, nil
+				}
+			}
+			if tp, err := l.Field(ctx, lua.RegistryIndex, stdlibRegistryKey); err != nil {
+				return 0, err
+			} else if tp == lua.TypeNil {
+				// If the state does not have a standard library in the registry (bug?),
+				// then return nothing.
+				return 1, nil
+			}
+			l.Insert(2)
+			l.SetTop(3)
+			if _, err := l.Table(ctx, 2); err != nil {
+				return 0, err
+			}
+			return 1, nil
+		},
+	})
+	if err := l.SetMetatable(-2); err != nil {
+		return nil, err
+	}
+	l.Pop(1)
 
 	// Stash cache connection.
 	l.NewUserdata(cache, 0)
@@ -209,17 +314,16 @@ func (eval *Eval) File(ctx context.Context, exprFile string, attrPaths []string)
 	}
 	defer eval.cachePool.Put(cache)
 
-	l, err := eval.newState(ctx, cache)
+	l, err := eval.newState(cache)
 	if err != nil {
 		return nil, err
 	}
 	defer l.Close()
 
 	l.PushClosure(0, messageHandler)
-	if err := loadFile(l, exprFile); err != nil {
-		return nil, err
-	}
-	if err := l.PCall(ctx, 0, 1, -2); err != nil {
+	l.PushPureFunction(0, eval.importFunction)
+	l.PushString(exprFile)
+	if err := l.PCall(ctx, 1, 1, -3); err != nil {
 		return nil, err
 	}
 	return evalAttrPaths(ctx, l, attrPaths)
@@ -232,7 +336,7 @@ func (eval *Eval) Expression(ctx context.Context, expr string, attrPaths []strin
 	}
 	defer eval.cachePool.Put(cache)
 
-	l, err := eval.newState(ctx, cache)
+	l, err := eval.newState(cache)
 	if err != nil {
 		return nil, err
 	}
@@ -428,8 +532,8 @@ func loadFunction(ctx context.Context, l *lua.State) (int, error) {
 	return l.Top(), nil
 }
 
-// loadfileFunction is the global loadfile function implementation.
-func (eval *Eval) loadfileFunction(ctx context.Context, l *lua.State) (int, error) {
+// importFunction is the global import function implementation.
+func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error) {
 	filename, err := lua.CheckString(l, 1)
 	if err != nil {
 		return 0, err
@@ -478,87 +582,47 @@ func (eval *Eval) loadfileFunction(ctx context.Context, l *lua.State) (int, erro
 		filename = strings.NewReplacer(rewrites...).Replace(filename)
 	}
 
-	const modeArg = 2
-	switch l.Type(modeArg) {
-	case lua.TypeNil, lua.TypeNone:
-	case lua.TypeString:
-		if s, _ := l.ToString(modeArg); s != "t" {
-			l.PushNil()
-			l.PushString(fmt.Sprintf("loadfile only supports text chunks (got %q)", s))
-			return 2, nil
-		}
-	default:
-		l.PushNil()
-		l.PushString("only permitted mode for loadfile is 't'")
-		return 2, nil
-	}
-
-	const envArg = 3
-	hasEnv := l.Type(envArg) != lua.TypeNone
-
 	filename, err = absSourcePath(l, filename, filenameContext)
 	if err != nil {
 		l.PushNil()
 		l.PushString(err.Error())
 		return 2, nil
 	}
-	if err := loadFile(l, filename); err != nil {
+	cache, err := stateCacheConn(l)
+	if err != nil {
+		return 0, err
+	}
+	substate, err := eval.newState(cache)
+	if err != nil {
+		return 0, err
+	}
+	defer substate.Close()
+	if err := loadFile(substate, filename); err != nil {
 		l.PushNil()
 		l.PushString(err.Error())
 		return 2, nil
 	}
-
-	if hasEnv {
-		l.PushValue(envArg)
-		if _, err := l.SetUpvalue(-2, 1); err != nil {
-			// Remove env if not used.
-			l.Pop(1)
-		}
-	}
-
-	return 1, nil
-}
-
-// dofileFunction is the global dofile function implementation.
-// It assumes that a loadfile function is its first upvalue.
-func dofileFunction(ctx context.Context, l *lua.State) (int, error) {
-	filename, err := lua.CheckString(l, 1)
-	if err != nil {
+	firstResult := substate.Top()
+	if err := substate.Call(ctx, 0, lua.MultipleReturns); err != nil {
 		return 0, err
 	}
-	l.SetTop(1)
-
-	// Perform path resolution here instead of at loadfile,
-	// since loadfile would just obtain our call record.
-	resolved, err := absSourcePath(l, filename, l.StringContext(1))
-	if err != nil {
-		return 0, fmt.Errorf("dofile: %v", err)
-	}
-	if resolved != filename {
-		// Relative paths will not be store paths.
-		l.PushString(resolved)
-		if err := l.Replace(1); err != nil {
+	if substate.Top() >= firstResult {
+		// If the file returned at least one value,
+		// use that directly.
+		substate.SetTop(firstResult)
+	} else {
+		// Push _G. Presumably there were _ENV.foo assignments.
+		if _, err := substate.Index(ctx, lua.RegistryIndex, lua.RegistryIndexGlobals); err != nil {
 			return 0, err
 		}
 	}
-
-	// loadfile(filename)
-	l.PushValue(lua.UpvalueIndex(1))
-	l.Insert(1)
-	if err := l.Call(ctx, 1, 2); err != nil {
-		return 0, fmt.Errorf("dofile: %v", err)
+	if err := substate.Freeze(-1); err != nil {
+		return 0, err
 	}
-	if l.IsNil(-2) {
-		msg, _, _ := lua.ToString(ctx, l, -1)
-		return 0, fmt.Errorf("dofile: %s", msg)
+	if err := l.XMove(substate, 1); err != nil {
+		return 0, err
 	}
-	l.Pop(1)
-
-	// Call the loaded function.
-	if err := l.Call(ctx, 0, lua.MultipleReturns); err != nil {
-		return 0, fmt.Errorf("dofile %s: %v", resolved, err)
-	}
-	return l.Top(), nil
+	return 1, nil
 }
 
 func messageHandler(ctx context.Context, l *lua.State) (int, error) {

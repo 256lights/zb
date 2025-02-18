@@ -13,6 +13,7 @@ import (
 
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/zbstore"
@@ -79,7 +80,7 @@ func TestNewState(t *testing.T) {
 	}
 	defer eval.cachePool.Put(cacheConn)
 
-	l, err := eval.newState(ctx, cacheConn)
+	l, err := eval.newState(cacheConn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,6 +92,9 @@ func TestNewState(t *testing.T) {
 
 	if got, want := l.Top(), 0; got != want {
 		t.Errorf("l.Top() = %d; want %d", got, want)
+	}
+	if tp, err := l.Global(ctx, "derivation"); err != nil || tp != lua.TypeFunction {
+		t.Errorf("l.Global(ctx, \"derivation\") = %v, %v; want function, <nil>", tp, err)
 	}
 }
 
@@ -121,7 +125,7 @@ func BenchmarkNewState(b *testing.B) {
 	defer eval.cachePool.Put(cacheConn)
 
 	for b.Loop() {
-		l, err := eval.newState(ctx, cacheConn)
+		l, err := eval.newState(cacheConn)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -1,11 +1,11 @@
 -- Copyright 2024 The zb Authors
 -- SPDX-License-Identifier: MIT
 
-local drv1 = dofile("hello.lua")
+hello = import("hello_linux.lua")
 
-local drv2 = derivation {
+hello2 = derivation {
   name = "hello2";
-  ["in"] = drv1.out;
+  ["in"] = hello.out;
   builder = "/bin/sh";
   system = "x86_64-linux";
   args = {"-c", [[
@@ -17,5 +17,3 @@ while read line; do
 done < $in >> $out
 ]]};
 }
-
-return drv2

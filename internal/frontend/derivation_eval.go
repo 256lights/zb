@@ -18,6 +18,13 @@ import (
 
 const derivationTypeName = "derivation"
 
+type Derivation struct {
+	*zbstore.Derivation
+	Path zbstore.Path
+}
+
+func (drv *Derivation) Freeze() error { return nil }
+
 func registerDerivationMetatable(ctx context.Context, l *lua.State) error {
 	lua.NewMetatable(l, derivationTypeName)
 	err := lua.SetPureFunctions(ctx, l, 0, map[string]lua.Function{
@@ -38,9 +45,11 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 	if !l.IsTable(1) {
 		return 0, lua.NewTypeError(l, 1, lua.TypeTable.String())
 	}
-	drv := &zbstore.Derivation{
-		Dir: eval.storeDir,
-		Env: make(map[string]string),
+	drv := &Derivation{
+		Derivation: &zbstore.Derivation{
+			Dir: eval.storeDir,
+			Env: make(map[string]string),
+		},
 	}
 
 	// Configure outputs.
@@ -128,7 +137,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 				return 0, fmt.Errorf("system argument: %v expected, got %v", lua.TypeString, typ)
 			}
 			var err error
-			drv.Builder, err = stringToEnvVar(l, drv, -1)
+			drv.Builder, err = stringToEnvVar(l, drv.Derivation, -1)
 			if err != nil {
 				return 0, fmt.Errorf("%s: %v", k, err)
 			}
@@ -137,7 +146,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 				return 0, fmt.Errorf("args argument: %v expected, got %v", lua.TypeTable, typ)
 			}
 			err := ipairs(ctx, l, -1, func(i int64) error {
-				arg, err := stringToEnvVar(l, drv, -1)
+				arg, err := stringToEnvVar(l, drv.Derivation, -1)
 				if err != nil {
 					return fmt.Errorf("#%d: %v", i, err)
 				}
@@ -149,7 +158,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 			}
 		}
 
-		v, err := toEnvVar(ctx, l, drv, -1, true)
+		v, err := toEnvVar(ctx, l, drv.Derivation, -1, true)
 		if err != nil {
 			return 0, fmt.Errorf("%s: %v", k, err)
 		}
@@ -173,12 +182,13 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 			panic(outputName + " has an unhandled output type")
 		}
 	}
-	drvPath, err := writeDerivation(ctx, eval.store, drv)
+	var err error
+	drv.Path, err = writeDerivation(ctx, eval.store, drv.Derivation)
 	if err != nil {
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
 
-	pushStorePath(l, drvPath)
+	pushStorePath(l, drv.Path)
 	if err := l.SetField(ctx, tableCopyIndex, "drvPath"); err != nil {
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
@@ -187,7 +197,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 		switch {
 		case outType.IsFloating():
 			placeholder = zbstore.UnknownCAOutputPlaceholder(zbstore.OutputReference{
-				DrvPath:    drvPath,
+				DrvPath:    drv.Path,
 				OutputName: zbstore.DefaultDerivationOutputName,
 			})
 		case outType.IsFixed():
@@ -199,7 +209,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 			placeholder = string(p)
 		}
 		ref := zbstore.OutputReference{
-			DrvPath:    drvPath,
+			DrvPath:    drv.Path,
 			OutputName: outputName,
 		}
 		l.PushStringContext(placeholder, sets.New(contextValue{outputReference: ref}.String()))
@@ -347,7 +357,7 @@ func writeDerivation(ctx context.Context, store *jsonrpc.Client, drv *zbstore.De
 	return info.StorePath, nil
 }
 
-func toDerivation(l *lua.State) (*zbstore.Derivation, error) {
+func toDerivation(l *lua.State) (*Derivation, error) {
 	const idx = 1
 	if _, err := lua.CheckUserdata(l, idx, derivationTypeName); err != nil {
 		return nil, err
@@ -359,9 +369,9 @@ func toDerivation(l *lua.State) (*zbstore.Derivation, error) {
 	return drv, nil
 }
 
-func testDerivation(l *lua.State, idx int) *zbstore.Derivation {
+func testDerivation(l *lua.State, idx int) *Derivation {
 	x, _ := lua.TestUserdata(l, idx, derivationTypeName)
-	drv, _ := x.(*zbstore.Derivation)
+	drv, _ := x.(*Derivation)
 	return drv
 }
 

@@ -3,6 +3,9 @@
 
 ---@meta
 
+loadfile = nil
+dofile = nil
+
 ---@class derivation: userdata
 ---@field name string
 ---@field system string
@@ -17,6 +20,11 @@
 ---@param args { name: string, system: string, builder: string, args: string[], [string]: string|number|boolean|(string|number|boolean)[] }
 ---@return derivation
 function derivation(args) end
+
+--- Import a Lua file.
+--- @param path (string)
+--- @return any
+function import(path) end
 
 ---Make a file or directory available to a derivation.
 ---@param p (string|{path: string, name: string?}) path to import, relative to the source file that called `path`
