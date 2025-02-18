@@ -1348,6 +1348,25 @@ func TestFreeze(t *testing.T) {
 		}
 	})
 
+	t.Run("GoClosureInTable", func(t *testing.T) {
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		state.CreateTable(1, 0)
+		state.PushClosure(0, func(ctx context.Context, l *State) (int, error) { return 0, nil })
+		if err := state.RawSetIndex(-2, 1); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := state.Freeze(-1); err == nil {
+			t.Error("Freeze on impure Go function did not return error")
+		}
+	})
+
 	t.Run("PureFunction", func(t *testing.T) {
 		ctx := context.Background()
 		state := new(State)

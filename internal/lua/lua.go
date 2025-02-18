@@ -2252,7 +2252,7 @@ func (l *State) Freeze(idx int) error {
 		}
 		visited.Add(id)
 
-		switch v := v.(type) {
+		switch v := curr.value.(type) {
 		case *userdata:
 			if f, ok := v.x.(Freezer); !ok {
 				return fmt.Errorf("cannot freeze %T", v.x)
