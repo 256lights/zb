@@ -14,9 +14,7 @@ import (
 // New returns a context that associates the test logger with the test
 // and obeys the test's deadline if present.
 func New(tb testing.TB) (context.Context, context.CancelFunc) {
-	// TODO(someday): Go 1.24 includes a Context method
-	// that cancels the context when the test function returns.
-	ctx := context.Background()
+	ctx := tb.Context()
 	cancel := context.CancelFunc(func() {})
 	if d, ok := deadline(tb); ok {
 		ctx, cancel = context.WithDeadline(ctx, d)

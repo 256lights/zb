@@ -36,7 +36,7 @@ local function forSystem(_, currentSystem)
     }
   end
 
-  return dofile(drv.out)
+  return import(drv.out)
 end
 
 local t = {}

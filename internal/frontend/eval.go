@@ -22,7 +22,6 @@ import (
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
-	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/sqlite"
@@ -30,10 +29,7 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-const (
-	cacheConnRegistryKey = "zb.256lights.llc/pkg/internal/frontend cacheConn"
-	stdlibRegistryKey    = "zb.256lights.llc/pkg/internal/frontend stdlib"
-)
+const stdlibRegistryKey = "zb.256lights.llc/pkg/internal/frontend stdlib"
 
 //go:embed prelude.luac
 var preludeSource []byte
@@ -43,10 +39,18 @@ type Eval struct {
 	storeDir  zbstore.Directory
 	cachePool *sqlitemigration.Pool
 
-	mu sync.Mutex
+	baseImportContext context.Context
+	cancelImports     context.CancelFunc
+	importGroup       sync.WaitGroup
+
+	zygoteMutex sync.Mutex
 	// zygote is a Lua state that populates its registry in [*Eval.initZygote].
 	// New states are created by copying the registry into their own tables.
 	zygote lua.State
+
+	loadedMutex sync.Mutex
+	// loadedState is a Lua state that has a table at the top of all the modules.
+	loadedState lua.State
 }
 
 func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) (_ *Eval, err error) {
@@ -77,6 +81,11 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 	if err := eval.initZygote(); err != nil {
 		return nil, fmt.Errorf("zb: new eval: %v", err)
 	}
+	if err := eval.initState(&eval.loadedState); err != nil {
+		return nil, fmt.Errorf("zb: new eval: %v", err)
+	}
+	eval.loadedState.CreateTable(0, 0)
+	eval.baseImportContext, eval.cancelImports = context.WithCancel(context.Background())
 	return eval, nil
 }
 
@@ -85,6 +94,9 @@ func (eval *Eval) initZygote() error {
 	l := &eval.zygote
 
 	if err := registerDerivationMetatable(ctx, l); err != nil {
+		return err
+	}
+	if err := registerModuleMetatable(ctx, l); err != nil {
 		return err
 	}
 
@@ -97,6 +109,7 @@ func (eval *Eval) initZygote() error {
 
 	// Set other built-ins.
 	extraBaseFunctions := map[string]lua.Function{
+		"await": awaitFunction,
 		"baseNameOf": func(ctx context.Context, l *lua.State) (int, error) {
 			path, err := lua.CheckString(l, 1)
 			if err != nil {
@@ -177,8 +190,21 @@ func (eval *Eval) initZygote() error {
 		return err
 	}
 
-	// Freeze everything.
+	// Freeze everything in registry and metatables.
 	if err := l.Freeze(lua.RegistryIndex); err != nil {
+		return err
+	}
+	var err error
+	forEachSharedMetatableType(l, func() bool {
+		if !l.Metatable(-1) {
+			l.Pop(1)
+			return true
+		}
+		err = l.Freeze(-1)
+		l.Pop(2)
+		return err == nil
+	})
+	if err != nil {
 		return err
 	}
 
@@ -195,18 +221,44 @@ func clearFields(l *lua.State, fieldNames ...string) error {
 	return nil
 }
 
-func (eval *Eval) newState(cache *sqlite.Conn) (*lua.State, error) {
+func (eval *Eval) newState() (*lua.State, error) {
 	l := new(lua.State)
-
-	eval.mu.Lock()
-	eval.zygote.PushValue(lua.RegistryIndex)
-	err := l.XMove(&eval.zygote, 1)
-	eval.mu.Unlock()
-	if err != nil {
+	if err := eval.initState(l); err != nil {
 		return nil, err
 	}
+	return l, nil
+}
 
-	tableIndex := l.Top()
+func (eval *Eval) initState(l *lua.State) error {
+	eval.zygoteMutex.Lock()
+	eval.zygote.PushValue(lua.RegistryIndex)
+	forEachSharedMetatableType(&eval.zygote, func() bool {
+		if !eval.zygote.Metatable(-1) {
+			eval.zygote.PushNil()
+		}
+		eval.zygote.Remove(-2)
+		return true
+	})
+	err := l.XMove(&eval.zygote, eval.zygote.Top())
+	eval.zygoteMutex.Unlock()
+	if err != nil {
+		return err
+	}
+
+	// Copy over metatables.
+	const tableIndex = 1
+	const firstMetatableIndex = 2
+	forEachSharedMetatableType(l, func() bool {
+		l.Rotate(firstMetatableIndex, -1) // Move next metatable to the top.
+		err = l.SetMetatable(-2)
+		l.Pop(1) // Pop off dummy value.
+		return err == nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// Copy over entries into registry.
 	l.PushNil()
 	for l.Next(tableIndex) {
 		if l.IsInteger(-2) {
@@ -219,7 +271,7 @@ func (eval *Eval) newState(cache *sqlite.Conn) (*lua.State, error) {
 		l.Insert(-2)
 
 		if err := l.RawSet(lua.RegistryIndex); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	l.Pop(1) // Pop the zygote registry.
@@ -255,17 +307,11 @@ func (eval *Eval) newState(cache *sqlite.Conn) (*lua.State, error) {
 		},
 	})
 	if err := l.SetMetatable(-2); err != nil {
-		return nil, err
+		return err
 	}
 	l.Pop(1)
 
-	// Stash cache connection.
-	l.NewUserdata(cache, 0)
-	if err := l.RawSetField(lua.RegistryIndex, cacheConnRegistryKey); err != nil {
-		return nil, err
-	}
-
-	return l, nil
+	return nil
 }
 
 func prepareCache(conn *sqlite.Conn) error {
@@ -304,17 +350,13 @@ func prepareCache(conn *sqlite.Conn) error {
 }
 
 func (eval *Eval) Close() error {
+	eval.cancelImports()
+	eval.importGroup.Wait()
 	return eval.cachePool.Close()
 }
 
 func (eval *Eval) File(ctx context.Context, exprFile string, attrPaths []string) ([]any, error) {
-	cache, err := eval.cachePool.Get(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer eval.cachePool.Put(cache)
-
-	l, err := eval.newState(cache)
+	l, err := eval.newState()
 	if err != nil {
 		return nil, err
 	}
@@ -323,20 +365,18 @@ func (eval *Eval) File(ctx context.Context, exprFile string, attrPaths []string)
 	l.PushClosure(0, messageHandler)
 	l.PushPureFunction(0, eval.importFunction)
 	l.PushString(exprFile)
-	if err := l.PCall(ctx, 1, 1, -3); err != nil {
+	if err := l.PCall(ctx, 1, 2, -3); err != nil {
 		return nil, err
 	}
+	if errMsg, _ := l.ToString(-1); errMsg != "" {
+		return nil, errors.New(errMsg)
+	}
+	l.Pop(1)
 	return evalAttrPaths(ctx, l, attrPaths)
 }
 
 func (eval *Eval) Expression(ctx context.Context, expr string, attrPaths []string) ([]any, error) {
-	cache, err := eval.cachePool.Get(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer eval.cachePool.Put(cache)
-
-	l, err := eval.newState(cache)
+	l, err := eval.newState()
 	if err != nil {
 		return nil, err
 	}
@@ -389,67 +429,77 @@ func evalAttrPaths(ctx context.Context, l *lua.State, paths []string) ([]any, er
 }
 
 func luaToGo(ctx context.Context, l *lua.State) (any, error) {
-	switch typ := l.Type(-1); typ {
-	case lua.TypeNil:
-		return nil, nil
-	case lua.TypeNumber:
-		if l.IsInteger(-1) {
-			i, _ := l.ToInteger(-1)
-			return i, nil
-		}
-		n, _ := l.ToNumber(-1)
-		return n, nil
-	case lua.TypeBoolean:
-		return l.IsBoolean(-1), nil
-	case lua.TypeString:
-		s, _ := l.ToString(-1)
-		return s, nil
-	case lua.TypeTable:
-		// Try first for an array.
-		var arr []any
-		err := ipairs(ctx, l, -1, func(i int64) error {
-			x, err := luaToGo(ctx, l)
-			if err != nil {
-				return fmt.Errorf("#%d: %v", i, err)
-			}
-			arr = append(arr, x)
-			return nil
-		})
-		if err != nil {
-			if len(arr) > 0 {
-				return arr, err
-			}
-			return nil, err
-		}
-		if len(arr) > 0 {
-			return arr, nil
-		}
-
-		// It's an object.
-		m := make(map[string]any)
-		l.PushNil()
-		for l.Next(-2) {
-			if l.Type(-2) != lua.TypeString {
-				l.Pop(1)
-				continue
-			}
-
-			k, _ := l.ToString(-2)
-			v, err := luaToGo(ctx, l)
-			if err != nil {
-				l.Pop(2)
-				return nil, fmt.Errorf("[%q]: %v", k, err)
-			}
+	for {
+		// Resolve modules, if any.
+		if mod := testModule(l, -1); mod != nil {
 			l.Pop(1)
-			m[k] = v
+			if err := waitForModule(ctx, l, mod); err != nil {
+				return nil, err
+			}
 		}
-		return m, nil
-	default:
-		drv := testDerivation(l, -1)
-		if drv != nil {
-			return drv, nil
+
+		switch typ := l.Type(-1); typ {
+		case lua.TypeNil:
+			return nil, nil
+		case lua.TypeNumber:
+			if l.IsInteger(-1) {
+				i, _ := l.ToInteger(-1)
+				return i, nil
+			}
+			n, _ := l.ToNumber(-1)
+			return n, nil
+		case lua.TypeBoolean:
+			return l.IsBoolean(-1), nil
+		case lua.TypeString:
+			s, _ := l.ToString(-1)
+			return s, nil
+		case lua.TypeTable:
+			// Try first for an array.
+			var arr []any
+			err := ipairs(ctx, l, -1, func(i int64) error {
+				x, err := luaToGo(ctx, l)
+				if err != nil {
+					return fmt.Errorf("#%d: %v", i, err)
+				}
+				arr = append(arr, x)
+				return nil
+			})
+			if err != nil {
+				if len(arr) > 0 {
+					return arr, err
+				}
+				return nil, err
+			}
+			if len(arr) > 0 {
+				return arr, nil
+			}
+
+			// It's an object.
+			m := make(map[string]any)
+			l.PushNil()
+			for l.Next(-2) {
+				if l.Type(-2) != lua.TypeString {
+					l.Pop(1)
+					continue
+				}
+
+				k, _ := l.ToString(-2)
+				v, err := luaToGo(ctx, l)
+				if err != nil {
+					l.Pop(2)
+					return nil, fmt.Errorf("[%q]: %v", k, err)
+				}
+				l.Pop(1)
+				m[k] = v
+			}
+			return m, nil
+		default:
+			drv := testDerivation(l, -1)
+			if drv != nil {
+				return drv, nil
+			}
+			return nil, fmt.Errorf("cannot convert %v to Go", typ)
 		}
-		return nil, fmt.Errorf("cannot convert %v to Go", typ)
 	}
 }
 
@@ -532,99 +582,6 @@ func loadFunction(ctx context.Context, l *lua.State) (int, error) {
 	return l.Top(), nil
 }
 
-// importFunction is the global import function implementation.
-func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error) {
-	filename, err := lua.CheckString(l, 1)
-	if err != nil {
-		return 0, err
-	}
-	filenameContext := l.StringContext(1)
-
-	// TODO(someday): If we have dependencies and we're using a non-local store,
-	// export the store object and read it.
-	var rewrites []string
-	for dep := range filenameContext {
-		c, err := parseContextString(dep)
-		if err != nil {
-			l.PushNil()
-			l.PushString(fmt.Sprintf("internal error: %v", err))
-			return 2, nil
-		}
-		if c.outputReference.IsZero() {
-			continue
-		}
-		resp := new(zbstore.RealizeResponse)
-		// TODO(someday): Only realize single output.
-		// TODO(someday): Batch.
-		err = jsonrpc.Do(ctx, eval.store, zbstore.RealizeMethod, resp, &zbstore.RealizeRequest{
-			DrvPath: c.outputReference.DrvPath,
-		})
-		if err != nil {
-			l.PushNil()
-			l.PushString(fmt.Sprintf("realize %v: %v", c.outputReference, err))
-			return 2, nil
-		}
-		output, err := xiter.Single(resp.OutputsByName(c.outputReference.OutputName))
-		if err != nil {
-			l.PushNil()
-			l.PushString(fmt.Sprintf("realize %v: outputs: %v", c.outputReference, err))
-			return 2, nil
-		}
-		if !output.Path.Valid || output.Path.X == "" {
-			l.PushNil()
-			l.PushString(fmt.Sprintf("realize %v: build failed", c.outputReference))
-			return 2, nil
-		}
-		placeholder := zbstore.UnknownCAOutputPlaceholder(c.outputReference)
-		rewrites = append(rewrites, placeholder, string(output.Path.X))
-	}
-	if len(rewrites) > 0 {
-		filename = strings.NewReplacer(rewrites...).Replace(filename)
-	}
-
-	filename, err = absSourcePath(l, filename, filenameContext)
-	if err != nil {
-		l.PushNil()
-		l.PushString(err.Error())
-		return 2, nil
-	}
-	cache, err := stateCacheConn(l)
-	if err != nil {
-		return 0, err
-	}
-	substate, err := eval.newState(cache)
-	if err != nil {
-		return 0, err
-	}
-	defer substate.Close()
-	if err := loadFile(substate, filename); err != nil {
-		l.PushNil()
-		l.PushString(err.Error())
-		return 2, nil
-	}
-	firstResult := substate.Top()
-	if err := substate.Call(ctx, 0, lua.MultipleReturns); err != nil {
-		return 0, err
-	}
-	if substate.Top() >= firstResult {
-		// If the file returned at least one value,
-		// use that directly.
-		substate.SetTop(firstResult)
-	} else {
-		// Push _G. Presumably there were _ENV.foo assignments.
-		if _, err := substate.Index(ctx, lua.RegistryIndex, lua.RegistryIndexGlobals); err != nil {
-			return 0, err
-		}
-	}
-	if err := substate.Freeze(-1); err != nil {
-		return 0, err
-	}
-	if err := l.XMove(substate, 1); err != nil {
-		return 0, err
-	}
-	return 1, nil
-}
-
 func messageHandler(ctx context.Context, l *lua.State) (int, error) {
 	msg, ok := l.ToString(1)
 	sctx := l.StringContext(1)
@@ -641,6 +598,37 @@ func messageHandler(ctx context.Context, l *lua.State) (int, error) {
 
 	l.PushStringContext(lua.Traceback(l, msg, 1), sctx)
 	return 1, nil
+}
+
+// forEachSharedMetatableType pushes nil, false, 0, "", and a no-op function
+// onto l's stack in sequence
+// and calls f after each push.
+// If f returns false, forEachSharedMetatableType skips pushing the remaining values.
+// This can be used to do something for each Lua type that shares [metatables]
+// among all values of the type.
+//
+// [metatables]: https://www.lua.org/manual/5.4/manual.html#2.4
+func forEachSharedMetatableType(l *lua.State, f func() bool) {
+	l.PushNil()
+	if !f() {
+		return
+	}
+	l.PushBoolean(false)
+	if !f() {
+		return
+	}
+	l.PushNumber(0)
+	if !f() {
+		return
+	}
+	l.PushString("")
+	if !f() {
+		return
+	}
+	l.PushClosure(0, func(ctx context.Context, l *lua.State) (int, error) {
+		return 0, nil
+	})
+	f()
 }
 
 //go:embed cache_sql

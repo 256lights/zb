@@ -25,17 +25,6 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-func stateCacheConn(l *lua.State) (*sqlite.Conn, error) {
-	defer l.SetTop(l.Top())
-	l.RawField(lua.RegistryIndex, cacheConnRegistryKey)
-	cacheUserdata, _ := l.ToUserdata(-1)
-	cache, ok := cacheUserdata.(*sqlite.Conn)
-	if !ok {
-		return nil, fmt.Errorf("internal error: cache connection is %T", cacheUserdata)
-	}
-	return cache, nil
-}
-
 func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int, err error) {
 	var p string
 	var pcontext sets.Set[string]
@@ -78,10 +67,11 @@ func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int,
 		name = filepath.Base(p)
 	}
 
-	cache, err := stateCacheConn(l)
+	cache, err := eval.cachePool.Get(ctx)
 	if err != nil {
 		return 0, err
 	}
+	defer eval.cachePool.Put(cache)
 
 	if err := walkPath(ctx, cache, p); err != nil {
 		return 0, fmt.Errorf("path: %v", err)

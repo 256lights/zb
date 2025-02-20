@@ -9,6 +9,7 @@ package luacode
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"math"
 
 	"zb.256lights.llc/pkg/internal/lualex"
@@ -17,6 +18,8 @@ import (
 // ArithmeticOperator is the subset of Lua operators that operate on numbers.
 type ArithmeticOperator int
 
+// Defined [ArithmeticOperator] values.
+// Can be iterated with [AllArithmeticOperators].
 const (
 	Add ArithmeticOperator = 1 + iota
 	Subtract
@@ -35,6 +38,17 @@ const (
 
 	numArithmeticOperators = iota
 )
+
+// AllArithmeticOperators returns an iterator over all the valid arithmetic operators.
+func AllArithmeticOperators() iter.Seq[ArithmeticOperator] {
+	return func(yield func(ArithmeticOperator) bool) {
+		for i := range numArithmeticOperators {
+			if !yield(ArithmeticOperator(1 + i)) {
+				return
+			}
+		}
+	}
+}
 
 func (op ArithmeticOperator) isValid() bool {
 	return 0 < op && op <= numArithmeticOperators

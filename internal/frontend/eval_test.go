@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
@@ -19,6 +20,37 @@ import (
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log/testlog"
 )
+
+func TestStringMethod(t *testing.T) {
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+
+	realStoreDir := t.TempDir()
+	storeDir, err := zbstore.CleanDirectory(realStoreDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
+	eval, err := NewEval(storeDir, store, filepath.Join(t.TempDir(), "cache.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := eval.Close(); err != nil {
+			t.Error("eval.Close:", err)
+		}
+	}()
+
+	const expr = `("abcdef"):sub(2, 4)`
+	got, err := eval.Expression(ctx, expr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []any{"bcd"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("%s (-want +got):\n%s", expr, diff)
+	}
+}
 
 func TestImportFromDerivation(t *testing.T) {
 	ctx, cancel := testcontext.New(t)
@@ -74,13 +106,8 @@ func TestNewState(t *testing.T) {
 			t.Error("eval.Close:", err)
 		}
 	}()
-	cacheConn, err := eval.cachePool.Get(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer eval.cachePool.Put(cacheConn)
 
-	l, err := eval.newState(cacheConn)
+	l, err := eval.newState()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,9 +127,6 @@ func TestNewState(t *testing.T) {
 
 // BenchmarkNewState measures the performance of spinning up a new interpreter.
 func BenchmarkNewState(b *testing.B) {
-	ctx, cancel := testcontext.New(b)
-	defer cancel()
-
 	realStoreDir := b.TempDir()
 	storeDir, err := zbstore.CleanDirectory(realStoreDir)
 	if err != nil {
@@ -118,14 +142,9 @@ func BenchmarkNewState(b *testing.B) {
 			b.Error("eval.Close:", err)
 		}
 	}()
-	cacheConn, err := eval.cachePool.Get(ctx)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer eval.cachePool.Put(cacheConn)
 
 	for b.Loop() {
-		l, err := eval.newState(cacheConn)
+		l, err := eval.newState()
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -21,6 +21,11 @@ dofile = nil
 ---@return derivation
 function derivation(args) end
 
+--- Force a module to load.
+--- @param x (any)
+--- @return any
+function await(x) end
+
 --- Import a Lua file.
 --- @param path (string)
 --- @return any

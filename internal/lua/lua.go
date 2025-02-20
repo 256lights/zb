@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"slices"
 	"strings"
 
@@ -803,6 +804,36 @@ const (
 	Less                                  // <
 	LessOrEqual                           // <=
 )
+
+// AllArithmeticOperators returns an iterator over all the valid arithmetic operators.
+func AllComparisonOperators() iter.Seq[ComparisonOperator] {
+	return func(yield func(ComparisonOperator) bool) {
+		if !yield(Equal) {
+			return
+		}
+		if !yield(Less) {
+			return
+		}
+		if !yield(LessOrEqual) {
+			return
+		}
+	}
+}
+
+// TagMethod returns the metamethod name for the given operator.
+// TagMethod panics if op is not a valid comparison operator.
+func (op ComparisonOperator) TagMethod() luacode.TagMethod {
+	switch op {
+	case Equal:
+		return luacode.TagMethodEQ
+	case Less:
+		return luacode.TagMethodLT
+	case LessOrEqual:
+		return luacode.TagMethodLE
+	default:
+		panic("invalid comparison operator")
+	}
+}
 
 // Compare reports if the value at idx1 satisfies op
 // when compared with the value at index idx2,
