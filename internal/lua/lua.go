@@ -1503,7 +1503,7 @@ func (l *State) SetMetatable(idx int) error {
 		}
 		v.meta = mt
 	default:
-		l.typeMetatables[v.valueType()] = mt
+		l.typeMetatables[valueType(v)] = mt
 	}
 	return nil
 }
