@@ -1850,6 +1850,7 @@ func (l *State) prepareCall(ctx context.Context, functionIndex int, opts callOpt
 				}
 				clear(l.callStack[newCallStackTop:])
 				l.callStack = l.callStack[:newCallStackTop]
+				l.setTop(newStackTop)
 				return false, err
 			}
 

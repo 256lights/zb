@@ -693,6 +693,30 @@ func TestFullUserdata(t *testing.T) {
 	}
 }
 
+func TestUnwindGoFunctionError(t *testing.T) {
+	ctx := context.Background()
+	state := new(State)
+	defer func() {
+		if err := state.Close(); err != nil {
+			t.Error("Close:", err)
+		}
+	}()
+
+	const message = "error message"
+	state.PushClosure(0, func(ctx context.Context, l *State) (int, error) {
+		l.PushString("bork")
+		return 0, errors.New(message)
+	})
+	if err := state.Call(ctx, 0, 0); err == nil {
+		t.Error("state.Call(...) did not return an error")
+	} else if got := err.Error(); got != message {
+		t.Errorf("state.Call(...) error = %q; want %q", got, message)
+	}
+	if got, want := state.Top(), 0; got != want {
+		t.Errorf("after call, state.Top() = %d; want %d", got, want)
+	}
+}
+
 func TestMessageHandler(t *testing.T) {
 	t.Run("DivideByZero", func(t *testing.T) {
 		ctx := context.Background()
