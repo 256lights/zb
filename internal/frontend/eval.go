@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	slashpath "path"
 	"path/filepath"
@@ -431,7 +432,11 @@ func evalAttrPaths(ctx context.Context, l *lua.State, paths []string) ([]any, er
 func luaToGo(ctx context.Context, l *lua.State) (any, error) {
 	for {
 		// Resolve modules, if any.
-		if mod := testModule(l, -1); mod != nil {
+		for {
+			mod := testModule(l, -1)
+			if mod == nil {
+				break
+			}
 			l.Pop(1)
 			if err := waitForModule(ctx, l, mod); err != nil {
 				return nil, err
@@ -449,32 +454,19 @@ func luaToGo(ctx context.Context, l *lua.State) (any, error) {
 			n, _ := l.ToNumber(-1)
 			return n, nil
 		case lua.TypeBoolean:
-			return l.IsBoolean(-1), nil
+			return l.ToBoolean(-1), nil
 		case lua.TypeString:
 			s, _ := l.ToString(-1)
 			return s, nil
 		case lua.TypeTable:
-			// Try first for an array.
-			var arr []any
-			err := ipairs(ctx, l, -1, func(i int64) error {
-				x, err := luaToGo(ctx, l)
-				if err != nil {
-					return fmt.Errorf("#%d: %v", i, err)
-				}
-				arr = append(arr, x)
-				return nil
-			})
-			if err != nil {
-				if len(arr) > 0 {
-					return arr, err
-				}
+			// Check first if table is an array.
+			if arr, err := luaTableToGoSlice(ctx, l); err == nil {
+				return arr, nil
+			} else if err != errNotASequence {
 				return nil, err
 			}
-			if len(arr) > 0 {
-				return arr, nil
-			}
 
-			// It's an object.
+			// Otherwise it's an object.
 			m := make(map[string]any)
 			l.PushNil()
 			for l.Next(-2) {
@@ -486,7 +478,6 @@ func luaToGo(ctx context.Context, l *lua.State) (any, error) {
 				k, _ := l.ToString(-2)
 				v, err := luaToGo(ctx, l)
 				if err != nil {
-					l.Pop(2)
 					return nil, fmt.Errorf("[%q]: %v", k, err)
 				}
 				l.Pop(1)
@@ -498,9 +489,76 @@ func luaToGo(ctx context.Context, l *lua.State) (any, error) {
 			if drv != nil {
 				return drv, nil
 			}
+			if typ == lua.TypeUserdata {
+				x, _ := l.ToUserdata(-1)
+				return nil, fmt.Errorf("cannot convert %T userdata to Go", x)
+			}
 			return nil, fmt.Errorf("cannot convert %v to Go", typ)
 		}
 	}
+}
+
+var errNotASequence = errors.New("table is not a sequence")
+
+func luaTableToGoSlice(ctx context.Context, l *lua.State) ([]any, error) {
+	defer l.SetTop(l.Top())
+	if !l.CheckStack(2) {
+		return nil, errors.New("depth exceeded")
+	}
+
+	// Arrays must have all integer keys
+	// except an "n" integer field is permitted
+	// (to support nils).
+	// This generally follows the pattern of table.pack.
+	n := int64(-1)
+	l.PushNil()
+	for l.Next(-2) {
+		switch l.Type(-2) {
+		case lua.TypeNumber:
+			// Only integer keys for a table.
+			i, ok := l.ToInteger(-2)
+			if !ok || i < 1 || i > math.MaxInt {
+				return nil, errNotASequence
+			}
+		case lua.TypeString:
+			// Only "n" allowed.
+			if s, _ := l.ToString(-2); s != "n" {
+				return nil, errNotASequence
+			}
+			var ok bool
+			n, ok = l.ToInteger(-1)
+			if !ok || n < 0 || n > math.MaxInt {
+				return nil, errNotASequence
+			}
+		default:
+			return nil, errNotASequence
+		}
+		l.Pop(1)
+	}
+
+	var result []any
+	l.PushNil()
+	for l.Next(-2) {
+		i, ok := l.ToInteger(-2)
+		if !ok {
+			// "n" field.
+			l.Pop(1)
+			continue
+		}
+		result = appendZero(result, int(i-1)-len(result))
+		x, err := luaToGo(ctx, l)
+		if err != nil {
+			return nil, fmt.Errorf("[%d]: %w", i, err)
+		}
+		result = append(result, x)
+		l.Pop(1)
+	}
+	if n >= 0 {
+		result = appendZero(result, int(n)-len(result))
+	} else if len(result) == 0 {
+		return nil, errNotASequence
+	}
+	return result, nil
 }
 
 func loadFile(l *lua.State, path string) error {
@@ -629,6 +687,11 @@ func forEachSharedMetatableType(l *lua.State, f func() bool) {
 		return 0, nil
 	})
 	f()
+}
+
+// appendZero appends n copies of the zero value to a slice.
+func appendZero[S ~[]E, E any](s S, n int) S {
+	return append(s, make(S, n)...)
 }
 
 //go:embed cache_sql

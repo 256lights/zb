@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
@@ -20,6 +21,92 @@ import (
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log/testlog"
 )
+
+func TestLuaToGo(t *testing.T) {
+	tests := []struct {
+		expr string
+		want []any
+	}{
+		{
+			expr: "nil",
+			want: []any{nil},
+		},
+		{
+			expr: "true",
+			want: []any{true},
+		},
+		{
+			expr: "false",
+			want: []any{false},
+		},
+		{
+			expr: `"foo"`,
+			want: []any{"foo"},
+		},
+		{
+			expr: "42",
+			want: []any{int64(42)},
+		},
+		{
+			expr: "3.14",
+			want: []any{3.14},
+		},
+		{
+			expr: `{n=0}`,
+			want: []any{[]any{}},
+		},
+		{
+			expr: "{123, 456}",
+			want: []any{[]any{int64(123), int64(456)}},
+		},
+		{
+			expr: "{123, nil, 456}",
+			want: []any{[]any{int64(123), nil, int64(456)}},
+		},
+		{
+			expr: "{n=3, 123}",
+			want: []any{[]any{int64(123), nil, nil}},
+		},
+		{
+			expr: `{}`,
+			want: []any{map[string]any{}},
+		},
+		{
+			expr: `{foo="bar", baz=42}`,
+			want: []any{map[string]any{"foo": "bar", "baz": int64(42)}},
+		},
+	}
+
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+
+	realStoreDir := t.TempDir()
+	storeDir, err := zbstore.CleanDirectory(realStoreDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
+	eval, err := NewEval(storeDir, store, filepath.Join(t.TempDir(), "cache.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := eval.Close(); err != nil {
+			t.Error("eval.Close:", err)
+		}
+	}()
+
+	for _, test := range tests {
+		got, err := eval.Expression(ctx, test.expr, nil)
+		if err != nil {
+			t.Errorf("%s: %v", test.expr, err)
+			continue
+		}
+		if diff := cmp.Diff(test.want, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("%s (-want +got):\n%s", test.expr, diff)
+		}
+	}
+}
 
 func TestStringMethod(t *testing.T) {
 	ctx, cancel := testcontext.New(t)
