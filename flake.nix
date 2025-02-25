@@ -10,15 +10,20 @@
         pkgs = import nixpkgs {
           inherit system;
         };
+
+        go = pkgs.go_1_24;
+        buildGoModule = pkgs.buildGo124Module;
       in
       {
         devShells.default = pkgs.mkShell {
           packages = [
-            pkgs.delve
-            pkgs.go_1_24
+            (pkgs.delve.override {
+              inherit buildGoModule;
+            })
+            go
             pkgs.gotools  # stringer, etc.
             (pkgs.gopls.override {
-              buildGoModule = pkgs.buildGo124Module;
+              inherit buildGoModule;
             })
           ];
 
