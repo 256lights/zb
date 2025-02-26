@@ -6,6 +6,8 @@ package frontend
 import (
 	"context"
 	"fmt"
+	"iter"
+	"slices"
 	"strings"
 	"sync"
 
@@ -124,12 +126,38 @@ func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error)
 		return 2, nil
 	}
 
+	// Return error if there's an import cycle.
+	chain := importChainFromContext(ctx)
+	if chain.has(filename) {
+		var list []string
+		for chainPath := range chain.All() {
+			if chainPath == filename {
+				break
+			}
+			list = append(list, chainPath)
+		}
+		slices.Reverse(list)
+
+		sb := new(strings.Builder)
+		sb.WriteString("import cycle: ")
+		sb.WriteString(filename)
+		for _, chainPath := range list {
+			sb.WriteString("\n→ ")
+			sb.WriteString(chainPath)
+		}
+		l.PushNil()
+		l.PushString(sb.String())
+		return 2, nil
+	}
+
+	// Begin critical section on loaded state.
 	eval.loadedMutex.Lock()
 	defer func() {
 		eval.loadedState.SetTop(1)
 		eval.loadedMutex.Unlock()
 	}()
 
+	// See if the module has already been imported.
 	if got := eval.loadedState.RawField(1, filename); got != lua.TypeNil {
 		if err := l.XMove(&eval.loadedState, 1); err != nil {
 			return 0, err
@@ -137,6 +165,8 @@ func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error)
 		return 1, nil
 	}
 	eval.loadedState.Pop(1)
+
+	// Create new module instance.
 	finished := make(chan struct{})
 	mod := &module{finished: finished}
 	if err := eval.initState(&mod.state); err != nil {
@@ -154,20 +184,24 @@ func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error)
 		return 0, err
 	}
 
+	// Start a goroutine that evaluates the module file.
 	eval.importGroup.Add(1)
 	go func() {
-		// TODO(now): Detect cycles.
 		defer func() {
 			close(finished)
 			eval.importGroup.Done()
 		}()
-		ctx := eval.baseImportContext
+		ctx := contextWithImportChain(eval.baseImportContext, &importChain{
+			path: filename,
+			next: chain,
+		})
 		mod.error = eval.resolveModule(ctx, &mod.state, filename)
 		if mod.error != nil {
 			mod.state.Close()
 		}
 	}()
 
+	// Copy module from loaded state to top of stack.
 	if err := l.XMove(&eval.loadedState, 1); err != nil {
 		return 0, err
 	}
@@ -359,8 +393,8 @@ func waitForModuleArg(ctx context.Context, l *lua.State) error {
 // or nil if the value at the given index is not a module userdata.
 func testModule(l *lua.State, idx int) *module {
 	x, _ := lua.TestUserdata(l, idx, moduleTypeName)
-	drv, _ := x.(*module)
-	return drv
+	mod, _ := x.(*module)
+	return mod
 }
 
 // waitForModule waits for the module to load and pushes its return value onto l's stack.
@@ -381,3 +415,38 @@ func waitForModule(ctx context.Context, l *lua.State, mod *module) error {
 
 	return err
 }
+
+type importChain struct {
+	path string
+	next *importChain
+}
+
+func importChainFromContext(ctx context.Context) *importChain {
+	chain, _ := ctx.Value(importChainContextKey{}).(*importChain)
+	return chain
+}
+
+func contextWithImportChain(parent context.Context, chain *importChain) context.Context {
+	return context.WithValue(parent, importChainContextKey{}, chain)
+}
+
+func (chain *importChain) has(path string) bool {
+	for chainPath := range chain.All() {
+		if chainPath == path {
+			return true
+		}
+	}
+	return false
+}
+
+func (chain *importChain) All() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for curr := chain; curr != nil; curr = curr.next {
+			if !yield(curr.path) {
+				return
+			}
+		}
+	}
+}
+
+type importChainContextKey struct{}

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -172,6 +173,74 @@ func TestImportFromDerivation(t *testing.T) {
 	if results[0] != want {
 		t.Errorf("result = %#v; want %#v", results[0], want)
 	}
+}
+
+func TestImportCycle(t *testing.T) {
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+
+	realStoreDir := t.TempDir()
+	storeDir, err := zbstore.CleanDirectory(realStoreDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
+	eval, err := NewEval(storeDir, store, filepath.Join(t.TempDir(), "cache.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := eval.Close(); err != nil {
+			t.Error("eval.Close:", err)
+		}
+	}()
+
+	toString := func(x any) string {
+		s, _ := x.(string)
+		return s
+	}
+
+	t.Run("Self", func(t *testing.T) {
+		path := filepath.Join("testdata", "cycle", "self.lua")
+		results, err := eval.File(ctx, path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := results[0].([]any)
+		const want = "import cycle"
+		if len(got) != 2 || got[0] != nil || !strings.Contains(toString(got[1]), want) {
+			t.Errorf("import(%q) = %v; want nil, (string containing %q)", path, got, want)
+		} else {
+			t.Logf("Error message: %s", toString(got[1]))
+		}
+	})
+
+	t.Run("MultipleFiles", func(t *testing.T) {
+		path := filepath.Join("testdata", "cycle", "a.lua")
+		results, err := eval.File(ctx, path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := results[0].([]any)
+		const want = "import cycle"
+		if len(got) != 2 || got[0] != nil || !strings.Contains(toString(got[1]), want) {
+			t.Errorf("import(%q) = %v; want nil, (string containing %q)", path, got, want)
+		} else {
+			t.Logf("Error message: %s", toString(got[1]))
+		}
+	})
+
+	t.Run("Defer", func(t *testing.T) {
+		path := filepath.Join("testdata", "cycle", "defer_a.lua")
+		got, err := eval.File(ctx, path, []string{"[4]"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []any{int64(7)}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("import(%q) (-want +got):\n%s", path, diff)
+		}
+	})
 }
 
 func TestNewState(t *testing.T) {
