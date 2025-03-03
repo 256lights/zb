@@ -85,6 +85,7 @@ func main() {
 		newBuildCommand(g),
 		newDerivationCommand(g),
 		newEvalCommand(g),
+		newNARCommand(),
 		newServeCommand(g),
 		newStoreCommand(g),
 		luacCommand,
