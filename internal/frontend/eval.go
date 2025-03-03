@@ -35,10 +35,25 @@ const stdlibRegistryKey = "zb.256lights.llc/pkg/internal/frontend stdlib"
 //go:embed prelude.luac
 var preludeSource []byte
 
+// Options is the set of parameters for [NewEval].
+type Options struct {
+	// Store is an open JSON-RPC client to the store server.
+	Store *jsonrpc.Client
+	// StoreDirectory is the store directory used by the store.
+	StoreDirectory zbstore.Directory
+	// CacheDBPath is the path to a database file used to speed up store imports.
+	// If empty, an in-memory cache will be used.
+	CacheDBPath string
+	// LookupEnv is called for the Lua os.getenv function.
+	// If nil, os.getenv will always return nil.
+	LookupEnv func(ctx context.Context, key string) (string, bool)
+}
+
 type Eval struct {
 	store     *jsonrpc.Client
 	storeDir  zbstore.Directory
 	cachePool *sqlitemigration.Pool
+	lookupEnv func(ctx context.Context, key string) (string, bool)
 
 	baseImportContext context.Context
 	cancelImports     context.CancelFunc
@@ -54,10 +69,18 @@ type Eval struct {
 	loadedState lua.State
 }
 
-func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) (_ *Eval, err error) {
-	if err := os.MkdirAll(filepath.Dir(cacheDB), 0o777); err != nil {
-		return nil, fmt.Errorf("zb: new eval: %v", err)
+func NewEval(opts *Options) (_ *Eval, err error) {
+	eval := &Eval{
+		store:     opts.Store,
+		storeDir:  opts.StoreDirectory,
+		lookupEnv: opts.LookupEnv,
 	}
+	if eval.lookupEnv == nil {
+		eval.lookupEnv = func(ctx context.Context, key string) (string, bool) {
+			return "", false
+		}
+	}
+
 	var schema sqlitemigration.Schema
 	for i := 1; ; i++ {
 		migration, err := fs.ReadFile(sqlFiles(), fmt.Sprintf("schema/%02d.sql", i))
@@ -69,16 +92,23 @@ func NewEval(storeDir zbstore.Directory, store *jsonrpc.Client, cacheDB string) 
 		}
 		schema.Migrations = append(schema.Migrations, string(migration))
 	}
-
-	eval := &Eval{
-		store:    store,
-		storeDir: storeDir,
-		cachePool: sqlitemigration.NewPool(cacheDB, schema, sqlitemigration.Options{
+	if opts.CacheDBPath == "" {
+		eval.cachePool = sqlitemigration.NewPool(":memory:", schema, sqlitemigration.Options{
+			Flags:       sqlite.OpenReadWrite | sqlite.OpenMemory,
+			PoolSize:    1,
+			PrepareConn: prepareCache,
+		})
+	} else {
+		if err := os.MkdirAll(filepath.Dir(opts.CacheDBPath), 0o777); err != nil {
+			return nil, fmt.Errorf("zb: new eval: %v", err)
+		}
+		eval.cachePool = sqlitemigration.NewPool(opts.CacheDBPath, schema, sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
 			PoolSize:    1,
 			PrepareConn: prepareCache,
-		}),
+		})
 	}
+
 	if err := eval.initZygote(); err != nil {
 		return nil, fmt.Errorf("zb: new eval: %v", err)
 	}
@@ -176,6 +206,10 @@ func (eval *Eval) initZygote() error {
 		return err
 	}
 	l.Pop(1)
+	if err := lua.Require(ctx, l, lua.OSLibraryName, true, eval.openOS); err != nil {
+		return err
+	}
+	l.Pop(1)
 
 	// Run prelude.
 	if err := l.Load(bytes.NewReader(preludeSource), lua.UnknownSource, "b"); err != nil {
@@ -220,6 +254,24 @@ func clearFields(l *lua.State, fieldNames ...string) error {
 		}
 	}
 	return nil
+}
+
+func (eval *Eval) openOS(ctx context.Context, l *lua.State) (int, error) {
+	lua.NewPureLib(l, map[string]lua.Function{
+		"getenv": func(ctx context.Context, l *lua.State) (int, error) {
+			key, err := lua.CheckString(l, 1)
+			if err != nil {
+				return 0, err
+			}
+			if val, ok := eval.lookupEnv(ctx, key); ok {
+				l.PushString(val)
+			} else {
+				l.PushNil()
+			}
+			return 1, nil
+		},
+	})
+	return 1, nil
 }
 
 func (eval *Eval) newState() (*lua.State, error) {

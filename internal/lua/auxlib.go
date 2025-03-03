@@ -461,6 +461,14 @@ func NewTypeError(l *State, arg int, tname string) error {
 	return NewArgError(l, arg, fmt.Sprintf("%s expected, got %s", tname, typeArg))
 }
 
+// Unimplemented library names.
+const (
+	DebugLibraryName   = "debug"
+	IOLibraryName      = "io"
+	OSLibraryName      = "os"
+	PackageLibraryName = "package"
+)
+
 // OpenLibraries opens all standard Lua libraries into the given state
 // with their default settings.
 func OpenLibraries(ctx context.Context, l *State) error {

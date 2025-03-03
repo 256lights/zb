@@ -87,7 +87,10 @@ func TestLuaToGo(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
-	eval, err := NewEval(storeDir, store, filepath.Join(t.TempDir(), "cache.db"))
+	eval, err := NewEval(&Options{
+		Store:          store,
+		StoreDirectory: storeDir,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +112,78 @@ func TestLuaToGo(t *testing.T) {
 	}
 }
 
+func TestGetenv(t *testing.T) {
+	tests := []struct {
+		name     string
+		envValue string
+		envOK    bool
+		want     any
+	}{
+		{
+			name:     "Success",
+			envValue: "foo",
+			envOK:    true,
+			want:     "foo",
+		},
+		{
+			name:     "Missing",
+			envValue: "",
+			envOK:    false,
+			want:     nil,
+		},
+		{
+			name:     "Empty",
+			envValue: "",
+			envOK:    true,
+			want:     "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := testcontext.New(t)
+			defer cancel()
+
+			const wantKey = "BAR"
+			realStoreDir := t.TempDir()
+			storeDir, err := zbstore.CleanDirectory(realStoreDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
+			callCount := 0
+			eval, err := NewEval(&Options{
+				Store:          store,
+				StoreDirectory: storeDir,
+				LookupEnv: func(ctx context.Context, key string) (string, bool) {
+					callCount++
+					if key != wantKey {
+						t.Errorf("LookupEnv called with %q; want %q", key, wantKey)
+					}
+					return test.envValue, test.envOK
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := eval.Close(); err != nil {
+					t.Error("eval.Close:", err)
+				}
+			}()
+
+			expr := "os.getenv('" + wantKey + "')"
+			got, err := eval.Expression(ctx, expr, nil)
+			if err != nil {
+				t.Fatalf("%s: %v", expr, err)
+			}
+			if diff := cmp.Diff([]any{test.want}, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("%s (-want +got):\n%s", expr, diff)
+			}
+		})
+	}
+}
+
 func TestStringMethod(t *testing.T) {
 	ctx, cancel := testcontext.New(t)
 	defer cancel()
@@ -119,7 +194,10 @@ func TestStringMethod(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
-	eval, err := NewEval(storeDir, store, filepath.Join(t.TempDir(), "cache.db"))
+	eval, err := NewEval(&Options{
+		Store:          store,
+		StoreDirectory: storeDir,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +228,10 @@ func TestImportFromDerivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
-	eval, err := NewEval(storeDir, store, filepath.Join(t.TempDir(), "cache.db"))
+	eval, err := NewEval(&Options{
+		Store:          store,
+		StoreDirectory: storeDir,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +266,10 @@ func TestImportCycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
-	eval, err := NewEval(storeDir, store, filepath.Join(t.TempDir(), "cache.db"))
+	eval, err := NewEval(&Options{
+		Store:          store,
+		StoreDirectory: storeDir,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +337,10 @@ func TestNewState(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
-	eval, err := NewEval(storeDir, store, filepath.Join(t.TempDir(), "cache.db"))
+	eval, err := NewEval(&Options{
+		Store:          store,
+		StoreDirectory: storeDir,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +376,10 @@ func BenchmarkNewState(b *testing.B) {
 		b.Fatal(err)
 	}
 	store := newTestServer(b, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
-	eval, err := NewEval(storeDir, store, filepath.Join(b.TempDir(), "cache.db"))
+	eval, err := NewEval(&Options{
+		Store:          store,
+		StoreDirectory: storeDir,
+	})
 	if err != nil {
 		b.Fatal(err)
 	}

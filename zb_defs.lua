@@ -74,3 +74,11 @@ function table.elem(x, xs) end
 ---@param ... T[]
 ---@return T[]
 function table.concatLists(...) end
+
+os = {}
+
+---Returns the value of the process environment variable `varname`
+---or `nil` if the variable is not defined.
+---@param varname string
+---@return string|nil
+function os.getenv(varname) end

@@ -14,9 +14,11 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/luac"
+	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 )
@@ -105,6 +107,22 @@ type evalOptions struct {
 	expr         string
 	file         string
 	installables []string
+	allowEnv     stringAllowList
+}
+
+func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client) (*frontend.Eval, error) {
+	return frontend.NewEval(&frontend.Options{
+		Store:          storeClient,
+		StoreDirectory: g.storeDir,
+		CacheDBPath:    g.cacheDB,
+		LookupEnv: func(ctx context.Context, key string) (string, bool) {
+			if !opts.allowEnv.Has(key) {
+				log.Warnf(ctx, "os.getenv(%s) not permitted (use --allow-env=%s if this is intentional)", lualex.Quote(key), key)
+				return "", false
+			}
+			return os.LookupEnv(key)
+		},
+	})
 }
 
 func newEvalCommand(g *globalConfig) *cobra.Command {
@@ -119,6 +137,7 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 	opts := new(evalOptions)
 	c.Flags().StringVar(&opts.expr, "expr", "", "interpret installables as attribute paths relative to the Lua expression `expr`")
 	c.Flags().StringVar(&opts.file, "file", "", "interpret installables as attribute paths relative to the Lua expression stored in `path`")
+	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.installables = args
 		return runEval(cmd.Context(), g, opts)
@@ -132,7 +151,7 @@ func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 		storeClient.Close()
 		waitStoreClient()
 	}()
-	eval, err := frontend.NewEval(g.storeDir, storeClient, g.cacheDB)
+	eval, err := opts.newEval(g, storeClient)
 	if err != nil {
 		return err
 	}
@@ -181,6 +200,7 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 	opts := new(buildOptions)
 	c.Flags().StringVar(&opts.expr, "expr", "", "interpret installables as attribute paths relative to the Lua expression `expr`")
 	c.Flags().StringVar(&opts.file, "file", "", "interpret installables as attribute paths relative to the Lua expression stored in `path`")
+	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
 	c.Flags().StringVarP(&opts.outLink, "out-link", "o", "result", "change the name of the output path symlink to `path`")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.installables = args
@@ -195,7 +215,7 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 		storeClient.Close()
 		waitStoreClient()
 	}()
-	eval, err := frontend.NewEval(g.storeDir, storeClient, g.cacheDB)
+	eval, err := opts.newEval(g, storeClient)
 	if err != nil {
 		return err
 	}
@@ -289,19 +309,9 @@ func defaultVarDir() string {
 	return filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "zb")
 }
 
-type storeDirectoryFlag zbstore.Directory
-
-func (f *storeDirectoryFlag) Type() string  { return "string" }
-func (f storeDirectoryFlag) String() string { return string(f) }
-func (f storeDirectoryFlag) Get() any       { return zbstore.Directory(f) }
-
-func (f *storeDirectoryFlag) Set(s string) error {
-	dir, err := zbstore.CleanDirectory(s)
-	if err != nil {
-		return err
-	}
-	*f = storeDirectoryFlag(dir)
-	return nil
+func addEnvAllowListFlag(fset *pflag.FlagSet, list *stringAllowList) {
+	fset.Var(list.argFlag(true), "allow-env", "allow the given environment `var`iable to be accessed with os.getenv")
+	fset.Var(list.allFlag(), "allow-all-env", "allow all environment variables to be accessed with os.getenv")
 }
 
 var initLogOnce sync.Once

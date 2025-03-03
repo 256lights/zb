@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/zbstore"
@@ -54,6 +53,7 @@ func newDerivationShowCommand(g *globalConfig) *cobra.Command {
 	opts := new(derivationShowOptions)
 	c.Flags().StringVar(&opts.expr, "expr", "", "interpret arguments as attribute paths relative to the Lua expression `expr`")
 	c.Flags().StringVar(&opts.file, "file", "", "interpret arguments as attribute paths relative to the Lua expression stored in `path`")
+	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
 	c.Flags().BoolVar(&opts.jsonFormat, "json", false, "print derivation as JSON")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.installables = args
@@ -75,7 +75,7 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 		storeClient.Close()
 		waitStoreClient()
 	}()
-	eval, err := frontend.NewEval(g.storeDir, storeClient, g.cacheDB)
+	eval, err := opts.newEval(g, storeClient)
 	if err != nil {
 		return err
 	}
@@ -304,6 +304,7 @@ func newDerivationEnvCommand(g *globalConfig) *cobra.Command {
 	opts := new(derivationEnvOptions)
 	c.Flags().StringVar(&opts.expr, "expr", "", "interpret installables as attribute paths relative to the Lua expression `expr`")
 	c.Flags().StringVar(&opts.file, "file", "", "interpret installables as attribute paths relative to the Lua expression stored in `path`")
+	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
 	c.Flags().BoolVar(&opts.jsonFormat, "json", false, "print environments as JSON")
 	c.Flags().StringVar(&opts.tempDir, "temp-dir", os.TempDir(), "temporary `dir`ectory to fill in")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
@@ -319,7 +320,7 @@ func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvO
 		storeClient.Close()
 		waitStoreClient()
 	}()
-	eval, err := frontend.NewEval(g.storeDir, storeClient, g.cacheDB)
+	eval, err := opts.newEval(g, storeClient)
 	if err != nil {
 		return err
 	}
