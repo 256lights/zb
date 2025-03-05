@@ -75,7 +75,7 @@ func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
 		return err
 	}
 	defer func() {
-		if err := os.RemoveAll(chrootDir); err != nil {
+		if err := osutil.UnmountAndRemoveAll(chrootDir); err != nil {
 			log.Errorf(ctx, "Failed to clean up: %v", err)
 		}
 	}()

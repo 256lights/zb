@@ -122,3 +122,14 @@ func MakePublicReadOnly(path string, onError func(error) error) error {
 		return nil
 	})
 }
+
+// UnmountAndRemoveAll removes path and any children it contains,
+// unmounting any mount points encountered.
+// It removes everything it can but returns the first error it encounters.
+// If the path does not exist, RemoveAll returns nil (no error).
+// If there is an error, it will be of type [*os.PathError].
+//
+// Generally this requires root privileges to run.
+func UnmountAndRemoveAll(path string) error {
+	return removeAll(path)
+}
