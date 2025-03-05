@@ -5,72 +5,6 @@ local stage0 <const> = dofile("stage0-posix/x86_64-linux.lua")
 
 local boot <const> = {}
 
-local gnuMirrors <const> = {
-  "https://mirrors.kernel.org/gnu/",
-  "https://ftp.gnu.org/gnu/",
-}
-
-local badGNUURLs <const> = {
-  -- Nix's fetchurl seems to un-lzma tarballs from mirrors.kernel.org.
-  -- Unclear why.
-  "https://mirrors.kernel.org/gnu/coreutils/coreutils-6.10.tar.lzma",
-  "https://mirrors.kernel.org/gnu/libtool/libtool-2.2.4.tar.lzma",
-}
-
----@param args {path: string, hash: string}
-local function fetchGNU(args)
-  for _, mirror in ipairs(gnuMirrors) do
-    local url = mirror..args.path
-    if not table.elem(url, badGNUURLs) then
-      return fetchurl({
-        url = url;
-        hash = args.hash;
-      })
-    end
-  end
-end
-
----Construct a Unix-style search path by appending `subDir`
----to the specified `output` of each of the packages.
----@param output string
----@param subDir string
----@param paths derivation[]
----@return string
-local function makeSearchPathOutput(output, subDir, paths)
-  local parts = {}
-  for i, x in ipairs(paths) do
-    local xout = x[output]
-    if xout then
-      if #parts > 0 then
-        parts[#parts + 1] = ":"
-      end
-      parts[#parts + 1] = tostring(xout)
-      parts[#parts + 1] = "/"
-      parts[#parts + 1] = subDir
-    end
-  end
-  return table.concat(parts)
-end
-
----Construct a binary search path (such as `$PATH`)
----containing the binaries for a set of packages.
----@param pkgs derivation[]
----@return string # colon-separated paths
-local function mkBinPath(pkgs)
-  return makeSearchPathOutput("out", "bin", pkgs)
-end
-
----@param pkgs derivation[]
----@return string
-local function mkIncludePath(pkgs)
-  return makeSearchPathOutput("out", "include", pkgs)
-end
-
----@param pkgs derivation[]
----@return string
-local function mkLibraryPath(pkgs)
-  return makeSearchPathOutput("out", "lib", pkgs)
-end
 
 ---@param args table
 local function kaemDerivation(args)
@@ -88,20 +22,6 @@ local function kaemDerivation(args)
   actualArgs.builder = stage0.stage0.."/bin/kaem"
   actualArgs.args = { "-f", toFile(args.name.."-builder.kaem", args.script) }
   return derivation(actualArgs)
-end
-
----@param pname string
----@param version string?
----@return string
-local function stepPath(pname, version)
-  local name = pname
-  if version then
-    name = name.."-"..version
-  end
-  return path {
-    name = "live-bootstrap-steps-"..name;
-    path = "live-bootstrap/steps/"..name;
-  }
 end
 
 --- Issue cp commands for the directory.

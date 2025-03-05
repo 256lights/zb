@@ -3,10 +3,10 @@
 
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-CC      = tcc
-AR      = tcc -ar
+CC      ?= tcc
+AR      ?= tcc -ar
 
-CFLAGS  = -I lib \
+CFLAGS  += -I lib \
           -DVERSION=\"1.4.7\" \
           -DPACKAGE_BUGREPORT=\"bug-m4@gnu.org\" \
           -DPACKAGE_STRING=\"GNU\ M4\ 1.4.7\" \
