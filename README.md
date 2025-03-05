@@ -67,7 +67,7 @@ You can use `./zb --help` to get more information on commands.
 1. `mkdir $HOME/zb`
 2. Clone this repository to your computer and `cd` into it.
 3. `go build ./cmd/zb`
-4. `export ZB_STORE_DIR="$HOME/zb" ZB_STORE_SOCKET="$HOME/zb/var/zb/server.sock"`
+4. `export ZB_STORE_DIR="$HOME/zb/store" ZB_STORE_SOCKET="$HOME/zb/var/zb/server.sock"`
 5. Start the build server (only on startup): `./zb serve --sandbox=0 --db="$HOME/zb/var/zb/db.sqlite" &`
 6. Run a build: `./zb build --file demo/hello_macos.lua`
 
