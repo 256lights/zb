@@ -181,7 +181,7 @@ func removeAllFrom(parent *os.File, parentPath, base string) error {
 
 func ensureNotMounted(path string) error {
 	err := ignoringEINTR(func() error {
-		return unix.Unmount(path, 0)
+		return unix.Unmount(path, UnmountNoFollow)
 	})
 	// EINVAL is returned if we have permission to unmount but path does not name a mount point.
 	if err != nil && !errors.Is(err, unix.EINVAL) && !errors.Is(err, os.ErrNotExist) {

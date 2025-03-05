@@ -166,7 +166,7 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 			m := mounts[len(mounts)-1-i]
 
 			log.Debugf(ctx, "umount %s", m)
-			if err := unix.Unmount(m, 0); err != nil {
+			if err := unix.Unmount(m, osutil.UnmountNoFollow); err != nil {
 				log.Errorf(ctx, "Failed to unmount %s during cleanup: %v", m, err)
 			}
 		}
