@@ -29,7 +29,7 @@ func removeAll(path string) error {
 		}
 	}
 
-	if err := ensureNotMounted(path); err != nil {
+	if err := ensureNotMounted(path, false); err != nil {
 		return err
 	}
 
@@ -61,7 +61,7 @@ func removeAllFrom(parent *os.File, parentPath, base string) error {
 	parentFD := int(parent.Fd())
 	fullPath := parentPath + string(os.PathSeparator) + base
 
-	if err := ensureNotMounted(fullPath); err != nil {
+	if err := ensureNotMounted(fullPath, false); err != nil {
 		return err
 	}
 	// Simple case: Unlink removes it.
@@ -179,16 +179,84 @@ func removeAllFrom(parent *os.File, parentPath, base string) error {
 	}
 }
 
-func ensureNotMounted(path string) error {
-	err := ignoringEINTR(func() error {
+func ensureNotMounted(path string, unmountContents bool) error {
+	unmountError := ignoringEINTR(func() error {
 		return unix.Unmount(path, UnmountNoFollow)
 	})
-	// EINVAL is returned if we have permission to unmount but path does not name a mount point.
-	if err != nil && !errors.Is(err, unix.EINVAL) && !errors.Is(err, os.ErrNotExist) {
+	isMountpoint := true
+	switch {
+	case unmountError == nil || errors.Is(unmountError, os.ErrNotExist):
+		return nil
+	case errors.Is(unmountError, unix.EINVAL):
+		// We have permission to unmount, but path does not name a mount point.
+		if !unmountContents {
+			return nil
+		}
+		isMountpoint = false
+	case !errors.Is(unmountError, unix.EBUSY):
+		return &os.PathError{
+			Op:   "umount",
+			Path: path,
+			Err:  unmountError,
+		}
+	}
+
+	// We either hit EBUSY (might mean there are nested mountpoints)
+	// or a parent path did.
+	// Try opening the path as a directory and ensure its contents are unmounted.
+	file, err := os.OpenFile(path, os.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if errors.Is(err, unix.ENOTDIR) {
+			if !isMountpoint {
+				return nil
+			}
+			// If it's not a directory, return the original error.
+			err = unmountError
+		}
 		return &os.PathError{
 			Op:   "umount",
 			Path: path,
 			Err:  err,
+		}
+	}
+	for {
+		names, err := file.Readdirnames(1024)
+		if err != nil && err != io.EOF {
+			file.Close()
+			return &os.PathError{
+				Op:   "readdirnames",
+				Path: path,
+				Err:  err,
+			}
+		}
+		for _, name := range names {
+			if err := ensureNotMounted(path+string(os.PathSeparator)+name, true); err != nil {
+				file.Close()
+				return err
+			}
+		}
+		if err != nil {
+			file.Close()
+			break
+		}
+	}
+
+	// Contents should be unmounted now.
+	// Retry unmount if this was originally a mount point.
+	if !isMountpoint {
+		return nil
+	}
+	unmountError = ignoringEINTR(func() error {
+		return unix.Unmount(path, UnmountNoFollow)
+	})
+	if unmountError != nil && !errors.Is(unmountError, os.ErrNotExist) && !errors.Is(unmountError, unix.EINVAL) {
+		return &os.PathError{
+			Op:   "umount",
+			Path: path,
+			Err:  unmountError,
 		}
 	}
 	return nil

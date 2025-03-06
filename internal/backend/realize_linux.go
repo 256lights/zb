@@ -75,6 +75,8 @@ func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
 		return err
 	}
 	defer func() {
+		// The chroot is expected to contain bind mounts,
+		// so we carefully unmount as we remove the directory.
 		if err := osutil.UnmountAndRemoveAll(chrootDir); err != nil {
 			log.Errorf(ctx, "Failed to clean up: %v", err)
 		}
@@ -101,11 +103,9 @@ func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
 		opts.builderUID = invocation.user.UID
 		opts.builderGID = invocation.user.GID
 	}
-	cleanupMounts, err := setupSandboxFilesystem(ctx, chrootDir, opts)
-	if err != nil {
+	if err := setupSandboxFilesystem(ctx, chrootDir, opts); err != nil {
 		return err
 	}
-	defer cleanupMounts()
 
 	c := exec.CommandContext(ctx, invocation.derivation.Builder, invocation.derivation.Args...)
 	setCancelFunc(c)
@@ -156,26 +156,13 @@ type linuxSandboxOptions struct {
 	shmSize string
 }
 
-func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxOptions) (cleanupMounts func(), err error) {
+// setupSandboxFilesystem creates a sandbox filesystem inside an existing directory.
+// If setupSandboxFilesystem fails, it will leave any mountpoints in-place.
+func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxOptions) (err error) {
 	log.Debugf(ctx, "Creating sandbox at %s...", dir)
-	var mounts []string
-	// Separate variable so named return does not clobber in defer.
-	doCleanupMounts := func() {
-		for i := range mounts {
-			// Unmount in reverse order of creation.
-			m := mounts[len(mounts)-1-i]
-
-			log.Debugf(ctx, "umount %s", m)
-			if err := unix.Unmount(m, osutil.UnmountNoFollow); err != nil {
-				log.Errorf(ctx, "Failed to unmount %s during cleanup: %v", m, err)
-			}
-		}
-		mounts = nil
-	}
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("create sandbox in %s: %v", dir, err)
-			doCleanupMounts()
 		}
 	}()
 
@@ -183,78 +170,74 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 		_, err := os.Lstat(path)
 		return err == nil
 	}
-	doBindMount := func(ctx context.Context, oldname, newname string) error {
-		isMount, err := bindMount(ctx, oldname, newname)
-		if isMount {
-			mounts = append(mounts, newname)
-		}
-		return err
-	}
 
 	if !opts.storeDir.IsNative() {
-		return nil, fmt.Errorf("using non-native store %s", opts.storeDir)
+		return fmt.Errorf("using non-native store %s", opts.storeDir)
 	}
 
 	if err := osutil.MkdirPerm(filepath.Join(dir, "tmp"), 0o777|os.ModeSticky); err != nil {
-		return nil, err
+		return err
 	}
 	workDir := filepath.Join(dir, opts.workDir)
-	if err := doBindMount(ctx, opts.realWorkDir, workDir); err != nil {
-		return nil, err
+	if err := bindMount(ctx, opts.realWorkDir, workDir); err != nil {
+		return err
 	}
 
 	etcDir := filepath.Join(dir, "etc")
 	if err := os.Mkdir(etcDir, 0o755); err != nil {
-		return nil, err
+		return err
 	}
 	if err := osutil.WriteFilePerm(filepath.Join(etcDir, "passwd"), sandboxPasswd(opts.builderUID, opts.builderGID), 0o444); err != nil {
-		return nil, err
+		return err
 	}
 	if err := osutil.WriteFilePerm(filepath.Join(etcDir, "group"), sandboxGroup(opts.builderGID), 0o444); err != nil {
-		return nil, err
+		return err
 	}
 	const hostsContent = "127.0.0.1 localhost\n::1 localhost\n"
 	if err := osutil.WriteFilePerm(filepath.Join(etcDir, "hosts"), []byte(hostsContent), 0o444); err != nil {
-		return nil, err
+		return err
 	}
 	if opts.network {
 		const nsswitchContent = "hosts: files dns\nservices: files\n"
 		if err := osutil.WriteFilePerm(filepath.Join(etcDir, "nsswitch.conf"), []byte(nsswitchContent), 0o444); err != nil {
-			return nil, err
+			return err
 		}
 		for newname, oldname := range linuxNetworkBindMounts(etcDir, opts) {
-			if err := doBindMount(ctx, oldname, newname); err != nil {
-				return nil, err
+			if err := bindMount(ctx, oldname, newname); err != nil {
+				return err
 			}
 		}
 	}
 	if err := os.Chmod(etcDir, 0o555); err != nil {
-		return nil, err
+		return err
 	}
 
 	devDir := filepath.Join(dir, "dev")
 	if err := osutil.MkdirPerm(devDir, 0o755); err != nil {
-		return nil, err
+		return err
 	}
 	if exists("/dev/shm") {
 		shmDir := filepath.Join(devDir, "shm")
 		if err := osutil.MkdirPerm(shmDir, 0o755); err != nil {
-			return nil, err
+			return err
 		}
 		if opts.shmSize != "" {
 			mountOpts := "size=" + opts.shmSize
 			log.Debugf(ctx, "mount -t tmpfs -o %s none %s", mountOpts, shmDir)
 			err := unix.Mount("none", shmDir, "tmpfs", 0, mountOpts)
 			if err != nil {
-				return nil, err
+				return &os.PathError{
+					Op:   "mount tmpfs",
+					Path: shmDir,
+					Err:  err,
+				}
 			}
-			mounts = append(mounts, shmDir)
 		}
 	}
 
 	ptsDir := filepath.Join(devDir, "pts")
 	if err := osutil.MkdirPerm(ptsDir, 0o755); err != nil {
-		return nil, err
+		return err
 	}
 	if exists("/dev/pts/ptmx") {
 		ptmxPath := filepath.Join(devDir, "ptmx")
@@ -263,82 +246,88 @@ func setupSandboxFilesystem(ctx context.Context, dir string, opts *linuxSandboxO
 		err := unix.Mount("none", ptsDir, "devpts", 0, devptsMountOpts)
 		switch {
 		case err == nil:
-			mounts = append(mounts, ptsDir)
 			if err := os.Symlink("/dev/pts/ptmx", ptmxPath); err != nil {
-				return nil, err
+				return err
 			}
 			// Make sure /dev/pts/ptmx is world-writable.
 			// With some Linux versions, it is created with permissions 0.
 			if err := os.Chmod(filepath.Join(ptsDir, "ptmx"), 0o666); err != nil {
-				return nil, err
+				return err
 			}
 		case errors.Is(err, unix.EINVAL):
 			// Fallback: bind-mount /dev/pts and /dev/ptmx.
 			log.Debugf(ctx, "Failed to mount devpts at %s, falling back to bind mounts... (%v)", ptsDir, err)
-			if err := doBindMount(ctx, "/dev/pts", ptsDir); err != nil {
-				return nil, err
+			if err := bindMount(ctx, "/dev/pts", ptsDir); err != nil {
+				return err
 			}
 
-			if err := doBindMount(ctx, "/dev/ptmx", ptmxPath); err != nil {
-				return nil, err
+			if err := bindMount(ctx, "/dev/ptmx", ptmxPath); err != nil {
+				return err
 			}
 		default:
-			return nil, err
+			return &os.PathError{
+				Op:   "mount devpts",
+				Path: ptsDir,
+				Err:  err,
+			}
 		}
 	}
 
 	for newname, oldname := range linuxDeviceBindMounts(devDir) {
-		if err := doBindMount(ctx, oldname, newname); err != nil {
-			return nil, err
+		if err := bindMount(ctx, oldname, newname); err != nil {
+			return err
 		}
 	}
 	for newname, oldname := range linuxDeviceSymlinks(devDir) {
 		if err := os.Symlink(oldname, newname); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
 	procDir := filepath.Join(dir, "proc")
 	if err := osutil.MkdirPerm(procDir, 0o755); err != nil {
-		return nil, err
+		return err
 	}
 	if err := unix.Mount("none", procDir, "proc", 0, ""); err != nil {
-		return nil, err
+		return &os.PathError{
+			Op:   "mount proc",
+			Path: procDir,
+			Err:  err,
+		}
 	}
-	mounts = append(mounts, procDir)
 
 	// Create writable store directory.
 	storeDir := filepath.Join(dir, string(opts.storeDir))
 	if err := os.MkdirAll(filepath.Dir(storeDir), 0o755); err != nil {
-		return nil, err
+		return err
 	}
 	if err := osutil.MkdirPerm(storeDir, 0o775|os.ModeSticky); err != nil {
-		return nil, err
+		return err
 	}
 	if err := os.Chown(storeDir, opts.builderUID, opts.builderGID); err != nil {
-		return nil, err
+		return err
 	}
 	// Bind-mount input paths.
 	for input := range opts.inputs {
 		if inputDir := input.Dir(); inputDir != opts.storeDir {
-			return nil, fmt.Errorf("input %s is not inside %s", input, opts.storeDir)
+			return fmt.Errorf("input %s is not inside %s", input, opts.storeDir)
 		}
 		dst := filepath.Join(dir, string(input))
-		if err := doBindMount(ctx, filepath.Join(opts.realStoreDir, input.Base()), dst); err != nil {
-			return nil, err
+		if err := bindMount(ctx, filepath.Join(opts.realStoreDir, input.Base()), dst); err != nil {
+			return err
 		}
 	}
 
 	// Bind-mount requested extras.
 	for sandboxPath, hostPath := range opts.extra {
 		dst := filepath.Join(dir, sandboxPath)
-		if err := doBindMount(ctx, hostPath, dst); err != nil {
-			return nil, err
+		if err := bindMount(ctx, hostPath, dst); err != nil {
+			return err
 		}
 	}
 
 	log.Debugf(ctx, "Created sandbox at %s", dir)
-	return doCleanupMounts, nil
+	return nil
 }
 
 func sandboxPasswd(builderUID, builderGID int) []byte {
@@ -371,48 +360,58 @@ func sandboxGroup(builderGID int) []byte {
 // instead of creating a bind mount
 // and isMount will be false.
 // Symlinks cannot be bind-mounted, so recreating the symlink is the best that can be done.
-func bindMount(ctx context.Context, oldname, newname string) (isMount bool, err error) {
+func bindMount(ctx context.Context, oldname, newname string) (err error) {
+	defer func() {
+		if err != nil {
+			err = &os.LinkError{
+				Op:  "bind mount",
+				Old: oldname,
+				New: newname,
+				Err: err,
+			}
+		}
+	}()
+
 	info, err := os.Lstat(oldname)
 	if err != nil {
-		return false, fmt.Errorf("bind mount %s to %s: %w", oldname, newname, err)
+		return err
 	}
 
 	switch info.Mode().Type() {
 	case os.ModeDir:
 		if err := os.MkdirAll(newname, 0o777); err != nil {
-			return false, fmt.Errorf("bind mount %s to %s: %v", oldname, newname, err)
+			return err
 		}
 		log.Debugf(ctx, "mount --rbind %s %s", oldname, newname)
 		if err := unix.Mount(oldname, newname, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-			return false, fmt.Errorf("bind mount %s to %s: %v", oldname, newname, err)
+			return err
 		}
 	case os.ModeSymlink:
 		if err := os.MkdirAll(filepath.Dir(newname), 0o777); err != nil {
-			return false, fmt.Errorf("bind mount %s to %s: %v", oldname, newname, err)
+			return err
 		}
 		target, err := os.Readlink(oldname)
 		if err != nil {
-			return false, fmt.Errorf("bind mount %s to %s: %v", oldname, newname, err)
+			return err
 		}
 		log.Debugf(ctx, "ln -s %s %s", target, newname)
 		if err := os.Symlink(target, newname); err != nil {
-			return false, fmt.Errorf("bind mount %s to %s: %v", oldname, newname, err)
+			return err
 		}
-		return false, nil
 	default:
 		if err := os.MkdirAll(filepath.Dir(newname), 0o777); err != nil {
-			return false, fmt.Errorf("bind mount %s to %s: %v", oldname, newname, err)
+			return err
 		}
 		if err := os.WriteFile(newname, nil, 0o666); err != nil {
-			return false, fmt.Errorf("bind mount %s to %s: %v", oldname, newname, err)
+			return err
 		}
 		log.Debugf(ctx, "mount --rbind %s %s", oldname, newname)
 		if err := unix.Mount(oldname, newname, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-			return false, fmt.Errorf("bind mount %s to %s: %v", oldname, newname, err)
+			return err
 		}
 	}
 
-	return true, nil
+	return nil
 }
 
 func linuxNetworkBindMounts(etcDir string, opts *linuxSandboxOptions) iter.Seq2[string, string] {
