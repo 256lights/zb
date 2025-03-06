@@ -934,6 +934,8 @@ func runSubprocess(ctx context.Context, invocation *builderInvocation) error {
 	c.SysProcAttr = sysProcAttrForUser(invocation.user)
 
 	if err := c.Run(); err != nil {
+		errLine := append([]byte(err.Error()), '\n')
+		invocation.logWriter.Write(errLine)
 		return builderFailure{err}
 	}
 

@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -244,6 +245,7 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 	}
 
 	// TODO(soon): Batch.
+	numBuilt := 0
 	for _, result := range results {
 		drv, _ := result.(*frontend.Derivation)
 		if drv == nil {
@@ -256,13 +258,21 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 		if err != nil {
 			return err
 		}
+		hasValid := false
 		for _, out := range resp.Outputs {
 			if out.Path.Valid {
+				hasValid = true
 				fmt.Println(out.Path.X)
 			}
 		}
+		if hasValid {
+			numBuilt++
+		}
 	}
 
+	if numBuilt < len(results) {
+		return errors.New("not all derivations built")
+	}
 	return nil
 }
 

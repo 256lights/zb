@@ -124,6 +124,8 @@ func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
 	c.SysProcAttr.Chroot = chrootDir
 
 	if err := c.Run(); err != nil {
+		errLine := append([]byte(err.Error()), '\n')
+		invocation.logWriter.Write(errLine)
 		return builderFailure{err}
 	}
 
