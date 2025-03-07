@@ -34,6 +34,7 @@ type serveOptions struct {
 	buildUsersGroup string
 	sandbox         bool
 	sandboxPaths    map[string]string
+	allowKeepFailed bool
 }
 
 func newServeCommand(g *globalConfig) *cobra.Command {
@@ -58,6 +59,7 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 	c.Flags().StringVar(&opts.buildUsersGroup, "build-users-group", opts.buildUsersGroup, "name of Unix `group` of users to run builds as")
 	c.Flags().BoolVar(&opts.sandbox, "sandbox", opts.sandbox, "run builders in a restricted environment")
 	c.Flags().Var(pathMapFlag(opts.sandboxPaths), "sandbox-path", "`path` to allow in sandbox (can be passed multiple times)")
+	c.Flags().BoolVar(&opts.allowKeepFailed, "allow-keep-failed", true, "allow user to skip cleanup of failed builds")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		return runServe(cmd.Context(), g, opts)
 	}
@@ -127,10 +129,11 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 
 	log.Infof(ctx, "Listening on %s", g.storeSocket)
 	srv := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
-		BuildDir:       opts.buildDir,
-		SandboxPaths:   opts.sandboxPaths,
-		DisableSandbox: !opts.sandbox,
-		BuildUsers:     buildUsers,
+		BuildDir:        opts.buildDir,
+		SandboxPaths:    opts.sandboxPaths,
+		DisableSandbox:  !opts.sandbox,
+		BuildUsers:      buildUsers,
+		AllowKeepFailed: opts.allowKeepFailed,
 	})
 	defer func() {
 		if err := srv.Close(); err != nil {

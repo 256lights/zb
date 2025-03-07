@@ -77,7 +77,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		})
 	}
 	b := s.newBuilder(conn, drvCache)
-	if err := b.realize(ctx, wantOutputs); err != nil {
+	if err := b.realize(ctx, wantOutputs, args.KeepFailed); err != nil {
 		if isBuilderFailure(err) {
 			return marshalResponse(b.makeRealizeResponse(drvPath))
 		}
@@ -131,7 +131,7 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 	drv := drvCache[drvPath]
 	inputs := sets.Collect(drv.InputDerivationOutputs())
 	b := s.newBuilder(conn, drvCache)
-	if err := b.realize(ctx, inputs); err != nil {
+	if err := b.realize(ctx, inputs, false); err != nil {
 		if isBuilderFailure(err) {
 			return marshalResponse(b.makeRealizeResponse(drvPath))
 		}
@@ -227,7 +227,7 @@ func (b *builder) lookup(ref zbstore.OutputReference) (_ zbstore.Path, ok bool) 
 	return r.path, ok
 }
 
-func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) error {
+func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputReference], keepFailed bool) error {
 	log.Debugf(ctx, "Will realize %v...", want)
 
 	// Multi-output derivations are particularly troublesome for us
@@ -306,7 +306,7 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 		log.Debugf(ctx, "Acquired build lock on %s", curr.DrvPath)
 		outputs := sets.New(curr.OutputName)
 		outputs.AddSeq(multiOutputs[curr.DrvPath].All())
-		if err := b.do(ctx, curr.DrvPath, outputs); err != nil {
+		if err := b.do(ctx, curr.DrvPath, outputs, keepFailed); err != nil {
 			return err
 		}
 		drvLocks[curr.DrvPath]()
@@ -546,7 +546,7 @@ func (b *builder) isCompatible(pe pathAndEquivalenceClass) bool {
 // b.drvHashes must have a non-zero value for drvPath before calling do
 // (which implies the caller realized all of the derivation's inputs)
 // or else do returns an error.
-func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets.Set[string]) (err error) {
+func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets.Set[string], keepFailed bool) (err error) {
 	drv := b.derivations[drvPath]
 	if drv == nil {
 		return fmt.Errorf("build %s: unknown derivation", drvPath)
@@ -655,7 +655,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		log.Debugf(ctx, "Runner for %s is unsandboxed", drvPath)
 		runner = runSubprocess
 	}
-	tempOutPaths, err := b.runBuilder(ctx, drvPath, buildUser, runner)
+	tempOutPaths, err := b.runBuilder(ctx, drvPath, keepFailed, buildUser, runner)
 	if err != nil {
 		return err
 	}
@@ -828,7 +828,7 @@ type builderInvocation struct {
 	sandboxPaths map[string]string
 }
 
-func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, buildUser *BuildUser, f runnerFunc) (map[string]zbstore.Path, error) {
+func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, keepFailed bool, buildUser *BuildUser, f runnerFunc) (map[string]zbstore.Path, error) {
 	drvName, isDrv := drvPath.DerivationName()
 	if !isDrv {
 		return nil, fmt.Errorf("build %s: not a derivation", drvPath)
@@ -850,11 +850,19 @@ func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, buildUse
 		return nil, fmt.Errorf("build %s: %v", drvPath, err)
 	}
 
-	buildDir, err := os.MkdirTemp(b.server.buildDir, "zb-build-"+drvName+"*")
+	buildDir, err := os.MkdirTemp(b.server.buildDir, "zb-build-"+drvName+"-*")
 	if err != nil {
 		return nil, fmt.Errorf("build %s: %v", drvPath, err)
 	}
+	startedRun := false
 	defer func() {
+		if startedRun && keepFailed {
+			if b.server.allowKeepFailed {
+				log.Infof(ctx, "Build of %s failed and user requested build directory %s be kept", drvPath, buildDir)
+				return
+			}
+			log.Debugf(ctx, "Build of %s failed and user requested build directory be kept, but server policy is to discard.", drvPath)
+		}
 		if err := os.RemoveAll(buildDir); err != nil {
 			log.Warnf(ctx, "Failed to clean up %s: %v", buildDir, err)
 		}
@@ -876,6 +884,7 @@ func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, buildUse
 	defer bufferedPeerLogger.Flush()
 
 	log.Debugf(ctx, "Starting builder for %s...", drvPath)
+	startedRun = true
 	err = f(ctx, &builderInvocation{
 		derivation:     expandedDrv,
 		derivationPath: drvPath,
@@ -895,6 +904,15 @@ func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, buildUse
 			})
 		},
 	})
+	if err != nil && keepFailed && b.server.allowKeepFailed {
+		var buf []byte
+		buf = append(buf, "Build failed. Build directory available at "...)
+		buf = append(buf, buildDir...)
+		buf = append(buf, "\n"...)
+		if _, err := bufferedPeerLogger.Write(buf); err != nil {
+			log.Debugf(ctx, "While writing failed build directory info: %v", err)
+		}
+	}
 	bufferedPeerLogger.Flush()
 	if err != nil {
 		log.Debugf(ctx, "Builder for %s has failed: %v", drvPath, err)

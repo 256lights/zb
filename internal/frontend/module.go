@@ -96,7 +96,8 @@ func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error)
 		// TODO(someday): Only realize single output.
 		// TODO(someday): Batch.
 		err = jsonrpc.Do(ctx, eval.store, zbstore.RealizeMethod, resp, &zbstore.RealizeRequest{
-			DrvPath: c.outputReference.DrvPath,
+			DrvPath:    c.outputReference.DrvPath,
+			KeepFailed: eval.keepFailed,
 		})
 		if err != nil {
 			l.PushNil()

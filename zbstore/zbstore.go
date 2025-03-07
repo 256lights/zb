@@ -61,6 +61,9 @@ const RealizeMethod = "zb.realize"
 // RealizeRequest is the set of parameters for [RealizeMethod].
 type RealizeRequest struct {
 	DrvPath Path `json:"drvPath"`
+	// KeepFailed indicates that if the realization fails,
+	// the user wants the store to keep the build directory for further investigation.
+	KeepFailed bool `json:"keepFailed"`
 }
 
 // RealizeResponse is the result for [RealizeMethod].

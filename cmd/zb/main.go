@@ -109,6 +109,7 @@ type evalOptions struct {
 	file         string
 	installables []string
 	allowEnv     stringAllowList
+	keepFailed   bool
 }
 
 func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client) (*frontend.Eval, error) {
@@ -116,6 +117,7 @@ func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client) (
 		Store:          storeClient,
 		StoreDirectory: g.storeDir,
 		CacheDBPath:    g.cacheDB,
+		KeepFailed:     opts.keepFailed,
 		LookupEnv: func(ctx context.Context, key string) (string, bool) {
 			if !opts.allowEnv.Has(key) {
 				log.Warnf(ctx, "os.getenv(%s) not permitted (use --allow-env=%s if this is intentional)", lualex.Quote(key), key)
@@ -138,6 +140,7 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 	opts := new(evalOptions)
 	c.Flags().StringVar(&opts.expr, "expr", "", "interpret installables as attribute paths relative to the Lua expression `expr`")
 	c.Flags().StringVar(&opts.file, "file", "", "interpret installables as attribute paths relative to the Lua expression stored in `path`")
+	c.Flags().BoolVarP(&opts.keepFailed, "keep-failed", "k", false, "keep temporary directories of failed builds")
 	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.installables = args
@@ -201,6 +204,7 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 	opts := new(buildOptions)
 	c.Flags().StringVar(&opts.expr, "expr", "", "interpret installables as attribute paths relative to the Lua expression `expr`")
 	c.Flags().StringVar(&opts.file, "file", "", "interpret installables as attribute paths relative to the Lua expression stored in `path`")
+	c.Flags().BoolVarP(&opts.keepFailed, "keep-failed", "k", false, "keep temporary directories of failed builds")
 	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
 	c.Flags().StringVarP(&opts.outLink, "out-link", "o", "result", "change the name of the output path symlink to `path`")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
@@ -253,7 +257,8 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 		}
 		resp := new(zbstore.RealizeResponse)
 		err = jsonrpc.Do(ctx, storeClient, zbstore.RealizeMethod, resp, &zbstore.RealizeRequest{
-			DrvPath: drv.Path,
+			DrvPath:    drv.Path,
+			KeepFailed: opts.keepFailed,
 		})
 		if err != nil {
 			return err

@@ -40,6 +40,9 @@ type Options struct {
 	// If empty, defaults to [os.TempDir].
 	BuildDir string
 
+	// If AllowKeepFailed is true, then the KeepFailed field in [zbstore.RealizeRequest] will be respected.
+	AllowKeepFailed bool
+
 	// If DisableSandbox is true, then builders are always run without the sandbox.
 	// Otherwise, sandboxing is used whenever possible.
 	DisableSandbox bool
@@ -79,10 +82,11 @@ func CanSandbox() bool {
 // Server is a local store.
 // Server implements [jsonrpc.Handler] and is intended to be used with [jsonrpc.Serve].
 type Server struct {
-	dir      zbstore.Directory
-	realDir  string
-	buildDir string
-	db       *sqlitemigration.Pool
+	dir             zbstore.Directory
+	realDir         string
+	buildDir        string
+	db              *sqlitemigration.Pool
+	allowKeepFailed bool
 
 	sandbox      bool
 	sandboxPaths map[string]string
@@ -100,12 +104,13 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		panic(err)
 	}
 	srv := &Server{
-		dir:          dir,
-		realDir:      opts.RealDir,
-		buildDir:     opts.BuildDir,
-		sandbox:      !opts.DisableSandbox && CanSandbox(),
-		sandboxPaths: opts.SandboxPaths,
-		users:        users,
+		dir:             dir,
+		realDir:         opts.RealDir,
+		buildDir:        opts.BuildDir,
+		allowKeepFailed: opts.AllowKeepFailed,
+		sandbox:         !opts.DisableSandbox && CanSandbox(),
+		sandboxPaths:    opts.SandboxPaths,
+		users:           users,
 
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,

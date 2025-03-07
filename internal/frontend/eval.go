@@ -47,13 +47,17 @@ type Options struct {
 	// LookupEnv is called for the Lua os.getenv function.
 	// If nil, os.getenv will always return nil.
 	LookupEnv func(ctx context.Context, key string) (string, bool)
+	// KeepFailed indicates that if any realization fails,
+	// the user wants the store to keep the build directory for further investigation.
+	KeepFailed bool
 }
 
 type Eval struct {
-	store     *jsonrpc.Client
-	storeDir  zbstore.Directory
-	cachePool *sqlitemigration.Pool
-	lookupEnv func(ctx context.Context, key string) (string, bool)
+	store      *jsonrpc.Client
+	storeDir   zbstore.Directory
+	cachePool  *sqlitemigration.Pool
+	lookupEnv  func(ctx context.Context, key string) (string, bool)
+	keepFailed bool
 
 	baseImportContext context.Context
 	cancelImports     context.CancelFunc
