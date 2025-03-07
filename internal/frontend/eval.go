@@ -458,6 +458,7 @@ func evalAttrPaths(ctx context.Context, l *lua.State, paths []string) ([]any, er
 
 	result := make([]any, 0, len(paths))
 	for _, p := range paths {
+		l.PushPureFunction(0, messageHandler)
 		expr := "local x = ...; return x"
 		if !strings.HasPrefix(p, "[") {
 			expr += "."
@@ -467,8 +468,8 @@ func evalAttrPaths(ctx context.Context, l *lua.State, paths []string) ([]any, er
 			l.Pop(1)
 			return result, fmt.Errorf("%s: %v", p, err)
 		}
-		l.PushValue(-2)
-		if err := l.Call(ctx, 1, 1); err != nil {
+		l.PushValue(-3)
+		if err := l.PCall(ctx, 1, 1, -3); err != nil {
 			return result, fmt.Errorf("%s: %v", p, err)
 		}
 		x, err := luaToGo(ctx, l)
