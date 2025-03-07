@@ -14,11 +14,11 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
-	"zombiezen.com/go/nix"
 )
 
 func newDerivationCommand(g *globalConfig) *cobra.Command {
@@ -102,17 +102,16 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 	}
 
 	for _, result := range results {
-		drv, _ := result.(*zbstore.Derivation)
+		drv, _ := result.(*frontend.Derivation)
 		if drv == nil {
 			return fmt.Errorf("%v is not a derivation", result)
 		}
-		// TODO(someday): Evaluation should store the path of the exported result.
-		drvInfo, _, drvBytes, err := drv.Export(nix.SHA256)
-		if err != nil {
-			return err
-		}
 
 		if !opts.jsonFormat {
+			drvBytes, err := drv.MarshalText()
+			if err != nil {
+				return err
+			}
 			if len(results) > 1 {
 				drvBytes = append(drvBytes, '\n')
 			}
@@ -122,7 +121,7 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 			continue
 		}
 
-		jsonData, err := marshalDerivationJSON(string(drvInfo.StorePath), drv)
+		jsonData, err := marshalDerivationJSON(string(drv.Path), drv.Derivation)
 		if err != nil {
 			return err
 		}
@@ -350,36 +349,31 @@ func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvO
 
 	// TODO(soon): Batch.
 	for _, result := range results {
-		drv, _ := result.(*zbstore.Derivation)
+		drv, _ := result.(*frontend.Derivation)
 		if drv == nil {
 			return fmt.Errorf("%v is not a derivation", result)
 		}
-		// TODO(someday): Evaluation should store the path of the exported result.
-		drvInfo, _, _, err := drv.Export(nix.SHA256)
-		if err != nil {
-			return err
-		}
 
 		req := &zbstore.ExpandRequest{
-			DrvPath:            drvInfo.StorePath,
+			DrvPath:            drv.Path,
 			TemporaryDirectory: opts.tempDir,
 		}
 		if opts.jsonFormat {
 			// Dump expand response directly to preserve unknown fields.
 			jsonReq, err := json.Marshal(req)
 			if err != nil {
-				return fmt.Errorf("%s: marshal request: %v", drvInfo.StorePath, err)
+				return fmt.Errorf("%s: marshal request: %v", drv.Path, err)
 			}
 			resp, err := storeClient.JSONRPC(ctx, &jsonrpc.Request{
 				Method: zbstore.ExpandMethod,
 				Params: jsonReq,
 			})
 			if err != nil {
-				return fmt.Errorf("%s: %v", drvInfo.StorePath, err)
+				return fmt.Errorf("%s: %v", drv.Path, err)
 			}
 			jsonBytes, err := dedentJSON(resp.Result)
 			if err != nil {
-				return fmt.Errorf("%s: %v", drvInfo.StorePath, err)
+				return fmt.Errorf("%s: %v", drv.Path, err)
 			}
 			jsonBytes = append(jsonBytes, '\n')
 			if _, err := os.Stdout.Write(jsonBytes); err != nil {
