@@ -10,6 +10,7 @@ import (
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
+	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -127,6 +128,9 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 				return 0, fmt.Errorf("name argument: %v expected, got %v", lua.TypeString, typ)
 			}
 			drv.Name, _ = l.ToString(-1)
+			if _, err := eval.storeDir.Object("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-" + drv.Name); err != nil {
+				return 0, fmt.Errorf("name argument: %s is an invalid name", lualex.Quote(drv.Name))
+			}
 		case "system":
 			if typ := l.Type(-1); typ != lua.TypeString {
 				return 0, fmt.Errorf("system argument: %v expected, got %v", lua.TypeString, typ)
