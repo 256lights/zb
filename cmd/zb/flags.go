@@ -153,7 +153,7 @@ type stringAllowListAllFlag struct {
 	list *stringAllowList
 }
 
-func (b *stringAllowListAllFlag) IsBoolFlag() bool { return true }
+func (f *stringAllowListAllFlag) IsBoolFlag() bool { return true }
 func (f *stringAllowListAllFlag) Type() string     { return "bool" }
 func (f *stringAllowListAllFlag) String() string   { return strconv.FormatBool(f.list.all) }
 func (f *stringAllowListAllFlag) Get() any         { return f.list.all }

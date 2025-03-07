@@ -326,7 +326,8 @@ func defaultVarDir() string {
 
 func addEnvAllowListFlag(fset *pflag.FlagSet, list *stringAllowList) {
 	fset.Var(list.argFlag(true), "allow-env", "allow the given environment `var`iable to be accessed with os.getenv")
-	fset.Var(list.allFlag(), "allow-all-env", "allow all environment variables to be accessed with os.getenv")
+	all := fset.VarPF(list.allFlag(), "allow-all-env", "", "allow all environment variables to be accessed with os.getenv")
+	all.NoOptDefVal = "true"
 }
 
 var initLogOnce sync.Once
