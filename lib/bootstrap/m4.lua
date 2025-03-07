@@ -3,36 +3,38 @@
 
 local fetchGNU <const> = import "../fetchgnu.lua"
 local steps <const> = import "./steps.lua"
-local strings <const> = import "../strings.lua"
-local tables <const> = import "../tables.lua"
 
-return function(args)
-  return steps.bash(tables.update(
-    {
+local module <const> = { version = "1.4.7" }
+local getters <const> = {}
+
+function getters.tarball()
+  return fetchGNU {
+    path = "m4/m4-1.4.7.tar.bz2";
+    hash = "sha256:a88f3ddaa7c89cf4c34284385be41ca85e9135369c333fdfa232f3bf48223213";
+  }
+end
+
+setmetatable(module, {
+  __index = function(_, k)
+    local g = getters[k]
+    if g then return g() end
+  end;
+
+  __call = function(_, args)
+    return steps.bash {
       pname = "m4";
-      version = "1.4.7";
+      version = module.version;
       builder = args.bash.."/bin/bash";
 
-      PATH = args.PATH or strings.mkBinPath {
-        args.tcc,
-        args.bash,
-        args.coreutils,
-        args.sed,
-        args.tar,
-        args.gzip,
-        args.bzip2,
-        args.patch,
-        args.make,
-        args.stage0,
-      };
+      ARCH = args.ARCH;
+      CC = args.CC;
+      AR = args.AR;
+      CFLAGS = args.CFLAGS;
+      PATH = args.PATH;
 
-      tarballs = {
-        fetchGNU {
-          path = "m4/m4-1.4.7.tar.bz2";
-          hash = "sha256:a88f3ddaa7c89cf4c34284385be41ca85e9135369c333fdfa232f3bf48223213";
-        },
-      };
-    },
-    args
-  ))
-end
+      tarballs = { module.tarball };
+    }
+  end;
+})
+
+return module
