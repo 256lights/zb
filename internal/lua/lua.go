@@ -1877,7 +1877,7 @@ func (l *State) prepareCall(ctx context.Context, functionIndex int, opts callOpt
 				newCallStackTop := len(l.callStack) - 1
 				if opts.isTailCall {
 					newCallStackTop--
-					newStackTop = l.callStack[newStackTop].framePointer()
+					newStackTop = l.callStack[newCallStackTop].framePointer()
 				}
 				clear(l.callStack[newCallStackTop:])
 				l.callStack = l.callStack[:newCallStackTop]
