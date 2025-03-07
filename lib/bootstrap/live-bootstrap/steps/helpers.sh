@@ -313,7 +313,7 @@ default_src_postprocess() {
     if (command -v find && command -v file && command -v strip) >/dev/null 2>&1; then
         # Logic largely taken from void linux 06-strip-and-debug-pkgs.sh
         # shellcheck disable=SC2162
-        find "${DESTDIR}" -type f | while read f; do
+        find "${DESTDIR}${PREFIX}" -type f | while read f; do
             case "$(file -bi "${f}")" in
                 application/x-executable*) strip "${f}" ;;
                 application/x-sharedlib*|application/x-pie-executable*)
