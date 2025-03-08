@@ -828,7 +828,7 @@ type builderInvocation struct {
 	sandboxPaths map[string]string
 }
 
-func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, keepFailed bool, buildUser *BuildUser, f runnerFunc) (map[string]zbstore.Path, error) {
+func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, keepFailed bool, buildUser *BuildUser, f runnerFunc) (outPaths map[string]zbstore.Path, err error) {
 	drvName, isDrv := drvPath.DerivationName()
 	if !isDrv {
 		return nil, fmt.Errorf("build %s: not a derivation", drvPath)
@@ -838,7 +838,7 @@ func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, keepFail
 		return nil, fmt.Errorf("build %s: unknown derivation", drvPath)
 	}
 
-	outPaths, err := tempOutputPaths(drvPath, drv.Outputs)
+	outPaths, err = tempOutputPaths(drvPath, drv.Outputs)
 	if err != nil {
 		return nil, fmt.Errorf("build %s: %v", drvPath, err)
 	}
@@ -856,7 +856,7 @@ func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, keepFail
 	}
 	startedRun := false
 	defer func() {
-		if startedRun && keepFailed {
+		if err != nil && startedRun && keepFailed {
 			if b.server.allowKeepFailed {
 				log.Infof(ctx, "Build of %s failed and user requested build directory %s be kept", drvPath, buildDir)
 				return
