@@ -859,6 +859,11 @@ func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, keepFail
 		if err != nil && startedRun && keepFailed {
 			if b.server.allowKeepFailed {
 				log.Infof(ctx, "Build of %s failed and user requested build directory %s be kept", drvPath, buildDir)
+				if runtime.GOOS != "windows" {
+					if err := os.Chmod(buildDir, 0o755); err != nil {
+						log.Warnf(ctx, "Unable to make %s readable: %v", buildDir, err)
+					}
+				}
 				return
 			}
 			log.Debugf(ctx, "Build of %s failed and user requested build directory be kept, but server policy is to discard.", drvPath)
