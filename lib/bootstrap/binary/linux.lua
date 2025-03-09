@@ -3,15 +3,48 @@
 
 local gcc <const> = import "../gcc.lua"
 local gmp <const> = import "../gmp.lua"
-local linuxHeaders <const> = import "../linux_headers.lua"
 local m4 <const> = import "../m4.lua"
 local mpc <const> = import "../mpc.lua"
 local mpfr <const> = import "../mpfr.lua"
-local musl <const> = import "../musl.lua"
 local strings <const> = import "../../strings.lua"
+local tables <const> = import "../../tables.lua"
+
+---@param t table
+---@param k any
+---@param v any
+local function addDefault(t, k, v)
+  local x = t[k]
+  if x == nil then
+    if type(v) == "function" then
+      t[k] = v()
+    else
+      t[k] = v
+    end
+  elseif x == false then
+    t[k] = nil
+  end
+end
+
+---@param paths (string|derivation)[]
+---@return string
+local function makeRPathFlags(paths)
+  local parts = { "-Wl" }
+  for _, p in ipairs(paths) do
+    parts[#parts + 1] = '-rpath'
+    if type(p) == "string" then
+      parts[#parts + 1] = p
+    else
+      parts[#parts + 1] = p.."/lib"
+    end
+  end
+  return table.concat(parts, ',')
+end
 
 local function forArchitecture(arch)
-  local userPath <const> = os.getenv("PATH")
+  local userPath <const> = os.getenv("PATH") or "/usr/local/bin:/usr/bin:/bin"
+  local userCIncludePath <const> = os.getenv("C_INCLUDE_PATH")
+  local userCPlusIncludePath <const> = os.getenv("CPLUS_INCLUDE_PATH")
+  local userLibraryPath <const> = os.getenv("LIBRARY_PATH")
   local system <const> = arch.."-linux"
   local builderScript <const> = toFile(
     "builder.sh",
@@ -40,18 +73,24 @@ local function forArchitecture(arch)
       else\n\z
         cd *\n\z
       fi\n\z
+      for i in ${patches:-}; do\n\z
+        patch ${patchFlags:--p1} < "$i"\n\z
+      done\n\z
       ./configure --prefix=$out $configureFlags\n\z
       make $makeFlags $buildFlags\n\z
       make install $makeFlags $installFlags\n'
   )
 
   local function mkDerivation(args)
-    args.name = args.name or args.pname.."-"..args.version
-    args.system = args.system or system
-    args.builder = args.builder or "/usr/bin/bash"
-    args.PATH = args.PATH or userPath
-    args.SOURCE_DATE_EPOCH = args.SOURCE_DATE_EPOCH or 0
-    args.KBUILD_BUILD_TIMESTAMP = args.KBUILD_BUILD_TIMESTAMP or "@0"
+    addDefault(args, "name", function() return args.pname.."-"..args.version end)
+    addDefault(args, "system", system)
+    addDefault(args, "builder", "/usr/bin/bash")
+    addDefault(args, "PATH", userPath)
+    addDefault(args, "C_INCLUDE_PATH", userCIncludePath)
+    addDefault(args, "CPLUS_INCLUDE_PATH", userCPlusIncludePath)
+    addDefault(args, "LIBRARY_PATH", userLibraryPath)
+    addDefault(args, "SOURCE_DATE_EPOCH", 0)
+    addDefault(args, "KBUILD_BUILD_TIMESTAMP", "@0")
     args.args = { builderScript }
     return derivation(args)
   end
@@ -62,73 +101,99 @@ local function forArchitecture(arch)
     src = m4.tarball;
   }
 
-  local gmp = mkDerivation {
-    pname = "gmp";
-    version = gmp.version;
-    src = gmp.tarball;
+  local function mkGCCDeps(path)
+    path = path or userPath
+    local result = {}
 
-    PATH = strings.mkBinPath {
-      m4,
-    }..":"..userPath;
-  }
+    result.gmp = mkDerivation {
+      pname = "gmp";
+      version = gmp.version;
+      src = gmp.tarball;
 
-  local mpfr = mkDerivation {
-    pname = "mpfr";
-    version = mpfr.version;
-    src = mpfr.tarball;
+      PATH = strings.mkBinPath {
+        m4,
+      }..":"..path;
+    }
 
-    PATH = userPath;
+    result.mpfr = mkDerivation {
+      pname = "mpfr";
+      version = mpfr.version;
+      src = mpfr.tarball;
 
-    configureFlags = {
-      "--with-gmp="..gmp,
-    };
-  }
+      PATH = path;
 
-  local mpc = mkDerivation {
-    pname = "mpc";
-    version = mpc.version;
-    src = mpc.tarball;
+      configureFlags = {
+        "--with-gmp="..result.gmp,
+      };
+    }
 
-    PATH = userPath;
+    result.mpc = mkDerivation {
+      pname = "mpc";
+      version = mpc.version;
+      src = mpc.tarball;
 
-    configureFlags = {
-      "--with-gmp="..gmp,
-      "--with-mpfr="..mpfr,
-    };
-  }
+      PATH = path;
 
-  local muslVersion <const> = "1.2.4"
-  local musl = mkDerivation {
-    pname = "musl";
-    version = muslVersion;
-    src = musl.tarballs[muslVersion];
+      configureFlags = {
+        "--with-gmp="..result.gmp,
+        "--with-mpfr="..result.mpfr,
+      };
+    }
+    return result
+  end
 
-    PATH = userPath;
-  }
+  --[[
+  GCC's build process is *very* particular about include paths.
+  During the build of libstdc++,
+  it passes --nostdinc++ for libstdc++-v3/src/c++17.
+  (See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=100017 for background.)
+  Nix's gcc doesn't use the standard include paths
+  and depends on the system includes being passed in as flags or environment variables.
+  Thus, --nostdinc++ has no effect.
+  To emulate this, we:
+    - don't set CPLUS_INCLUDE_PATH (because that would get used everywhere)
+    - set CXXFLAGS to the set of paths that are in both CPLUS_INCLUDE_PATH and C_INCLUDE_PATH
+    - set CXXFLAGS_FOR_BUILD to the set of paths that are in CPLUS_INCLUDE_PATH
+      but not C_INCLUDE_PATH.
+      (Recall that in cross-compilation, the *build* platform is the machine currently in use,
+      the *host* platform is the machine the compiler will run on,
+      and the *target* platform is the machine the compiler will generate code for.)
+  --]]
+  local userCIncludePathList = strings.splitString(":", userCIncludePath)
+  local userCPlusIncludePathList = strings.splitString(":", userCPlusIncludePath)
+  local cxxArgs = {}
+  local cxxForBuildArgs = {}
+  for _, path in ipairs(userCPlusIncludePathList) do
+    if tables.elem(path, userCIncludePathList) then
+      cxxArgs[#cxxArgs + 1] = "-idirafter"
+      cxxArgs[#cxxArgs + 1] = path
+    else
+      cxxForBuildArgs[#cxxForBuildArgs + 1] = "-isystem"
+      cxxForBuildArgs[#cxxForBuildArgs + 1] = path
+    end
+  end
 
-  local linuxHeaders = linuxHeaders {
-    system = system;
-    builder = "/usr/bin/bash";
-
-    PATH = userPath;
-    C_INCLUDE_PATH = strings.mkIncludePath { musl };
-    LIBRARY_PATH = strings.mkIncludePath { musl };
-  }
-
+  -- Build first GCC.
+  -- This gives us a mostly deterministic base for compilation.
   local gccVersion <const> = "13.1.0"
-  local gcc = mkDerivation {
+  local gccDeps = mkGCCDeps()
+  local gcc1 <const> = mkDerivation {
     pname = "gcc";
     version = gccVersion;
     src = gcc.tarballs[gccVersion];
 
     PATH = userPath;
+    LDFLAGS = makeRPathFlags { gccDeps.gmp, gccDeps.mpfr, gccDeps.mpc };
+
+    C_INCLUDE_PATH = userCIncludePath;
+    CPLUS_INCLUDE_PATH = false;
+    CXXFLAGS = cxxArgs;
+    CXXFLAGS_FOR_BUILD = cxxForBuildArgs;
 
     configureFlags = {
-      "--target="..arch.."-unknown-linux-musl",
-      "--program-transform-name=",
-      "--with-mpc="..mpc,
-      "--with-mpfr="..mpfr,
-      "--with-gmp="..gmp,
+      "--with-gmp="..gccDeps.gmp,
+      "--with-mpfr="..gccDeps.mpfr,
+      "--with-mpc="..gccDeps.mpc,
       "--disable-plugins",
       "--disable-libssp",
       "--disable-libsanitizer",
@@ -136,25 +201,11 @@ local function forArchitecture(arch)
       "--disable-bootstrap",
       "--enable-threads=posix",
       "--enable-languages=c,c++",
-      "--enable-static",
-    };
-
-    buildFlags = {
-      "BOOT_LDFLAGS=-static",
-    };
-
-    C_INCLUDE_PATH = strings.mkIncludePath {
-      musl,
-      linuxHeaders,
-    };
-    LIBRARY_PATH = strings.mkLibraryPath {
-      musl,
     };
   }
 
   return {
-    gcc = gcc;
-    linuxHeaders = linuxHeaders;
+    gcc = gcc1;
   }
 end
 

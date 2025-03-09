@@ -1,6 +1,24 @@
 -- Copyright 2025 The zb Authors
 -- SPDX-License-Identifier: MIT
 
+---Cut a string with a separator
+---and produces a list of strings which were separated by this separator.
+---@param sep string
+---@param s string
+---@return string[]
+function splitString(sep, s)
+  local result = {}
+  local i = 1
+  while true do
+    local j = s:find(sep, i, true)
+    if not j then break end
+    result[#result + 1] = s:sub(i, j - 1)
+    i = j + #sep
+  end
+  result[#result + 1] = s:sub(i)
+  return result
+end
+
 ---Construct a Unix-style search path by appending `subDir`
 ---to the specified `output` of each of the packages.
 ---@param output string
