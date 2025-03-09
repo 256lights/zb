@@ -6,6 +6,7 @@ local gmp <const> = import "../gmp.lua"
 local m4 <const> = import "../m4.lua"
 local mpc <const> = import "../mpc.lua"
 local mpfr <const> = import "../mpfr.lua"
+local musl <const> = import "../musl.lua"
 local strings <const> = import "../../strings.lua"
 local tables <const> = import "../../tables.lua"
 
@@ -204,8 +205,24 @@ local function forArchitecture(arch)
     };
   }
 
+  local muslVersion <const> = "1.2.4"
+  local musl = mkDerivation {
+    pname = "musl";
+    version = muslVersion;
+    src = musl.tarballs[muslVersion];
+
+    PATH = strings.mkBinPath {
+      gcc1,
+    }..":"..userPath;
+
+    configureFlags = {
+      "--disable-shared",
+    };
+  }
+
   return {
     gcc = gcc1;
+    musl = musl;
   }
 end
 
