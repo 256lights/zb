@@ -51,6 +51,11 @@ type Options struct {
 	// These paths will be made available to sandboxed builders.
 	SandboxPaths map[string]string
 
+	// CoresPerBuild is a hint from the user to builders
+	// on the number of concurrent jobs to perform.
+	// If non-positive, then the number of cores detected on the machine is used.
+	CoresPerBuild int
+
 	// BuildUsers is the set of user IDs to use for builds on non-Windows systems.
 	// If empty, then builds will use the current process's privileges.
 	// [NewServer] will panic if multiple entries have the same user ID.
@@ -91,6 +96,8 @@ type Server struct {
 	sandbox      bool
 	sandboxPaths map[string]string
 
+	coresPerBuild int
+
 	writing  mutexMap[zbstore.Path] // store objects being written
 	building mutexMap[zbstore.Path] // derivations being built
 	users    *userSet
@@ -110,6 +117,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		allowKeepFailed: opts.AllowKeepFailed,
 		sandbox:         !opts.DisableSandbox && CanSandbox(),
 		sandboxPaths:    opts.SandboxPaths,
+		coresPerBuild:   opts.CoresPerBuild,
 		users:           users,
 
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
@@ -128,6 +136,9 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 				log.Errorf(ctx, "Migration: %v", err)
 			},
 		}),
+	}
+	if srv.coresPerBuild <= 0 {
+		srv.coresPerBuild = max(1, runtime.NumCPU())
 	}
 	if srv.realDir == "" {
 		srv.realDir = string(srv.dir)

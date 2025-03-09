@@ -110,7 +110,7 @@ func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
 	c := exec.CommandContext(ctx, invocation.derivation.Builder, invocation.derivation.Args...)
 	setCancelFunc(c)
 	env := maps.Clone(invocation.derivation.Env)
-	fillBaseEnv(env, invocation.derivation.Dir, workDir)
+	fillBaseEnv(env, invocation.derivation.Dir, workDir, invocation.cores)
 	for k, v := range xmaps.Sorted(env) {
 		c.Env = append(c.Env, k+"="+v)
 	}

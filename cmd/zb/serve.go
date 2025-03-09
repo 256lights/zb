@@ -35,6 +35,7 @@ type serveOptions struct {
 	sandbox         bool
 	sandboxPaths    map[string]string
 	allowKeepFailed bool
+	coresPerBuild   int
 }
 
 func newServeCommand(g *globalConfig) *cobra.Command {
@@ -60,6 +61,7 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 	c.Flags().BoolVar(&opts.sandbox, "sandbox", opts.sandbox, "run builders in a restricted environment")
 	c.Flags().Var(pathMapFlag(opts.sandboxPaths), "sandbox-path", "`path` to allow in sandbox (can be passed multiple times)")
 	c.Flags().BoolVar(&opts.allowKeepFailed, "allow-keep-failed", true, "allow user to skip cleanup of failed builds")
+	c.Flags().IntVar(&opts.coresPerBuild, "cores-per-build", runtime.NumCPU(), "hint to builders for `number` of concurrent jobs to run")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		return runServe(cmd.Context(), g, opts)
 	}
@@ -134,6 +136,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 		DisableSandbox:  !opts.sandbox,
 		BuildUsers:      buildUsers,
 		AllowKeepFailed: opts.allowKeepFailed,
+		CoresPerBuild:   opts.coresPerBuild,
 	})
 	defer func() {
 		if err := srv.Close(); err != nil {

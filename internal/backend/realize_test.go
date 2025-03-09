@@ -7,12 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +74,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 	}
 
 	logBuffer := new(bytes.Buffer)
-	client := newTestServer(t, dir, string(dir), &writerLogger{logBuffer}, nil)
+	client := newTestServer(t, dir, &writerLogger{logBuffer}, nil, nil)
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +145,7 @@ func TestRealizeReuse(t *testing.T) {
 	}
 
 	logBuffer := new(bytes.Buffer)
-	client := newTestServer(t, dir, string(dir), &writerLogger{logBuffer}, nil)
+	client := newTestServer(t, dir, &writerLogger{logBuffer}, nil, nil)
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -243,7 +245,7 @@ func TestRealizeMultiStep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, string(dir), &testBuildLogger{t}, nil)
+	client := newTestServer(t, dir, &testBuildLogger{t}, nil, nil)
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -345,7 +347,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, string(dir), &testBuildLogger{t}, nil)
+	client := newTestServer(t, dir, &testBuildLogger{t}, nil, nil)
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -479,7 +481,7 @@ func TestRealizeFixed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, string(dir), &testBuildLogger{t}, nil)
+	client := newTestServer(t, dir, &testBuildLogger{t}, nil, nil)
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -547,7 +549,7 @@ func TestRealizeFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, string(dir), &testBuildLogger{t}, nil)
+	client := newTestServer(t, dir, &testBuildLogger{t}, nil, nil)
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -585,6 +587,76 @@ func TestRealizeFailure(t *testing.T) {
 		if name != drvPath.Base() {
 			t.Errorf("unknown object %s left in store", name)
 		}
+	}
+}
+
+func TestRealizeCores(t *testing.T) {
+	tests := []int{1, 2}
+	for _, n := range tests {
+		t.Run(fmt.Sprintf("N%d", n), func(t *testing.T) {
+			ctx := testlog.WithTB(context.Background(), t)
+			dir, err := zbstore.CleanDirectory(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			exportBuffer := new(bytes.Buffer)
+			exporter := zbstore.NewExporter(exportBuffer)
+			const drvName = "cores.txt"
+			// Create a derivation that fails after creating its output.
+			drvContent := &zbstore.Derivation{
+				Name:   drvName,
+				Dir:    dir,
+				System: system.Current().String(),
+				Env: map[string]string{
+					"out": zbstore.HashPlaceholder("out"),
+				},
+				Outputs: map[string]*zbstore.DerivationOutputType{
+					zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+				},
+			}
+			if runtime.GOOS == "windows" {
+				drvContent.Builder = powershellPath
+				drvContent.Args = []string{"-Command", "${env:ZB_BUILD_CORES} | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"}
+			} else {
+				drvContent.Builder = shPath
+				drvContent.Args = []string{"-c", `echo -n "$ZB_BUILD_CORES" > "$out"`}
+			}
+			drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := exporter.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			client := newTestServer(t, dir, &testBuildLogger{t}, nil, &Options{
+				CoresPerBuild: n,
+			})
+			codec, releaseCodec, err := storeCodec(ctx, client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = codec.Export(exportBuffer)
+			releaseCodec()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got := new(zbstore.RealizeResponse)
+			err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
+				DrvPath: drvPath,
+			})
+			if err != nil {
+				t.Fatal("build drv:", err)
+			}
+			wantOutputContent := strconv.Itoa(n)
+			wantOutputPath, err := singleFileOutputPath(dir, drvName, []byte(wantOutputContent), zbstore.References{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
+		})
 	}
 }
 
@@ -628,7 +700,7 @@ func TestRealizeFetchURL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, string(dir), &testBuildLogger{t}, nil)
+	client := newTestServer(t, dir, &testBuildLogger{t}, nil, nil)
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)

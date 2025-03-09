@@ -7,18 +7,20 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"syscall"
 
 	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/zbstore"
 )
 
-func fillBaseEnv(m map[string]string, storeDir zbstore.Directory, workDir string) {
-	xmaps.SetDefault(m, "PATH", `C:\path-not-set`)
+func fillBaseEnv(m map[string]string, storeDir zbstore.Directory, workDir string, cores int) {
 	xmaps.SetDefault(m, "HOME", `C:\home-not-set`)
-	xmaps.SetDefault(m, "TMP", workDir)
+	xmaps.SetDefault(m, "PATH", `C:\path-not-set`)
 	xmaps.SetDefault(m, "TEMP", workDir)
+	xmaps.SetDefault(m, "TMP", workDir)
 	xmaps.SetDefault(m, "ZB_STORE", string(storeDir))
+	xmaps.SetDefault(m, "ZB_BUILD_CORES", strconv.Itoa(cores))
 	xmaps.SetDefault(m, "ZB_BUILD_TOP", workDir)
 	// TODO(someday): More.
 }

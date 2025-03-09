@@ -58,7 +58,9 @@ func TestImport(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		client := newTestServer(t, dir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
+		client := newTestServer(t, dir, jsonrpc.MethodNotFoundHandler{}, nil, &Options{
+			RealDir: realStoreDir,
+		})
 
 		codec, releaseCodec, err := storeCodec(ctx, client)
 		if err != nil {
@@ -160,7 +162,7 @@ func TestImport(t *testing.T) {
 // and returns a client connected to it.
 // newTestServer must be called from the goroutine running the test or benchmark.
 // The server and the client will be closed as part of test cleanup.
-func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir string, clientHandler jsonrpc.Handler, clientReceiver zbstore.NARReceiver) *jsonrpc.Client {
+func newTestServer(tb testing.TB, storeDir zbstore.Directory, clientHandler jsonrpc.Handler, clientReceiver zbstore.NARReceiver, opts *Options) *jsonrpc.Client {
 	tb.Helper()
 	helperDir := tb.TempDir()
 	buildDir := filepath.Join(helperDir, "build")
@@ -169,11 +171,16 @@ func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir strin
 	}
 
 	var wg sync.WaitGroup
-	srv := NewServer(storeDir, filepath.Join(helperDir, "db.sqlite"), &Options{
-		RealDir:        realStoreDir,
-		BuildDir:       buildDir,
-		DisableSandbox: true,
-	})
+	opts2 := new(Options)
+	if opts != nil {
+		*opts2 = *opts
+	}
+	opts2.BuildDir = buildDir
+	opts2.DisableSandbox = true
+	if opts2.CoresPerBuild < 1 {
+		opts2.CoresPerBuild = 1
+	}
+	srv := NewServer(storeDir, filepath.Join(helperDir, "db.sqlite"), opts2)
 	serverConn, clientConn := net.Pipe()
 
 	ctx, cancel := context.WithCancel(testlog.WithTB(context.Background(), tb))

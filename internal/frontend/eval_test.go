@@ -417,6 +417,7 @@ func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir strin
 		RealDir:        realStoreDir,
 		BuildDir:       buildDir,
 		DisableSandbox: true,
+		CoresPerBuild:  1,
 	})
 	serverConn, clientConn := net.Pipe()
 

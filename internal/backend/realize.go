@@ -151,7 +151,7 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 		maps.All(inputRewrites),
 	))
 	expandedDrv := expandDerivationPlaceholders(r, drv)
-	fillBaseEnv(expandedDrv.Env, drv.Dir, temporaryDirectory)
+	fillBaseEnv(expandedDrv.Env, drv.Dir, temporaryDirectory, s.coresPerBuild)
 
 	return marshalResponse(&zbstore.ExpandResponse{
 		Builder: expandedDrv.Builder,
@@ -822,6 +822,9 @@ type builderInvocation struct {
 	// user is the Unix user to run the build as.
 	// If nil, then the current process's user should be used.
 	user *BuildUser
+	// cores is a hint from the user to the builder
+	// on the number of concurrent jobs to perform.
+	cores int
 	// sandboxPaths is a map of paths inside the sandbox
 	// to paths on the host machine.
 	// For sandboxed runners, these paths will be made available inside the sandbox.
@@ -900,6 +903,7 @@ func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, keepFail
 		logWriter:    bufferedPeerLogger,
 		user:         buildUser,
 		sandboxPaths: b.server.sandboxPaths,
+		cores:        b.server.coresPerBuild,
 
 		lookup: b.lookup,
 		closure: func(path zbstore.Path, yield func(zbstore.Path) bool) error {
@@ -947,7 +951,7 @@ func runSubprocess(ctx context.Context, invocation *builderInvocation) error {
 	c := exec.CommandContext(ctx, invocation.derivation.Builder, invocation.derivation.Args...)
 	setCancelFunc(c)
 	env := maps.Clone(invocation.derivation.Env)
-	fillBaseEnv(env, invocation.derivation.Dir, invocation.buildDir)
+	fillBaseEnv(env, invocation.derivation.Dir, invocation.buildDir, invocation.cores)
 	for k, v := range xmaps.Sorted(env) {
 		c.Env = append(c.Env, k+"="+v)
 	}
