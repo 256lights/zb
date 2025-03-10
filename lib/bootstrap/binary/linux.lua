@@ -78,7 +78,7 @@ local function forArchitecture(arch)
         patch ${patchFlags:--p1} < "$i"\n\z
       done\n\z
       ./configure --prefix=$out $configureFlags\n\z
-      make $makeFlags $buildFlags\n\z
+      make -j${ZB_BUILD_CORES:-1} $makeFlags $buildFlags\n\z
       make install $makeFlags $installFlags\n'
   )
 
