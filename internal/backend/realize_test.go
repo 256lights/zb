@@ -617,10 +617,10 @@ func TestRealizeCores(t *testing.T) {
 			}
 			if runtime.GOOS == "windows" {
 				drvContent.Builder = powershellPath
-				drvContent.Args = []string{"-Command", "${env:ZB_BUILD_CORES} | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"}
+				drvContent.Args = []string{"-Command", "\"${env:ZB_BUILD_CORES}`n\" | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"}
 			} else {
 				drvContent.Builder = shPath
-				drvContent.Args = []string{"-c", `echo -n "$ZB_BUILD_CORES" > "$out"`}
+				drvContent.Args = []string{"-c", `echo "$ZB_BUILD_CORES" > "$out"`}
 			}
 			drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
 			if err != nil {
