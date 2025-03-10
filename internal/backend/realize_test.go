@@ -14,7 +14,6 @@ import (
 	"os"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -650,7 +649,7 @@ func TestRealizeCores(t *testing.T) {
 			if err != nil {
 				t.Fatal("build drv:", err)
 			}
-			wantOutputContent := strconv.Itoa(n)
+			wantOutputContent := fmt.Sprintf("%d\n", n)
 			wantOutputPath, err := singleFileOutputPath(dir, drvName, []byte(wantOutputContent), zbstore.References{})
 			if err != nil {
 				t.Fatal(err)
