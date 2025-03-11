@@ -47,40 +47,19 @@ local function forArchitecture(arch)
   local userCPlusIncludePath <const> = os.getenv("CPLUS_INCLUDE_PATH")
   local userLibraryPath <const> = os.getenv("LIBRARY_PATH")
   local system <const> = arch.."-linux"
-  local builderScript <const> = toFile(
-    "builder.sh",
-    '\z
-      #!/usr/bin/env bash\n\z
-      set -e\n\z
-      mkdir "${TEMPDIR}/src"\n\z
-      cd "${TEMPDIR}/src"\n\z
-      case "$src" in\n\z
-        *.tar.bz2)\n\z
-          tar -xf "$src" --bzip2\n\z
-          ;;\n\z
-        *.tar.gz)\n\z
-          tar -xf "$src" --gzip\n\z
-          ;;\n\z
-        *.tar.xz)\n\z
-          tar -xf "$src" --xz\n\z
-          ;;\n\z
-        *)\n\z
-          echo "unhandled source $src"\n\z
-          exit 1\n\z
-          ;;\n\z
-      esac\n\z
-      if [[ -n "$sourceRoot" ]]; then\n\z
-        cd "$sourceRoot"\n\z
-      else\n\z
-        cd *\n\z
-      fi\n\z
-      for i in ${patches:-}; do\n\z
-        patch ${patchFlags:--p1} < "$i"\n\z
-      done\n\z
-      ./configure --prefix=$out $configureFlags\n\z
-      make -j${ZB_BUILD_CORES:-1} $makeFlags $buildFlags\n\z
-      make install $makeFlags $installFlags\n'
-  )
+  local builderScript <const> = path "builder.sh"
+
+  local configGuess <const> = fetchurl {
+    name = "config.guess";
+    url = "https://cvs.savannah.gnu.org/viewvc/*checkout*/config/config/config.guess?revision=1.377";
+    hash = "sha256:a41df3c465f3704faf331f052c4c3975f656436902d1778e81e16b5b511fb5ed";
+  }
+
+  local configSub <const> = fetchurl {
+    name = "config.sub";
+    url = "https://cvs.savannah.gnu.org/viewvc/*checkout*/config/config/config.sub?revision=1.362";
+    hash = "sha256:638892f94dc00d98cee4a88d76194263ed4c08c0f8d689e7de496f28b9c26b2d";
+  }
 
   local function mkDerivation(args)
     addDefault(args, "name", function() return args.pname.."-"..args.version end)
@@ -92,6 +71,8 @@ local function forArchitecture(arch)
     addDefault(args, "LIBRARY_PATH", userLibraryPath)
     addDefault(args, "SOURCE_DATE_EPOCH", 0)
     addDefault(args, "KBUILD_BUILD_TIMESTAMP", "@0")
+    addDefault(args, "configGuess", configGuess)
+    addDefault(args, "configSub", configSub)
     args.args = { builderScript }
     return derivation(args)
   end
