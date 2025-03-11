@@ -4,8 +4,7 @@
 ---@param system string
 ---@return boolean
 local function isWindows(system)
-  -- TODO(someday): Use string module to check suffix.
-  return system == "x86_64-windows" or system == "aarch64-windows"
+  return system:find("-windows$") ~= nil
 end
 
 local function forSystem(_, currentSystem)
