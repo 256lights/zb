@@ -34,6 +34,7 @@
       {
         devShells.default = pkgs.mkShellNoCC {
           packages = [
+            pkgs.binutils
             gcc
             (pkgs.delve.override {
               inherit buildGoModule;
