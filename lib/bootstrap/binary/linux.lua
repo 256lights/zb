@@ -66,9 +66,6 @@ local function forArchitecture(arch)
     addDefault(args, "system", system)
     addDefault(args, "builder", "/usr/bin/bash")
     addDefault(args, "PATH", userPath)
-    addDefault(args, "C_INCLUDE_PATH", userCIncludePath)
-    addDefault(args, "CPLUS_INCLUDE_PATH", userCPlusIncludePath)
-    addDefault(args, "LIBRARY_PATH", userLibraryPath)
     addDefault(args, "SOURCE_DATE_EPOCH", 0)
     addDefault(args, "KBUILD_BUILD_TIMESTAMP", "@0")
     addDefault(args, "configGuess", configGuess)
@@ -81,12 +78,44 @@ local function forArchitecture(arch)
     pname = "m4";
     version = m4.version;
     src = m4.tarball;
+
+    C_INCLUDE_PATH = userCIncludePath;
+    CPLUS_INCLUDE_PATH = userCPlusIncludePath;
+    LIBRARY_PATH = userLibraryPath;
   }
 
-  local function mkGCCDeps(path)
-    path = path or userPath
+  ---@param path string
+  ---@param musl derivation|string|nil
+  ---@return { gmp: derivation, mpfr: derivation, mpc: derivation }
+  local function mkGCCDeps(path, musl)
     local result = {}
 
+    ---@type string|nil
+    local cIncludePath = nil
+    ---@type string|nil
+    local cplusIncludePath = nil
+    ---@type string|nil
+    local libraryPath = nil
+    ---@type string|table|nil
+    local cflags = nil
+    ---@type string[]
+    local baseConfigureFlags = {}
+    if musl then
+      cflags = {
+        "-specs="..musl.."/lib/musl-gcc.specs",
+      }
+      baseConfigureFlags[#baseConfigureFlags + 1] = "--enable-static"
+      baseConfigureFlags[#baseConfigureFlags + 1] = "--disable-shared"
+    else
+      cIncludePath = userCIncludePath
+      cplusIncludePath = userCPlusIncludePath
+      libraryPath = userLibraryPath
+    end
+
+    local gmpConfigureFlags
+    if #baseConfigureFlags > 0 then
+      gmpConfigureFlags = baseConfigureFlags
+    end
     result.gmp = mkDerivation {
       pname = "gmp";
       version = gmp.version;
@@ -95,6 +124,12 @@ local function forArchitecture(arch)
       PATH = strings.mkBinPath {
         m4,
       }..":"..path;
+      C_INCLUDE_PATH = cIncludePath;
+      CPLUS_INCLUDE_PATH = cplusIncludePath;
+      LIBRARY_PATH = libraryPath;
+      CFLAGS = cflags;
+
+      configureFlags = gmpConfigureFlags;
     }
 
     result.mpfr = mkDerivation {
@@ -103,10 +138,14 @@ local function forArchitecture(arch)
       src = mpfr.tarball;
 
       PATH = path;
+      C_INCLUDE_PATH = cIncludePath;
+      CPLUS_INCLUDE_PATH = cplusIncludePath;
+      LIBRARY_PATH = libraryPath;
+      CFLAGS = cflags;
 
-      configureFlags = {
+      configureFlags = table.concatLists({
         "--with-gmp="..result.gmp,
-      };
+      }, baseConfigureFlags);
     }
 
     result.mpc = mkDerivation {
@@ -115,11 +154,15 @@ local function forArchitecture(arch)
       src = mpc.tarball;
 
       PATH = path;
+      C_INCLUDE_PATH = cIncludePath;
+      CPLUS_INCLUDE_PATH = cplusIncludePath;
+      LIBRARY_PATH = libraryPath;
+      CFLAGS = cflags;
 
-      configureFlags = {
+      configureFlags = table.concatLists({
         "--with-gmp="..result.gmp,
         "--with-mpfr="..result.mpfr,
-      };
+      }, baseConfigureFlags);
     }
     return result
   end
@@ -158,19 +201,19 @@ local function forArchitecture(arch)
   -- Build first GCC.
   -- This gives us a mostly deterministic base for compilation.
   local gccVersion <const> = "13.1.0"
-  local gccDeps = mkGCCDeps()
+  local gccDeps = mkGCCDeps(userPath)
   local gcc1 <const> = mkDerivation {
     pname = "gcc";
     version = gccVersion;
     src = gcc.tarballs[gccVersion];
 
     PATH = userPath;
-    LDFLAGS = makeRPathFlags { gccDeps.gmp, gccDeps.mpfr, gccDeps.mpc };
 
     C_INCLUDE_PATH = userCIncludePath;
-    CPLUS_INCLUDE_PATH = false;
+    LIBRARY_PATH = userLibraryPath;
     CXXFLAGS = cxxArgs;
     CXXFLAGS_FOR_BUILD = cxxForBuildArgs;
+    LDFLAGS = makeRPathFlags { gccDeps.gmp, gccDeps.mpfr, gccDeps.mpc };
 
     configureFlags = {
       "--with-gmp="..gccDeps.gmp,
@@ -181,10 +224,15 @@ local function forArchitecture(arch)
       "--disable-libsanitizer",
       "--disable-multilib",
       "--disable-bootstrap",
+      "--disable-shared",
       "--enable-threads=posix",
       "--enable-languages=c,c++",
     };
   }
+
+  local userPathWithGCC1 <const> = strings.mkBinPath {
+    gcc1,
+  }..":"..userPath
 
   local muslVersion <const> = "1.2.4"
   local musl = mkDerivation {
@@ -192,9 +240,7 @@ local function forArchitecture(arch)
     version = muslVersion;
     src = musl.tarballs[muslVersion];
 
-    PATH = strings.mkBinPath {
-      gcc1,
-    }..":"..userPath;
+    PATH = userPathWithGCC1;
 
     configureFlags = {
       "--disable-shared",
