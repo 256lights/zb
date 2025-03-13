@@ -34,12 +34,15 @@
       {
         devShells.default = pkgs.mkShellNoCC {
           packages = [
-            pkgs.binutils
+            # C/C++ tooling.
             gcc
+            libc.bin
+            pkgs.binutils-unwrapped
+
+            # Go tooling.
             (pkgs.delve.override {
               inherit buildGoModule;
             })
-            libc.bin
             go
             pkgs.gotools  # stringer, etc.
             (pkgs.gopls.override {
