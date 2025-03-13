@@ -7,6 +7,7 @@ package main
 
 import (
 	"os"
+	"os/signal"
 
 	"go4.org/xdgdir"
 	"golang.org/x/sys/unix"
@@ -19,4 +20,8 @@ var interruptSignals = []os.Signal{
 
 func cacheDir() string {
 	return xdgdir.Cache.Path()
+}
+
+func ignoreSIGPIPE() {
+	signal.Ignore(unix.SIGPIPE)
 }

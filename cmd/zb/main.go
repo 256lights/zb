@@ -94,6 +94,7 @@ func main() {
 		luacCommand,
 	)
 
+	ignoreSIGPIPE()
 	ctx, cancel := signal.NotifyContext(context.Background(), interruptSignals...)
 	err = rootCommand.ExecuteContext(ctx)
 	cancel()

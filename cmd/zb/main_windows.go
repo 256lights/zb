@@ -14,3 +14,5 @@ func cacheDir() string {
 	}
 	return dir
 }
+
+func ignoreSIGPIPE() {}
