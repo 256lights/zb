@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copied from https://github.com/rofl0r/musl-cross-make/raw/3889a9b28a10dd0a130b3ba3446b930e9bc6eb7e/patches/gcc-4.2.1/0014-cfns-inline-fix.diff,
+# part of https://github.com/richfelker/musl-cross-make/pull/78
+--- gcc-4.2.1.orig/gcc/cp/cfns.h
++++ gcc-4.2.1/gcc/cp/cfns.h
+@@ -37,6 +37,9 @@
+ #ifdef __GNUC__
+ __inline
+ #endif
++#ifdef __GNUC_STDC_INLINE__
++__attribute__ ((__gnu_inline__))
++#endif
+ const char * libc_name_p (const char *, unsigned int);
+ /* maximum key range = 391, duplicates = 0 */
+ 
+@@ -107,6 +110,9 @@
+ 
+ #ifdef __GNUC__
+ __inline
++#endif
++#ifdef __GNUC_STDC_INLINE__
++__attribute__ ((__gnu_inline__))
+ #endif
+ const char *
+ libc_name_p (register const char *str, register unsigned int len)

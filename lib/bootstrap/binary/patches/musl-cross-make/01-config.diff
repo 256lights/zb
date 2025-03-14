@@ -1,0 +1,20 @@
+# Copyright 2025 The zb Authors
+# SPDX-License-Identifier: MIT
+# cowpatch causes some issues when resolving files.
+# Use regular patch, and also copy in config.guess from sources.
+--- a/Makefile	2025-02-17 16:21:12.000000000 -0800
++++ b/Makefile	2025-03-13 16:46:14.060693284 -0700
+@@ -134,10 +134,10 @@
+ %: %.orig | $(SOURCES)/config.sub
+ 	case "$@" in */*) exit 1 ;; esac
+ 	rm -rf $@.tmp
+-	mkdir $@.tmp
+-	( cd $@.tmp && $(COWPATCH) -I ../$< )
+-	test ! -d patches/$@ || cat patches/$@/* | ( cd $@.tmp && $(COWPATCH) -p1 )
++	cp -R $< $@.tmp
++	test ! -d patches/$@ || cat patches/$@/* | ( cd $@.tmp && patch -p1 )
+ 	if test -f $</configfsf.sub ; then cs=configfsf.sub ; elif test -f $</config.sub ; then cs=config.sub ; else exit 0 ; fi ; rm -f $@.tmp/$$cs && cp -f $(SOURCES)/config.sub $@.tmp/$$cs && chmod +x $@.tmp/$$cs
++	if test -f $</configfsf.guess ; then cg=configfsf.guess ; elif test -f $</config.guess ; then cg=config.guess ; else exit 0 ; fi ; rm -f $@.tmp/$$cg && cp -f $(SOURCES)/config.guess $@.tmp/$$cg && chmod +x $@.tmp/$$cg
+ 	rm -rf $@
+ 	mv $@.tmp $@
+ 

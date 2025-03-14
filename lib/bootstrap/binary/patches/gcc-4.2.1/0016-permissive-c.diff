@@ -1,0 +1,79 @@
+# Copyright 2025 The zb Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Various configure tests and source files use C that is not permitted with modern GCC.
+# Using -fpermissive suppresses the errors until libtool gets used later on.
+# Instead, we go through and fix the problematic code.
+--- a/configure
++++ b/configure
+@@ -1999,7 +1999,7 @@
+ #line 1990 "configure"
+ #include "confdefs.h"
+ 
+-main(){return(0);}
++int main(){return(0);}
+ EOF
+ if { (eval echo configure:1995: \"$ac_link\") 1>&5; (eval $ac_link) 2>&5; } && test -s conftest${ac_exeext}; then
+   ac_cv_prog_cc_works=yes
+--- a/libiberty/configure
++++ b/libiberty/configure
+@@ -4061,6 +4061,7 @@
+ cat confdefs.h >>conftest.$ac_ext
+ cat >>conftest.$ac_ext <<_ACEOF
+ /* end confdefs.h.  */
++#include <stdlib.h>
+ #include <ctype.h>
+ #if ((' ' & 0x0FF) == 0x020)
+ # define ISLOWER(c) ('a' <= (c) && (c) <= 'z')
+--- a/libcpp/directives.c
++++ b/libcpp/directives.c
+@@ -187,7 +187,7 @@
+    did use this notation in its preprocessed output.  */
+ static const directive linemarker_dir =
+ {
+-  do_linemarker, U"#", 1, KANDR, IN_I
++  do_linemarker, "#", 1, KANDR, IN_I
+ };
+ 
+ #define SEEN_EOL() (pfile->cur_token[-1].type == CPP_EOF)
+@@ -681,7 +681,7 @@
+       const unsigned char *dir;
+ 
+       if (pfile->directive == &dtable[T_PRAGMA])
+-	dir = U"pragma dependency";
++	dir = "pragma dependency";
+       else
+ 	dir = pfile->directive->name;
+       cpp_error (pfile, CPP_DL_ERROR, "#%s expects \"FILENAME\" or <FILENAME>",
+--- a/libcpp/lex.c
++++ b/libcpp/lex.c
+@@ -39,7 +39,7 @@
+ };
+ 
+ static const unsigned char *const digraph_spellings[] =
+-{ U"%:", U"%:%:", U"<:", U":>", U"<%", U"%>" };
++{ "%:", "%:%:", "<:", ":>", "<%", "%>" };
+ 
+ #define OP(e, s) { SPELL_OPERATOR, U s  },
+ #define TK(e, s) { SPELL_ ## s,    U #e },
+--- a/libcpp/macro.c
++++ b/libcpp/macro.c
+@@ -154,7 +154,7 @@
+ 		  {
+ 		    cpp_errno (pfile, CPP_DL_WARNING,
+ 			"could not determine file timestamp");
+-		    pbuffer->timestamp = U"\"??? ??? ?? ??:??:?? ????\"";
++		    pbuffer->timestamp = "\"??? ??? ?? ??:??:?? ????\"";
+ 		  }
+ 	      }
+ 	  }
+@@ -252,8 +252,8 @@
+ 	      cpp_errno (pfile, CPP_DL_WARNING,
+ 			 "could not determine date and time");
+ 		
+-	      pfile->date = U"\"??? ?? ????\"";
+-	      pfile->time = U"\"??:??:??\"";
++	      pfile->date = "\"??? ?? ????\"";
++	      pfile->time = "\"??:??:??\"";
+ 	    }
+ 	}
+ 

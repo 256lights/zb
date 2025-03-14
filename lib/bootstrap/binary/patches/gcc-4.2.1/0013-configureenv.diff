@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copied from https://github.com/rofl0r/musl-cross-make/raw/3889a9b28a10dd0a130b3ba3446b930e9bc6eb7e/patches/gcc-4.2.1/0013-configureenv.diff,
+# part of https://github.com/richfelker/musl-cross-make/pull/78
+--- gcc-4.2.1.orig/configure
++++ gcc-4.2.1/configure
+@@ -436,6 +436,16 @@
+   -*) { echo "configure: error: $ac_option: invalid option; use --help to show usage" 1>&2; exit 1; }
+     ;;
+ 
++  *=*)
++    ac_envvar=`expr "x$ac_option" : 'x\([^=]*\)='`
++    # Reject names that are not valid shell variable names.
++    case $ac_envvar in #(
++      '' | [0-9]* | *[!_$as_cr_alnum]* )
++      as_fn_error "invalid variable name: \`$ac_envvar'" ;;
++    esac
++    eval $ac_envvar=\$ac_optarg
++    export $ac_envvar ;;
++
+   *)
+     if test -n "`echo $ac_option| sed 's/[-a-z0-9.]//g'`"; then
+       echo "configure: warning: $ac_option: invalid host type" 1>&2

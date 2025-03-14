@@ -1,0 +1,64 @@
+# Copyright 2025 The zb Authors
+# SPDX-License-Identifier: MIT
+# The GCC 4.2.1 configure script does not propagate the environment variables.
+--- a/litecross/Makefile	2025-02-17 16:21:12.000000000 -0800
++++ b/litecross/Makefile	2025-03-13 18:46:14.760364384 -0700
+@@ -80,6 +80,7 @@
+ 	--disable-libmpx \
+ 	--enable-initfini-array \
+ 	--enable-libstdcxx-time=rt
++FULL_GCC_ENV = 
+ 
+ FULL_MUSL_CONFIG = $(MUSL_CONFIG) \
+ 	--prefix= --host=$(TARGET)
+@@ -98,7 +99,9 @@
+ SYSROOT = /$(TARGET)
+ FULL_BINUTILS_CONFIG += --build=$(BUILD) --host=$(BUILD)
+ FULL_GCC_CONFIG += --with-build-sysroot=$(CURDIR)/obj_sysroot \
+-	AR_FOR_TARGET=$(PWD)/obj_binutils/binutils/ar \
++	--build=$(BUILD) --host=$(BUILD) \
++	# end
++FULL_GCC_ENV += AR_FOR_TARGET=$(PWD)/obj_binutils/binutils/ar \
+ 	AS_FOR_TARGET=$(PWD)/obj_binutils/gas/as-new \
+ 	LD_FOR_TARGET=$(PWD)/obj_binutils/ld/ld-new \
+ 	NM_FOR_TARGET=$(PWD)/obj_binutils/binutils/nm-new \
+@@ -107,7 +110,6 @@
+ 	RANLIB_FOR_TARGET=$(PWD)/obj_binutils/binutils/ranlib \
+ 	READELF_FOR_TARGET=$(PWD)/obj_binutils/binutils/readelf \
+ 	STRIP_FOR_TARGET=$(PWD)/obj_binutils/binutils/strip-new \
+-	--build=$(BUILD) --host=$(BUILD) \
+ 	# end
+ FULL_MUSL_CONFIG += CC="$(XGCC)" LIBCC="../obj_gcc/$(TARGET)/libgcc/libgcc.a" 
+ MUSL_VARS = AR=../obj_binutils/binutils/ar RANLIB=../obj_binutils/binutils/ranlib
+@@ -216,11 +218,11 @@
+ 	touch $@
+ 
+ obj_gcc/.lc_configured: | obj_gcc src_gcc
+-	cd obj_gcc && ../src_gcc/configure $(FULL_GCC_CONFIG)
++	cd obj_gcc && $(FULL_GCC_ENV) ../src_gcc/configure $(FULL_GCC_CONFIG)
+ 	touch $@
+ 
+ obj_gcc/gcc/.lc_built: | obj_gcc/.lc_configured
+-	cd obj_gcc && $(MAKE) MAKE="$(MAKE) $(LIBTOOL_ARG)" all-gcc
++	cd obj_gcc && $(FULL_GCC_ENV) $(MAKE) MAKE="$(MAKE) $(LIBTOOL_ARG)" all-gcc
+ 	touch $@
+ 
+ obj_musl/.lc_configured: | obj_musl src_musl
+@@ -232,7 +234,7 @@
+ 	touch $@
+ 
+ obj_gcc/$(TARGET)/libgcc/libgcc.a: | obj_sysroot/.lc_headers
+-	cd obj_gcc && $(MAKE) MAKE="$(MAKE) enable_shared=no $(LIBTOOL_ARG)" all-target-libgcc
++	cd obj_gcc && $(FULL_GCC_ENV) $(MAKE) MAKE="$(MAKE) enable_shared=no $(LIBTOOL_ARG)" all-target-libgcc
+ 
+ obj_musl/.lc_built: | obj_musl/.lc_configured
+ 	cd obj_musl && $(MAKE) $(MUSL_VARS)
+@@ -243,7 +245,7 @@
+ 	touch $@
+ 
+ obj_gcc/.lc_built: | obj_gcc/.lc_configured obj_gcc/gcc/.lc_built
+-	cd obj_gcc && $(MAKE) MAKE="$(MAKE) $(LIBTOOL_ARG)"
++	cd obj_gcc && $(FULL_GCC_ENV) $(MAKE) MAKE="$(MAKE) $(LIBTOOL_ARG)"
+ 	touch $@
+ 
+ install-musl: | obj_musl/.lc_built

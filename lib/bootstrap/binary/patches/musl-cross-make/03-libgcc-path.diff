@@ -1,0 +1,29 @@
+# Copyright 2025 The zb Authors
+# SPDX-License-Identifier: MIT
+# GCC 4.2.1 doesn't have a dedicated directory.
+--- a/litecross/Makefile
++++ b/litecross/Makefile
+@@ -111,10 +111,10 @@
+ 	READELF_FOR_TARGET=$(PWD)/obj_binutils/binutils/readelf \
+ 	STRIP_FOR_TARGET=$(PWD)/obj_binutils/binutils/strip-new \
+ 	# end
+-FULL_MUSL_CONFIG += CC="$(XGCC)" LIBCC="../obj_gcc/$(TARGET)/libgcc/libgcc.a" 
++FULL_MUSL_CONFIG += CC="$(XGCC)" LIBCC="../obj_gcc/gcc/libgcc.a" 
+ MUSL_VARS = AR=../obj_binutils/binutils/ar RANLIB=../obj_binutils/binutils/ranlib
+ obj_musl/.lc_configured: | obj_gcc/gcc/.lc_built
+-obj_musl/.lc_built: | obj_gcc/$(TARGET)/libgcc/libgcc.a
++obj_musl/.lc_built: | obj_gcc/gcc/libgcc.a
+ obj_gcc/gcc/.lc_built: | obj_sysroot/usr obj_sysroot/lib32 obj_sysroot/lib64 obj_sysroot/include
+ obj_gcc/.lc_built: | obj_sysroot/.lc_libs obj_sysroot/.lc_headers
+ obj_gcc/.lc_configured: obj_binutils/.lc_built
+@@ -233,8 +233,8 @@
+ 	cd obj_musl && $(MAKE) DESTDIR=$(CURDIR)/obj_sysroot install-headers
+ 	touch $@
+ 
+-obj_gcc/$(TARGET)/libgcc/libgcc.a: | obj_sysroot/.lc_headers
+-	cd obj_gcc && $(FULL_GCC_ENV) $(MAKE) MAKE="$(MAKE) enable_shared=no $(LIBTOOL_ARG)" all-target-libgcc
++obj_gcc/gcc/libgcc.a: | obj_sysroot/.lc_headers
++	cd obj_gcc/gcc && $(FULL_GCC_ENV) $(MAKE) MAKE="$(MAKE) enable_shared=no $(LIBTOOL_ARG)" libgcc.a
+ 
+ obj_musl/.lc_built: | obj_musl/.lc_configured
+ 	cd obj_musl && $(MAKE) $(MUSL_VARS)

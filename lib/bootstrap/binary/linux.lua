@@ -1,14 +1,14 @@
 -- Copyright 2025 The zb Authors
 -- SPDX-License-Identifier: MIT
 
+local binutils <const> = import "../binutils.lua"
 local gcc <const> = import "../gcc.lua"
 local gmp <const> = import "../gmp.lua"
-local m4 <const> = import "../m4.lua"
 local mpc <const> = import "../mpc.lua"
 local mpfr <const> = import "../mpfr.lua"
 local musl <const> = import "../musl.lua"
-local strings <const> = import "../../strings.lua"
-local tables <const> = import "../../tables.lua"
+
+local builderScript <const> = path "builder.sh"
 
 ---@param t table
 ---@param k any
@@ -26,39 +26,23 @@ local function addDefault(t, k, v)
   end
 end
 
----@param paths (string|derivation)[]
----@return string
-local function makeRPathFlags(paths)
-  local parts = { "-Wl" }
-  for _, p in ipairs(paths) do
-    parts[#parts + 1] = '-rpath'
-    if type(p) == "string" then
-      parts[#parts + 1] = p
-    else
-      parts[#parts + 1] = p.."/lib"
-    end
-  end
-  return table.concat(parts, ',')
-end
-
 local function forArchitecture(arch)
   local userPath <const> = os.getenv("PATH") or "/usr/local/bin:/usr/bin:/bin"
   local userCIncludePath <const> = os.getenv("C_INCLUDE_PATH")
-  local userCPlusIncludePath <const> = os.getenv("CPLUS_INCLUDE_PATH")
   local userLibraryPath <const> = os.getenv("LIBRARY_PATH")
   local system <const> = arch.."-linux"
-  local builderScript <const> = path "builder.sh"
 
+  local muslCrossMakeCommit <const> = "6f3701d08137496d5aac479e3a3977b5ae993c1f"
+  local gnuConfigCommit <const> = "3d5db9ebe8607382d17d60faf8853c944fc5f353"
   local configGuess <const> = fetchurl {
     name = "config.guess";
-    url = "https://cvs.savannah.gnu.org/viewvc/*checkout*/config/config/config.guess?revision=1.377";
-    hash = "sha256:a41df3c465f3704faf331f052c4c3975f656436902d1778e81e16b5b511fb5ed";
+    url = "https://git.savannah.gnu.org/gitweb/?p=config.git;a=blob_plain;f=config.guess;hb="..gnuConfigCommit;
+    hash = "sha256:facdf496e646084c42ef81909af0815f8710224599517e1e03bfb90d44e5c936";
   }
-
   local configSub <const> = fetchurl {
     name = "config.sub";
-    url = "https://cvs.savannah.gnu.org/viewvc/*checkout*/config/config/config.sub?revision=1.362";
-    hash = "sha256:638892f94dc00d98cee4a88d76194263ed4c08c0f8d689e7de496f28b9c26b2d";
+    url = "https://git.savannah.gnu.org/gitweb/?p=config.git;a=blob_plain;f=config.sub;hb="..gnuConfigCommit;
+    hash = "sha256:75d5d255a2a273b6e651f82eecfabf6cbcd8eaeae70e86b417384c8f4a58d8d3";
   }
 
   local function mkDerivation(args)
@@ -68,188 +52,80 @@ local function forArchitecture(arch)
     addDefault(args, "PATH", userPath)
     addDefault(args, "SOURCE_DATE_EPOCH", 0)
     addDefault(args, "KBUILD_BUILD_TIMESTAMP", "@0")
-    addDefault(args, "configGuess", configGuess)
-    addDefault(args, "configSub", configSub)
     args.args = { builderScript }
     return derivation(args)
   end
 
-  local m4 = mkDerivation {
-    pname = "m4";
-    version = m4.version;
-    src = m4.tarball;
-
-    C_INCLUDE_PATH = userCIncludePath;
-    CPLUS_INCLUDE_PATH = userCPlusIncludePath;
-    LIBRARY_PATH = userLibraryPath;
-  }
-
-  ---@param path string
-  ---@param musl derivation|string|nil
-  ---@return { gmp: derivation, mpfr: derivation, mpc: derivation }
-  local function mkGCCDeps(path, musl)
-    local result = {}
-
-    ---@type string|nil
-    local cIncludePath = nil
-    ---@type string|nil
-    local cplusIncludePath = nil
-    ---@type string|nil
-    local libraryPath = nil
-    ---@type string|table|nil
-    local cflags = nil
-    ---@type string[]
-    local baseConfigureFlags = {}
-    if musl then
-      cflags = {
-        "-specs="..musl.."/lib/musl-gcc.specs",
-      }
-      baseConfigureFlags[#baseConfigureFlags + 1] = "--enable-static"
-      baseConfigureFlags[#baseConfigureFlags + 1] = "--disable-shared"
-    else
-      cIncludePath = userCIncludePath
-      cplusIncludePath = userCPlusIncludePath
-      libraryPath = userLibraryPath
-    end
-
-    local gmpConfigureFlags
-    if #baseConfigureFlags > 0 then
-      gmpConfigureFlags = baseConfigureFlags
-    end
-    result.gmp = mkDerivation {
-      pname = "gmp";
-      version = gmp.version;
-      src = gmp.tarball;
-
-      PATH = strings.mkBinPath {
-        m4,
-      }..":"..path;
-      C_INCLUDE_PATH = cIncludePath;
-      CPLUS_INCLUDE_PATH = cplusIncludePath;
-      LIBRARY_PATH = libraryPath;
-      CFLAGS = cflags;
-
-      configureFlags = gmpConfigureFlags;
-    }
-
-    result.mpfr = mkDerivation {
-      pname = "mpfr";
-      version = mpfr.version;
-      src = mpfr.tarball;
-
-      PATH = path;
-      C_INCLUDE_PATH = cIncludePath;
-      CPLUS_INCLUDE_PATH = cplusIncludePath;
-      LIBRARY_PATH = libraryPath;
-      CFLAGS = cflags;
-
-      configureFlags = table.concatLists({
-        "--with-gmp="..result.gmp,
-      }, baseConfigureFlags);
-    }
-
-    result.mpc = mkDerivation {
-      pname = "mpc";
-      version = mpc.version;
-      src = mpc.tarball;
-
-      PATH = path;
-      C_INCLUDE_PATH = cIncludePath;
-      CPLUS_INCLUDE_PATH = cplusIncludePath;
-      LIBRARY_PATH = libraryPath;
-      CFLAGS = cflags;
-
-      configureFlags = table.concatLists({
-        "--with-gmp="..result.gmp,
-        "--with-mpfr="..result.mpfr,
-      }, baseConfigureFlags);
-    }
-    return result
-  end
-
-  --[[
-  GCC's build process is *very* particular about include paths.
-  During the build of libstdc++,
-  it passes --nostdinc++ for libstdc++-v3/src/c++17.
-  (See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=100017 for background.)
-  Nix's gcc doesn't use the standard include paths
-  and depends on the system includes being passed in as flags or environment variables.
-  Thus, --nostdinc++ has no effect.
-  To emulate this, we:
-    - don't set CPLUS_INCLUDE_PATH (because that would get used everywhere)
-    - set CXXFLAGS to the set of paths that are in both CPLUS_INCLUDE_PATH and C_INCLUDE_PATH
-    - set CXXFLAGS_FOR_BUILD to the set of paths that are in CPLUS_INCLUDE_PATH
-      but not C_INCLUDE_PATH.
-      (Recall that in cross-compilation, the *build* platform is the machine currently in use,
-      the *host* platform is the machine the compiler will run on,
-      and the *target* platform is the machine the compiler will generate code for.)
-  --]]
-  local userCIncludePathList = strings.splitString(":", userCIncludePath)
-  local userCPlusIncludePathList = strings.splitString(":", userCPlusIncludePath)
-  local cxxArgs = {}
-  local cxxForBuildArgs = {}
-  for _, path in ipairs(userCPlusIncludePathList) do
-    if tables.elem(path, userCIncludePathList) then
-      cxxArgs[#cxxArgs + 1] = "-idirafter"
-      cxxArgs[#cxxArgs + 1] = path
-    else
-      cxxForBuildArgs[#cxxForBuildArgs + 1] = "-isystem"
-      cxxForBuildArgs[#cxxForBuildArgs + 1] = path
-    end
-  end
-
-  -- Build first GCC.
+  -- Build GCC.
   -- This gives us a mostly deterministic base for compilation.
-  local gccVersion <const> = "13.1.0"
-  local gccDeps = mkGCCDeps(userPath)
-  local gcc1 <const> = mkDerivation {
+  local binutilsVersion <const> = "2.27"
+  local gccVersion <const> = "4.2.1"
+  local muslVersion <const> = "1.2.4"
+  local gcc <const> = mkDerivation {
     pname = "gcc";
     version = gccVersion;
-    src = gcc.tarballs[gccVersion];
 
     PATH = userPath;
-
     C_INCLUDE_PATH = userCIncludePath;
+    CPLUS_INCLUDE_PATH = userCIncludePath;
     LIBRARY_PATH = userLibraryPath;
-    CXXFLAGS = cxxArgs;
-    CXXFLAGS_FOR_BUILD = cxxForBuildArgs;
-    LDFLAGS = makeRPathFlags { gccDeps.gmp, gccDeps.mpfr, gccDeps.mpc };
 
-    configureFlags = {
-      "--with-gmp="..gccDeps.gmp,
-      "--with-mpfr="..gccDeps.mpfr,
-      "--with-mpc="..gccDeps.mpc,
-      "--disable-plugins",
-      "--disable-libssp",
-      "--disable-libsanitizer",
-      "--disable-multilib",
-      "--disable-bootstrap",
-      "--disable-shared",
-      "--enable-threads=posix",
-      "--enable-languages=c,c++",
+    src = fetchurl {
+      name = "musl-cross-make-"..muslCrossMakeCommit..".tar.gz";
+      url = "https://github.com/richfelker/musl-cross-make/archive/"..muslCrossMakeCommit..".tar.gz";
+      hash = "sha256:b6ad075187d8ac737e38f5f97545bebab6272aac07ffed321d0d90f71ef4c468";
     };
+
+    sourceFiles = {
+      binutils.tarballs[binutilsVersion],
+      gcc.tarballs[gccVersion],
+      musl.tarballs[muslVersion],
+      gmp.tarball,
+      mpc.tarball,
+      mpfr.tarball,
+      configSub,
+      configGuess,
+    };
+
+    postUnpack = [[
+for i in $sourceFiles; do
+  cp "$i" "../$(stripHash "$i")"
+done
+]];
+
+    patches = {
+      path "patches/musl-cross-make/01-config.diff",
+      path "patches/musl-cross-make/02-binutils-tools-as-env.diff",
+      path "patches/musl-cross-make/03-libgcc-path.diff",
+    };
+
+    extraGCCPatches = path "patches/gcc-4.2.1";
+    postPatch = [[
+for i in "$extraGCCPatches"/*; do
+  cp "$i" "patches/gcc-$version/"
+done
+]];
+
+    configFile = toFile("config.mak", "\z
+      TARGET = "..arch.."-unknown-linux-musl\n\z
+      BINUTILS_VER = "..binutilsVersion.."\n\z
+      GCC_VER = "..gccVersion.."\n\z
+      MUSL_VER = "..muslVersion.."\n\z
+      GMP_VER = "..gmp.version.."\n\z
+      MPC_VER = "..mpc.version.."\n\z
+      MPFR_VER = "..mpfr.version.."\n\z
+      GCC_CONFIG = --disable-shared\n");
+    configurePhase = [[
+cp "$configFile" config.mak
+chmod +w config.mak
+echo "SOURCES = $(dirname "$(pwd)")" >> config.mak
+echo "OUTPUT = $out" >> config.mak
+]];
   }
 
-  local userPathWithGCC1 <const> = strings.mkBinPath {
-    gcc1,
-  }..":"..userPath
-
-  local muslVersion <const> = "1.2.4"
-  local musl = mkDerivation {
-    pname = "musl";
-    version = muslVersion;
-    src = musl.tarballs[muslVersion];
-
-    PATH = userPathWithGCC1;
-
-    configureFlags = {
-      "--disable-shared",
-    };
-  }
 
   return {
-    gcc = gcc1;
-    musl = musl;
+    gcc = gcc;
   }
 end
 
