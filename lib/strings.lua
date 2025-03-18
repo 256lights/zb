@@ -1,6 +1,20 @@
 -- Copyright 2025 The zb Authors
 -- SPDX-License-Identifier: MIT
 
+--- baseNameOf returns the last element of path.
+--- Trailing slashes are removed before extracting the last element.
+--- If the path is empty, baseNameOf returns "".
+--- If the path consists entirely of slashes, baseNameOf returns "/".
+---@param path string slash-separated path
+---@return string
+function baseNameOf(path)
+  if path == "" then return "." end
+  local base = path:match("([^/]*)/*$")
+  -- If empty now, it had only slashes.
+  if base == "" then return path:sub(1, 1) end
+  return base
+end
+
 ---Cut a string with a separator
 ---and produces a list of strings which were separated by this separator.
 ---@param sep string

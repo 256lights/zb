@@ -16,7 +16,6 @@ import (
 	"io/fs"
 	"math"
 	"os"
-	slashpath "path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -144,19 +143,7 @@ func (eval *Eval) initZygote() error {
 
 	// Set other built-ins.
 	extraBaseFunctions := map[string]lua.Function{
-		"await": awaitFunction,
-		"baseNameOf": func(ctx context.Context, l *lua.State) (int, error) {
-			path, err := lua.CheckString(l, 1)
-			if err != nil {
-				return 0, err
-			}
-			if path == "" {
-				l.PushString("")
-				return 1, nil
-			}
-			l.PushString(slashpath.Base(path))
-			return 1, nil
-		},
+		"await":      awaitFunction,
 		"derivation": eval.derivationFunction,
 		"import":     eval.importFunction,
 		"toFile":     eval.toFileFunction,

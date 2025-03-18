@@ -1,6 +1,8 @@
 -- Copyright 2025 The zb Authors
 -- SPDX-License-Identifier: MIT
 
+local tables <const> = import "tables.lua"
+
 local gnuMirrors <const> = {
   "https://mirrors.kernel.org/gnu/",
   "https://ftp.gnu.org/gnu/",
@@ -17,7 +19,7 @@ local badGNUURLs <const> = {
 return function(args)
   for _, mirror in ipairs(gnuMirrors) do
     local url = mirror..args.path
-    if not table.elem(url, badGNUURLs) then
+    if not tables.elem(url, badGNUURLs) then
       return fetchurl({
         url = url;
         hash = args.hash;
