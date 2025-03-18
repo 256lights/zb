@@ -10,6 +10,7 @@
         pkgs = import nixpkgs {
           inherit system;
         };
+        inherit (pkgs.lib.attrsets) getOutput;
         inherit (pkgs.lib.strings) concatStringsSep makeIncludePath makeLibraryPath;
 
         go = pkgs.go_1_24;
@@ -23,7 +24,7 @@
           "${gcc}/lib/gcc/${pkgs.targetPlatform.config}/${gccVersion}/include"
           "${gcc}/include"
           "${gcc}/lib/gcc/${pkgs.targetPlatform.config}/${gccVersion}/include-fixed"
-          "${libc.dev}/include"
+          (makeIncludePath [libc])
         ];
         cplusIncludePath = [
           "${gcc}/include/c++/${gcc.version}/"
@@ -36,7 +37,7 @@
           packages = [
             # C/C++ tooling.
             gcc
-            libc.bin
+            (getOutput "bin" libc)
             pkgs.binutils-unwrapped
 
             # Go tooling.
@@ -54,7 +55,7 @@
             export C_INCLUDE_PATH='${concatStringsSep ":" cIncludePath}'
             export CPLUS_INCLUDE_PATH='${concatStringsSep ":" cplusIncludePath}'
             export LIBRARY_PATH='${makeLibraryPath [ gcc libc ]}'
-            export ZB_BOOTSTRAP_SYSTEM_HEADERS='${makeIncludePath [ libc.dev ]}'
+            export ZB_BOOTSTRAP_SYSTEM_HEADERS='${makeIncludePath [ libc ]}'
           '';
 
           hardeningDisable = [ "fortify" ];
