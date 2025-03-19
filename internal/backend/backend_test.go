@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -218,6 +219,18 @@ func newTestServer(tb testing.TB, storeDir zbstore.Directory, clientHandler json
 		if err := srv.Close(); err != nil {
 			tb.Error("srv.Close:", err)
 		}
+
+		// Make entire store writable for deletion.
+		filepath.WalkDir(string(storeDir), func(path string, entry fs.DirEntry, err error) error {
+			perm := os.FileMode(0o666)
+			if entry.IsDir() {
+				perm = 0o777
+			}
+			if err := os.Chmod(path, perm); err != nil {
+				tb.Log(err)
+			}
+			return nil
+		})
 	})
 
 	return client

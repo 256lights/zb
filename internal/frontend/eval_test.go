@@ -5,6 +5,7 @@ package frontend
 
 import (
 	"context"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -222,7 +223,10 @@ func TestImportFromDerivation(t *testing.T) {
 	ctx, cancel := testcontext.New(t)
 	defer cancel()
 
-	realStoreDir := t.TempDir()
+	realStoreDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	storeDir, err := zbstore.CleanDirectory(realStoreDir)
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +264,10 @@ func TestImportCycle(t *testing.T) {
 	ctx, cancel := testcontext.New(t)
 	defer cancel()
 
-	realStoreDir := t.TempDir()
+	realStoreDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	storeDir, err := zbstore.CleanDirectory(realStoreDir)
 	if err != nil {
 		t.Fatal(err)
@@ -456,6 +463,18 @@ func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir strin
 		if err := srv.Close(); err != nil {
 			tb.Error("srv.Close:", err)
 		}
+
+		// Make entire store writable for deletion.
+		filepath.WalkDir(realStoreDir, func(path string, entry fs.DirEntry, err error) error {
+			perm := os.FileMode(0o666)
+			if entry.IsDir() {
+				perm = 0o777
+			}
+			if err := os.Chmod(path, perm); err != nil {
+				tb.Log(err)
+			}
+			return nil
+		})
 	})
 
 	return client
