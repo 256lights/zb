@@ -96,7 +96,11 @@ func NewEval(opts *Options) (_ *Eval, err error) {
 		schema.Migrations = append(schema.Migrations, string(migration))
 	}
 	if opts.CacheDBPath == "" {
-		eval.cachePool = sqlitemigration.NewPool(":memory:", schema, sqlitemigration.Options{
+		// Because we are limiting the pool size to 1,
+		// this acts like a mutex on a single in-memory connection.
+		// The SQLite library returns an error if we use ":memory:",
+		// so we pick a different string and pass the [sqlite.OpenMemory] flag.
+		eval.cachePool = sqlitemigration.NewPool("mycache", schema, sqlitemigration.Options{
 			Flags:       sqlite.OpenReadWrite | sqlite.OpenMemory,
 			PoolSize:    1,
 			PrepareConn: prepareCache,
