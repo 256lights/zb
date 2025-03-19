@@ -47,6 +47,19 @@ function toFile(name, s) end
 ---@return derivation
 function fetchurl(args) end
 
+---Create a derivation that extracts an archive.
+---The source must be one of the following formats:
+--- - .tar
+--- - .tar.gz
+--- - .tar.bz2
+--- - .zip
+---
+---If stripFirstComponent is true (the default),
+---then the root directory is stripped during extraction.
+---@param args string|{src: string, name: string?, stripFirstComponent: boolean?}
+---@return derivation
+function extract(args) end
+
 os = {}
 
 ---Returns the value of the process environment variable `varname`

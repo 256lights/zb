@@ -5,6 +5,7 @@ package frontend
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"net"
 	"os"
@@ -334,6 +335,106 @@ func TestImportCycle(t *testing.T) {
 	})
 }
 
+func TestExtract(t *testing.T) {
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+
+	realStoreDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	storeDir, err := zbstore.CleanDirectory(realStoreDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newTestServer(t, storeDir, realStoreDir, &testBuildLogger{t}, nil)
+	eval, err := NewEval(&Options{
+		Store:          store,
+		StoreDirectory: storeDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := eval.Close(); err != nil {
+			t.Error("eval.Close:", err)
+		}
+	}()
+
+	results, err := eval.File(ctx, filepath.Join("testdata", "extract.lua"), []string{
+		"full",
+		"stripped",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(results), 2; got != want {
+		t.Fatalf("len(results) = %d; want %d", got, want)
+	}
+
+	t.Run("Full", func(t *testing.T) {
+		drv, ok := results[0].(*Derivation)
+		if !ok {
+			t.Fatalf("result is %T; want *Derivation", results[0])
+		}
+		var response zbstore.RealizeResponse
+		err := jsonrpc.Do(ctx, store, zbstore.RealizeMethod, &response, &zbstore.RealizeRequest{
+			DrvPath: drv.Path,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := len(response.Outputs), 1; got != want {
+			t.Fatalf("received %d outputs from building %s; want %d", got, drv.Path, want)
+		}
+		if got, want := response.Outputs[0].Name, zbstore.DefaultDerivationOutputName; got != want {
+			t.Errorf("name of output from %s = %q; want %q", drv.Path, got, want)
+		}
+		if !response.Outputs[0].Path.Valid {
+			t.Fatalf("build of %s failed", drv.Path)
+		}
+		outputPath := response.Outputs[0].Path.X
+		got, err := os.ReadFile(filepath.Join(string(outputPath), "foo", "bar.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "Hello, World!\n"; string(got) != want {
+			t.Errorf("content of %s = %q; want %q", outputPath, got, want)
+		}
+	})
+
+	t.Run("Stripped", func(t *testing.T) {
+		drv, ok := results[1].(*Derivation)
+		if !ok {
+			t.Fatalf("result is %T; want *Derivation", results[1])
+		}
+		var response zbstore.RealizeResponse
+		err := jsonrpc.Do(ctx, store, zbstore.RealizeMethod, &response, &zbstore.RealizeRequest{
+			DrvPath: drv.Path,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := len(response.Outputs), 1; got != want {
+			t.Fatalf("received %d outputs from building %s; want %d", got, drv.Path, want)
+		}
+		if got, want := response.Outputs[0].Name, zbstore.DefaultDerivationOutputName; got != want {
+			t.Errorf("name of output from %s = %q; want %q", drv.Path, got, want)
+		}
+		if !response.Outputs[0].Path.Valid {
+			t.Fatalf("build of %s failed", drv.Path)
+		}
+		outputPath := response.Outputs[0].Path.X
+		got, err := os.ReadFile(filepath.Join(string(outputPath), "bar.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "Hello, World!\n"; string(got) != want {
+			t.Errorf("content of %s = %q; want %q", outputPath, got, want)
+		}
+	})
+}
+
 func TestNewState(t *testing.T) {
 	ctx, cancel := testcontext.New(t)
 	defer cancel()
@@ -478,6 +579,29 @@ func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir strin
 	})
 
 	return client
+}
+
+type testBuildLogger struct {
+	tb testing.TB
+}
+
+func (l *testBuildLogger) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	return jsonrpc.ServeMux{
+		zbstore.LogMethod: jsonrpc.HandlerFunc(l.log),
+	}.JSONRPC(ctx, req)
+}
+
+func (l *testBuildLogger) log(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	args := new(zbstore.LogNotification)
+	if err := json.Unmarshal(req.Params, args); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	payload := args.Payload()
+	if len(payload) == 0 {
+		return nil, nil
+	}
+	l.tb.Logf("Build %s: %s", args.DrvPath, payload)
+	return nil, nil
 }
 
 func TestMain(m *testing.M) {

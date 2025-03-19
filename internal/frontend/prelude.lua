@@ -38,3 +38,50 @@ function fetchurl(args)
     impureEnvVars = { "http_proxy", "https_proxy", "ftp_proxy", "all_proxy", "no_proxy" };
   }
 end
+
+---Strip the first suffix found in the argument list.
+---@param name string
+---@param ... string suffixes to test
+---@return string
+local function stripSuffixes(name, ...)
+  for i = 1, select("#", ...) do
+    local suffix = select(i, ...)
+    local n = #suffix
+    if name:sub(-n) == suffix then
+      return name:sub(1, -(n + 1))
+    end
+  end
+  return name
+end
+
+---@param args string|{src: string, name: string?, stripFirstComponent: boolean?}
+---@return derivation
+function extract(args)
+  ---@type string
+  local src
+  ---@type string?
+  local name
+  ---@type boolean?
+  local stripFirstComponent
+  if type(args) == "string" then
+    src = args
+  else
+    src = args.src
+    stripFirstComponent = args.stripFirstComponent
+    name = args.name
+  end
+  if not name then
+    name = stripSuffixes(baseNameOf(src), ".tar", ".tar.gz", ".tar.bz2", ".zip")
+  end
+  if stripFirstComponent == nil then
+    stripFirstComponent = true
+  end
+  return derivation {
+    name = name;
+    builder = "builtin:extract";
+    system = "builtin";
+
+    src = src;
+    stripFirstComponent = stripFirstComponent;
+  }
+end
