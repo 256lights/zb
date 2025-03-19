@@ -60,6 +60,12 @@ function fetchurl(args) end
 ---@return derivation
 function extract(args) end
 
+---Create a derivation that extracts an archive from a URL.
+---This is a convenience wrapper around fetchurl and extract.
+---@param args {url: string, hash: string, name: string?, stripFirstComponent: boolean?}
+---@return derivation
+function fetchArchive(args) end
+
 os = {}
 
 ---Returns the value of the process environment variable `varname`

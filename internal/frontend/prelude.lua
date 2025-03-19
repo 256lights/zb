@@ -96,3 +96,19 @@ function extract(args)
     stripFirstComponent = stripFirstComponent;
   }
 end
+
+---@param args {url: string, hash: string, name: string?, stripFirstComponent: boolean?}
+---@return derivation
+function fetchArchive(args)
+  local name = args.name or baseNameOf(args.url)
+  local dl = fetchurl {
+    url = args.url;
+    hash = args.hash,
+    name = name,
+  }
+  return extract {
+    src = dl.out,
+    name = stripSuffixes(name, ".tar", ".tar.gz", ".tar.bz2", ".zip"),
+    stripFirstComponent = args.stripFirstComponent,
+  }
+end
