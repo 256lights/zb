@@ -443,7 +443,9 @@ func (eval *Eval) Expression(ctx context.Context, expr string, attrPaths []strin
 // evalAttrPaths evaluates all the attribute paths given
 // against the value on the top of the stack.
 func evalAttrPaths(ctx context.Context, l *lua.State, paths []string) ([]any, error) {
+	defer l.SetTop(l.Top())
 	if len(paths) == 0 {
+		l.PushValue(-1) // Modules can cause luaToGo to mutate the stack.
 		x, err := luaToGo(ctx, l)
 		if err != nil {
 			return nil, err
@@ -452,8 +454,8 @@ func evalAttrPaths(ctx context.Context, l *lua.State, paths []string) ([]any, er
 	}
 
 	result := make([]any, 0, len(paths))
+	l.PushPureFunction(0, messageHandler)
 	for _, p := range paths {
-		l.PushPureFunction(0, messageHandler)
 		expr := "local x = ...; return x"
 		if !strings.HasPrefix(p, "[") {
 			expr += "."
