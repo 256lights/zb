@@ -9,7 +9,6 @@ full = extract {
 }
 
 stripped = extract {
-  name = "foo.txt";
   src = archiveFile;
   stripFirstComponent = true;
 }

@@ -39,6 +39,17 @@ function fetchurl(args)
   }
 end
 
+---Strip the store hash from a name, if present.
+---@param name string
+---@return string
+local function stripHash(name)
+  local i, j = name:match("^[0123456789abcdfghijklmnpqrsvwxyz]+()-()")
+  if i - 1 == 32 then
+    return name:sub(j)
+  end
+  return name
+end
+
 ---Strip the first suffix found in the argument list.
 ---@param name string
 ---@param ... string suffixes to test
@@ -71,7 +82,7 @@ function extract(args)
     name = args.name
   end
   if not name then
-    name = stripSuffixes(baseNameOf(src), ".tar", ".tar.gz", ".tar.bz2", ".zip")
+    name = stripHash(stripSuffixes(baseNameOf(src), ".tar", ".tar.gz", ".tar.bz2", ".zip"))
   end
   if stripFirstComponent == nil then
     stripFirstComponent = true
