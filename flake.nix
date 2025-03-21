@@ -17,14 +17,14 @@
         buildGoModule = pkgs.buildGo124Module;
 
         gcc = pkgs.gcc-unwrapped;
-        libc = gcc.libc_dev.out;
+        libc_dev = gcc.libc_dev;
 
         gccVersion = "14.2.1"; # name used in directory, which sadly != gcc.version.
         cIncludePath = [
           "${gcc}/lib/gcc/${pkgs.targetPlatform.config}/${gccVersion}/include"
           "${gcc}/include"
           "${gcc}/lib/gcc/${pkgs.targetPlatform.config}/${gccVersion}/include-fixed"
-          (makeIncludePath [libc])
+          (makeIncludePath [libc_dev])
         ];
         cplusIncludePath = [
           "${gcc}/include/c++/${gcc.version}/"
@@ -37,7 +37,7 @@
           packages = [
             # C/C++ tooling.
             gcc
-            (getOutput "bin" libc)
+            (libc_dev.bin or libc_dev)
             pkgs.binutils-unwrapped
 
             # Go tooling.
@@ -54,8 +54,8 @@
           shellHook = ''
             export C_INCLUDE_PATH='${concatStringsSep ":" cIncludePath}'
             export CPLUS_INCLUDE_PATH='${concatStringsSep ":" cplusIncludePath}'
-            export LIBRARY_PATH='${makeLibraryPath [ gcc libc ]}'
-            export ZB_BOOTSTRAP_SYSTEM_HEADERS='${makeIncludePath [ libc ]}'
+            export LIBRARY_PATH='${makeLibraryPath [ gcc (libc_dev.lib or libc_dev.out or libc_dev) ]}'
+            export ZB_BOOTSTRAP_SYSTEM_HEADERS='${makeIncludePath [ libc_dev ]}'
           '';
 
           hardeningDisable = [ "fortify" ];
