@@ -567,6 +567,9 @@ func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir strin
 
 		// Make entire store writable for deletion.
 		filepath.WalkDir(realStoreDir, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
 			perm := os.FileMode(0o666)
 			if entry.IsDir() {
 				perm = 0o777
