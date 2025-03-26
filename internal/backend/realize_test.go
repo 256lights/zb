@@ -1,7 +1,7 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-package backend
+package backend_test
 
 import (
 	"bytes"
@@ -19,12 +19,14 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	. "zb.256lights.llc/pkg/internal/backend"
+	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/system"
+	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
-	"zombiezen.com/go/log/testlog"
 	"zombiezen.com/go/nix"
 )
 
@@ -34,11 +36,9 @@ const (
 )
 
 func TestRealizeSingleDerivation(t *testing.T) {
-	ctx := testlog.WithTB(context.Background(), t)
-	dir, err := zbstore.CleanDirectory(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	dir := backendtest.NewStoreDirectory(t)
 
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
@@ -73,7 +73,13 @@ func TestRealizeSingleDerivation(t *testing.T) {
 	}
 
 	logBuffer := new(bytes.Buffer)
-	client := newTestServer(t, dir, &writerLogger{logBuffer}, nil, nil)
+	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir:       t.TempDir(),
+		ClientHandler: &writerLogger{logBuffer},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -105,11 +111,9 @@ func TestRealizeSingleDerivation(t *testing.T) {
 }
 
 func TestRealizeReuse(t *testing.T) {
-	ctx := testlog.WithTB(context.Background(), t)
-	dir, err := zbstore.CleanDirectory(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	dir := backendtest.NewStoreDirectory(t)
 
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
@@ -144,7 +148,13 @@ func TestRealizeReuse(t *testing.T) {
 	}
 
 	logBuffer := new(bytes.Buffer)
-	client := newTestServer(t, dir, &writerLogger{logBuffer}, nil, nil)
+	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir:       t.TempDir(),
+		ClientHandler: &writerLogger{logBuffer},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -183,11 +193,9 @@ func TestRealizeReuse(t *testing.T) {
 }
 
 func TestRealizeMultiStep(t *testing.T) {
-	ctx := testlog.WithTB(context.Background(), t)
-	dir, err := zbstore.CleanDirectory(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	dir := backendtest.NewStoreDirectory(t)
 
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
@@ -244,7 +252,13 @@ func TestRealizeMultiStep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, &testBuildLogger{t}, nil, nil)
+	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir:       t.TempDir(),
+		ClientHandler: &testBuildLogger{t},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -272,11 +286,9 @@ func TestRealizeMultiStep(t *testing.T) {
 }
 
 func TestRealizeReferenceToDep(t *testing.T) {
-	ctx := testlog.WithTB(context.Background(), t)
-	dir, err := zbstore.CleanDirectory(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	dir := backendtest.NewStoreDirectory(t)
 
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
@@ -346,7 +358,13 @@ func TestRealizeReferenceToDep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, &testBuildLogger{t}, nil, nil)
+	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir:       t.TempDir(),
+		ClientHandler: &testBuildLogger{t},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -409,11 +427,9 @@ func TestRealizeReferenceToDep(t *testing.T) {
 }
 
 func TestRealizeFixed(t *testing.T) {
-	ctx := testlog.WithTB(context.Background(), t)
-	dir, err := zbstore.CleanDirectory(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	dir := backendtest.NewStoreDirectory(t)
 
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExporter(exportBuffer)
@@ -480,7 +496,13 @@ func TestRealizeFixed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, &testBuildLogger{t}, nil, nil)
+	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir:       t.TempDir(),
+		ClientHandler: &testBuildLogger{t},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -512,11 +534,9 @@ func TestRealizeFixed(t *testing.T) {
 }
 
 func TestRealizeFailure(t *testing.T) {
-	ctx := testlog.WithTB(context.Background(), t)
-	dir, err := zbstore.CleanDirectory(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	dir := backendtest.NewStoreDirectory(t)
 
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExporter(exportBuffer)
@@ -548,7 +568,13 @@ func TestRealizeFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, &testBuildLogger{t}, nil, nil)
+	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir:       t.TempDir(),
+		ClientHandler: &testBuildLogger{t},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)
@@ -593,11 +619,9 @@ func TestRealizeCores(t *testing.T) {
 	tests := []int{1, 2}
 	for _, n := range tests {
 		t.Run(fmt.Sprintf("N%d", n), func(t *testing.T) {
-			ctx := testlog.WithTB(context.Background(), t)
-			dir, err := zbstore.CleanDirectory(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			ctx, cancel := testcontext.New(t)
+			defer cancel()
+			dir := backendtest.NewStoreDirectory(t)
 
 			exportBuffer := new(bytes.Buffer)
 			exporter := zbstore.NewExporter(exportBuffer)
@@ -629,9 +653,16 @@ func TestRealizeCores(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			client := newTestServer(t, dir, &testBuildLogger{t}, nil, &Options{
-				CoresPerBuild: n,
+			client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+				TempDir:       t.TempDir(),
+				ClientHandler: &testBuildLogger{t},
+				Options: Options{
+					CoresPerBuild: n,
+				},
 			})
+			if err != nil {
+				t.Fatal(err)
+			}
 			codec, releaseCodec, err := storeCodec(ctx, client)
 			if err != nil {
 				t.Fatal(err)
@@ -660,11 +691,9 @@ func TestRealizeCores(t *testing.T) {
 }
 
 func TestRealizeFetchURL(t *testing.T) {
-	ctx := testlog.WithTB(context.Background(), t)
-	dir, err := zbstore.CleanDirectory(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	dir := backendtest.NewStoreDirectory(t)
 
 	const fileContent = "Hello, World!\n"
 	mux := http.NewServeMux()
@@ -699,7 +728,13 @@ func TestRealizeFetchURL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := newTestServer(t, dir, &testBuildLogger{t}, nil, nil)
+	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir:       t.TempDir(),
+		ClientHandler: &testBuildLogger{t},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	codec, releaseCodec, err := storeCodec(ctx, client)
 	if err != nil {
 		t.Fatal(err)

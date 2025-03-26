@@ -39,6 +39,7 @@ type Codec struct {
 }
 
 // NewCodec returns a new [Codec] that uses the given connection.
+// receiver may be nil.
 func NewCodec(rwc io.ReadWriteCloser, receiver NARReceiver) *Codec {
 	if receiver == nil {
 		receiver = nopReceiver{}

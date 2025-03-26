@@ -6,17 +6,14 @@ package frontend
 import (
 	"context"
 	"encoding/json"
-	"io/fs"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"zb.256lights.llc/pkg/internal/backend"
+	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/system"
@@ -82,13 +79,14 @@ func TestLuaToGo(t *testing.T) {
 
 	ctx, cancel := testcontext.New(t)
 	defer cancel()
+	storeDir := backendtest.NewStoreDirectory(t)
 
-	realStoreDir := t.TempDir()
-	storeDir, err := zbstore.CleanDirectory(realStoreDir)
+	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
 	eval, err := NewEval(&Options{
 		Store:          store,
 		StoreDirectory: storeDir,
@@ -145,14 +143,15 @@ func TestGetenv(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := testcontext.New(t)
 			defer cancel()
+			storeDir := backendtest.NewStoreDirectory(t)
 
 			const wantKey = "BAR"
-			realStoreDir := t.TempDir()
-			storeDir, err := zbstore.CleanDirectory(realStoreDir)
+			store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+				TempDir: t.TempDir(),
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
 			callCount := 0
 			eval, err := NewEval(&Options{
 				Store:          store,
@@ -189,13 +188,14 @@ func TestGetenv(t *testing.T) {
 func TestStringMethod(t *testing.T) {
 	ctx, cancel := testcontext.New(t)
 	defer cancel()
+	storeDir := backendtest.NewStoreDirectory(t)
 
-	realStoreDir := t.TempDir()
-	storeDir, err := zbstore.CleanDirectory(realStoreDir)
+	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
 	eval, err := NewEval(&Options{
 		Store:          store,
 		StoreDirectory: storeDir,
@@ -223,16 +223,14 @@ func TestStringMethod(t *testing.T) {
 func TestImportFromDerivation(t *testing.T) {
 	ctx, cancel := testcontext.New(t)
 	defer cancel()
+	storeDir := backendtest.NewStoreDirectory(t)
 
-	realStoreDir, err := filepath.EvalSymlinks(t.TempDir())
+	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	storeDir, err := zbstore.CleanDirectory(realStoreDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
 	eval, err := NewEval(&Options{
 		Store:          store,
 		StoreDirectory: storeDir,
@@ -264,16 +262,14 @@ func TestImportFromDerivation(t *testing.T) {
 func TestImportCycle(t *testing.T) {
 	ctx, cancel := testcontext.New(t)
 	defer cancel()
+	storeDir := backendtest.NewStoreDirectory(t)
 
-	realStoreDir, err := filepath.EvalSymlinks(t.TempDir())
+	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	storeDir, err := zbstore.CleanDirectory(realStoreDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
 	eval, err := NewEval(&Options{
 		Store:          store,
 		StoreDirectory: storeDir,
@@ -338,16 +334,14 @@ func TestImportCycle(t *testing.T) {
 func TestExtract(t *testing.T) {
 	ctx, cancel := testcontext.New(t)
 	defer cancel()
+	storeDir := backendtest.NewStoreDirectory(t)
 
-	realStoreDir, err := filepath.EvalSymlinks(t.TempDir())
+	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	storeDir, err := zbstore.CleanDirectory(realStoreDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := newTestServer(t, storeDir, realStoreDir, &testBuildLogger{t}, nil)
 	eval, err := NewEval(&Options{
 		Store:          store,
 		StoreDirectory: storeDir,
@@ -438,13 +432,14 @@ func TestExtract(t *testing.T) {
 func TestNewState(t *testing.T) {
 	ctx, cancel := testcontext.New(t)
 	defer cancel()
+	storeDir := backendtest.NewStoreDirectory(t)
 
-	realStoreDir := t.TempDir()
-	storeDir, err := zbstore.CleanDirectory(realStoreDir)
+	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := newTestServer(t, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
 	eval, err := NewEval(&Options{
 		Store:          store,
 		StoreDirectory: storeDir,
@@ -478,12 +473,16 @@ func TestNewState(t *testing.T) {
 
 // BenchmarkNewState measures the performance of spinning up a new interpreter.
 func BenchmarkNewState(b *testing.B) {
-	realStoreDir := b.TempDir()
-	storeDir, err := zbstore.CleanDirectory(realStoreDir)
+	ctx, cancel := testcontext.New(b)
+	defer cancel()
+	storeDir := backendtest.NewStoreDirectory(b)
+
+	store, err := backendtest.NewServer(ctx, b, storeDir, &backendtest.Options{
+		TempDir: b.TempDir(),
+	})
 	if err != nil {
 		b.Fatal(err)
 	}
-	store := newTestServer(b, storeDir, realStoreDir, jsonrpc.MethodNotFoundHandler{}, nil)
 	eval, err := NewEval(&Options{
 		Store:          store,
 		StoreDirectory: storeDir,
@@ -506,82 +505,6 @@ func BenchmarkNewState(b *testing.B) {
 			b.Error(err)
 		}
 	}
-}
-
-// newTestServer creates a new [Server] suitable for testing
-// and returns a client connected to it.
-// newTestServer must be called from the goroutine running the test or benchmark.
-// The server and the client will be closed as part of test cleanup.
-func newTestServer(tb testing.TB, storeDir zbstore.Directory, realStoreDir string, clientHandler jsonrpc.Handler, clientReceiver zbstore.NARReceiver) *jsonrpc.Client {
-	tb.Helper()
-	helperDir := tb.TempDir()
-	buildDir := filepath.Join(helperDir, "build")
-	if err := os.Mkdir(buildDir, 0o777); err != nil {
-		tb.Fatal(err)
-	}
-
-	var wg sync.WaitGroup
-	srv := backend.NewServer(storeDir, filepath.Join(helperDir, "db.sqlite"), &backend.Options{
-		RealDir:        realStoreDir,
-		BuildDir:       buildDir,
-		DisableSandbox: true,
-		CoresPerBuild:  1,
-	})
-	serverConn, clientConn := net.Pipe()
-
-	ctx, cancel := context.WithCancel(testlog.WithTB(context.Background(), tb))
-	serverReceiver := srv.NewNARReceiver(ctx)
-	serverCodec := zbstore.NewCodec(serverConn, serverReceiver)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		peer := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
-			return serverCodec, nil
-		})
-		jsonrpc.Serve(backend.WithPeer(ctx, peer), serverCodec, srv)
-		peer.Close() // closes serverCodec implicitly
-	}()
-
-	clientCodec := zbstore.NewCodec(clientConn, clientReceiver)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		jsonrpc.Serve(ctx, clientCodec, clientHandler)
-	}()
-	client := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
-		return clientCodec, nil
-	})
-
-	tb.Cleanup(func() {
-		if err := client.Close(); err != nil {
-			tb.Error("client.Close:", err)
-		}
-
-		cancel()
-		wg.Wait()
-
-		serverReceiver.Cleanup(testlog.WithTB(context.Background(), tb))
-		if err := srv.Close(); err != nil {
-			tb.Error("srv.Close:", err)
-		}
-
-		// Make entire store writable for deletion.
-		filepath.WalkDir(realStoreDir, func(path string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			perm := os.FileMode(0o666)
-			if entry.IsDir() {
-				perm = 0o777
-			}
-			if err := os.Chmod(path, perm); err != nil {
-				tb.Log(err)
-			}
-			return nil
-		})
-	})
-
-	return client
 }
 
 type testBuildLogger struct {

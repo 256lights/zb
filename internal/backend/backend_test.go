@@ -1,24 +1,24 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-package backend
+package backend_test
 
 import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/fs"
-	"net"
 	"os"
 	"path/filepath"
 	"slices"
-	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	. "zb.256lights.llc/pkg/internal/backend"
+	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/system"
+	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log/testlog"
@@ -27,7 +27,8 @@ import (
 
 func TestImport(t *testing.T) {
 	runTest := func(t *testing.T, dir zbstore.Directory, realStoreDir string) {
-		ctx := testlog.WithTB(context.Background(), t)
+		ctx, cancel := testcontext.New(t)
+		defer cancel()
 
 		const fileContent = "Hello, World!\n"
 		exportBuffer := new(bytes.Buffer)
@@ -59,9 +60,15 @@ func TestImport(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		client := newTestServer(t, dir, jsonrpc.MethodNotFoundHandler{}, nil, &Options{
-			RealDir: realStoreDir,
+		client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+			TempDir: t.TempDir(),
+			Options: Options{
+				RealDir: realStoreDir,
+			},
 		})
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		codec, releaseCodec, err := storeCodec(ctx, client)
 		if err != nil {
@@ -157,86 +164,6 @@ func TestImport(t *testing.T) {
 	t.Run("MappedDir", func(t *testing.T) {
 		runTest(t, zbstore.DefaultDirectory(), t.TempDir())
 	})
-}
-
-// newTestServer creates a new [Server] suitable for testing
-// and returns a client connected to it.
-// newTestServer must be called from the goroutine running the test or benchmark.
-// The server and the client will be closed as part of test cleanup.
-func newTestServer(tb testing.TB, storeDir zbstore.Directory, clientHandler jsonrpc.Handler, clientReceiver zbstore.NARReceiver, opts *Options) *jsonrpc.Client {
-	tb.Helper()
-	helperDir := tb.TempDir()
-	buildDir := filepath.Join(helperDir, "build")
-	if err := os.Mkdir(buildDir, 0o777); err != nil {
-		tb.Fatal(err)
-	}
-
-	var wg sync.WaitGroup
-	opts2 := new(Options)
-	if opts != nil {
-		*opts2 = *opts
-	}
-	opts2.BuildDir = buildDir
-	opts2.DisableSandbox = true
-	if opts2.CoresPerBuild < 1 {
-		opts2.CoresPerBuild = 1
-	}
-	srv := NewServer(storeDir, filepath.Join(helperDir, "db.sqlite"), opts2)
-	serverConn, clientConn := net.Pipe()
-
-	ctx, cancel := context.WithCancel(testlog.WithTB(context.Background(), tb))
-	serverReceiver := srv.NewNARReceiver(ctx)
-	serverCodec := zbstore.NewCodec(serverConn, serverReceiver)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		peer := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
-			return serverCodec, nil
-		})
-		jsonrpc.Serve(WithPeer(ctx, peer), serverCodec, srv)
-		peer.Close() // closes serverCodec implicitly
-	}()
-
-	clientCodec := zbstore.NewCodec(clientConn, clientReceiver)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		jsonrpc.Serve(ctx, clientCodec, clientHandler)
-	}()
-	client := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
-		return clientCodec, nil
-	})
-
-	tb.Cleanup(func() {
-		if err := client.Close(); err != nil {
-			tb.Error("client.Close:", err)
-		}
-
-		cancel()
-		wg.Wait()
-
-		serverReceiver.Cleanup(testlog.WithTB(context.Background(), tb))
-		if err := srv.Close(); err != nil {
-			tb.Error("srv.Close:", err)
-		}
-
-		// Make entire store writable for deletion.
-		filepath.WalkDir(string(storeDir), func(path string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			perm := os.FileMode(0o666)
-			if entry.IsDir() {
-				perm = 0o777
-			}
-			if err := os.Chmod(path, perm); err != nil {
-				tb.Log(err)
-			}
-			return nil
-		})
-	})
-
-	return client
 }
 
 // wantObjectInfo builds the expected [*zbstore.ObjectInfo]
