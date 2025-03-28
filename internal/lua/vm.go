@@ -1438,12 +1438,23 @@ func decodeBinaryMetamethod(frame *callFrame, proto *luacode.Prototype) (uint8, 
 		return 0, 0, fmt.Errorf("%s: decode instruction: %v must be preceded by binary arithmetic instruction (found %v)",
 			sourceLocation(proto, pc), i.OpCode(), prevOpCode)
 	}
-	if got, want := luacode.TagMethod(i.ArgC()), prevOperator.TagMethod(); got != want {
+	got := luacode.TagMethod(i.ArgC())
+	newOperator, ok := got.ArithmeticOperator()
+	if !ok || !canUseTagMethodForOperator(got, prevOperator) {
+		// if got, want := luacode.TagMethod(i.ArgC()), prevOperator.TagMethod(); got != want {
 		err := fmt.Errorf("%s: decode instruction: found metamethod %v in %v after %v (expected %v)",
-			sourceLocation(proto, pc), got, i.OpCode(), prev.OpCode(), want)
+			sourceLocation(proto, pc), got, i.OpCode(), prev.OpCode(), prevOperator.TagMethod())
 		return prev.ArgA(), prevOperator, err
 	}
-	return prev.ArgA(), prevOperator, nil
+	return prev.ArgA(), newOperator, nil
+}
+
+func canUseTagMethodForOperator(tm luacode.TagMethod, op luacode.ArithmeticOperator) bool {
+	return tm == op.TagMethod() ||
+		tm == luacode.TagMethodSub && op == luacode.Add ||
+		tm == luacode.TagMethodAdd && op == luacode.Subtract ||
+		tm == luacode.TagMethodSHL && op == luacode.ShiftRight ||
+		tm == luacode.TagMethodSHR && op == luacode.ShiftLeft
 }
 
 // forPrep initializes the numeric for loop state

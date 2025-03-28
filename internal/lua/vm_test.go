@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"zb.256lights.llc/pkg/internal/luacode"
 	"zb.256lights.llc/pkg/internal/lualex"
 )
 
@@ -738,5 +739,50 @@ func TestVM(t *testing.T) {
 			t.Errorf("type(a[1]) = %v; want %v", got, want)
 		}
 		state.Pop(1)
+	})
+
+	t.Run("AllowNegatedMetamethod", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		// Set a metatable for nil which treats the nil like a zero when subtracting.
+		state.PushNil()
+		NewPureLib(state, map[string]Function{
+			luacode.TagMethodSub.String(): func(ctx context.Context, l *State) (int, error) {
+				for i := range 2 {
+					if l.IsNil(1 + i) {
+						l.PushInteger(0)
+						l.Replace(1 + i)
+					}
+				}
+				if err := l.Arithmetic(ctx, luacode.Subtract); err != nil {
+					return 0, err
+				}
+				return 1, nil
+			},
+		})
+		if err := state.SetMetatable(-2); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `return nil - 1`
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(ctx, 0, 1); err != nil {
+			t.Fatal(err)
+		}
+
+		const wantResult = -1
+		if got, want := state.Type(-1), TypeNumber; got != want {
+			t.Fatalf("state.Type(-1) = %v; want %v", got, want)
+		} else if got, ok := state.ToInteger(-1); got != wantResult || !ok {
+			t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, wantResult)
+		}
 	})
 }
