@@ -44,7 +44,7 @@ end
 ---@return string
 local function stripHash(name)
   local i, j = name:match("^[0123456789abcdfghijklmnpqrsvwxyz]+()-()")
-  if i - 1 == 32 then
+  if i == 32 + 1 then
     return name:sub(j)
   end
   return name
