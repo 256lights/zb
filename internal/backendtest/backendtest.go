@@ -92,6 +92,10 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 	if opts2.CoresPerBuild < 1 {
 		opts2.CoresPerBuild = 1
 	}
+	realStoreDir := opts2.RealDir
+	if realStoreDir == "" {
+		realStoreDir = string(storeDir)
+	}
 	srv := backend.NewServer(storeDir, filepath.Join(tempDir, "db.sqlite"), opts2)
 	serverConn, clientConn := net.Pipe()
 
@@ -138,7 +142,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 		}
 
 		// Make entire store writable for deletion.
-		filepath.WalkDir(string(storeDir), func(path string, entry fs.DirEntry, err error) error {
+		filepath.WalkDir(string(realStoreDir), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return nil
 			}
