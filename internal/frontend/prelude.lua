@@ -65,6 +65,20 @@ local function stripSuffixes(name, ...)
   return name
 end
 
+--- fsBaseNameOf returns the last element of path.
+--- Trailing slashes are removed before extracting the last element.
+--- If the path is empty, baseNameOf returns "".
+--- If the path consists entirely of separators, fsBaseNameOf returns a single separator.
+---@param path string slash-separated or backslash-separated path
+---@return string
+local function fsBaseNameOf(path)
+  if path == "" then return "." end
+  local base = path:match("([^/\\]*)[/\\]*$")
+  -- If empty now, it had only separators.
+  if base == "" then return path:sub(1, 1) end
+  return base
+end
+
 ---@param args string|{src: string, name: string?, stripFirstComponent: boolean?}
 ---@return derivation
 function extract(args)
@@ -82,7 +96,7 @@ function extract(args)
     name = args.name
   end
   if not name then
-    name = stripHash(stripSuffixes(baseNameOf(src), ".tar", ".tar.gz", ".tar.bz2", ".zip"))
+    name = stripHash(stripSuffixes(fsBaseNameOf(src), ".tar", ".tar.gz", ".tar.bz2", ".zip"))
   end
   if stripFirstComponent == nil then
     stripFirstComponent = true
