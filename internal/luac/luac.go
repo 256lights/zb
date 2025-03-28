@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -59,17 +60,31 @@ func run(opts *options) error {
 	}
 	defer f.Close()
 
-	var sourceName luacode.Source
-	if opts.source != "" {
-		sourceName = luacode.Source(opts.source)
+	br := bufio.NewReader(f)
+	var proto *luacode.Prototype
+	if header, _ := br.Peek(len(luacode.Signature)); string(header) == luacode.Signature {
+		bytecode, err := io.ReadAll(br)
+		if err != nil {
+			return err
+		}
+		proto = new(luacode.Prototype)
+		if err := proto.UnmarshalBinary(bytecode); err != nil {
+			return err
+		}
 	} else {
-		sourceName = luacode.FilenameSource(opts.inputFilename)
+		var sourceName luacode.Source
+		if opts.source != "" {
+			sourceName = luacode.Source(opts.source)
+		} else {
+			sourceName = luacode.FilenameSource(opts.inputFilename)
+		}
+		var err error
+		proto, err = luacode.Parse(sourceName, br)
+		if err != nil {
+			return err
+		}
 	}
 
-	proto, err := luacode.Parse(sourceName, bufio.NewReader(f))
-	if err != nil {
-		return err
-	}
 	if opts.list > 0 {
 		functionNames := make(map[*luacode.Prototype]string)
 		nameFunctions(functionNames, proto)
