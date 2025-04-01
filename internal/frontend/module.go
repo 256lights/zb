@@ -11,10 +11,9 @@ import (
 	"strings"
 	"sync"
 
-	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/luacode"
-	"zb.256lights.llc/pkg/internal/xiter"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 )
 
@@ -76,7 +75,8 @@ func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error)
 
 	// TODO(someday): If we have dependencies and we're using a non-local store,
 	// export the store object and read it.
-	var rewrites []string
+	toRealize := make(sets.Set[zbstore.OutputReference])
+	placeholders := make(map[string]zbstore.OutputReference)
 	for dep := range filenameContext {
 		c, err := parseContextString(dep)
 		if err != nil {
@@ -91,35 +91,35 @@ func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error)
 		if !strings.Contains(filename, placeholder) {
 			continue
 		}
-
-		resp := new(zbstore.RealizeResponse)
-		// TODO(someday): Only realize single output.
-		// TODO(someday): Batch.
-		err = jsonrpc.Do(ctx, eval.store, zbstore.RealizeMethod, resp, &zbstore.RealizeRequest{
-			DrvPath:    c.outputReference.DrvPath,
-			KeepFailed: eval.keepFailed,
-		})
-		if err != nil {
-			l.PushNil()
-			l.PushString(fmt.Sprintf("realize %v: %v", c.outputReference, err))
-			return 2, nil
-		}
-		output, err := xiter.Single(resp.OutputsByName(c.outputReference.OutputName))
-		if err != nil {
-			l.PushNil()
-			l.PushString(fmt.Sprintf("realize %v: outputs: %v", c.outputReference, err))
-			return 2, nil
-		}
-		if !output.Path.Valid || output.Path.X == "" {
-			l.PushNil()
-			l.PushString(fmt.Sprintf("realize %v: build failed", c.outputReference))
-			return 2, nil
-		}
-		rewrites = append(rewrites, placeholder, string(output.Path.X))
+		toRealize.Add(c.outputReference)
+		placeholders[placeholder] = c.outputReference
 	}
-	if len(rewrites) > 0 {
+	if toRealize.Len() > 0 {
+		results, err := eval.store.Realize(ctx, toRealize)
+		if err != nil {
+			l.PushNil()
+			l.PushString(err.Error())
+			return 2, nil
+		}
+
+		var rewrites []string
+		for placeholder, outputReference := range placeholders {
+			outputPath, err := zbstore.FindRealizeOutput(slices.Values(results), outputReference)
+			if err != nil {
+				l.PushNil()
+				l.PushString(err.Error())
+				return 2, nil
+			}
+			if !outputPath.Valid || outputPath.X == "" {
+				l.PushNil()
+				l.PushString(fmt.Sprintf("realize %v: build failed", outputReference))
+				return 2, nil
+			}
+			rewrites = append(rewrites, placeholder, string(outputPath.X))
+		}
 		filename = strings.NewReplacer(rewrites...).Replace(filename)
 	}
+
 	filename, err = absSourcePath(l, filename, filenameContext)
 	if err != nil {
 		l.PushNil()

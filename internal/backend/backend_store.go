@@ -6,13 +6,19 @@ package backend
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"iter"
 	"os"
 	"slices"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/google/uuid"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -20,6 +26,7 @@ import (
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 	"zombiezen.com/go/sqlite/sqlitex"
+	"zombiezen.com/go/xcontext"
 )
 
 /*
@@ -463,6 +470,395 @@ func upsertDrvHash(conn *sqlite.Conn, h nix.Hash) error {
 	return nil
 }
 
+func recordBuildStart(conn *sqlite.Conn, buildID uuid.UUID) error {
+	now := time.Now()
+	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/start.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":build_id":         buildID.String(),
+			":timestamp_millis": now.UnixMilli(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create new build record for %s: %v", buildID, err)
+	}
+	return nil
+}
+
+func recordBuildEnd(conn *sqlite.Conn, buildID uuid.UUID, buildError error) error {
+	now := time.Now()
+	var buildErrorArg any = nil
+	if buildError != nil && !errors.Is(buildError, errUnfinishedRealization) {
+		buildErrorArg = buildError.Error()
+	}
+	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/end.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":build_id":         buildID.String(),
+			":build_error":      buildErrorArg,
+			":timestamp_millis": now.UnixMilli(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("record build end for %s: %v", buildID, err)
+	}
+	return nil
+}
+
+// deleteOldBuilds deletes builds that occurred before the time cutoff.
+// Any build IDs yielded by the keep sequence will be retained.
+func deleteOldBuilds(conn *sqlite.Conn, cutoff time.Time, keep iter.Seq[uuid.UUID]) (numDeleted int64, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("delete old builds: %v", err)
+		}
+	}()
+	defer sqlitex.Save(conn)(&err)
+
+	err = sqlitex.ExecuteTransient(conn, `create temp table "active_builds" ("uuid" blob not null unique);`, nil)
+	if err != nil {
+		return 0, err
+	}
+	stmt, _, err := conn.PrepareTransient(`insert into temp."active_builds" values (?);`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Finalize()
+	for id := range keep {
+		stmt.BindBytes(1, id[:])
+		var stmtErrors [2]error
+		_, stmtErrors[0] = stmt.Step()
+		stmtErrors[1] = stmt.Reset()
+		for _, err := range stmtErrors {
+			if err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/gc.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":cutoff_millis": cutoff.UnixMilli(),
+		},
+	})
+	if err != nil {
+		return 0, err
+	}
+	err = sqlitex.ExecuteTransient(conn, `drop table temp."active_builds";`, nil)
+	if err != nil {
+		return 0, err
+	}
+	return int64(conn.Changes()), nil
+}
+
+func recordExpandResult(conn *sqlite.Conn, buildID uuid.UUID, result *zbstore.ExpandResult) error {
+	argsJSON := "[]"
+	if len(result.Args) > 0 {
+		var err error
+		argsJSON, err = marshalJSONString(result.Args)
+		if err != nil {
+			return fmt.Errorf("record build end for %s: %v", buildID, err)
+		}
+	}
+	envJSON := "{}"
+	if len(result.Env) > 0 {
+		var err error
+		envJSON, err = marshalJSONString(result.Env)
+		if err != nil {
+			return fmt.Errorf("record build end for %s: %v", buildID, err)
+		}
+	}
+	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/set_extract.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":build_id": buildID.String(),
+			":builder":  result.Builder,
+			":args":     argsJSON,
+			":env":      envJSON,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("record build end for %s: %v", buildID, err)
+	}
+	return nil
+}
+
+func insertBuildResult(conn *sqlite.Conn, buildID uuid.UUID, drvPath zbstore.Path, t time.Time) (buildResultID int64, err error) {
+	defer sqlitex.Save(conn)(&err)
+	if err := upsertPath(conn, drvPath); err != nil {
+		return -1, fmt.Errorf("record build result for %s in %v: %v", drvPath, buildID, err)
+	}
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/insert_result.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":build_id":         buildID.String(),
+			":drv_path":         string(drvPath),
+			":timestamp_millis": t.UnixMilli(),
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			buildResultID = stmt.ColumnInt64(0)
+			return nil
+		},
+	})
+	if err != nil {
+		return -1, fmt.Errorf("record build result for %s in %v: %v", drvPath, buildID, err)
+	}
+	return buildResultID, nil
+}
+
+func recordBuilderStart(conn *sqlite.Conn, buildResultID int64, t time.Time) error {
+	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/set_builder_start.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":id":               buildResultID,
+			":timestamp_millis": t.UnixMilli(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("record builder start: %v", err)
+	}
+	return nil
+}
+
+// setBuildResultOutputs sets the outputs for the build result with the given ID.
+// If a path is empty, then the output's path will be null.
+func setBuildResultOutputs(conn *sqlite.Conn, buildResultID int64, outputs iter.Seq2[string, zbstore.Path]) (err error) {
+	defer sqlitex.Save(conn)(&err)
+
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/clear_outputs.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":id": buildResultID,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("record build result outputs: %v", err)
+	}
+
+	stmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "build/insert_output.sql")
+	if err != nil {
+		return fmt.Errorf("record build result outputs: %v", err)
+	}
+	defer stmt.Finalize()
+
+	stmt.SetInt64(":id", buildResultID)
+	for outputName, outputPath := range outputs {
+		if outputPath != "" {
+			if err := upsertPath(conn, outputPath); err != nil {
+				return fmt.Errorf("record build result %s -> %s: %v", outputName, outputPath, err)
+			}
+		}
+
+		stmt.SetText(":output_name", outputName)
+		stmt.SetText(":output_path", string(outputPath))
+		var execErrors [2]error
+		_, execErrors[0] = stmt.Step()
+		execErrors[1] = stmt.Reset()
+		for _, err := range execErrors {
+			if err != nil {
+				return fmt.Errorf("record build result %s -> %s: %v", outputName, outputPath, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func recordBuilderEnd(conn *sqlite.Conn, buildResultID int64, t time.Time) error {
+	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/set_builder_end.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":id":               buildResultID,
+			":timestamp_millis": t.UnixMilli(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("record builder end: %v", err)
+	}
+	return nil
+}
+
+func finalizeBuildResult(ctx context.Context, conn *sqlite.Conn, buildResultID int64, t time.Time, buildError error) (err error) {
+	// If build is being cancelled, allow some amount of time to write.
+	ctx, cancel := xcontext.KeepAlive(ctx, 30*time.Second)
+	defer cancel()
+	oldDone := conn.SetInterrupt(ctx.Done())
+	defer conn.SetInterrupt(oldDone)
+
+	defer sqlitex.Save(conn)(&err)
+
+	status := zbstore.BuildSuccess
+	if buildError != nil {
+		if isBuilderFailure(buildError) {
+			status = zbstore.BuildFail
+		} else {
+			status = zbstore.BuildError
+			logger := newBuildLogger(ctx, conn, buildResultID)
+			var buf []byte
+			buf = append(buf, "zb internal error: "...)
+			buf = append(buf, buildError.Error()...)
+			buf = append(buf, '\n')
+			if _, err := logger.Write(buf); err != nil {
+				log.Warnf(ctx, "Failed to write build error to log: %v", err)
+			}
+			if err := logger.Close(); err != nil {
+				log.Debugf(ctx, "Failed to write close build logger: %v", err)
+			}
+		}
+	}
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/end_result.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":id":               buildResultID,
+			":status":           string(status),
+			":timestamp_millis": t.UnixMilli(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("record final build result: %v", err)
+	}
+	return nil
+}
+
+var (
+	errBuildLogNotFound = errors.New("not found")
+	errBuildLogPending  = errors.New("log not finished")
+)
+
+// readBuildLogAt reads len(p) bytes into p starting at offset off
+// in the builder log for the derivation path drvPath from build with ID buildID.
+// It returns the number of bytes read (0 <= n <= len(p))
+// and any error encountered.
+// When readBuildLogAt returns n < len(p),
+// it returns a non-nil error explaining why more bytes were not returned.
+//
+// If the n < len(p) bytes returned by readBuildLogAt are at the end of the build log
+// and the builder has not finished,
+// readBuildLogAt will return an error that wraps [errBuildLogPending].
+// readBuildLogAt will not block until more data is written.
+// If the n = len(p) bytes returned by readBuildLogAt are at the end of the build log
+// and the builder has already finished,
+// readBuildLogAt returns err == [io.EOF].
+//
+// If the build log does not exist in the database,
+// then readBuildLogAt will return an error that wraps [errBuildLogNotFound].
+func readBuildLogAt(conn *sqlite.Conn, buildID uuid.UUID, drvPath zbstore.Path, p []byte, off int64) (n int, err error) {
+	defer sqlitex.Save(conn)(&err)
+
+	var buildResultID int64
+	found := false
+	finished := false
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/find_result.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":build_id": buildID.String(),
+			":drv_path": drvPath,
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			found = true
+			buildResultID = stmt.GetInt64("id")
+			status := zbstore.BuildStatus(stmt.GetText("status"))
+			finished = status != zbstore.BuildActive
+			return nil
+		},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("read log for %s in build %v: %v", drvPath, buildID, err)
+	}
+	if !found {
+		return 0, fmt.Errorf("read log for %s in build %v: %w", drvPath, buildID, errBuildLogNotFound)
+	}
+	end := off + int64(len(p))
+	if finished {
+		// Read an additional byte to check for EOF.
+		end++
+	}
+	maxSeen := off
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/read_log.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":build_result_id": buildResultID,
+			":start":           off,
+			":end":             end,
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			start := stmt.GetInt64("start")
+			i := stmt.ColumnIndex("data")
+			stmt.ColumnBytes(i, p[start-off:])
+			maxSeen = max(maxSeen, start+int64(stmt.ColumnLen(i)))
+			return nil
+		},
+	})
+	if err != nil {
+		return int(maxSeen - off), fmt.Errorf("read log for %s in build %v: %v", drvPath, buildID, err)
+	}
+	switch want := off + int64(len(p)); {
+	case finished && maxSeen <= want:
+		return int(maxSeen - off), io.EOF
+	case !finished && maxSeen < want:
+		return int(maxSeen - off), errBuildLogPending
+	default:
+		return len(p), nil
+	}
+}
+
+// buildLogger is an [io.Writer] that inserts log chunks into the store database.
+// It has no buffering: callers should introduce buffering as needed.
+type buildLogger struct {
+	ctx  context.Context
+	conn *sqlite.Conn
+	stmt *sqlite.Stmt
+	err  error
+}
+
+// newBuildLogger returns a logger that appends to the log for the given build result.
+// The caller is responsible for calling [*buildLogger.Close] when it is done writing to the logger.
+func newBuildLogger(ctx context.Context, conn *sqlite.Conn, buildResultID int64) *buildLogger {
+	stmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "build/insert_log_chunk.sql")
+	if err != nil {
+		return &buildLogger{err: err}
+	}
+	stmt.SetInt64(":build_result_id", buildResultID)
+	return &buildLogger{
+		ctx:  ctx,
+		conn: conn,
+		stmt: stmt,
+	}
+}
+
+// Write writes the bytes as a new log chunk in the log.
+func (logger *buildLogger) Write(p []byte) (n int, err error) {
+	now := time.Now()
+	if logger.err != nil {
+		return 0, logger.err
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	// Avoid interrupting writes if the overall build is being cancelled.
+	ctx, cancel := xcontext.KeepAlive(logger.ctx, 30*time.Second)
+	defer cancel()
+	oldDone := logger.conn.SetInterrupt(ctx.Done())
+	defer logger.conn.SetInterrupt(oldDone)
+
+	logger.stmt.SetInt64(":received_at", now.UnixMilli())
+	logger.stmt.SetBytes(":data", p)
+	var stmtErrors [2]error
+	_, stmtErrors[0] = logger.stmt.Step()
+	stmtErrors[1] = logger.stmt.Reset()
+	for _, err := range stmtErrors {
+		if err != nil {
+			logger.err = fmt.Errorf("write to build log: %v", err)
+			return 0, logger.err
+		}
+	}
+	return len(p), nil
+}
+
+// Close releases the resources associated with the logger.
+func (logger *buildLogger) Close() error {
+	logger.err = errors.New("logger closed")
+	var err error
+	if logger.stmt != nil {
+		err = logger.stmt.Finalize()
+		logger.stmt = nil
+	}
+	logger.conn = nil
+	logger.ctx = nil
+	return err
+}
+
 func prepareConn(conn *sqlite.Conn) error {
 	if err := sqlitex.ExecuteTransient(conn, "PRAGMA journal_mode = wal;", nil); err != nil {
 		return err
@@ -470,10 +866,59 @@ func prepareConn(conn *sqlite.Conn) error {
 	if err := sqlitex.ExecuteTransient(conn, "PRAGMA foreign_keys = on;", nil); err != nil {
 		return err
 	}
+	// uuid(TEXT) -> BLOB | NULL
+	// Parse UUID, returning NULL if it does not represent a valid UUID.
+	err := conn.CreateFunction("uuid", &sqlite.FunctionImpl{
+		NArgs:         1,
+		Deterministic: true,
+		AllowIndirect: true,
+		Scalar: func(ctx sqlite.Context, args []sqlite.Value) (sqlite.Value, error) {
+			u, err := uuid.Parse(args[0].Text())
+			if err != nil {
+				return sqlite.Value{}, nil
+			}
+			return sqlite.BlobValue(u[:]), nil
+		},
+	})
+	if err != nil {
+		return err
+	}
+	// uuidhex(any) -> TEXT | NULL
+	// Format UUID in canonical dash-separated lower hex format.
+	// If argument is not a BLOB, it is converted to TEXT and parsing is attempted.
+	// If parsing fails or the argument is a BLOB with a length other than 16,
+	// then uuidhex returns NULL.
+	err = conn.CreateFunction("uuidhex", &sqlite.FunctionImpl{
+		NArgs:         1,
+		Deterministic: true,
+		AllowIndirect: true,
+		Scalar: func(ctx sqlite.Context, args []sqlite.Value) (sqlite.Value, error) {
+			var u uuid.UUID
+			switch args[0].Type() {
+			case sqlite.TypeBlob:
+				b := args[0].Blob()
+				if len(b) != len(u) {
+					return sqlite.Value{}, nil
+				}
+				copy(u[:], b)
+			default:
+				var err error
+				u, err = uuid.Parse(args[0].Text())
+				if err != nil {
+					return sqlite.Value{}, nil
+				}
+			}
+			return sqlite.TextValue(u.String()), nil
+		},
+	})
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
 //go:embed sql/*.sql
+//go:embed sql/build/*.sql
 //go:embed sql/schema/*.sql
 var rawSQLFiles embed.FS
 
@@ -510,4 +955,27 @@ func loadSchema() sqlitemigration.Schema {
 		panic(schemaState.err)
 	}
 	return schemaState.schema
+}
+
+func marshalJSONString(v any) (string, error) {
+	sb := new(strings.Builder)
+	enc := json.NewEncoder(sb)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "")
+	err := enc.Encode(v)
+	return strings.TrimSuffix(sb.String(), "\n"), err
+}
+
+func unmarshalJSONString(data string, v any) error {
+	dec := json.NewDecoder(strings.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	var buf [1]byte
+	n, _ := io.ReadFull(dec.Buffered(), buf[:])
+	if n > 0 {
+		return errors.New("unmarshal json: trailing data")
+	}
+	return nil
 }

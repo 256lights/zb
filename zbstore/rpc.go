@@ -7,9 +7,13 @@ package zbstore
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"iter"
+	"slices"
+	"time"
 	"unicode/utf8"
 
+	"zb.256lights.llc/pkg/internal/xiter"
 	"zombiezen.com/go/nix"
 )
 
@@ -60,7 +64,7 @@ const RealizeMethod = "zb.realize"
 
 // RealizeRequest is the set of parameters for [RealizeMethod].
 type RealizeRequest struct {
-	DrvPath Path `json:"drvPath"`
+	DrvPaths []Path `json:"drvPath"`
 	// KeepFailed indicates that if the realization fails,
 	// the user wants the store to keep the build directory for further investigation.
 	KeepFailed bool `json:"keepFailed"`
@@ -68,32 +72,7 @@ type RealizeRequest struct {
 
 // RealizeResponse is the result for [RealizeMethod].
 type RealizeResponse struct {
-	Outputs []*RealizeOutput `json:"outputs"`
-}
-
-// OutputsByName returns an iterator over the outputs with the given name.
-func (resp *RealizeResponse) OutputsByName(name string) iter.Seq[*RealizeOutput] {
-	if resp == nil {
-		return func(yield func(*RealizeOutput) bool) {}
-	}
-	return func(yield func(*RealizeOutput) bool) {
-		for _, out := range resp.Outputs {
-			if out.Name == name {
-				if !yield(out) {
-					return
-				}
-			}
-		}
-	}
-}
-
-// RealizeOutput is an output in [RealizeResponse].
-type RealizeOutput struct {
-	// OutputName is the name of the output that was built (e.g. "out" or "dev").
-	Name string `json:"name"`
-	// Path is the store path of the output if successfully built,
-	// or null if the build failed.
-	Path Nullable[Path] `json:"path"`
+	BuildID string `json:"buildID"`
 }
 
 // ExpandMethod is the name of the method that performs placeholder expansion
@@ -112,46 +91,219 @@ type ExpandRequest struct {
 
 // ExpandResponse is the result for [ExpandMethod].
 type ExpandResponse struct {
+	BuildID string `json:"buildID"`
+}
+
+// ExpandResult is the result in a [GetBuildResponse] for a build started by [ExpandMethod].
+type ExpandResult struct {
 	Builder string            `json:"builder"`
 	Args    []string          `json:"args"`
 	Env     map[string]string `json:"env"`
 }
 
-// LogMethod is the name of the method invoked on the client
-// to record a log message from a running invocation.
-// [LogNotification] is used for the request
-// and the response is ignored.
-const LogMethod = "zb.log"
+// GetBuildMethod is the name of the method that queries the status of a build.
+// [GetBuildRequest] is used for the request
+// and [GetBuildResponse] is used for the response.
+const GetBuildMethod = "zb.getBuild"
 
-// LogNotification is the set of parameters for [LogMethod].
-// One of Text or Base64 should be set to a non-empty string.
-type LogNotification struct {
+// GetBuildRequest is the set of parameters for [GetBuildMethod].
+type GetBuildRequest struct {
+	BuildID string `json:"buildID"`
+}
+
+// BuildStatus is an enumeration of build states in [GetBuildResponse].
+type BuildStatus string
+
+// Defined build states.
+const (
+	// BuildUnknown is the status used for a build that the store doesn't know about.
+	BuildUnknown BuildStatus = "unknown"
+	// BuildActive is the status used for a build in progress.
+	BuildActive BuildStatus = "active"
+	// BuildSuccess is the status used for a build that encountered no errors.
+	BuildSuccess BuildStatus = "success"
+	// BuildFail is the status used for a build that has one or more derivations that failed.
+	BuildFail BuildStatus = "fail"
+	// BuildError is the status used for a build that encountered an internal error.
+	BuildError BuildStatus = "error"
+)
+
+// GetBuildResponse is the result for [GetBuildMethod].
+type GetBuildResponse struct {
+	Status    BuildStatus         `json:"status"`
+	StartedAt time.Time           `json:"startedAt"`
+	EndedAt   Nullable[time.Time] `json:"endedAt"`
+	Results   []*BuildResult      `json:"results"`
+	Expand    *ExpandResult       `json:"expand,omitempty"`
+}
+
+// ResultForPath returns the build result with the given derivation path.
+// It returns an error if there is not exactly one.
+func (resp *GetBuildResponse) ResultForPath(drvPath Path) (*BuildResult, error) {
+	var seq iter.Seq[*BuildResult]
+	if resp == nil {
+		seq = func(yield func(*BuildResult) bool) {}
+	} else {
+		seq = func(yield func(*BuildResult) bool) {
+			for _, result := range resp.Results {
+				if result.DrvPath == drvPath {
+					if !yield(result) {
+						return
+					}
+				}
+			}
+		}
+	}
+
+	result, err := xiter.Single(seq)
+	if err != nil {
+		err = fmt.Errorf("build result for %s: %w", drvPath, err)
+	}
+	return result, err
+}
+
+// FindRealizeOutput searches through resp.Results for the given output.
+func (resp *GetBuildResponse) FindRealizeOutput(ref OutputReference) (Nullable[Path], error) {
+	var results []*BuildResult
+	if resp != nil {
+		results = resp.Results
+	}
+	return FindRealizeOutput(slices.Values(results), ref)
+}
+
+// BuildResult is the result of a single derivation in a [GetBuildResponse].
+type BuildResult struct {
+	DrvPath Path             `json:"drvPath"`
+	Status  BuildStatus      `json:"status"`
+	Outputs []*RealizeOutput `json:"outputs"`
+}
+
+// OutputForName returns the [*RealizeOutput] with the given name.
+// It returns an error if there is not exactly one.
+func (result *BuildResult) OutputForName(name string) (*RealizeOutput, error) {
+	var seq iter.Seq[*RealizeOutput]
+	if result == nil {
+		seq = func(yield func(*RealizeOutput) bool) {}
+	} else {
+		seq = func(yield func(*RealizeOutput) bool) {
+			for _, out := range result.Outputs {
+				if out.Name == name {
+					if !yield(out) {
+						return
+					}
+				}
+			}
+		}
+	}
+
+	output, err := xiter.Single(seq)
+	if err != nil {
+		err = fmt.Errorf("output for %s: %w", name, err)
+	}
+	return output, err
+}
+
+// FindRealizeOutput searches through a list of [*BuildResult] values for the given output.
+func FindRealizeOutput(results iter.Seq[*BuildResult], ref OutputReference) (Nullable[Path], error) {
+	p, err := xiter.Single(func(yield func(Nullable[Path]) bool) {
+		for result := range results {
+			if result.DrvPath != ref.DrvPath {
+				continue
+			}
+			for _, output := range result.Outputs {
+				if output.Name == ref.OutputName {
+					if !yield(output.Path) {
+						return
+					}
+				}
+			}
+		}
+	})
+	if err != nil {
+		return Nullable[Path]{}, fmt.Errorf("look up %v: %w", ref, err)
+	}
+	return p, nil
+}
+
+// RealizeOutput is an output in [BuildResult].
+type RealizeOutput struct {
+	// OutputName is the name of the output that was built (e.g. "out" or "dev").
+	Name string `json:"name"`
+	// Path is the store path of the output if successfully built,
+	// or null if the build failed.
+	Path Nullable[Path] `json:"path"`
+}
+
+// CancelBuildMethod is the name of the method that informs the store
+// that the client is no longer interested in the results of the build
+// and wishes it to be canceled.
+// [CancelBuildNotification] is used for the request
+// and the response is ignored.
+const CancelBuildMethod = "zb.cancelBuild"
+
+// CancelBuildNotification is the set of parameters for [CancelBuildMethod].
+type CancelBuildNotification struct {
+	BuildID string `json:"buildID"`
+}
+
+// ReadLogMethod is the name of the method that reads the build log from a running build.
+// [ReadLogRequest] is used for the request
+// and [ReadLogResponse] is used for the response.
+const ReadLogMethod = "zb.readLog"
+
+// ReadLogRequest is the set of parameters for [ReadLogMethod].
+type ReadLogRequest struct {
+	BuildID string `json:"buildID"`
 	DrvPath Path   `json:"drvPath"`
-	Text    string `json:"text,omitempty"`
-	Base64  string `json:"base64,omitempty"`
+	// RangeStart is the first byte of the log to read,
+	// where zero is the start of the log.
+	// If RangeStart is greater than the number of bytes in the log
+	// and the derivation has finished building,
+	// then an error is returned.
+	// If RangeStart is greater than or equal to the number of bytes in the log
+	// and the derivation's build is still active,
+	// then the method blocks until at least RangeStart+1 bytes have been written to the log.
+	RangeStart int64 `json:"rangeStart"`
+	// RangeEnd is an optional upper bound on the number of bytes to read.
+	// If non-null, it must be greater than RangeStart.
+	// This method may return less bytes than requested.
+	RangeEnd Nullable[int64] `json:"rangeEnd"`
+}
+
+// ReadLogResponse is the result for [ReadLogMethod].
+// At most one of Text or Base64 should be set;
+// the payload fields can be read with [*ReadLogResponse.Payload]
+// and can be written with [*ReadLogResponse.SetPayload].
+type ReadLogResponse struct {
+	Text   string `json:"text,omitempty"`
+	Base64 string `json:"base64,omitempty"`
+
+	// EOF indicates whether the end of this payload is the end of the log.
+	// If true, this implies that the derivation has finished its realization.
+	EOF bool `json:"eof"`
 }
 
 // Payload returns the log's byte content.
-func (notif *LogNotification) Payload() []byte {
+func (resp *ReadLogResponse) Payload() []byte {
 	switch {
-	case notif.Base64 != "":
-		b, _ := base64.StdEncoding.DecodeString(notif.Base64)
+	case resp.Base64 != "":
+		b, _ := base64.StdEncoding.DecodeString(resp.Base64)
 		return b
-	case notif.Text != "":
-		return []byte(notif.Text)
+	case resp.Text != "":
+		return []byte(resp.Text)
 	default:
 		return nil
 	}
 }
 
-// SetPayload sets notif.Text and notif.Base64 to reflect the given payload.
-func (notif *LogNotification) SetPayload(src []byte) {
+// SetPayload sets resp.Text and resp.Base64 to reflect the given payload.
+func (resp *ReadLogResponse) SetPayload(src []byte) {
 	if utf8.Valid(src) {
-		notif.Text = string(src)
-		notif.Base64 = ""
+		resp.Text = string(src)
+		resp.Base64 = ""
 	} else {
-		notif.Text = ""
-		notif.Base64 = base64.StdEncoding.EncodeToString(src)
+		resp.Text = ""
+		resp.Base64 = base64.StdEncoding.EncodeToString(src)
 	}
 }
 

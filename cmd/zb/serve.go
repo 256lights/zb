@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 	"zb.256lights.llc/pkg/internal/backend"
@@ -29,13 +30,14 @@ import (
 )
 
 type serveOptions struct {
-	dbPath          string
-	buildDir        string
-	buildUsersGroup string
-	sandbox         bool
-	sandboxPaths    map[string]string
-	allowKeepFailed bool
-	coresPerBuild   int
+	dbPath            string
+	buildDir          string
+	buildUsersGroup   string
+	sandbox           bool
+	sandboxPaths      map[string]string
+	allowKeepFailed   bool
+	coresPerBuild     int
+	buildLogRetention time.Duration
 }
 
 func newServeCommand(g *globalConfig) *cobra.Command {
@@ -62,6 +64,7 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 	c.Flags().Var(pathMapFlag(opts.sandboxPaths), "sandbox-path", "`path` to allow in sandbox (can be passed multiple times)")
 	c.Flags().BoolVar(&opts.allowKeepFailed, "allow-keep-failed", true, "allow user to skip cleanup of failed builds")
 	c.Flags().IntVar(&opts.coresPerBuild, "cores-per-build", runtime.NumCPU(), "hint to builders for `number` of concurrent jobs to run")
+	c.Flags().DurationVar(&opts.buildLogRetention, "build-log-retention", 7*24*time.Hour, "`duration` before deleting finished build logs")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		return runServe(cmd.Context(), g, opts)
 	}
@@ -131,12 +134,13 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 
 	log.Infof(ctx, "Listening on %s", g.storeSocket)
 	srv := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
-		BuildDir:        opts.buildDir,
-		SandboxPaths:    opts.sandboxPaths,
-		DisableSandbox:  !opts.sandbox,
-		BuildUsers:      buildUsers,
-		AllowKeepFailed: opts.allowKeepFailed,
-		CoresPerBuild:   opts.coresPerBuild,
+		BuildDir:          opts.buildDir,
+		SandboxPaths:      opts.sandboxPaths,
+		DisableSandbox:    !opts.sandbox,
+		BuildUsers:        buildUsers,
+		AllowKeepFailed:   opts.allowKeepFailed,
+		CoresPerBuild:     opts.coresPerBuild,
+		BuildLogRetention: opts.buildLogRetention,
 	})
 	defer func() {
 		if err := srv.Close(); err != nil {
@@ -163,11 +167,8 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 			defer recv.Cleanup(ctx)
 
 			codec := zbstore.NewCodec(nopCloser{conn}, recv)
-			peer := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
-				return codec, nil
-			})
-			jsonrpc.Serve(backend.WithPeer(ctx, peer), codec, srv)
-			peer.Close()
+			jsonrpc.Serve(backend.WithExporter(ctx, codec), codec, srv)
+			codec.Close()
 
 			openConnsMu.Lock()
 			openConns.Delete(conn)

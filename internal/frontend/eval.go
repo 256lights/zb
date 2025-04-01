@@ -20,8 +20,8 @@ import (
 	"strings"
 	"sync"
 
-	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/sqlite"
@@ -37,7 +37,7 @@ var preludeSource []byte
 // Options is the set of parameters for [NewEval].
 type Options struct {
 	// Store is an open JSON-RPC client to the store server.
-	Store *jsonrpc.Client
+	Store Store
 	// StoreDirectory is the store directory used by the store.
 	StoreDirectory zbstore.Directory
 	// CacheDBPath is the path to a database file used to speed up store imports.
@@ -46,17 +46,29 @@ type Options struct {
 	// LookupEnv is called for the Lua os.getenv function.
 	// If nil, os.getenv will always return nil.
 	LookupEnv func(ctx context.Context, key string) (string, bool)
-	// KeepFailed indicates that if any realization fails,
-	// the user wants the store to keep the build directory for further investigation.
-	KeepFailed bool
+}
+
+// Store is the set of store operations that [Eval] needs.
+//
+// Exists reports whether the given path exists in the store.
+//
+// Import reads the `nix-store --export` data from the given reader
+// and adds any objects from the stream into the store.
+//
+// Realize starts a build for the given derivation paths,
+// waits for the build to finish,
+// then returns the results of the build.
+type Store interface {
+	Exists(ctx context.Context, path string) (bool, error)
+	Import(ctx context.Context, r io.Reader) error
+	Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstore.BuildResult, error)
 }
 
 type Eval struct {
-	store      *jsonrpc.Client
-	storeDir   zbstore.Directory
-	cachePool  *sqlitemigration.Pool
-	lookupEnv  func(ctx context.Context, key string) (string, bool)
-	keepFailed bool
+	store     Store
+	storeDir  zbstore.Directory
+	cachePool *sqlitemigration.Pool
+	lookupEnv func(ctx context.Context, key string) (string, bool)
 
 	baseImportContext context.Context
 	cancelImports     context.CancelFunc

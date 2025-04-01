@@ -23,6 +23,7 @@ import (
 	"time"
 	"unique"
 
+	"github.com/google/uuid"
 	"zb.256lights.llc/pkg/internal/detect"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/storepath"
@@ -38,6 +39,7 @@ import (
 	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
+	"zombiezen.com/go/xcontext"
 )
 
 func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.Response, err error) {
@@ -46,21 +48,33 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 	if err := json.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
-	drvPath, subPath, err := s.dir.ParsePath(string(args.DrvPath))
+	if len(args.DrvPaths) == 0 {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("no derivation paths given"))
+	}
+	var drvPaths []zbstore.Path
+	for _, arg := range args.DrvPaths {
+		drvPath, subPath, err := s.dir.ParsePath(string(arg))
+		if err != nil {
+			return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+		}
+		if subPath != "" {
+			return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a store object", arg))
+		}
+		if _, isDrv := drvPath.DerivationName(); !isDrv {
+			return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a derivation", drvPath))
+		}
+		drvPaths = append(drvPaths, drvPath)
+	}
+	buildID, err := uuid.NewV7()
 	if err != nil {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+		return nil, err
 	}
-	if subPath != "" {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a store object", args.DrvPath))
-	}
-	if _, isDrv := drvPath.DerivationName(); !isDrv {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s is not a derivation", drvPath))
-	}
-	log.Infof(ctx, "Requested to build %s", drvPath)
+	drvPathList := joinStrings(drvPaths, ", ")
+	log.Infof(ctx, "New build %v: %s", buildID, drvPathList)
 
-	drvCache, err := s.readDerivationClosure(ctx, []zbstore.Path{drvPath})
+	drvCache, err := s.readDerivationClosure(ctx, drvPaths)
 	if err != nil {
-		return nil, fmt.Errorf("build %s: %v", drvPath, err)
+		return nil, fmt.Errorf("build %s: %v", drvPathList, err)
 	}
 
 	conn, err := s.db.Get(ctx)
@@ -69,21 +83,46 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 	}
 	defer s.db.Put(conn)
 
-	wantOutputs := make(sets.Set[zbstore.OutputReference])
-	for outputName := range drvCache[drvPath].Outputs {
-		wantOutputs.Add(zbstore.OutputReference{
-			DrvPath:    drvPath,
-			OutputName: outputName,
-		})
+	buildCtx, cancelBuild, err := s.registerBuildID(ctx, conn, buildID)
+	if err != nil {
+		return nil, fmt.Errorf("build %s: %v", drvPathList, err)
 	}
-	b := s.newBuilder(conn, drvCache)
-	if err := b.realize(ctx, wantOutputs, args.KeepFailed); err != nil {
-		if isBuilderFailure(err) {
-			return marshalResponse(b.makeRealizeResponse(drvPath))
+
+	s.buildWaitGroup.Add(1)
+	go func() {
+		defer func() {
+			cancelBuild()
+			s.buildWaitGroup.Done()
+		}()
+
+		wantOutputs := make(sets.Set[zbstore.OutputReference])
+		for _, drvPath := range drvPaths {
+			for outputName := range drvCache[drvPath].Outputs {
+				wantOutputs.Add(zbstore.OutputReference{
+					DrvPath:    drvPath,
+					OutputName: outputName,
+				})
+			}
 		}
-		return nil, fmt.Errorf("build %s: %v", drvPath, err)
-	}
-	return marshalResponse(b.makeRealizeResponse(drvPath))
+		b := s.newBuilder(buildID, drvCache)
+		realizeError := b.realize(buildCtx, wantOutputs, args.KeepFailed)
+
+		recordCtx, cancel := xcontext.KeepAlive(buildCtx, 30*time.Second)
+		defer cancel()
+		conn, err := s.db.Get(recordCtx)
+		if err != nil {
+			log.Errorf(recordCtx, "Unable to record end of build %s: %v. Original error: %v", buildID, err, realizeError)
+			return
+		}
+		defer s.db.Put(conn)
+		if err := recordBuildEnd(conn, buildID, realizeError); err != nil {
+			log.Errorf(recordCtx, "Unable to record end of build %s: %v. Original error: %v", buildID, err, realizeError)
+		}
+	}()
+
+	return marshalResponse(&zbstore.RealizeResponse{
+		BuildID: buildID.String(),
+	})
 }
 
 func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.Response, err error) {
@@ -121,6 +160,10 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 	if err != nil {
 		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
 	}
+	buildID, err := uuid.NewV7()
+	if err != nil {
+		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
+	}
 
 	conn, err := s.db.Get(ctx)
 	if err != nil {
@@ -128,41 +171,108 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 	}
 	defer s.db.Put(conn)
 
-	drv := drvCache[drvPath]
-	inputs := sets.Collect(drv.InputDerivationOutputs())
-	b := s.newBuilder(conn, drvCache)
-	if err := b.realize(ctx, inputs, false); err != nil {
-		if isBuilderFailure(err) {
-			return marshalResponse(b.makeRealizeResponse(drvPath))
-		}
+	buildCtx, endBuild, err := s.registerBuildID(ctx, conn, buildID)
+	if err != nil {
 		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
 	}
 
-	outPaths, err := tempOutputPaths(drvPath, drv.Outputs)
-	if err != nil {
-		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
-	}
-	inputRewrites, err := derivationInputRewrites(drv, b.lookup)
-	if err != nil {
-		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
-	}
-	r := newReplacer(xiter.Chain2(
-		outputPathRewrites(outPaths),
-		maps.All(inputRewrites),
-	))
-	expandedDrv := expandDerivationPlaceholders(r, drv)
-	fillBaseEnv(expandedDrv.Env, drv.Dir, temporaryDirectory, s.coresPerBuild)
+	s.buildWaitGroup.Add(1)
+	go func() {
+		defer func() {
+			endBuild()
+			s.buildWaitGroup.Done()
+		}()
+
+		drv := drvCache[drvPath]
+		inputs := sets.Collect(drv.InputDerivationOutputs())
+
+		b := s.newBuilder(buildID, drvCache)
+		realizeError := b.realize(buildCtx, inputs, false)
+
+		recordCtx, cancel := xcontext.KeepAlive(buildCtx, 30*time.Second)
+		defer cancel()
+		conn, err := s.db.Get(recordCtx)
+		if err != nil {
+			log.Errorf(recordCtx, "Unable to record end of build %s: %v. Original error: %v", buildID, err, realizeError)
+			return
+		}
+		defer s.db.Put(conn)
+
+		if realizeError != nil {
+			if err := recordBuildEnd(conn, buildID, realizeError); err != nil {
+				log.Errorf(recordCtx, "Unable to record end of build %s: %v. Original error: %v", buildID, err, realizeError)
+			}
+			return
+		}
+
+		expandedDrv, expandError := b.expand(drvPath, drv, temporaryDirectory)
+		if expandError != nil {
+			// Errors at this stage indicate defects in zb.
+			log.Errorf(recordCtx, "Expand %s: %v", drvPath, expandError)
+		}
+
+		err = func() (err error) {
+			endTx, err := sqlitex.ImmediateTransaction(conn)
+			if err != nil {
+				return err
+			}
+			defer endTx(&err)
+			if err := recordBuildEnd(conn, buildID, expandError); err != nil {
+				return err
+			}
+			if expandError == nil {
+				err := recordExpandResult(conn, buildID, &zbstore.ExpandResult{
+					Builder: expandedDrv.Builder,
+					Args:    expandedDrv.Args,
+					Env:     expandedDrv.Env,
+				})
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		}()
+		if err != nil {
+			log.Errorf(recordCtx, "Unable to record end of build %s: %v", buildID, err)
+			return
+		}
+	}()
 
 	return marshalResponse(&zbstore.ExpandResponse{
-		Builder: expandedDrv.Builder,
-		Args:    expandedDrv.Args,
-		Env:     expandedDrv.Env,
+		BuildID: buildID.String(),
 	})
 }
 
+func (s *Server) registerBuildID(parent context.Context, conn *sqlite.Conn, buildID uuid.UUID) (_ context.Context, cleanup func(), err error) {
+	if err := recordBuildStart(conn, buildID); err != nil {
+		return nil, nil, err
+	}
+	ctx := s.buildContext(context.WithoutCancel(parent), buildID.String())
+	ctx, cancel := context.WithCancel(ctx)
+	s.activeBuildsMu.Lock()
+	draining := s.draining
+	if !draining {
+		s.activeBuilds[buildID] = cancel
+	}
+	s.activeBuildsMu.Unlock()
+
+	if draining {
+		// If we're draining, don't worry about updating the status.
+		// An unterminated build that isn't active will show up as unknown.
+		cancel()
+		return nil, nil, errors.New("server shutting down; not starting new builds")
+	}
+	return ctx, func() {
+		s.activeBuildsMu.Lock()
+		delete(s.activeBuilds, buildID)
+		s.activeBuildsMu.Unlock()
+		cancel()
+	}, nil
+}
+
 type builder struct {
+	id     uuid.UUID
 	server *Server
-	conn   *sqlite.Conn
 
 	derivations  map[zbstore.Path]*zbstore.Derivation
 	drvHashes    map[zbstore.Path]nix.Hash
@@ -179,10 +289,10 @@ type cachedRealization struct {
 	closure map[zbstore.Path]sets.Set[equivalenceClass]
 }
 
-func (s *Server) newBuilder(conn *sqlite.Conn, derivations map[zbstore.Path]*zbstore.Derivation) *builder {
+func (s *Server) newBuilder(id uuid.UUID, derivations map[zbstore.Path]*zbstore.Derivation) *builder {
 	return &builder{
 		server:      s,
-		conn:        conn,
+		id:          id,
 		derivations: derivations,
 
 		drvHashes:    make(map[zbstore.Path]nix.Hash),
@@ -190,20 +300,20 @@ func (s *Server) newBuilder(conn *sqlite.Conn, derivations map[zbstore.Path]*zbs
 	}
 }
 
-func (b *builder) makeRealizeResponse(drvPath zbstore.Path) *zbstore.RealizeResponse {
-	resp := new(zbstore.RealizeResponse)
+func (b *builder) makeBuildResult(drvPath zbstore.Path) *zbstore.BuildResult {
+	result := new(zbstore.BuildResult)
 	for _, outputName := range xmaps.SortedKeys(b.derivations[drvPath].Outputs) {
 		var p zbstore.Nullable[zbstore.Path]
 		p.X, p.Valid = b.lookup(zbstore.OutputReference{
 			DrvPath:    drvPath,
 			OutputName: outputName,
 		})
-		resp.Outputs = append(resp.Outputs, &zbstore.RealizeOutput{
+		result.Outputs = append(result.Outputs, &zbstore.RealizeOutput{
 			Name: outputName,
 			Path: p,
 		})
 	}
-	return resp
+	return result
 }
 
 func (b *builder) toEquivalenceClass(ref zbstore.OutputReference) (_ equivalenceClass, ok bool) {
@@ -226,6 +336,8 @@ func (b *builder) lookup(ref zbstore.OutputReference) (_ zbstore.Path, ok bool) 
 	r, ok := b.realizations[eqClassRef]
 	return r.path, ok
 }
+
+var errUnfinishedRealization = errors.New("realization did not complete")
 
 func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputReference], keepFailed bool) error {
 	log.Debugf(ctx, "Will realize %v...", want)
@@ -307,7 +419,12 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 		outputs := sets.New(curr.OutputName)
 		outputs.AddSeq(multiOutputs[curr.DrvPath].All())
 		if err := b.do(ctx, curr.DrvPath, outputs, keepFailed); err != nil {
-			return err
+			// b.do already records the build failure,
+			// so we don't need to report the same error at the build level.
+			if !isBuilderFailure(err) {
+				log.Errorf(ctx, "%v", err)
+			}
+			return errUnfinishedRealization
 		}
 		drvLocks[curr.DrvPath]()
 		delete(drvLocks, curr.DrvPath)
@@ -320,6 +437,24 @@ var (
 	errRealizationNotFound  = errors.New("no suitable realizations exist")
 	errMultipleRealizations = errors.New("multiple valid realizations")
 )
+
+func (b *builder) expand(drvPath zbstore.Path, drv *zbstore.Derivation, temporaryDirectory string) (*zbstore.Derivation, error) {
+	outPaths, err := tempOutputPaths(drvPath, drv.Outputs)
+	if err != nil {
+		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
+	}
+	inputRewrites, err := derivationInputRewrites(drv, b.lookup)
+	if err != nil {
+		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
+	}
+	r := newReplacer(xiter.Chain2(
+		outputPathRewrites(outPaths),
+		maps.All(inputRewrites),
+	))
+	expandedDrv := expandDerivationPlaceholders(r, drv)
+	fillBaseEnv(expandedDrv.Env, drv.Dir, temporaryDirectory, b.server.coresPerBuild)
+	return expandedDrv, nil
+}
 
 // fetchRealization finds a realization to use for a derivation output
 // from the store database
@@ -338,7 +473,7 @@ var (
 // because selecting a realization may imply selecting realizations from its closure.
 // fetchRealization will only add realizations to b.realizations
 // if it does not return an error.
-func (b *builder) fetchRealization(ctx context.Context, eqClass equivalenceClass, mustExist bool) (absentRealizations sets.Set[equivalenceClass], err error) {
+func (b *builder) fetchRealization(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass, mustExist bool) (absentRealizations sets.Set[equivalenceClass], err error) {
 	if _, exists := b.realizations[eqClass]; exists {
 		return nil, nil
 	}
@@ -352,17 +487,17 @@ func (b *builder) fetchRealization(ctx context.Context, eqClass equivalenceClass
 			absentRealizations = nil
 		}
 	}()
-	defer sqlitex.Save(b.conn)(&err)
+	defer sqlitex.Save(conn)(&err)
 
 	log.Debugf(ctx, "Searching for realizations for %v...", eqClass)
-	presentInStore, absentFromStore, err := findPossibleRealizations(ctx, b.conn, eqClass)
+	presentInStore, absentFromStore, err := findPossibleRealizations(ctx, conn, eqClass)
 	if err != nil {
 		return nil, err
 	}
 
 	var r cachedRealization
 	present := false
-	r.path, r.closure, err = b.pickRealizationFromSet(ctx, eqClass, presentInStore)
+	r.path, r.closure, err = b.pickRealizationFromSet(ctx, conn, eqClass, presentInStore)
 	switch {
 	case err == nil:
 		present = true
@@ -372,7 +507,7 @@ func (b *builder) fetchRealization(ctx context.Context, eqClass equivalenceClass
 		if mustExist {
 			return nil, err
 		}
-		r.path, r.closure, err = b.pickRealizationFromSet(ctx, eqClass, absentFromStore)
+		r.path, r.closure, err = b.pickRealizationFromSet(ctx, conn, eqClass, absentFromStore)
 		if errors.Is(err, errMultipleRealizations) {
 			return nil, fmt.Errorf("pick compatible realization for %v: %w", eqClass, errRealizationNotFound)
 		}
@@ -393,7 +528,7 @@ func (b *builder) fetchRealization(ctx context.Context, eqClass equivalenceClass
 		refPathExists := true
 		if !present {
 			var err error
-			refPathExists, err = objectExists(b.conn, refPath)
+			refPathExists, err = objectExists(conn, refPath)
 			if err != nil {
 				return absentRealizations, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
 			}
@@ -414,7 +549,7 @@ func (b *builder) fetchRealization(ctx context.Context, eqClass equivalenceClass
 				path:    refPath,
 				closure: make(map[zbstore.Path]sets.Set[equivalenceClass]),
 			}
-			err = closurePaths(b.conn, pe, func(pe pathAndEquivalenceClass) bool {
+			err = closurePaths(conn, pe, func(pe pathAndEquivalenceClass) bool {
 				addToMultiMap(closureRealization.closure, pe.path, pe.equivalenceClass)
 				return true
 			})
@@ -445,8 +580,8 @@ func (b *builder) fetchRealization(ctx context.Context, eqClass equivalenceClass
 // because selecting a realization may imply selecting realizations from its closure.
 // fetchRealizationSet will only add realizations to b.realizations
 // if it does not return an error.
-func (b *builder) fetchRealizationSet(ctx context.Context, eqClasses sets.Set[equivalenceClass]) (err error) {
-	defer sqlitex.Save(b.conn)(&err)
+func (b *builder) fetchRealizationSet(ctx context.Context, conn *sqlite.Conn, eqClasses sets.Set[equivalenceClass]) (err error) {
+	defer sqlitex.Save(conn)(&err)
 
 	oldRealizations := maps.Clone(b.realizations)
 	defer func() {
@@ -456,14 +591,14 @@ func (b *builder) fetchRealizationSet(ctx context.Context, eqClasses sets.Set[eq
 	}()
 
 	for eqClass := range eqClasses.All() {
-		if _, err := b.fetchRealization(ctx, eqClass, true); err != nil {
+		if _, err := b.fetchRealization(ctx, conn, eqClass, true); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (b *builder) pickRealizationFromSet(ctx context.Context, eqClass equivalenceClass, existing sets.Set[zbstore.Path]) (zbstore.Path, map[zbstore.Path]sets.Set[equivalenceClass], error) {
+func (b *builder) pickRealizationFromSet(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass, existing sets.Set[zbstore.Path]) (zbstore.Path, map[zbstore.Path]sets.Set[equivalenceClass], error) {
 	var selectedPath zbstore.Path
 	closure := make(map[zbstore.Path]sets.Set[equivalenceClass])
 	remaining := existing.Clone()
@@ -477,7 +612,7 @@ func (b *builder) pickRealizationFromSet(ctx context.Context, eqClass equivalenc
 		}
 		clear(closure)
 		canUse := true
-		err := closurePaths(b.conn, pe, func(ref pathAndEquivalenceClass) bool {
+		err := closurePaths(conn, pe, func(ref pathAndEquivalenceClass) bool {
 			canUse = b.isCompatible(ref)
 			if canUse {
 				addToMultiMap(closure, ref.path, ref.equivalenceClass)
@@ -511,7 +646,7 @@ func (b *builder) pickRealizationFromSet(ctx context.Context, eqClass equivalenc
 			equivalenceClass: eqClass,
 		}
 		canUse := true
-		err := closurePaths(b.conn, pe, func(ref pathAndEquivalenceClass) bool {
+		err := closurePaths(conn, pe, func(ref pathAndEquivalenceClass) bool {
 			canUse = b.isCompatible(ref)
 			return canUse
 		})
@@ -547,6 +682,7 @@ func (b *builder) isCompatible(pe pathAndEquivalenceClass) bool {
 // (which implies the caller realized all of the derivation's inputs)
 // or else do returns an error.
 func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets.Set[string], keepFailed bool) (err error) {
+	startTime := time.Now()
 	drv := b.derivations[drvPath]
 	if drv == nil {
 		return fmt.Errorf("build %s: unknown derivation", drvPath)
@@ -565,19 +701,83 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		}
 	}
 
-	// Search for existing realizations first.
-	wantEqClasses := sets.Collect(func(yield func(equivalenceClass) bool) {
-		for outputName := range outputNames.All() {
-			if !yield(newEquivalenceClass(drvHash, outputName)) {
-				return
-			}
+	conn, err := b.server.db.Get(ctx)
+	if err != nil {
+		return err
+	}
+	defer b.server.db.Put(conn)
+
+	var buildResultID int64
+	hasExisting := false
+	err = func() (err error) {
+		endFn, err := sqlitex.ImmediateTransaction(conn)
+		if err != nil {
+			return err
 		}
-	})
-	if err := b.fetchRealizationSet(ctx, wantEqClasses); err == nil {
+		defer endFn(&err)
+
+		buildResultID, err = insertBuildResult(conn, b.id, drvPath, startTime)
+		if err != nil {
+			return fmt.Errorf("build %s: %v", drvPath, err)
+		}
+
+		// Search for existing realizations first.
+		wantEqClasses := sets.Collect(func(yield func(equivalenceClass) bool) {
+			for outputName := range outputNames.All() {
+				if !yield(newEquivalenceClass(drvHash, outputName)) {
+					return
+				}
+			}
+		})
+		reuseError := b.fetchRealizationSet(ctx, conn, wantEqClasses)
+
+		// Regardless of whether the realization search succeeded or not,
+		// we want to set outputs for this build results during this transaction.
+		// If the search succeeded, the outputs will have the found paths.
+		// Otherwise, we set a default of nulls for all requested outputs.
+		err = setBuildResultOutputs(conn, buildResultID, func(yield func(string, zbstore.Path) bool) {
+			for outputName := range outputNames.All() {
+				eqClass := newEquivalenceClass(drvHash, outputName)
+				var path zbstore.Path
+				if reuseError == nil {
+					path = b.realizations[eqClass].path
+				}
+				if !yield(outputName, path) {
+					return
+				}
+			}
+		})
+		if err != nil {
+			// If setting the outputs failed, then it's probably an I/O error of some sort.
+			// Finalizing the build result probably won't succeed,
+			// so we just return the error and bail early.
+			return err
+		}
+
+		if !errors.Is(reuseError, errRealizationNotFound) {
+			// If there was a realization or the search had an abnormal failure,
+			// we can finalize the result inside this transaction.
+			hasExisting = reuseError == nil
+			if err := finalizeBuildResult(ctx, conn, buildResultID, time.Now(), reuseError); err != nil {
+				log.Warnf(ctx, "For build %s: %v", drvPath, err)
+			}
+			return reuseError
+		}
+
 		return nil
-	} else if !errors.Is(err, errRealizationNotFound) {
+	}()
+	if err != nil {
 		return fmt.Errorf("build %s: %v", drvPath, err)
 	}
+	if hasExisting {
+		return nil
+	}
+	defer func() {
+		finalizeError := finalizeBuildResult(ctx, conn, buildResultID, time.Now(), err)
+		if finalizeError != nil {
+			log.Warnf(ctx, "For build %s: %v", drvPath, finalizeError)
+		}
+	}()
 
 	// If fixed output, acquire write lock on output path.
 	var unlockFixedOutput func()
@@ -604,7 +804,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 					// Fixed outputs don't have references.
 				},
 			}
-			if err := b.recordRealizations(ctx, drvHash, outputs); err != nil {
+			if err := b.recordRealizations(ctx, conn, drvHash, buildResultID, outputs); err != nil {
 				return fmt.Errorf("build %s: %v", drvPath, err)
 			}
 			return nil
@@ -655,7 +855,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		log.Debugf(ctx, "Runner for %s is unsandboxed", drvPath)
 		runner = runSubprocess
 	}
-	tempOutPaths, err := b.runBuilder(ctx, drvPath, keepFailed, buildUser, runner)
+	tempOutPaths, err := b.runBuilder(ctx, conn, drvPath, buildResultID, keepFailed, buildUser, runner)
 	if err != nil {
 		return err
 	}
@@ -671,7 +871,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 	}()
 
 	// Save outputs as store objects.
-	inputs, err := b.inputs(ctx, drvPath)
+	inputs, err := b.inputs(ctx, conn, drvPath)
 	if err != nil {
 		return err
 	}
@@ -682,7 +882,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 			DrvPath:    drvPath,
 			OutputName: outputName,
 		}
-		info, err := b.postprocess(ctx, ref, tempOutputPath, unlockFixedOutput, inputPaths)
+		info, err := b.postprocess(ctx, conn, ref, tempOutputPath, unlockFixedOutput, inputPaths)
 		if err != nil {
 			return fmt.Errorf("build %s: %v", drvPath, err)
 		}
@@ -711,7 +911,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 	}
 
 	// Record realizations.
-	if err := b.recordRealizations(ctx, drvHash, outputs); err != nil {
+	if err := b.recordRealizations(ctx, conn, drvHash, buildResultID, outputs); err != nil {
 		return fmt.Errorf("build %s: %v", drvPath, err)
 	}
 
@@ -726,7 +926,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 }
 
 // inputs computes the closure of all inputs used by the derivation at drvPath.
-func (b *builder) inputs(ctx context.Context, drvPath zbstore.Path) (map[zbstore.Path]sets.Set[equivalenceClass], error) {
+func (b *builder) inputs(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.Path) (map[zbstore.Path]sets.Set[equivalenceClass], error) {
 	drv := b.derivations[drvPath]
 	if drv == nil {
 		return nil, fmt.Errorf("input closure for %s: unknown derivation", drvPath)
@@ -751,8 +951,8 @@ func (b *builder) inputs(ctx context.Context, drvPath zbstore.Path) (map[zbstore
 		}
 	}
 
-	startedTransaction := b.conn.AutocommitEnabled()
-	if err := sqlitex.Execute(b.conn, "SAVEPOINT inputs;", nil); err != nil {
+	startedTransaction := conn.AutocommitEnabled()
+	if err := sqlitex.Execute(conn, "SAVEPOINT inputs;", nil); err != nil {
 		return nil, fmt.Errorf("input closure for %s: %v", drvPath, err)
 	}
 	defer func() {
@@ -762,13 +962,13 @@ func (b *builder) inputs(ctx context.Context, drvPath zbstore.Path) (map[zbstore
 		} else {
 			sql = "ROLLBACK TRANSACTION TO SAVEPOINT inputs;"
 		}
-		if err := sqlitex.Execute(b.conn, sql, nil); err != nil {
+		if err := sqlitex.Execute(conn, sql, nil); err != nil {
 			log.Errorf(ctx, "Rollback read-only savepoint: %v", err)
 		}
 	}()
 
 	for _, input := range drv.InputSources.All() {
-		err := closurePaths(b.conn, pathAndEquivalenceClass{path: input}, func(pe pathAndEquivalenceClass) bool {
+		err := closurePaths(conn, pathAndEquivalenceClass{path: input}, func(pe pathAndEquivalenceClass) bool {
 			addToMultiMap(result, pe.path, pe.equivalenceClass)
 			return true
 		})
@@ -831,7 +1031,10 @@ type builderInvocation struct {
 	sandboxPaths map[string]string
 }
 
-func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, keepFailed bool, buildUser *BuildUser, f runnerFunc) (outPaths map[string]zbstore.Path, err error) {
+// builderLogInterval is the maximum time between flushes of the builder log.
+const builderLogInterval = 100 * time.Millisecond
+
+func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.Path, buildResultID int64, keepFailed bool, buildUser *BuildUser, f runnerFunc) (outPaths map[string]zbstore.Path, err error) {
 	drvName, isDrv := drvPath.DerivationName()
 	if !isDrv {
 		return nil, fmt.Errorf("build %s: not a derivation", drvPath)
@@ -887,11 +1090,22 @@ func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, keepFail
 	))
 	expandedDrv := expandDerivationPlaceholders(r, drv)
 
-	peerLogger := newRPCLogger(ctx, drvPath, peer(ctx))
-	bufferedPeerLogger := batchio.NewWriter(peerLogger, 8192, 250*time.Millisecond)
-	defer bufferedPeerLogger.Flush()
+	logger := newBuildLogger(ctx, conn, buildResultID)
+	// Per https://www.sqlite.org/intern-v-extern-blob.html,
+	// ~50KB was still faster than filesystem for the default page size of 4096.
+	// We use 32
+	bufferedLogger := batchio.NewWriter(logger, 32*1024, builderLogInterval)
+	defer func() {
+		bufferedLogger.Flush()
+		if err := logger.Close(); err != nil {
+			log.Warnf(ctx, "Closing build log for %s: %v", drvPath, err)
+		}
+	}()
 
 	log.Debugf(ctx, "Starting builder for %s...", drvPath)
+	if err := recordBuilderStart(conn, buildResultID, time.Now()); err != nil {
+		log.Warnf(ctx, "For %s: %v", drvPath, err)
+	}
 	startedRun = true
 	err = f(ctx, &builderInvocation{
 		derivation:     expandedDrv,
@@ -900,29 +1114,37 @@ func (b *builder) runBuilder(ctx context.Context, drvPath zbstore.Path, keepFail
 
 		realStoreDir: b.server.realDir,
 		buildDir:     buildDir,
-		logWriter:    bufferedPeerLogger,
+		logWriter:    bufferedLogger,
 		user:         buildUser,
 		sandboxPaths: b.server.sandboxPaths,
 		cores:        b.server.coresPerBuild,
 
 		lookup: b.lookup,
 		closure: func(path zbstore.Path, yield func(zbstore.Path) bool) error {
+			// This function is only called before writing any logs,
+			// so it's safe to use conn.
 			pe := pathAndEquivalenceClass{path: path}
-			return closurePaths(b.conn, pe, func(pe pathAndEquivalenceClass) bool {
+			return closurePaths(conn, pe, func(pe pathAndEquivalenceClass) bool {
 				return yield(pe.path)
 			})
 		},
 	})
+	builderEndTime := time.Now()
 	if err != nil && keepFailed && b.server.allowKeepFailed {
 		var buf []byte
 		buf = append(buf, "Build failed. Build directory available at "...)
 		buf = append(buf, buildDir...)
 		buf = append(buf, "\n"...)
-		if _, err := bufferedPeerLogger.Write(buf); err != nil {
+		if _, err := bufferedLogger.Write(buf); err != nil {
 			log.Debugf(ctx, "While writing failed build directory info: %v", err)
 		}
 	}
-	bufferedPeerLogger.Flush()
+	if err := bufferedLogger.Flush(); err != nil {
+		log.Errorf(ctx, "Flushing build log for %s: %v", drvPath, err)
+	}
+	if err := recordBuilderEnd(conn, buildResultID, builderEndTime); err != nil {
+		log.Warnf(ctx, "For %s: %v", drvPath, err)
+	}
 	if err != nil {
 		log.Debugf(ctx, "Builder for %s has failed: %v", drvPath, err)
 		for outName, outPath := range outPaths {
@@ -1058,7 +1280,7 @@ func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.Derivatio
 // and unlockBuildPath must be the unlock function obtained from b.server.writing.
 // If the outputType is floating,
 // then postprocess will move the store object at buildPath to its computed path.
-func (b *builder) postprocess(ctx context.Context, output zbstore.OutputReference, buildPath zbstore.Path, unlockBuildPath func(), inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
+func (b *builder) postprocess(ctx context.Context, conn *sqlite.Conn, output zbstore.OutputReference, buildPath zbstore.Path, unlockBuildPath func(), inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
 	drv := b.derivations[output.DrvPath]
 	if drv == nil {
 		return nil, fmt.Errorf("post-process %v: unknown derivation", output)
@@ -1076,14 +1298,14 @@ func (b *builder) postprocess(ctx context.Context, output zbstore.OutputReferenc
 		}
 		defer unlockBuildPath()
 
-		info, err = b.postprocessFixedOutput(ctx, buildPath, ca)
+		info, err = b.postprocessFixedOutput(ctx, conn, buildPath, ca)
 	} else {
 		if unlockBuildPath != nil {
 			unlockBuildPath()
 			return nil, fmt.Errorf("post-process %v: unexpected write lock", output)
 		}
 		// outputType has presumably been validated with [validateOutputs].
-		info, err = b.postprocessFloatingOutput(ctx, buildPath, inputs)
+		info, err = b.postprocessFloatingOutput(ctx, conn, buildPath, inputs)
 	}
 	if info != nil {
 		info.Deriver = output.DrvPath
@@ -1093,7 +1315,7 @@ func (b *builder) postprocess(ctx context.Context, output zbstore.OutputReferenc
 
 // postprocessFixedOutput computes the NAR hash of the given store path
 // and verifies that it matches the content address.
-func (b *builder) postprocessFixedOutput(ctx context.Context, outputPath zbstore.Path, ca zbstore.ContentAddress) (info *zbstore.NARInfo, err error) {
+func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn, outputPath zbstore.Path, ca zbstore.ContentAddress) (info *zbstore.NARInfo, err error) {
 	log.Debugf(ctx, "Verifying fixed output %s...", outputPath)
 
 	realOutputPath := b.server.realPath(outputPath)
@@ -1126,12 +1348,12 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, outputPath zbstore
 		CA:          ca,
 	}
 	err = func() (err error) {
-		endFn, err := sqlitex.ImmediateTransaction(b.conn)
+		endFn, err := sqlitex.ImmediateTransaction(conn)
 		if err != nil {
 			return err
 		}
 		defer endFn(&err)
-		return insertObject(ctx, b.conn, info)
+		return insertObject(ctx, conn, info)
 	}()
 	if err != nil {
 		err = fmt.Errorf("post-process %v: %v", outputPath, err)
@@ -1142,7 +1364,7 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, outputPath zbstore
 	return info, nil
 }
 
-func (b *builder) postprocessFloatingOutput(ctx context.Context, buildPath zbstore.Path, inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
+func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Conn, buildPath zbstore.Path, inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
 	log.Debugf(ctx, "Processing floating output %s...", buildPath)
 	realBuildPath := b.server.realPath(buildPath)
 	scan, err := scanFloatingOutput(ctx, realBuildPath, buildPath.Digest(), inputs)
@@ -1200,12 +1422,12 @@ func (b *builder) postprocessFloatingOutput(ctx context.Context, buildPath zbsto
 	}
 
 	err = func() (err error) {
-		endFn, err := sqlitex.ImmediateTransaction(b.conn)
+		endFn, err := sqlitex.ImmediateTransaction(conn)
 		if err != nil {
 			return err
 		}
 		defer endFn(&err)
-		return insertObject(ctx, b.conn, info)
+		return insertObject(ctx, conn, info)
 	}()
 	if err != nil {
 		return nil, fmt.Errorf("post-process %v: %v", buildPath, err)
@@ -1347,23 +1569,35 @@ func finalizeFloatingOutput(dir zbstore.Directory, buildPath, finalPath string) 
 	return h.SumHash(), nil
 }
 
-// recordRealizations calls [recordRealizations] in a transaction
+// recordRealizations calls [recordRealizations] and [recordBuildOutputs] in a transaction
 // and on success, saves the realizations into b.realizations.
 // The outputs must exist in the store.
-func (b *builder) recordRealizations(ctx context.Context, drvHash nix.Hash, outputs map[string]realizationOutput) (err error) {
-	endFn, err := sqlitex.ImmediateTransaction(b.conn)
+func (b *builder) recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash, buildResultID int64, outputs map[string]realizationOutput) (err error) {
+	endFn, err := sqlitex.ImmediateTransaction(conn)
 	if err != nil {
 		return fmt.Errorf("record realizations for %v: %v", drvHash, err)
 	}
 	defer endFn(&err)
-	if err := recordRealizations(ctx, b.conn, drvHash, outputs); err != nil {
+
+	if err := recordRealizations(ctx, conn, drvHash, outputs); err != nil {
 		return err
 	}
+	buildOutputs := func(yield func(string, zbstore.Path) bool) {
+		for outputName, output := range outputs {
+			if !yield(outputName, output.path) {
+				return
+			}
+		}
+	}
+	if err := setBuildResultOutputs(conn, buildResultID, buildOutputs); err != nil {
+		return err
+	}
+
 	for outputName, output := range outputs {
 		eqClass := newEquivalenceClass(drvHash, outputName)
 		closure := make(map[zbstore.Path]sets.Set[equivalenceClass])
 		pe := pathAndEquivalenceClass{path: output.path, equivalenceClass: eqClass}
-		err := closurePaths(b.conn, pe, func(pe pathAndEquivalenceClass) bool {
+		err := closurePaths(conn, pe, func(pe pathAndEquivalenceClass) bool {
 			addToMultiMap(closure, pe.path, pe.equivalenceClass)
 			return true
 		})
@@ -1480,32 +1714,30 @@ func tempPath(ref zbstore.OutputReference) (zbstore.Path, error) {
 	return p, nil
 }
 
-// rpcLogger is an [io.Writer] that sends its data as [zbstore.LogMethod] RPCs.
-// It has no buffering: callers should introduce buffering.
-type rpcLogger struct {
-	ctx     context.Context
-	notif   zbstore.LogNotification
-	handler jsonrpc.Handler
-}
+func joinStrings[T ~string, S ~[]T](elems S, sep string) string {
+	switch len(elems) {
+	case 0:
+		return ""
+	case 1:
+		return string(elems[0])
+	}
 
-func newRPCLogger(ctx context.Context, drvPath zbstore.Path, handler jsonrpc.Handler) *rpcLogger {
-	return &rpcLogger{
-		ctx:     ctx,
-		notif:   zbstore.LogNotification{DrvPath: drvPath},
-		handler: handler,
+	var n int
+	if len(sep) > 0 {
+		n += len(sep) * (len(elems) - 1)
 	}
-}
+	for _, elem := range elems {
+		n += len(elem)
+	}
 
-func (logger *rpcLogger) Write(p []byte) (n int, err error) {
-	if len(p) == 0 {
-		return 0, nil
+	var b strings.Builder
+	b.Grow(n)
+	b.WriteString(string(elems[0]))
+	for _, s := range elems[1:] {
+		b.WriteString(sep)
+		b.WriteString(string(s))
 	}
-	logger.notif.SetPayload(p)
-	err = jsonrpc.Notify(logger.ctx, logger.handler, zbstore.LogMethod, &logger.notif)
-	if err != nil {
-		return 0, err
-	}
-	return len(p), nil
+	return b.String()
 }
 
 func formatOutputPaths(m map[string]zbstore.Path) string {

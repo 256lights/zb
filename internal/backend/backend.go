@@ -11,10 +11,15 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"sync"
+	"time"
 
+	"github.com/google/uuid"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/sets"
@@ -60,6 +65,14 @@ type Options struct {
 	// If empty, then builds will use the current process's privileges.
 	// [NewServer] will panic if multiple entries have the same user ID.
 	BuildUsers []BuildUser
+
+	// BuildContext optionally specifies a function that detaches the context for a build.
+	// If BuildContext is nil, the default is [context.Background].
+	BuildContext func(parent context.Context, buildID string) context.Context
+
+	// BuildLogRetention is the length of time to retain build logs.
+	// If non-positive, then build logs will be not be automatically deleted.
+	BuildLogRetention time.Duration
 }
 
 // BuildUser is a descriptor for a Unix user.
@@ -92,24 +105,37 @@ type Server struct {
 	buildDir        string
 	db              *sqlitemigration.Pool
 	allowKeepFailed bool
+	buildContext    func(context.Context, string) context.Context
 
 	sandbox      bool
 	sandboxPaths map[string]string
 
+	cancelGCLogs context.CancelFunc
+	gcLogsDone   <-chan struct{}
+
 	coresPerBuild int
 
-	writing  mutexMap[zbstore.Path] // store objects being written
-	building mutexMap[zbstore.Path] // derivations being built
-	users    *userSet
+	writing        mutexMap[zbstore.Path] // store objects being written
+	building       mutexMap[zbstore.Path] // derivations being built
+	users          *userSet
+	buildWaitGroup sync.WaitGroup
+
+	activeBuildsMu sync.Mutex
+	activeBuilds   map[uuid.UUID]context.CancelFunc
+	draining       bool
 }
 
 // NewServer returns a new [Server] for the given store directory and database path.
 // Callers are responsible for calling [Server.Close] on the returned server.
 func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
+	if opts == nil {
+		opts = new(Options)
+	}
 	users, err := newUserSet(opts.BuildUsers)
 	if err != nil {
 		panic(err)
 	}
+	gcLogsDone := make(chan struct{})
 	srv := &Server{
 		dir:             dir,
 		realDir:         opts.RealDir,
@@ -119,6 +145,10 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		sandboxPaths:    opts.SandboxPaths,
 		coresPerBuild:   opts.CoresPerBuild,
 		users:           users,
+		activeBuilds:    make(map[uuid.UUID]context.CancelFunc),
+		buildContext:    opts.BuildContext,
+
+		gcLogsDone: gcLogsDone,
 
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
@@ -146,11 +176,38 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	if srv.buildDir == "" {
 		srv.buildDir = os.TempDir()
 	}
+	if srv.buildContext == nil {
+		srv.buildContext = func(_ context.Context, _ string) context.Context {
+			return context.Background()
+		}
+	}
+	if opts.BuildLogRetention <= 0 {
+		srv.cancelGCLogs = func() {}
+		close(gcLogsDone)
+	} else {
+		var gcLogContext context.Context
+		gcLogContext, srv.cancelGCLogs = context.WithCancel(context.Background())
+		go func() {
+			defer close(gcLogsDone)
+			srv.gcLogs(gcLogContext, opts.BuildLogRetention)
+		}()
+	}
 	return srv
 }
 
 // Close releases any resources associated with the server.
 func (s *Server) Close() error {
+	s.cancelGCLogs()
+	s.activeBuildsMu.Lock()
+	s.draining = true
+	for _, cancel := range s.activeBuilds {
+		cancel()
+	}
+	s.activeBuildsMu.Unlock()
+
+	s.buildWaitGroup.Wait()
+	<-s.gcLogsDone
+
 	return s.db.Close()
 }
 
@@ -158,10 +215,13 @@ func (s *Server) Close() error {
 // and serves the [zbstore] API.
 func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	return jsonrpc.ServeMux{
-		zbstore.ExistsMethod:  jsonrpc.HandlerFunc(s.exists),
-		zbstore.InfoMethod:    jsonrpc.HandlerFunc(s.info),
-		zbstore.ExpandMethod:  jsonrpc.HandlerFunc(s.expand),
-		zbstore.RealizeMethod: jsonrpc.HandlerFunc(s.realize),
+		zbstore.ExistsMethod:      jsonrpc.HandlerFunc(s.exists),
+		zbstore.InfoMethod:        jsonrpc.HandlerFunc(s.info),
+		zbstore.ExpandMethod:      jsonrpc.HandlerFunc(s.expand),
+		zbstore.RealizeMethod:     jsonrpc.HandlerFunc(s.realize),
+		zbstore.GetBuildMethod:    jsonrpc.HandlerFunc(s.getBuild),
+		zbstore.CancelBuildMethod: jsonrpc.HandlerFunc(s.cancelBuild),
+		zbstore.ReadLogMethod:     jsonrpc.HandlerFunc(s.readLog),
 	}.JSONRPC(ctx, req)
 }
 
@@ -225,6 +285,257 @@ func (s *Server) info(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Respo
 	return marshalResponse(&zbstore.InfoResponse{
 		Info: info,
 	})
+}
+
+func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	var args zbstore.GetBuildRequest
+	if err := json.Unmarshal(req.Params, &args); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	buildID, ok := parseBuildID(args.BuildID)
+	if !ok {
+		return marshalResponse(&zbstore.GetBuildResponse{
+			Status: zbstore.BuildUnknown,
+		})
+	}
+
+	conn, err := s.db.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer s.db.Put(conn)
+
+	// Read active status before consulting database.
+	// We write to the database before clearing the active status.
+	s.activeBuildsMu.Lock()
+	_, isActive := s.activeBuilds[buildID]
+	s.activeBuildsMu.Unlock()
+
+	if err := sqlitex.Execute(conn, "BEGIN DEFERRED TRANSACTION;", nil); err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := sqlitex.Execute(conn, "ROLLBACK TRANSACTION;", nil); err != nil {
+			log.Errorf(ctx, "Rollback read-only transaction: %v", err)
+		}
+	}()
+
+	resp := &zbstore.GetBuildResponse{
+		Status:  zbstore.BuildUnknown,
+		Results: []*zbstore.BuildResult{},
+	}
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/find.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":build_id": buildID.String(),
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			switch typ := stmt.ColumnType(stmt.ColumnIndex("ended_at")); typ {
+			case sqlite.TypeNull:
+				if !isActive {
+					// If we don't have an end time and we're not running a build with this ID,
+					// assume it was orphaned from a previous run.
+					return nil
+				}
+				resp.Status = zbstore.BuildActive
+			case sqlite.TypeInteger:
+				resp.Status = zbstore.BuildStatus(stmt.GetText("status"))
+				resp.EndedAt = zbstore.NonNull(time.UnixMilli(stmt.GetInt64("ended_at")).UTC())
+			default:
+				return fmt.Errorf("type(ended_at) = %v", typ)
+			}
+
+			resp.StartedAt = time.UnixMilli(stmt.GetInt64("started_at"))
+
+			if stmt.GetBool("has_expand") {
+				resp.Expand = &zbstore.ExpandResult{
+					Builder: stmt.GetText("expand_builder"),
+				}
+				if s := stmt.GetText("expand_args"); s == "" {
+					resp.Expand.Args = []string{}
+				} else if err := unmarshalJSONString(s, &resp.Expand.Args); err != nil {
+					return fmt.Errorf("expand.args: %v", err)
+				}
+				if s := stmt.GetText("expand_env"); s == "" {
+					resp.Expand.Env = map[string]string{}
+				} else if err := unmarshalJSONString(s, &resp.Expand.Env); err != nil {
+					return fmt.Errorf("expand.env: %v", err)
+				}
+			}
+
+			return nil
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get build %v: %v", buildID, err)
+	}
+	if resp.Status == zbstore.BuildUnknown {
+		return marshalResponse(resp)
+	}
+
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/results.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":build_id": buildID.String(),
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			drvPath, err := zbstore.ParsePath(stmt.GetText("drv_path"))
+			if err != nil {
+				return err
+			}
+			var curr *zbstore.BuildResult
+			if len(resp.Results) > 0 && resp.Results[len(resp.Results)-1].DrvPath == drvPath {
+				curr = resp.Results[len(resp.Results)-1]
+			} else {
+				curr = &zbstore.BuildResult{
+					DrvPath: drvPath,
+					Status:  zbstore.BuildStatus(stmt.GetText("status")),
+					Outputs: []*zbstore.RealizeOutput{},
+				}
+				resp.Results = append(resp.Results, curr)
+			}
+
+			if outputName := stmt.GetText("output_name"); outputName != "" {
+				newOutput := &zbstore.RealizeOutput{
+					Name: outputName,
+				}
+				if s := stmt.GetText("output_path"); s != "" {
+					p, err := zbstore.ParsePath(s)
+					if err != nil {
+						return fmt.Errorf("output %s: %v", outputName, err)
+					}
+					newOutput.Path = zbstore.NonNull(p)
+				}
+				curr.Outputs = append(curr.Outputs, newOutput)
+			}
+
+			return nil
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get build %v: %v", buildID, err)
+	}
+
+	return marshalResponse(resp)
+}
+
+func (s *Server) cancelBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	var args zbstore.CancelBuildNotification
+	if err := json.Unmarshal(req.Params, &args); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	buildID, ok := parseBuildID(args.BuildID)
+	if !ok {
+		return nil, nil
+	}
+	s.activeBuildsMu.Lock()
+	cancel := s.activeBuilds[buildID]
+	s.activeBuildsMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return nil, nil
+}
+
+func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	var args zbstore.ReadLogRequest
+	if err := json.Unmarshal(req.Params, &args); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	newNotFoundError := func() error {
+		// TODO(someday): Use 404-like error code.
+		return fmt.Errorf("could not find log for %q in build ID %q", args.DrvPath, args.BuildID)
+	}
+	if args.DrvPath == "" {
+		return nil, newNotFoundError()
+	}
+	if args.RangeStart < 0 {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("log range start must be non-negative"))
+	}
+	if args.RangeEnd.Valid && args.RangeEnd.X <= args.RangeStart {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("log range end must be greater than range start"))
+	}
+	buildID, ok := parseBuildID(args.BuildID)
+	if !ok {
+		return nil, newNotFoundError()
+	}
+
+	conn, err := s.db.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer s.db.Put(conn)
+
+	const maxRead = 64 * 1024
+	end := args.RangeStart + maxRead
+	if args.RangeEnd.Valid {
+		end = min(end, args.RangeEnd.X)
+	}
+	buf := make([]byte, end-args.RangeStart)
+	n := 0
+	for {
+		nn, err := readBuildLogAt(conn, buildID, args.DrvPath, buf[n:], args.RangeStart+int64(n))
+		n += nn
+		switch {
+		case err == nil || err == io.EOF:
+			resp := &zbstore.ReadLogResponse{EOF: err == io.EOF}
+			resp.SetPayload(buf[:n])
+			return marshalResponse(resp)
+		case errors.Is(err, errBuildLogPending):
+			if n > 0 {
+				// Prefer returning what we have rather than blocking.
+				resp := new(zbstore.ReadLogResponse)
+				resp.SetPayload(buf[:n])
+				return marshalResponse(resp)
+			}
+
+			// Wait for more.
+			// TODO(someday): Have build logs signal when there's more data rather than polling.
+			t := time.NewTimer(builderLogInterval)
+			select {
+			case <-t.C:
+			case <-ctx.Done():
+				t.Stop()
+				return nil, fmt.Errorf("read log for %s in build %v: %w", args.DrvPath, buildID, ctx.Err())
+			}
+		case errors.Is(err, errBuildLogNotFound):
+			return nil, newNotFoundError()
+		default:
+			return nil, err
+		}
+	}
+}
+
+func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
+	ticker := time.NewTicker(min(5*time.Minute, window))
+	defer ticker.Stop()
+
+	t := time.Now()
+	for {
+		conn, err := s.db.Get(ctx)
+		if err != nil {
+			// Likely means context was canceled.
+			log.Debugf(ctx, "Exiting build log GC due to: %v", err)
+			return
+		}
+		cutoff := t.Add(-window)
+		s.activeBuildsMu.Lock()
+		activeBuilds := slices.Collect(maps.Keys(s.activeBuilds))
+		s.activeBuildsMu.Unlock()
+		log.Debugf(ctx, "Cleaning up build logs older than %v...", cutoff.UTC())
+		if n, err := deleteOldBuilds(conn, cutoff, slices.Values(activeBuilds)); err != nil {
+			log.Warnf(ctx, "Failed to clean up build logs: %v", err)
+		} else if n > 0 {
+			log.Infof(ctx, "Deleted %d build logs older than %v", n, cutoff.Truncate(time.Millisecond).UTC())
+		} else {
+			log.Debugf(ctx, "No build logs to clean up.")
+		}
+		s.db.Put(conn)
+
+		select {
+		case t = <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // NARReceiver is a per-connection [zbstore.NARReceiver].
@@ -518,22 +829,39 @@ func makePublicReadOnly(ctx context.Context, path string) {
 	})
 }
 
-type peerContextKey struct{}
+type exporterContextKey struct{}
 
-// WithPeer returns a copy of parent
-// in which the given handler is used as the client's connection.
-func WithPeer(parent context.Context, peer jsonrpc.Handler) context.Context {
-	return context.WithValue(parent, peerContextKey{}, peer)
+// A type that implements Exporter can receive a `nix-store --export` formatted stream.
+type Exporter interface {
+	Export(r io.Reader) error
 }
 
-func peer(ctx context.Context) jsonrpc.Handler {
-	p, _ := ctx.Value(peerContextKey{}).(jsonrpc.Handler)
-	if p == nil {
-		p = jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-			return nil, jsonrpc.Error(jsonrpc.InternalError, errors.New("no peer in context"))
-		})
+// WithExporter returns a copy of parent
+// in which the given exporter is used to send back export information.
+func WithExporter(parent context.Context, e Exporter) context.Context {
+	return context.WithValue(parent, exporterContextKey{}, e)
+}
+
+func exporterFromContext(ctx context.Context) Exporter {
+	e, _ := ctx.Value(exporterContextKey{}).(Exporter)
+	if e == nil {
+		e = stubExporter{}
 	}
-	return p
+	return e
+}
+
+type stubExporter struct{}
+
+func (stubExporter) Export(r io.Reader) error {
+	return errors.New("no exporter in context")
+}
+
+func parseBuildID(id string) (_ uuid.UUID, ok bool) {
+	u, err := uuid.Parse(id)
+	if err != nil || id != u.String() {
+		return uuid.UUID{}, false
+	}
+	return u, true
 }
 
 func marshalResponse(data any) (*jsonrpc.Response, error) {

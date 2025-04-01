@@ -5,15 +5,12 @@ package backend_test
 
 import (
 	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -72,10 +69,8 @@ func TestRealizeSingleDerivation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	logBuffer := new(bytes.Buffer)
 	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-		TempDir:       t.TempDir(),
-		ClientHandler: &writerLogger{logBuffer},
+		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -90,24 +85,35 @@ func TestRealizeSingleDerivation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
-		DrvPath: drvPath,
+	realizeResponse := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
 	})
-	gotLog := bytes.ReplaceAll(logBuffer.Bytes(), []byte("\r\n"), []byte("\n"))
 	if err != nil {
-		t.Fatalf("RPC error: %v\nlog:\n%s", err, gotLog)
+		t.Fatal("RPC error:", err)
+	}
+	if realizeResponse.BuildID == "" {
+		t.Fatal("no build ID returned")
 	}
 
-	if want := "catcat\n"; string(gotLog) != want {
-		t.Errorf("build log:\n%s\n(want %q)", gotLog, want)
+	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if gotLog, err := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvPath); err != nil {
+		t.Error(err)
+	} else {
+		if want := "catcat\n"; string(gotLog) != want {
+			t.Errorf("build log:\n%s\n(want %q)", gotLog, want)
+		}
+	}
+
 	const wantOutputContent = "Hello, World!\nHello, World!\n"
 	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, []byte(wantOutputContent), zbstore.References{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
+	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(wantOutputContent), got)
 }
 
 func TestRealizeReuse(t *testing.T) {
@@ -147,10 +153,8 @@ func TestRealizeReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	logBuffer := new(bytes.Buffer)
 	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-		TempDir:       t.TempDir(),
-		ClientHandler: &writerLogger{logBuffer},
+		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -165,31 +169,44 @@ func TestRealizeReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
-		DrvPath: drvPath,
+	realize1Response := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realize1Response, &zbstore.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
 	})
 	if err != nil {
-		gotLog := bytes.ReplaceAll(logBuffer.Bytes(), []byte("\r\n"), []byte("\n"))
-		t.Fatalf("first RPC error: %v\nlog:\n%s", err, gotLog)
+		t.Fatal("first RPC error:", err)
 	}
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
-		DrvPath: drvPath,
-	})
-	gotLog := bytes.ReplaceAll(logBuffer.Bytes(), []byte("\r\n"), []byte("\n"))
-	if err != nil {
-		t.Fatalf("second RPC error: %v\nlog:\n%s", err, gotLog)
+	if _, err := backendtest.WaitForSuccessfulBuild(ctx, client, realize1Response.BuildID); err != nil {
+		gotLog, _ := backendtest.ReadLog(ctx, client, realize1Response.BuildID, drvPath)
+		t.Fatalf("first build failed: %v\nlog:\n%s", err, gotLog)
 	}
 
-	if want := "catcat\n"; string(gotLog) != want {
+	realize2Response := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realize2Response, &zbstore.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
+	})
+	if err != nil {
+		t.Fatal("second RPC error:", err)
+	}
+	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realize2Response.BuildID)
+	if err != nil {
+		t.Error("second build failed:", err)
+	}
+
+	gotLog, err := backendtest.ReadLog(ctx, client, realize2Response.BuildID, drvPath)
+	if err != nil {
+		t.Error("accessing second build's logs:", err)
+	}
+	if want := ""; string(gotLog) != want {
 		t.Errorf("build log:\n%s\n(want %q)", gotLog, want)
 	}
+
 	const wantOutputContent = "Hello, World!\nHello, World!\n"
 	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, []byte(wantOutputContent), zbstore.References{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
+	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(wantOutputContent), got)
 }
 
 func TestRealizeMultiStep(t *testing.T) {
@@ -253,8 +270,7 @@ func TestRealizeMultiStep(t *testing.T) {
 	}
 
 	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-		TempDir:       t.TempDir(),
-		ClientHandler: &testBuildLogger{t},
+		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -269,12 +285,18 @@ func TestRealizeMultiStep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
-		DrvPath: drv2Path,
+	realizeResponse := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+		DrvPaths: []zbstore.Path{drv2Path},
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+	if err != nil {
+		gotLog1, _ := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drv1Path)
+		gotLog2, _ := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drv2Path)
+		t.Fatalf("build failed: %v\ndrv1 log:\n%s\ndrv2 log:\n%s", err, gotLog1, gotLog2)
 	}
 
 	wantOutputContent := strings.Repeat(inputContent, 4)
@@ -282,7 +304,7 @@ func TestRealizeMultiStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
+	checkSingleFileOutput(t, drv2Path, wantOutputPath, []byte(wantOutputContent), got)
 }
 
 func TestRealizeReferenceToDep(t *testing.T) {
@@ -359,8 +381,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 	}
 
 	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-		TempDir:       t.TempDir(),
-		ClientHandler: &testBuildLogger{t},
+		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -375,12 +396,18 @@ func TestRealizeReferenceToDep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
-		DrvPath: drv2Path,
+	realizeResponse := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+		DrvPaths: []zbstore.Path{drv2Path},
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+	if err != nil {
+		gotLog1, _ := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drv1Path)
+		gotLog2, _ := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drv2Path)
+		t.Fatalf("build failed: %v\ndrv1 log:\n%s\ndrv2 log:\n%s", err, gotLog1, gotLog2)
 	}
 
 	drv1OutputContent := strings.Repeat(inputContent, 2)
@@ -398,7 +425,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkSingleFileOutput(t, wantOutputPath, wantOutputContent, got)
+	checkSingleFileOutput(t, drv2Path, wantOutputPath, wantOutputContent, got)
 
 	var info zbstore.InfoResponse
 	err = jsonrpc.Do(ctx, client, zbstore.InfoMethod, &info, &zbstore.InfoRequest{
@@ -497,8 +524,7 @@ func TestRealizeFixed(t *testing.T) {
 	}
 
 	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-		TempDir:       t.TempDir(),
-		ClientHandler: &testBuildLogger{t},
+		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -513,24 +539,34 @@ func TestRealizeFixed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
-		DrvPath: drv1Path,
+	realize1Response := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realize1Response, &zbstore.RealizeRequest{
+		DrvPaths: []zbstore.Path{drv1Path},
 	})
 	if err != nil {
 		t.Fatal("build drv1:", err)
 	}
-	checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
+	got1, err := backendtest.WaitForSuccessfulBuild(ctx, client, realize1Response.BuildID)
+	if err != nil {
+		gotLog, _ := backendtest.ReadLog(ctx, client, realize1Response.BuildID, drv1Path)
+		t.Fatalf("build drv1: %v\nlog:\n%s", err, gotLog)
+	}
+	checkSingleFileOutput(t, drv1Path, wantOutputPath, []byte(wantOutputContent), got1)
 
 	// Now let's build the second derivation to see whether the output gets reused.
-	got = new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
-		DrvPath: drv2Path,
+	realize2Response := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realize2Response, &zbstore.RealizeRequest{
+		DrvPaths: []zbstore.Path{drv2Path},
 	})
 	if err != nil {
 		t.Fatal("build drv2:", err)
 	}
-	checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
+	got2, err := backendtest.WaitForSuccessfulBuild(ctx, client, realize2Response.BuildID)
+	if err != nil {
+		gotLog, _ := backendtest.ReadLog(ctx, client, realize2Response.BuildID, drv2Path)
+		t.Fatalf("build drv2: %v\nlog:\n%s", err, gotLog)
+	}
+	checkSingleFileOutput(t, drv2Path, wantOutputPath, []byte(wantOutputContent), got2)
 }
 
 func TestRealizeFailure(t *testing.T) {
@@ -569,8 +605,7 @@ func TestRealizeFailure(t *testing.T) {
 	}
 
 	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-		TempDir:       t.TempDir(),
-		ClientHandler: &testBuildLogger{t},
+		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -585,22 +620,51 @@ func TestRealizeFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
-		DrvPath: drvPath,
+	realizeResponse := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
 	})
 	if err != nil {
 		t.Fatal("build drv:", err)
 	}
-	want := &zbstore.RealizeResponse{
-		Outputs: []*zbstore.RealizeOutput{
+	got, err := backendtest.WaitForBuild(ctx, client, realizeResponse.BuildID)
+	if err != nil {
+		t.Fatal("build drv:", err)
+	}
+	want := &zbstore.GetBuildResponse{
+		Status: zbstore.BuildFail,
+		Results: []*zbstore.BuildResult{
 			{
-				Name: zbstore.DefaultDerivationOutputName,
+				DrvPath: drvPath,
+				Status:  zbstore.BuildFail,
+				Outputs: []*zbstore.RealizeOutput{
+					{
+						Name: zbstore.DefaultDerivationOutputName,
+					},
+				},
 			},
 		},
 	}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("realize response (-want +got):\n%s", diff)
+	getBuildResponseType := reflect.TypeFor[zbstore.GetBuildResponse]()
+	diff := cmp.Diff(
+		want, got,
+		cmp.FilterPath(
+			func(p cmp.Path) bool {
+				if p.Index(-2).Type() != getBuildResponseType {
+					return false
+				}
+				fieldName := p.Last().(cmp.StructField).Name()
+				return fieldName == "StartedAt" ||
+					fieldName == "EndedAt"
+			},
+			cmp.Ignore(),
+		),
+	)
+	if diff != "" {
+		t.Errorf("build (-want +got):\n%s", diff)
+	}
+	if !got.EndedAt.Valid {
+		t.Error("build.endedAt = null")
 	}
 	// Ensure that the build didn't leave files in the store.
 	storeListing, err := os.ReadDir(string(dir))
@@ -654,8 +718,7 @@ func TestRealizeCores(t *testing.T) {
 			}
 
 			client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-				TempDir:       t.TempDir(),
-				ClientHandler: &testBuildLogger{t},
+				TempDir: t.TempDir(),
 				Options: Options{
 					CoresPerBuild: n,
 				},
@@ -673,19 +736,24 @@ func TestRealizeCores(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got := new(zbstore.RealizeResponse)
-			err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
-				DrvPath: drvPath,
+			realizeResponse := new(zbstore.RealizeResponse)
+			err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+				DrvPaths: []zbstore.Path{drvPath},
 			})
 			if err != nil {
 				t.Fatal("build drv:", err)
+			}
+			got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+			if err != nil {
+				gotLog, _ := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvPath)
+				t.Fatalf("build drv: %v\nlog:\n%s", err, gotLog)
 			}
 			wantOutputContent := fmt.Sprintf("%d\n", n)
 			wantOutputPath, err := singleFileOutputPath(dir, drvName, []byte(wantOutputContent), zbstore.References{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			checkSingleFileOutput(t, wantOutputPath, []byte(wantOutputContent), got)
+			checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(wantOutputContent), got)
 		})
 	}
 }
@@ -729,8 +797,7 @@ func TestRealizeFetchURL(t *testing.T) {
 	}
 
 	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-		TempDir:       t.TempDir(),
-		ClientHandler: &testBuildLogger{t},
+		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -745,24 +812,40 @@ func TestRealizeFetchURL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, got, &zbstore.RealizeRequest{
-		DrvPath: drvPath,
+	realizeResponse := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal("build drv:", err)
+	}
+	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+	if err != nil {
+		gotLog, _ := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvPath)
+		t.Fatalf("build drv: %v\nlog:\n%s", err, gotLog)
 	}
 
 	wantOutputPath, err := zbstore.FixedCAOutputPath(dir, wantOutputName, wantOutputCA, zbstore.References{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkSingleFileOutput(t, wantOutputPath, []byte(fileContent), got)
+	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(fileContent), got)
 }
 
-func checkSingleFileOutput(tb testing.TB, wantOutputPath zbstore.Path, wantOutputContent []byte, got *zbstore.RealizeResponse) {
+func checkSingleFileOutput(tb testing.TB, drvPath, wantOutputPath zbstore.Path, wantOutputContent []byte, resp *zbstore.GetBuildResponse) {
 	tb.Helper()
-	want := &zbstore.RealizeResponse{
+
+	got, err := resp.ResultForPath(drvPath)
+	if err != nil {
+		tb.Error(err)
+	}
+	if got == nil {
+		return
+	}
+
+	want := &zbstore.BuildResult{
+		DrvPath: drvPath,
+		Status:  zbstore.BuildSuccess,
 		Outputs: []*zbstore.RealizeOutput{
 			{
 				Name: zbstore.DefaultDerivationOutputName,
@@ -775,11 +858,16 @@ func checkSingleFileOutput(tb testing.TB, wantOutputPath zbstore.Path, wantOutpu
 	}
 
 	// Try to compare the file if the response is the right shape.
-	gotOutputs := slices.Collect(got.OutputsByName(zbstore.DefaultDerivationOutputName))
-	if len(gotOutputs) != 1 || !gotOutputs[0].Path.Valid {
+	gotOutput, err := got.OutputForName(zbstore.DefaultDerivationOutputName)
+	if err != nil {
+		tb.Errorf("%s: %v", drvPath, err)
 		return
 	}
-	gotOutputPath := gotOutputs[0].Path.X
+	if !gotOutput.Path.Valid {
+		tb.Errorf("%s: output %s path is null", drvPath, zbstore.DefaultDerivationOutputName)
+		return
+	}
+	gotOutputPath := gotOutput.Path.X
 
 	if got, err := os.ReadFile(string(gotOutputPath)); err != nil {
 		tb.Error(err)
@@ -823,52 +911,6 @@ func singleFileOutputPath(dir zbstore.Directory, name string, data []byte, refs 
 		return "", err
 	}
 	return p, nil
-}
-
-type writerLogger struct {
-	w io.Writer
-}
-
-func (wl *writerLogger) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	return jsonrpc.ServeMux{
-		zbstore.LogMethod: jsonrpc.HandlerFunc(wl.log),
-	}.JSONRPC(ctx, req)
-}
-
-func (wl *writerLogger) log(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	args := new(zbstore.LogNotification)
-	if err := json.Unmarshal(req.Params, args); err != nil {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
-	}
-	payload := args.Payload()
-	if len(payload) == 0 {
-		return nil, nil
-	}
-	_, err := wl.w.Write(payload)
-	return nil, err
-}
-
-type testBuildLogger struct {
-	tb testing.TB
-}
-
-func (l *testBuildLogger) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	return jsonrpc.ServeMux{
-		zbstore.LogMethod: jsonrpc.HandlerFunc(l.log),
-	}.JSONRPC(ctx, req)
-}
-
-func (l *testBuildLogger) log(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	args := new(zbstore.LogNotification)
-	if err := json.Unmarshal(req.Params, args); err != nil {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
-	}
-	payload := args.Payload()
-	if len(payload) == 0 {
-		return nil, nil
-	}
-	l.tb.Logf("Build %s: %s", args.DrvPath, payload)
-	return nil, nil
 }
 
 func mustParseHash(tb testing.TB, s string) nix.Hash {

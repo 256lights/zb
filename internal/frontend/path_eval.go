@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 
-	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -85,10 +84,7 @@ func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int,
 	if prevStorePath, err := eval.checkStamp(cache, p, name); err != nil {
 		log.Debugf(ctx, "%v", err)
 	} else {
-		var exists bool
-		err := jsonrpc.Do(ctx, eval.store, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
-			Path: string(prevStorePath),
-		})
+		exists, err := eval.store.Exists(ctx, string(prevStorePath))
 		if err != nil {
 			log.Debugf(ctx, "Unable to query store path %s: %v", prevStorePath, err)
 		} else if exists {
@@ -249,10 +245,7 @@ func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error)
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 
-	var exists bool
-	err = jsonrpc.Do(ctx, eval.store, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
-		Path: string(storePath),
-	})
+	exists, err := eval.store.Exists(ctx, string(storePath))
 	if err != nil {
 		log.Debugf(ctx, "Unable to query store path %s: %v", storePath, err)
 	} else if exists {
@@ -549,15 +542,11 @@ func collatePath(a, b string) int {
 	}
 }
 
-func startExport(ctx context.Context, store *jsonrpc.Client) (exporter *zbstore.Exporter, closeFunc func(ok bool) error, err error) {
-	conn, releaseConn, err := storeCodec(ctx, store)
-	if err != nil {
-		return nil, nil, fmt.Errorf("export to store: %v", err)
-	}
+func startExport(ctx context.Context, store Store) (exporter *zbstore.Exporter, closeFunc func(ok bool) error, err error) {
 	pr, pw := io.Pipe()
 	done := make(chan error)
 	go func() {
-		err := conn.Export(pr)
+		err := store.Import(ctx, pr)
 		pr.Close()
 		done <- err
 		close(done)
@@ -581,7 +570,6 @@ func startExport(ctx context.Context, store *jsonrpc.Client) (exporter *zbstore.
 				errs[0] = pw.CloseWithError(errors.New("export interrupted"))
 			}
 			errs[2] = <-done
-			releaseConn()
 		})
 
 		for _, err := range errs {
@@ -592,19 +580,6 @@ func startExport(ctx context.Context, store *jsonrpc.Client) (exporter *zbstore.
 		return nil
 	}
 	return exporter, closeFunc, nil
-}
-
-func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstore.Codec, release func(), err error) {
-	generic, release, err := client.Codec(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	codec, ok := generic.(*zbstore.Codec)
-	if !ok {
-		release()
-		return nil, nil, fmt.Errorf("store connection is %T (want %T)", generic, (*zbstore.Codec)(nil))
-	}
-	return codec, release, nil
 }
 
 func stamp(path string, info fs.FileInfo) (string, error) {

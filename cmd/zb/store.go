@@ -67,7 +67,7 @@ func newStoreObjectInfoCommand(g *globalConfig) *cobra.Command {
 }
 
 func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectInfoOptions) error {
-	storeClient, waitStoreClient := g.storeClient(jsonrpc.MethodNotFoundHandler{}, nil)
+	storeClient, waitStoreClient := g.storeClient(nil)
 	defer func() {
 		storeClient.Close()
 		waitStoreClient()

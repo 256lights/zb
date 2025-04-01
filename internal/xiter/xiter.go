@@ -40,7 +40,7 @@ func Single[T any](seq iter.Seq[T]) (T, error) {
 	for x := range seq {
 		n++
 		if n > 1 {
-			return x, errMultipleValues
+			return got, errMultipleValues
 		}
 		got = x
 	}

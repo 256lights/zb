@@ -5,9 +5,11 @@ package frontend
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,6 +20,7 @@ import (
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log/testlog"
 )
@@ -88,7 +91,7 @@ func TestLuaToGo(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          store,
+		Store:          testRPCStore{store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -154,7 +157,7 @@ func TestGetenv(t *testing.T) {
 			}
 			callCount := 0
 			eval, err := NewEval(&Options{
-				Store:          store,
+				Store:          testRPCStore{store},
 				StoreDirectory: storeDir,
 				LookupEnv: func(ctx context.Context, key string) (string, bool) {
 					callCount++
@@ -197,7 +200,7 @@ func TestStringMethod(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          store,
+		Store:          testRPCStore{store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -232,7 +235,7 @@ func TestImportFromDerivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          store,
+		Store:          testRPCStore{store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -271,7 +274,7 @@ func TestImportCycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          store,
+		Store:          testRPCStore{store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -343,7 +346,7 @@ func TestExtract(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          store,
+		Store:          testRPCStore{store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -367,64 +370,78 @@ func TestExtract(t *testing.T) {
 	}
 
 	t.Run("Full", func(t *testing.T) {
+		ctx, cancel := testcontext.New(t)
+		defer cancel()
+
 		drv, ok := results[0].(*Derivation)
 		if !ok {
 			t.Fatalf("result is %T; want *Derivation", results[0])
 		}
 		var response zbstore.RealizeResponse
 		err := jsonrpc.Do(ctx, store, zbstore.RealizeMethod, &response, &zbstore.RealizeRequest{
-			DrvPath: drv.Path,
+			DrvPaths: []zbstore.Path{drv.Path},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := len(response.Outputs), 1; got != want {
-			t.Fatalf("received %d outputs from building %s; want %d", got, drv.Path, want)
+		build, err := backendtest.WaitForSuccessfulBuild(ctx, store, response.BuildID)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if got, want := response.Outputs[0].Name, zbstore.DefaultDerivationOutputName; got != want {
-			t.Errorf("name of output from %s = %q; want %q", drv.Path, got, want)
+		outputPath, err := build.FindRealizeOutput(zbstore.OutputReference{
+			DrvPath:    drv.Path,
+			OutputName: zbstore.DefaultDerivationOutputName,
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !response.Outputs[0].Path.Valid {
-			t.Fatalf("build of %s failed", drv.Path)
+		if !outputPath.Valid {
+			t.Fatalf("missing path for %s", drv.Path)
 		}
-		outputPath := response.Outputs[0].Path.X
-		got, err := os.ReadFile(filepath.Join(string(outputPath), "foo", "bar.txt"))
+		got, err := os.ReadFile(filepath.Join(string(outputPath.X), "foo", "bar.txt"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if want := "Hello, World!\n"; string(got) != want {
-			t.Errorf("content of %s = %q; want %q", outputPath, got, want)
+			t.Errorf("content of %s = %q; want %q", outputPath.X, got, want)
 		}
 	})
 
 	t.Run("Stripped", func(t *testing.T) {
+		ctx, cancel := testcontext.New(t)
+		defer cancel()
+
 		drv, ok := results[1].(*Derivation)
 		if !ok {
 			t.Fatalf("result is %T; want *Derivation", results[1])
 		}
 		var response zbstore.RealizeResponse
 		err := jsonrpc.Do(ctx, store, zbstore.RealizeMethod, &response, &zbstore.RealizeRequest{
-			DrvPath: drv.Path,
+			DrvPaths: []zbstore.Path{drv.Path},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := len(response.Outputs), 1; got != want {
-			t.Fatalf("received %d outputs from building %s; want %d", got, drv.Path, want)
+		build, err := backendtest.WaitForSuccessfulBuild(ctx, store, response.BuildID)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if got, want := response.Outputs[0].Name, zbstore.DefaultDerivationOutputName; got != want {
-			t.Errorf("name of output from %s = %q; want %q", drv.Path, got, want)
+		outputPath, err := build.FindRealizeOutput(zbstore.OutputReference{
+			DrvPath:    drv.Path,
+			OutputName: zbstore.DefaultDerivationOutputName,
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !response.Outputs[0].Path.Valid {
-			t.Fatalf("build of %s failed", drv.Path)
+		if !outputPath.Valid {
+			t.Fatalf("missing path for %s", drv.Path)
 		}
-		outputPath := response.Outputs[0].Path.X
-		got, err := os.ReadFile(filepath.Join(string(outputPath), "bar.txt"))
+		got, err := os.ReadFile(filepath.Join(string(outputPath.X), "bar.txt"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if want := "Hello, World!\n"; string(got) != want {
-			t.Errorf("content of %s = %q; want %q", outputPath, got, want)
+			t.Errorf("content of %s = %q; want %q", outputPath.X, got, want)
 		}
 	})
 }
@@ -441,7 +458,7 @@ func TestNewState(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          store,
+		Store:          testRPCStore{store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -484,7 +501,7 @@ func BenchmarkNewState(b *testing.B) {
 		b.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          store,
+		Store:          testRPCStore{store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -507,27 +524,56 @@ func BenchmarkNewState(b *testing.B) {
 	}
 }
 
-type testBuildLogger struct {
-	tb testing.TB
+// testRPCStore is an implementation of [Store]
+// that communicates to a real backend using JSON-RPC.
+// Realization logs are ignored.
+type testRPCStore struct {
+	client *jsonrpc.Client
 }
 
-func (l *testBuildLogger) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	return jsonrpc.ServeMux{
-		zbstore.LogMethod: jsonrpc.HandlerFunc(l.log),
-	}.JSONRPC(ctx, req)
+func (store testRPCStore) Exists(ctx context.Context, path string) (bool, error) {
+	var response bool
+	err := jsonrpc.Do(ctx, store.client, zbstore.ExistsMethod, &response, &zbstore.ExistsRequest{
+		Path: path,
+	})
+	if err != nil {
+		return false, err
+	}
+	return response, nil
 }
 
-func (l *testBuildLogger) log(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	args := new(zbstore.LogNotification)
-	if err := json.Unmarshal(req.Params, args); err != nil {
-		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+func (store testRPCStore) Import(ctx context.Context, r io.Reader) error {
+	generic, releaseConn, err := store.client.Codec(ctx)
+	if err != nil {
+		return err
 	}
-	payload := args.Payload()
-	if len(payload) == 0 {
-		return nil, nil
+	defer releaseConn()
+	codec, ok := generic.(*zbstore.Codec)
+	if !ok {
+		return fmt.Errorf("store connection is %T (want %T)", generic, (*zbstore.Codec)(nil))
 	}
-	l.tb.Logf("Build %s: %s", args.DrvPath, payload)
-	return nil, nil
+	return codec.Export(r)
+}
+
+func (store testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstore.BuildResult, error) {
+	var realizeResponse zbstore.RealizeResponse
+	err := jsonrpc.Do(ctx, store.client, zbstore.RealizeMethod, &realizeResponse, &zbstore.RealizeRequest{
+		DrvPaths: slices.Collect(func(yield func(zbstore.Path) bool) {
+			for ref := range want.All() {
+				if !yield(ref.DrvPath) {
+					return
+				}
+			}
+		}),
+	})
+	if err != nil {
+		return nil, err
+	}
+	build, err := backendtest.WaitForSuccessfulBuild(ctx, store.client, realizeResponse.BuildID)
+	if err != nil {
+		return nil, err
+	}
+	return build.Results, nil
 }
 
 func TestMain(m *testing.M) {

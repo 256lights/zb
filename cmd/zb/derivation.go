@@ -70,7 +70,7 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 		return runDerivationShowFiles(ctx, g, opts)
 	}
 
-	storeClient, waitStoreClient := g.storeClient(new(clientRPCHandler), nil)
+	storeClient, waitStoreClient := g.storeClient(nil)
 	defer func() {
 		storeClient.Close()
 		waitStoreClient()
@@ -314,7 +314,7 @@ func newDerivationEnvCommand(g *globalConfig) *cobra.Command {
 }
 
 func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvOptions) error {
-	storeClient, waitStoreClient := g.storeClient(new(clientRPCHandler), nil)
+	storeClient, waitStoreClient := g.storeClient(nil)
 	defer func() {
 		storeClient.Close()
 		waitStoreClient()
@@ -346,52 +346,51 @@ func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvO
 	if len(results) == 0 {
 		return fmt.Errorf("no evaluation results")
 	}
+	if len(results) > 1 {
+		return fmt.Errorf("can only expand one derivation")
+	}
 
-	// TODO(soon): Batch.
-	for _, result := range results {
-		drv, _ := result.(*frontend.Derivation)
-		if drv == nil {
-			return fmt.Errorf("%v is not a derivation", result)
+	drv, _ := results[0].(*frontend.Derivation)
+	if drv == nil {
+		return fmt.Errorf("%v is not a derivation", results[0])
+	}
+	expandResponse := new(zbstore.RealizeResponse)
+	err = jsonrpc.Do(ctx, storeClient, zbstore.ExpandMethod, expandResponse, &zbstore.ExpandRequest{
+		DrvPath:            drv.Path,
+		TemporaryDirectory: opts.tempDir,
+	})
+	if err != nil {
+		return err
+	}
+	build, rawBuild, err := waitForBuild(ctx, storeClient, expandResponse.BuildID)
+	if err != nil {
+		return err
+	}
+	if build.Expand == nil {
+		return fmt.Errorf("build %s did not provide expand information", expandResponse.BuildID)
+	}
+	if opts.jsonFormat {
+		// Dump expand response directly to preserve unknown fields.
+		var parsed struct {
+			Expand json.RawMessage `json:"expand"`
 		}
-
-		req := &zbstore.ExpandRequest{
-			DrvPath:            drv.Path,
-			TemporaryDirectory: opts.tempDir,
+		if err := json.Unmarshal(rawBuild, &parsed); err != nil {
+			return fmt.Errorf("%s: %v", drv.Path, err)
 		}
-		if opts.jsonFormat {
-			// Dump expand response directly to preserve unknown fields.
-			jsonReq, err := json.Marshal(req)
-			if err != nil {
-				return fmt.Errorf("%s: marshal request: %v", drv.Path, err)
-			}
-			resp, err := storeClient.JSONRPC(ctx, &jsonrpc.Request{
-				Method: zbstore.ExpandMethod,
-				Params: jsonReq,
-			})
-			if err != nil {
-				return fmt.Errorf("%s: %v", drv.Path, err)
-			}
-			jsonBytes, err := dedentJSON(resp.Result)
-			if err != nil {
-				return fmt.Errorf("%s: %v", drv.Path, err)
-			}
-			jsonBytes = append(jsonBytes, '\n')
-			if _, err := os.Stdout.Write(jsonBytes); err != nil {
-				return err
-			}
-			continue
-		}
-
-		resp := new(zbstore.ExpandResponse)
-		err = jsonrpc.Do(ctx, storeClient, zbstore.ExpandMethod, resp, req)
+		jsonBytes, err := dedentJSON(parsed.Expand)
 		if err != nil {
+			return fmt.Errorf("%s: %v", drv.Path, err)
+		}
+		jsonBytes = append(jsonBytes, '\n')
+		if _, err := os.Stdout.Write(jsonBytes); err != nil {
 			return err
 		}
+		return nil
+	}
 
-		for k, v := range xmaps.Sorted(resp.Env) {
-			if _, err := fmt.Printf("%s=%s\n", k, v); err != nil {
-				return err
-			}
+	for k, v := range xmaps.Sorted(build.Expand.Env) {
+		if _, err := fmt.Printf("%s=%s\n", k, v); err != nil {
+			return err
 		}
 	}
 

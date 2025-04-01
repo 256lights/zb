@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 
-	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/sets"
@@ -315,7 +314,7 @@ func stringToEnvVar(l *lua.State, drv *zbstore.Derivation, idx int) (string, err
 	return s, nil
 }
 
-func writeDerivation(ctx context.Context, store *jsonrpc.Client, drv *zbstore.Derivation) (zbstore.Path, error) {
+func writeDerivation(ctx context.Context, store Store, drv *zbstore.Derivation) (zbstore.Path, error) {
 	info, narBytes, _, err := drv.Export(nix.SHA256)
 	if err != nil {
 		if drv.Name == "" {
@@ -324,10 +323,7 @@ func writeDerivation(ctx context.Context, store *jsonrpc.Client, drv *zbstore.De
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
 
-	var exists bool
-	err = jsonrpc.Do(ctx, store, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
-		Path: string(info.StorePath),
-	})
+	exists, err := store.Exists(ctx, string(info.StorePath))
 	if err != nil {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}

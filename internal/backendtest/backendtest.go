@@ -5,13 +5,16 @@
 package backendtest
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
@@ -51,7 +54,6 @@ type Options struct {
 	// If empty, then a new directory is created and registered for cleanup.
 	TempDir string
 
-	ClientHandler  jsonrpc.Handler
 	ClientReceiver zbstore.NARReceiver
 }
 
@@ -92,6 +94,11 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 	if opts2.CoresPerBuild < 1 {
 		opts2.CoresPerBuild = 1
 	}
+	if opts2.BuildContext == nil {
+		opts2.BuildContext = func(_ context.Context, _ string) context.Context {
+			return ctx
+		}
+	}
 	realStoreDir := opts2.RealDir
 	if realStoreDir == "" {
 		realStoreDir = string(storeDir)
@@ -105,23 +112,11 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		peer := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
-			return serverCodec, nil
-		})
-		jsonrpc.Serve(backend.WithPeer(serveCtx, peer), serverCodec, srv)
-		peer.Close() // closes serverCodec implicitly
+		jsonrpc.Serve(backend.WithExporter(serveCtx, serverCodec), serverCodec, srv)
+		serverCodec.Close()
 	}()
 
 	clientCodec := zbstore.NewCodec(clientConn, opts.ClientReceiver)
-	clientHandler := opts.ClientHandler
-	if clientHandler == nil {
-		clientHandler = jsonrpc.MethodNotFoundHandler{}
-	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		jsonrpc.Serve(serveCtx, clientCodec, clientHandler)
-	}()
 	client := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
 		return clientCodec, nil
 	})
@@ -158,4 +153,63 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 	})
 
 	return client, nil
+}
+
+// WaitForBuild waits until the store finishes a build or the context is canceled,
+// whichever comes first.
+func WaitForBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (*zbstore.GetBuildResponse, error) {
+	if buildID == "" {
+		return nil, fmt.Errorf("cannot wait for empty build ID")
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		resp := new(zbstore.GetBuildResponse)
+		err := jsonrpc.Do(ctx, client, zbstore.GetBuildMethod, resp, &zbstore.GetBuildRequest{
+			BuildID: buildID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("waiting for build %s: %w", buildID, err)
+		}
+		if resp.Status != zbstore.BuildActive {
+			return resp, nil
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("waiting for build %s: %w", buildID, ctx.Err())
+		}
+	}
+}
+
+// WaitForSuccessfulBuild waits until the store finishes a build or the context is canceled,
+// whichever comes first.
+// If the build status is not [zbstore.BuildSuccess],
+// then WaitForSuccessfulBuild returns an error.
+func WaitForSuccessfulBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (*zbstore.GetBuildResponse, error) {
+	resp, err := WaitForBuild(ctx, client, buildID)
+	if err == nil && resp.Status != zbstore.BuildSuccess {
+		err = fmt.Errorf("build %s failed with status %q", buildID, resp.Status)
+	}
+	return resp, err
+}
+
+// ReadLog reads the entire log for the given build and derivation path into memory.
+func ReadLog(ctx context.Context, client *jsonrpc.Client, buildID string, drvPath zbstore.Path) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	for {
+		resp := new(zbstore.ReadLogResponse)
+		err := jsonrpc.Do(ctx, client, zbstore.ReadLogMethod, resp, &zbstore.ReadLogRequest{
+			BuildID:    buildID,
+			DrvPath:    drvPath,
+			RangeStart: int64(buf.Len()),
+		})
+		if err != nil {
+			return buf.Bytes(), fmt.Errorf("read log for %s: %w", drvPath, err)
+		}
+		buf.Write(resp.Payload())
+		if resp.EOF {
+			return bytes.ReplaceAll(buf.Bytes(), []byte("\r\n"), []byte("\n")), nil
+		}
+	}
 }
