@@ -22,6 +22,7 @@ import (
 	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
@@ -85,8 +86,8 @@ func TestRealizeSingleDerivation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	realizeResponse := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: []zbstore.Path{drvPath},
 	})
 	if err != nil {
@@ -169,8 +170,8 @@ func TestRealizeReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	realize1Response := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realize1Response, &zbstore.RealizeRequest{
+	realize1Response := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realize1Response, &zbstorerpc.RealizeRequest{
 		DrvPaths: []zbstore.Path{drvPath},
 	})
 	if err != nil {
@@ -181,8 +182,8 @@ func TestRealizeReuse(t *testing.T) {
 		t.Fatalf("first build failed: %v\nlog:\n%s", err, gotLog)
 	}
 
-	realize2Response := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realize2Response, &zbstore.RealizeRequest{
+	realize2Response := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realize2Response, &zbstorerpc.RealizeRequest{
 		DrvPaths: []zbstore.Path{drvPath},
 	})
 	if err != nil {
@@ -285,8 +286,8 @@ func TestRealizeMultiStep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	realizeResponse := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: []zbstore.Path{drv2Path},
 	})
 	if err != nil {
@@ -396,8 +397,8 @@ func TestRealizeReferenceToDep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	realizeResponse := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: []zbstore.Path{drv2Path},
 	})
 	if err != nil {
@@ -427,8 +428,8 @@ func TestRealizeReferenceToDep(t *testing.T) {
 	}
 	checkSingleFileOutput(t, drv2Path, wantOutputPath, wantOutputContent, got)
 
-	var info zbstore.InfoResponse
-	err = jsonrpc.Do(ctx, client, zbstore.InfoMethod, &info, &zbstore.InfoRequest{
+	var info zbstorerpc.InfoResponse
+	err = jsonrpc.Do(ctx, client, zbstorerpc.InfoMethod, &info, &zbstorerpc.InfoRequest{
 		Path: wantOutputPath,
 	})
 	if err != nil {
@@ -539,8 +540,8 @@ func TestRealizeFixed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	realize1Response := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realize1Response, &zbstore.RealizeRequest{
+	realize1Response := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realize1Response, &zbstorerpc.RealizeRequest{
 		DrvPaths: []zbstore.Path{drv1Path},
 	})
 	if err != nil {
@@ -554,8 +555,8 @@ func TestRealizeFixed(t *testing.T) {
 	checkSingleFileOutput(t, drv1Path, wantOutputPath, []byte(wantOutputContent), got1)
 
 	// Now let's build the second derivation to see whether the output gets reused.
-	realize2Response := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realize2Response, &zbstore.RealizeRequest{
+	realize2Response := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realize2Response, &zbstorerpc.RealizeRequest{
 		DrvPaths: []zbstore.Path{drv2Path},
 	})
 	if err != nil {
@@ -620,8 +621,8 @@ func TestRealizeFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	realizeResponse := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: []zbstore.Path{drvPath},
 	})
 	if err != nil {
@@ -631,13 +632,13 @@ func TestRealizeFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal("build drv:", err)
 	}
-	want := &zbstore.GetBuildResponse{
-		Status: zbstore.BuildFail,
-		Results: []*zbstore.BuildResult{
+	want := &zbstorerpc.GetBuildResponse{
+		Status: zbstorerpc.BuildFail,
+		Results: []*zbstorerpc.BuildResult{
 			{
 				DrvPath: drvPath,
-				Status:  zbstore.BuildFail,
-				Outputs: []*zbstore.RealizeOutput{
+				Status:  zbstorerpc.BuildFail,
+				Outputs: []*zbstorerpc.RealizeOutput{
 					{
 						Name: zbstore.DefaultDerivationOutputName,
 					},
@@ -645,7 +646,7 @@ func TestRealizeFailure(t *testing.T) {
 			},
 		},
 	}
-	getBuildResponseType := reflect.TypeFor[zbstore.GetBuildResponse]()
+	getBuildResponseType := reflect.TypeFor[zbstorerpc.GetBuildResponse]()
 	diff := cmp.Diff(
 		want, got,
 		cmp.FilterPath(
@@ -736,8 +737,8 @@ func TestRealizeCores(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			realizeResponse := new(zbstore.RealizeResponse)
-			err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+			realizeResponse := new(zbstorerpc.RealizeResponse)
+			err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
 				DrvPaths: []zbstore.Path{drvPath},
 			})
 			if err != nil {
@@ -812,8 +813,8 @@ func TestRealizeFetchURL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	realizeResponse := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: []zbstore.Path{drvPath},
 	})
 	if err != nil {
@@ -832,7 +833,7 @@ func TestRealizeFetchURL(t *testing.T) {
 	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(fileContent), got)
 }
 
-func checkSingleFileOutput(tb testing.TB, drvPath, wantOutputPath zbstore.Path, wantOutputContent []byte, resp *zbstore.GetBuildResponse) {
+func checkSingleFileOutput(tb testing.TB, drvPath, wantOutputPath zbstore.Path, wantOutputContent []byte, resp *zbstorerpc.GetBuildResponse) {
 	tb.Helper()
 
 	got, err := resp.ResultForPath(drvPath)
@@ -843,13 +844,13 @@ func checkSingleFileOutput(tb testing.TB, drvPath, wantOutputPath zbstore.Path, 
 		return
 	}
 
-	want := &zbstore.BuildResult{
+	want := &zbstorerpc.BuildResult{
 		DrvPath: drvPath,
-		Status:  zbstore.BuildSuccess,
-		Outputs: []*zbstore.RealizeOutput{
+		Status:  zbstorerpc.BuildSuccess,
+		Outputs: []*zbstorerpc.RealizeOutput{
 			{
 				Name: zbstore.DefaultDerivationOutputName,
-				Path: zbstore.NonNull(wantOutputPath),
+				Path: zbstorerpc.NonNull(wantOutputPath),
 			},
 		},
 	}

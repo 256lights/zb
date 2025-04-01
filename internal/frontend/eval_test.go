@@ -20,6 +20,7 @@ import (
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log/testlog"
@@ -377,8 +378,8 @@ func TestExtract(t *testing.T) {
 		if !ok {
 			t.Fatalf("result is %T; want *Derivation", results[0])
 		}
-		var response zbstore.RealizeResponse
-		err := jsonrpc.Do(ctx, store, zbstore.RealizeMethod, &response, &zbstore.RealizeRequest{
+		var response zbstorerpc.RealizeResponse
+		err := jsonrpc.Do(ctx, store, zbstorerpc.RealizeMethod, &response, &zbstorerpc.RealizeRequest{
 			DrvPaths: []zbstore.Path{drv.Path},
 		})
 		if err != nil {
@@ -415,8 +416,8 @@ func TestExtract(t *testing.T) {
 		if !ok {
 			t.Fatalf("result is %T; want *Derivation", results[1])
 		}
-		var response zbstore.RealizeResponse
-		err := jsonrpc.Do(ctx, store, zbstore.RealizeMethod, &response, &zbstore.RealizeRequest{
+		var response zbstorerpc.RealizeResponse
+		err := jsonrpc.Do(ctx, store, zbstorerpc.RealizeMethod, &response, &zbstorerpc.RealizeRequest{
 			DrvPaths: []zbstore.Path{drv.Path},
 		})
 		if err != nil {
@@ -533,7 +534,7 @@ type testRPCStore struct {
 
 func (store testRPCStore) Exists(ctx context.Context, path string) (bool, error) {
 	var response bool
-	err := jsonrpc.Do(ctx, store.client, zbstore.ExistsMethod, &response, &zbstore.ExistsRequest{
+	err := jsonrpc.Do(ctx, store.client, zbstorerpc.ExistsMethod, &response, &zbstorerpc.ExistsRequest{
 		Path: path,
 	})
 	if err != nil {
@@ -548,16 +549,16 @@ func (store testRPCStore) Import(ctx context.Context, r io.Reader) error {
 		return err
 	}
 	defer releaseConn()
-	codec, ok := generic.(*zbstore.Codec)
+	codec, ok := generic.(*zbstorerpc.Codec)
 	if !ok {
-		return fmt.Errorf("store connection is %T (want %T)", generic, (*zbstore.Codec)(nil))
+		return fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
 	}
 	return codec.Export(r)
 }
 
-func (store testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstore.BuildResult, error) {
-	var realizeResponse zbstore.RealizeResponse
-	err := jsonrpc.Do(ctx, store.client, zbstore.RealizeMethod, &realizeResponse, &zbstore.RealizeRequest{
+func (store testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
+	var realizeResponse zbstorerpc.RealizeResponse
+	err := jsonrpc.Do(ctx, store.client, zbstorerpc.RealizeMethod, &realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: slices.Collect(func(yield func(zbstore.Path) bool) {
 			for ref := range want.All() {
 				if !yield(ref.DrvPath) {

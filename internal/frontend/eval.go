@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"zb.256lights.llc/pkg/internal/lua"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
@@ -61,7 +62,7 @@ type Options struct {
 type Store interface {
 	Exists(ctx context.Context, path string) (bool, error)
 	Import(ctx context.Context, r io.Reader) error
-	Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstore.BuildResult, error)
+	Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error)
 }
 
 type Eval struct {

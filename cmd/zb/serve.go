@@ -24,8 +24,8 @@ import (
 	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/xmaps"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
-	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 )
 
@@ -166,7 +166,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 			recv := srv.NewNARReceiver(ctx)
 			defer recv.Cleanup(ctx)
 
-			codec := zbstore.NewCodec(nopCloser{conn}, recv)
+			codec := zbstorerpc.NewCodec(nopCloser{conn}, recv)
 			jsonrpc.Serve(backend.WithExporter(ctx, codec), codec, srv)
 			codec.Close()
 

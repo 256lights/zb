@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
 )
 
@@ -83,7 +84,7 @@ func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectI
 			return err
 		}
 
-		req := &zbstore.InfoRequest{
+		req := &zbstorerpc.InfoRequest{
 			Path: path,
 		}
 		if opts.jsonFormat {
@@ -91,7 +92,7 @@ func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectI
 			var partialParsed struct {
 				Info json.RawMessage `json:"info"`
 			}
-			err = jsonrpc.Do(ctx, storeClient, zbstore.InfoMethod, &partialParsed, req)
+			err = jsonrpc.Do(ctx, storeClient, zbstorerpc.InfoMethod, &partialParsed, req)
 			if err != nil {
 				return fmt.Errorf("%s: %v", path, err)
 			}
@@ -109,8 +110,8 @@ func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectI
 			continue
 		}
 
-		resp := new(zbstore.InfoResponse)
-		err = jsonrpc.Do(ctx, storeClient, zbstore.InfoMethod, resp, req)
+		resp := new(zbstorerpc.InfoResponse)
+		err = jsonrpc.Do(ctx, storeClient, zbstorerpc.InfoMethod, resp, req)
 		if err != nil {
 			return fmt.Errorf("%s: %v", path, err)
 		}

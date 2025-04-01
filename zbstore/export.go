@@ -5,12 +5,12 @@ package zbstore
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
 
 	"zb.256lights.llc/pkg/sets"
-	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 )
 
@@ -26,7 +26,7 @@ type ExportTrailer struct {
 	StorePath      Path
 	References     sets.Sorted[Path]
 	Deriver        Path
-	ContentAddress nix.ContentAddress
+	ContentAddress ContentAddress
 }
 
 // An Exporter serializes zero or more NARs to a stream
@@ -123,7 +123,11 @@ type NARReceiver interface {
 	ReceiveNAR(trailer *ExportTrailer)
 }
 
-func receiveExport(receiver NARReceiver, r io.Reader) error {
+// ReceiveExport processes a stream of NARs in `nix-store --export` format,
+// returning the first error encountered.
+// If the error is due to an error returned from the receiver,
+// then [IsReceiverError] will report true for the returned error.
+func ReceiveExport(receiver NARReceiver, r io.Reader) error {
 	buf := make([]byte, len(exportObjectMarker))
 	ew := &errWriter{w: receiver}
 	for {
@@ -216,6 +220,12 @@ func receiveExport(receiver NARReceiver, r io.Reader) error {
 	}
 }
 
+// IsReceiverError reports whether err indicates an error
+// from the [NARReceiver] passed to a call of [ReceiveExport].
+func IsReceiverError(err error) bool {
+	return errors.As(err, new(recvError))
+}
+
 type recvError struct {
 	err error
 }
@@ -227,11 +237,6 @@ func (e recvError) Error() string {
 func (e recvError) Unwrap() error {
 	return e.err
 }
-
-type nopReceiver struct{}
-
-func (nopReceiver) Write(p []byte) (n int, err error) { return len(p), nil }
-func (nopReceiver) ReceiveNAR(trailer *ExportTrailer) {}
 
 const stringAlign = 8
 

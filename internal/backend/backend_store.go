@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -250,14 +251,14 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash
 }
 
 // pathInfo returns basic information about an object in the store.
-func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *zbstore.ObjectInfo, err error) {
+func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *zbstorerpc.ObjectInfo, err error) {
 	defer sqlitex.Save(conn)(&err)
 
-	var info *zbstore.ObjectInfo
+	var info *zbstorerpc.ObjectInfo
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "info.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{":path": string(path)},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			info = new(zbstore.ObjectInfo)
+			info = new(zbstorerpc.ObjectInfo)
 			info.NARSize = stmt.GetInt64("nar_size")
 			var err error
 			info.NARHash, err = nix.ParseHash(stmt.GetText("nar_hash"))
@@ -549,7 +550,7 @@ func deleteOldBuilds(conn *sqlite.Conn, cutoff time.Time, keep iter.Seq[uuid.UUI
 	return int64(conn.Changes()), nil
 }
 
-func recordExpandResult(conn *sqlite.Conn, buildID uuid.UUID, result *zbstore.ExpandResult) error {
+func recordExpandResult(conn *sqlite.Conn, buildID uuid.UUID, result *zbstorerpc.ExpandResult) error {
 	argsJSON := "[]"
 	if len(result.Args) > 0 {
 		var err error
@@ -680,12 +681,12 @@ func finalizeBuildResult(ctx context.Context, conn *sqlite.Conn, buildResultID i
 
 	defer sqlitex.Save(conn)(&err)
 
-	status := zbstore.BuildSuccess
+	status := zbstorerpc.BuildSuccess
 	if buildError != nil {
 		if isBuilderFailure(buildError) {
-			status = zbstore.BuildFail
+			status = zbstorerpc.BuildFail
 		} else {
-			status = zbstore.BuildError
+			status = zbstorerpc.BuildError
 			logger := newBuildLogger(ctx, conn, buildResultID)
 			var buf []byte
 			buf = append(buf, "zb internal error: "...)
@@ -748,8 +749,8 @@ func readBuildLogAt(conn *sqlite.Conn, buildID uuid.UUID, drvPath zbstore.Path, 
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			found = true
 			buildResultID = stmt.GetInt64("id")
-			status := zbstore.BuildStatus(stmt.GetText("status"))
-			finished = status != zbstore.BuildActive
+			status := zbstorerpc.BuildStatus(stmt.GetText("status"))
+			finished = status != zbstorerpc.BuildActive
 			return nil
 		},
 	})

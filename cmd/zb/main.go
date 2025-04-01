@@ -22,6 +22,7 @@ import (
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/luac"
 	"zb.256lights.llc/pkg/internal/lualex"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -40,7 +41,7 @@ func (g *globalConfig) storeClient(receiver zbstore.NARReceiver) (_ *jsonrpc.Cli
 		if err != nil {
 			return nil, err
 		}
-		return zbstore.NewCodec(conn, receiver), nil
+		return zbstorerpc.NewCodec(conn, receiver), nil
 	})
 	return c, wg.Wait
 }
@@ -256,8 +257,8 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 		}
 		drvPaths = append(drvPaths, drv.Path)
 	}
-	realizeResponse := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, storeClient, zbstore.RealizeMethod, realizeResponse, &zbstore.RealizeRequest{
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, storeClient, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths:   drvPaths,
 		KeepFailed: opts.keepFailed,
 	})
@@ -292,7 +293,7 @@ type rpcStore struct {
 
 func (store *rpcStore) Exists(ctx context.Context, path string) (bool, error) {
 	var response bool
-	err := jsonrpc.Do(ctx, store.client, zbstore.ExistsMethod, &response, &zbstore.ExistsRequest{
+	err := jsonrpc.Do(ctx, store.client, zbstorerpc.ExistsMethod, &response, &zbstorerpc.ExistsRequest{
 		Path: path,
 	})
 	if err != nil {
@@ -307,16 +308,16 @@ func (store *rpcStore) Import(ctx context.Context, r io.Reader) error {
 		return err
 	}
 	defer releaseConn()
-	codec, ok := generic.(*zbstore.Codec)
+	codec, ok := generic.(*zbstorerpc.Codec)
 	if !ok {
-		return fmt.Errorf("store connection is %T (want %T)", generic, (*zbstore.Codec)(nil))
+		return fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
 	}
 	return codec.Export(r)
 }
 
-func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstore.BuildResult, error) {
-	var realizeResponse zbstore.RealizeResponse
-	err := jsonrpc.Do(ctx, store.client, zbstore.RealizeMethod, &realizeResponse, &zbstore.RealizeRequest{
+func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
+	var realizeResponse zbstorerpc.RealizeResponse
+	err := jsonrpc.Do(ctx, store.client, zbstorerpc.RealizeMethod, &realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: slices.Collect(func(yield func(zbstore.Path) bool) {
 			for ref := range want.All() {
 				if !yield(ref.DrvPath) {
@@ -342,13 +343,13 @@ func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.Output
 // If the build was not successful,
 // the build response is returned along with a non-nil error.
 // waitForBuild will also copy build logs to stderr.
-func waitForBuild(ctx context.Context, storeClient *jsonrpc.Client, buildID string) (_ *zbstore.GetBuildResponse, _ json.RawMessage, err error) {
+func waitForBuild(ctx context.Context, storeClient *jsonrpc.Client, buildID string) (_ *zbstorerpc.GetBuildResponse, _ json.RawMessage, err error) {
 	defer func() {
 		if err != nil && ctx.Err() != nil {
 			log.Debugf(ctx, "Context canceled while waiting for build %s. Canceling build...", buildID)
 			cancelCtx, cleanupCtx := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cleanupCtx()
-			cancelError := jsonrpc.Notify(cancelCtx, storeClient, zbstore.CancelBuildMethod, &zbstore.CancelBuildNotification{
+			cancelError := jsonrpc.Notify(cancelCtx, storeClient, zbstorerpc.CancelBuildMethod, &zbstorerpc.CancelBuildNotification{
 				BuildID: buildID,
 			})
 			if cancelError != nil {
@@ -357,7 +358,7 @@ func waitForBuild(ctx context.Context, storeClient *jsonrpc.Client, buildID stri
 		}
 	}()
 
-	paramsJSON, err := json.Marshal(&zbstore.GetBuildRequest{
+	paramsJSON, err := json.Marshal(&zbstorerpc.GetBuildRequest{
 		BuildID: buildID,
 	})
 	if err != nil {
@@ -370,19 +371,19 @@ func waitForBuild(ctx context.Context, storeClient *jsonrpc.Client, buildID stri
 	for {
 		log.Debugf(ctx, "Polling build %s...", buildID)
 		buildRPCResponse, err := storeClient.JSONRPC(ctx, &jsonrpc.Request{
-			Method: zbstore.GetBuildMethod,
+			Method: zbstorerpc.GetBuildMethod,
 			Params: paramsJSON,
 		})
 		if err != nil {
 			// TODO(maybe): Are some errors retryable?
 			return nil, nil, fmt.Errorf("wait for build %s: %w", buildID, err)
 		}
-		buildResponse := new(zbstore.GetBuildResponse)
+		buildResponse := new(zbstorerpc.GetBuildResponse)
 		if err := json.Unmarshal(buildRPCResponse.Result, buildResponse); err != nil {
 			return nil, nil, fmt.Errorf("wait for build %s: %v", buildID, err)
 		}
 		log.Debugf(ctx, "Build %s is currently in status %q", buildID, buildResponse.Status)
-		if buildResponse.Status == zbstore.BuildUnknown {
+		if buildResponse.Status == zbstorerpc.BuildUnknown {
 			return nil, nil, fmt.Errorf("wait for build %s: not found in store", buildID)
 		}
 
@@ -406,7 +407,7 @@ func waitForBuild(ctx context.Context, storeClient *jsonrpc.Client, buildID stri
 		}
 
 		switch buildResponse.Status {
-		case zbstore.BuildActive:
+		case zbstorerpc.BuildActive:
 			// Poll again after a brief delay.
 			log.Debugf(ctx, "Waiting to poll build %s again...", buildID)
 			select {
@@ -414,11 +415,11 @@ func waitForBuild(ctx context.Context, storeClient *jsonrpc.Client, buildID stri
 			case <-ctx.Done():
 				return nil, nil, fmt.Errorf("wait for build %s: %w", buildID, ctx.Err())
 			}
-		case zbstore.BuildSuccess:
+		case zbstorerpc.BuildSuccess:
 			return buildResponse, buildRPCResponse.Result, nil
-		case zbstore.BuildFail:
+		case zbstorerpc.BuildFail:
 			return buildResponse, buildRPCResponse.Result, fmt.Errorf("build %s failed", buildID)
-		case zbstore.BuildError:
+		case zbstorerpc.BuildError:
 			return buildResponse, buildRPCResponse.Result, fmt.Errorf("build %s encountered an internal error", buildID)
 		default:
 			return buildResponse, buildRPCResponse.Result, fmt.Errorf("build %s finished with status %q", buildID, buildResponse.Status)
@@ -429,8 +430,8 @@ func waitForBuild(ctx context.Context, storeClient *jsonrpc.Client, buildID stri
 func copyLogToStderr(ctx context.Context, storeClient *jsonrpc.Client, buildID string, drvPath zbstore.Path) error {
 	off := int64(0)
 	for {
-		response := new(zbstore.ReadLogResponse)
-		err := jsonrpc.Do(ctx, storeClient, zbstore.ReadLogMethod, response, &zbstore.ReadLogRequest{
+		response := new(zbstorerpc.ReadLogResponse)
+		err := jsonrpc.Do(ctx, storeClient, zbstorerpc.ReadLogMethod, response, &zbstorerpc.ReadLogRequest{
 			BuildID:    buildID,
 			DrvPath:    drvPath,
 			RangeStart: off,

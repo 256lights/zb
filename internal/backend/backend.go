@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/osutil"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -215,13 +216,13 @@ func (s *Server) Close() error {
 // and serves the [zbstore] API.
 func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	return jsonrpc.ServeMux{
-		zbstore.ExistsMethod:      jsonrpc.HandlerFunc(s.exists),
-		zbstore.InfoMethod:        jsonrpc.HandlerFunc(s.info),
-		zbstore.ExpandMethod:      jsonrpc.HandlerFunc(s.expand),
-		zbstore.RealizeMethod:     jsonrpc.HandlerFunc(s.realize),
-		zbstore.GetBuildMethod:    jsonrpc.HandlerFunc(s.getBuild),
-		zbstore.CancelBuildMethod: jsonrpc.HandlerFunc(s.cancelBuild),
-		zbstore.ReadLogMethod:     jsonrpc.HandlerFunc(s.readLog),
+		zbstorerpc.ExistsMethod:      jsonrpc.HandlerFunc(s.exists),
+		zbstorerpc.InfoMethod:        jsonrpc.HandlerFunc(s.info),
+		zbstorerpc.ExpandMethod:      jsonrpc.HandlerFunc(s.expand),
+		zbstorerpc.RealizeMethod:     jsonrpc.HandlerFunc(s.realize),
+		zbstorerpc.GetBuildMethod:    jsonrpc.HandlerFunc(s.getBuild),
+		zbstorerpc.CancelBuildMethod: jsonrpc.HandlerFunc(s.cancelBuild),
+		zbstorerpc.ReadLogMethod:     jsonrpc.HandlerFunc(s.readLog),
 	}.JSONRPC(ctx, req)
 }
 
@@ -230,7 +231,7 @@ func (s *Server) realPath(path zbstore.Path) string {
 }
 
 func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	var args zbstore.ExistsRequest
+	var args zbstorerpc.ExistsRequest
 	if err := json.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
@@ -259,12 +260,12 @@ func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 }
 
 func (s *Server) info(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	var args zbstore.InfoRequest
+	var args zbstorerpc.InfoRequest
 	if err := json.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 	if args.Path.Dir() != s.dir {
-		return marshalResponse(&zbstore.InfoResponse{})
+		return marshalResponse(&zbstorerpc.InfoResponse{})
 	}
 
 	conn, err := s.db.Get(ctx)
@@ -276,26 +277,26 @@ func (s *Server) info(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Respo
 	log.Debugf(ctx, "Looking up path info for %s...", args.Path)
 	info, err := pathInfo(conn, args.Path)
 	if errors.Is(err, errObjectNotExist) {
-		return marshalResponse(&zbstore.InfoResponse{})
+		return marshalResponse(&zbstorerpc.InfoResponse{})
 	}
 	if info.References == nil {
 		// Don't send null for the array.
 		info.References = []zbstore.Path{}
 	}
-	return marshalResponse(&zbstore.InfoResponse{
+	return marshalResponse(&zbstorerpc.InfoResponse{
 		Info: info,
 	})
 }
 
 func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	var args zbstore.GetBuildRequest
+	var args zbstorerpc.GetBuildRequest
 	if err := json.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 	buildID, ok := parseBuildID(args.BuildID)
 	if !ok {
-		return marshalResponse(&zbstore.GetBuildResponse{
-			Status: zbstore.BuildUnknown,
+		return marshalResponse(&zbstorerpc.GetBuildResponse{
+			Status: zbstorerpc.BuildUnknown,
 		})
 	}
 
@@ -320,9 +321,9 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 		}
 	}()
 
-	resp := &zbstore.GetBuildResponse{
-		Status:  zbstore.BuildUnknown,
-		Results: []*zbstore.BuildResult{},
+	resp := &zbstorerpc.GetBuildResponse{
+		Status:  zbstorerpc.BuildUnknown,
+		Results: []*zbstorerpc.BuildResult{},
 	}
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/find.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
@@ -336,10 +337,10 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 					// assume it was orphaned from a previous run.
 					return nil
 				}
-				resp.Status = zbstore.BuildActive
+				resp.Status = zbstorerpc.BuildActive
 			case sqlite.TypeInteger:
-				resp.Status = zbstore.BuildStatus(stmt.GetText("status"))
-				resp.EndedAt = zbstore.NonNull(time.UnixMilli(stmt.GetInt64("ended_at")).UTC())
+				resp.Status = zbstorerpc.BuildStatus(stmt.GetText("status"))
+				resp.EndedAt = zbstorerpc.NonNull(time.UnixMilli(stmt.GetInt64("ended_at")).UTC())
 			default:
 				return fmt.Errorf("type(ended_at) = %v", typ)
 			}
@@ -347,7 +348,7 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 			resp.StartedAt = time.UnixMilli(stmt.GetInt64("started_at"))
 
 			if stmt.GetBool("has_expand") {
-				resp.Expand = &zbstore.ExpandResult{
+				resp.Expand = &zbstorerpc.ExpandResult{
 					Builder: stmt.GetText("expand_builder"),
 				}
 				if s := stmt.GetText("expand_args"); s == "" {
@@ -368,7 +369,7 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 	if err != nil {
 		return nil, fmt.Errorf("get build %v: %v", buildID, err)
 	}
-	if resp.Status == zbstore.BuildUnknown {
+	if resp.Status == zbstorerpc.BuildUnknown {
 		return marshalResponse(resp)
 	}
 
@@ -381,20 +382,20 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 			if err != nil {
 				return err
 			}
-			var curr *zbstore.BuildResult
+			var curr *zbstorerpc.BuildResult
 			if len(resp.Results) > 0 && resp.Results[len(resp.Results)-1].DrvPath == drvPath {
 				curr = resp.Results[len(resp.Results)-1]
 			} else {
-				curr = &zbstore.BuildResult{
+				curr = &zbstorerpc.BuildResult{
 					DrvPath: drvPath,
-					Status:  zbstore.BuildStatus(stmt.GetText("status")),
-					Outputs: []*zbstore.RealizeOutput{},
+					Status:  zbstorerpc.BuildStatus(stmt.GetText("status")),
+					Outputs: []*zbstorerpc.RealizeOutput{},
 				}
 				resp.Results = append(resp.Results, curr)
 			}
 
 			if outputName := stmt.GetText("output_name"); outputName != "" {
-				newOutput := &zbstore.RealizeOutput{
+				newOutput := &zbstorerpc.RealizeOutput{
 					Name: outputName,
 				}
 				if s := stmt.GetText("output_path"); s != "" {
@@ -402,7 +403,7 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 					if err != nil {
 						return fmt.Errorf("output %s: %v", outputName, err)
 					}
-					newOutput.Path = zbstore.NonNull(p)
+					newOutput.Path = zbstorerpc.NonNull(p)
 				}
 				curr.Outputs = append(curr.Outputs, newOutput)
 			}
@@ -418,7 +419,7 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 }
 
 func (s *Server) cancelBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	var args zbstore.CancelBuildNotification
+	var args zbstorerpc.CancelBuildNotification
 	if err := json.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
@@ -436,7 +437,7 @@ func (s *Server) cancelBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrp
 }
 
 func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	var args zbstore.ReadLogRequest
+	var args zbstorerpc.ReadLogRequest
 	if err := json.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
@@ -476,13 +477,13 @@ func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 		n += nn
 		switch {
 		case err == nil || err == io.EOF:
-			resp := &zbstore.ReadLogResponse{EOF: err == io.EOF}
+			resp := &zbstorerpc.ReadLogResponse{EOF: err == io.EOF}
 			resp.SetPayload(buf[:n])
 			return marshalResponse(resp)
 		case errors.Is(err, errBuildLogPending):
 			if n > 0 {
 				// Prefer returning what we have rather than blocking.
-				resp := new(zbstore.ReadLogResponse)
+				resp := new(zbstorerpc.ReadLogResponse)
 				resp.SetPayload(buf[:n])
 				return marshalResponse(resp)
 			}

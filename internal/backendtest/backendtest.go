@@ -18,6 +18,7 @@ import (
 
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
 )
 
@@ -108,7 +109,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 
 	serveCtx, stopServe := context.WithCancel(context.WithoutCancel(ctx))
 	serverReceiver := srv.NewNARReceiver(serveCtx)
-	serverCodec := zbstore.NewCodec(serverConn, serverReceiver)
+	serverCodec := zbstorerpc.NewCodec(serverConn, serverReceiver)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -116,7 +117,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 		serverCodec.Close()
 	}()
 
-	clientCodec := zbstore.NewCodec(clientConn, opts.ClientReceiver)
+	clientCodec := zbstorerpc.NewCodec(clientConn, opts.ClientReceiver)
 	client := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
 		return clientCodec, nil
 	})
@@ -157,21 +158,21 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 
 // WaitForBuild waits until the store finishes a build or the context is canceled,
 // whichever comes first.
-func WaitForBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (*zbstore.GetBuildResponse, error) {
+func WaitForBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (*zbstorerpc.GetBuildResponse, error) {
 	if buildID == "" {
 		return nil, fmt.Errorf("cannot wait for empty build ID")
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		resp := new(zbstore.GetBuildResponse)
-		err := jsonrpc.Do(ctx, client, zbstore.GetBuildMethod, resp, &zbstore.GetBuildRequest{
+		resp := new(zbstorerpc.GetBuildResponse)
+		err := jsonrpc.Do(ctx, client, zbstorerpc.GetBuildMethod, resp, &zbstorerpc.GetBuildRequest{
 			BuildID: buildID,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("waiting for build %s: %w", buildID, err)
 		}
-		if resp.Status != zbstore.BuildActive {
+		if resp.Status != zbstorerpc.BuildActive {
 			return resp, nil
 		}
 		select {
@@ -186,9 +187,9 @@ func WaitForBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (
 // whichever comes first.
 // If the build status is not [zbstore.BuildSuccess],
 // then WaitForSuccessfulBuild returns an error.
-func WaitForSuccessfulBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (*zbstore.GetBuildResponse, error) {
+func WaitForSuccessfulBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (*zbstorerpc.GetBuildResponse, error) {
 	resp, err := WaitForBuild(ctx, client, buildID)
-	if err == nil && resp.Status != zbstore.BuildSuccess {
+	if err == nil && resp.Status != zbstorerpc.BuildSuccess {
 		err = fmt.Errorf("build %s failed with status %q", buildID, resp.Status)
 	}
 	return resp, err
@@ -198,8 +199,8 @@ func WaitForSuccessfulBuild(ctx context.Context, client *jsonrpc.Client, buildID
 func ReadLog(ctx context.Context, client *jsonrpc.Client, buildID string, drvPath zbstore.Path) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	for {
-		resp := new(zbstore.ReadLogResponse)
-		err := jsonrpc.Do(ctx, client, zbstore.ReadLogMethod, resp, &zbstore.ReadLogRequest{
+		resp := new(zbstorerpc.ReadLogResponse)
+		err := jsonrpc.Do(ctx, client, zbstorerpc.ReadLogMethod, resp, &zbstorerpc.ReadLogRequest{
 			BuildID:    buildID,
 			DrvPath:    drvPath,
 			RangeStart: int64(buf.Len()),

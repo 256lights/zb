@@ -31,6 +31,7 @@ import (
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/internal/xslices"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/batchio"
@@ -44,7 +45,7 @@ import (
 
 func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.Response, err error) {
 	// Validate request.
-	var args zbstore.RealizeRequest
+	var args zbstorerpc.RealizeRequest
 	if err := json.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
@@ -120,14 +121,14 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		}
 	}()
 
-	return marshalResponse(&zbstore.RealizeResponse{
+	return marshalResponse(&zbstorerpc.RealizeResponse{
 		BuildID: buildID.String(),
 	})
 }
 
 func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.Response, err error) {
 	// Validate request.
-	var args zbstore.ExpandRequest
+	var args zbstorerpc.ExpandRequest
 	if err := json.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
@@ -221,7 +222,7 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 				return err
 			}
 			if expandError == nil {
-				err := recordExpandResult(conn, buildID, &zbstore.ExpandResult{
+				err := recordExpandResult(conn, buildID, &zbstorerpc.ExpandResult{
 					Builder: expandedDrv.Builder,
 					Args:    expandedDrv.Args,
 					Env:     expandedDrv.Env,
@@ -238,7 +239,7 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 		}
 	}()
 
-	return marshalResponse(&zbstore.ExpandResponse{
+	return marshalResponse(&zbstorerpc.ExpandResponse{
 		BuildID: buildID.String(),
 	})
 }
@@ -300,15 +301,15 @@ func (s *Server) newBuilder(id uuid.UUID, derivations map[zbstore.Path]*zbstore.
 	}
 }
 
-func (b *builder) makeBuildResult(drvPath zbstore.Path) *zbstore.BuildResult {
-	result := new(zbstore.BuildResult)
+func (b *builder) makeBuildResult(drvPath zbstore.Path) *zbstorerpc.BuildResult {
+	result := new(zbstorerpc.BuildResult)
 	for _, outputName := range xmaps.SortedKeys(b.derivations[drvPath].Outputs) {
-		var p zbstore.Nullable[zbstore.Path]
+		var p zbstorerpc.Nullable[zbstore.Path]
 		p.X, p.Valid = b.lookup(zbstore.OutputReference{
 			DrvPath:    drvPath,
 			OutputName: outputName,
 		})
-		result.Outputs = append(result.Outputs, &zbstore.RealizeOutput{
+		result.Outputs = append(result.Outputs, &zbstorerpc.RealizeOutput{
 			Name: outputName,
 			Path: p,
 		})

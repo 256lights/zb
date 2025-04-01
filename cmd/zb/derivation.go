@@ -17,6 +17,7 @@ import (
 	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xmaps"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 )
@@ -354,8 +355,8 @@ func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvO
 	if drv == nil {
 		return fmt.Errorf("%v is not a derivation", results[0])
 	}
-	expandResponse := new(zbstore.RealizeResponse)
-	err = jsonrpc.Do(ctx, storeClient, zbstore.ExpandMethod, expandResponse, &zbstore.ExpandRequest{
+	expandResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, storeClient, zbstorerpc.ExpandMethod, expandResponse, &zbstorerpc.ExpandRequest{
 		DrvPath:            drv.Path,
 		TemporaryDirectory: opts.tempDir,
 	})

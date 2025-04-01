@@ -1,8 +1,8 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-// Package zbstore provides the data types for the zb store API.
-package zbstore
+// Package zbstorerpc is the reference implementation of the zb JSON-RPC store protocol.
+package zbstorerpc
 
 import (
 	"encoding/base64"
@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"zb.256lights.llc/pkg/internal/xiter"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
 )
 
@@ -33,7 +34,7 @@ const InfoMethod = "zb.info"
 
 // InfoRequest is the set of parameters for [InfoMethod].
 type InfoRequest struct {
-	Path Path `json:"path"`
+	Path zbstore.Path `json:"path"`
 }
 
 // InfoResponse is the result for [InfoMethod].
@@ -52,9 +53,9 @@ type ObjectInfo struct {
 	// Nix requires this field to be set.
 	NARSize int64 `json:"narSize"`
 	// References is the set of other store objects that this store object references.
-	References []Path `json:"references"`
+	References []zbstore.Path `json:"references"`
 	// CA is a content-addressability assertion.
-	CA ContentAddress `json:"ca"`
+	CA zbstore.ContentAddress `json:"ca"`
 }
 
 // RealizeMethod is the name of the method that triggers a build of a store path.
@@ -64,7 +65,7 @@ const RealizeMethod = "zb.realize"
 
 // RealizeRequest is the set of parameters for [RealizeMethod].
 type RealizeRequest struct {
-	DrvPaths []Path `json:"drvPath"`
+	DrvPaths []zbstore.Path `json:"drvPath"`
 	// KeepFailed indicates that if the realization fails,
 	// the user wants the store to keep the build directory for further investigation.
 	KeepFailed bool `json:"keepFailed"`
@@ -85,8 +86,8 @@ const ExpandMethod = "zb.expand"
 
 // ExpandRequest is the set of parameters for [ExpandMethod].
 type ExpandRequest struct {
-	DrvPath            Path   `json:"drvPath"`
-	TemporaryDirectory string `json:"tempDir"`
+	DrvPath            zbstore.Path `json:"drvPath"`
+	TemporaryDirectory string       `json:"tempDir"`
 }
 
 // ExpandResponse is the result for [ExpandMethod].
@@ -139,7 +140,7 @@ type GetBuildResponse struct {
 
 // ResultForPath returns the build result with the given derivation path.
 // It returns an error if there is not exactly one.
-func (resp *GetBuildResponse) ResultForPath(drvPath Path) (*BuildResult, error) {
+func (resp *GetBuildResponse) ResultForPath(drvPath zbstore.Path) (*BuildResult, error) {
 	var seq iter.Seq[*BuildResult]
 	if resp == nil {
 		seq = func(yield func(*BuildResult) bool) {}
@@ -163,7 +164,7 @@ func (resp *GetBuildResponse) ResultForPath(drvPath Path) (*BuildResult, error) 
 }
 
 // FindRealizeOutput searches through resp.Results for the given output.
-func (resp *GetBuildResponse) FindRealizeOutput(ref OutputReference) (Nullable[Path], error) {
+func (resp *GetBuildResponse) FindRealizeOutput(ref zbstore.OutputReference) (Nullable[zbstore.Path], error) {
 	var results []*BuildResult
 	if resp != nil {
 		results = resp.Results
@@ -173,7 +174,7 @@ func (resp *GetBuildResponse) FindRealizeOutput(ref OutputReference) (Nullable[P
 
 // BuildResult is the result of a single derivation in a [GetBuildResponse].
 type BuildResult struct {
-	DrvPath Path             `json:"drvPath"`
+	DrvPath zbstore.Path     `json:"drvPath"`
 	Status  BuildStatus      `json:"status"`
 	Outputs []*RealizeOutput `json:"outputs"`
 }
@@ -204,8 +205,8 @@ func (result *BuildResult) OutputForName(name string) (*RealizeOutput, error) {
 }
 
 // FindRealizeOutput searches through a list of [*BuildResult] values for the given output.
-func FindRealizeOutput(results iter.Seq[*BuildResult], ref OutputReference) (Nullable[Path], error) {
-	p, err := xiter.Single(func(yield func(Nullable[Path]) bool) {
+func FindRealizeOutput(results iter.Seq[*BuildResult], ref zbstore.OutputReference) (Nullable[zbstore.Path], error) {
+	p, err := xiter.Single(func(yield func(Nullable[zbstore.Path]) bool) {
 		for result := range results {
 			if result.DrvPath != ref.DrvPath {
 				continue
@@ -220,7 +221,7 @@ func FindRealizeOutput(results iter.Seq[*BuildResult], ref OutputReference) (Nul
 		}
 	})
 	if err != nil {
-		return Nullable[Path]{}, fmt.Errorf("look up %v: %w", ref, err)
+		return Nullable[zbstore.Path]{}, fmt.Errorf("look up %v: %w", ref, err)
 	}
 	return p, nil
 }
@@ -231,7 +232,7 @@ type RealizeOutput struct {
 	Name string `json:"name"`
 	// Path is the store path of the output if successfully built,
 	// or null if the build failed.
-	Path Nullable[Path] `json:"path"`
+	Path Nullable[zbstore.Path] `json:"path"`
 }
 
 // CancelBuildMethod is the name of the method that informs the store
@@ -253,8 +254,8 @@ const ReadLogMethod = "zb.readLog"
 
 // ReadLogRequest is the set of parameters for [ReadLogMethod].
 type ReadLogRequest struct {
-	BuildID string `json:"buildID"`
-	DrvPath Path   `json:"drvPath"`
+	BuildID string       `json:"buildID"`
+	DrvPath zbstore.Path `json:"drvPath"`
 	// RangeStart is the first byte of the log to read,
 	// where zero is the start of the log.
 	// If RangeStart is greater than the number of bytes in the log

@@ -1,17 +1,17 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-package zbstore
+package zbstorerpc
 
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/zbstore"
 )
 
 const (
@@ -38,7 +38,7 @@ type Codec struct {
 
 // NewCodec returns a new [Codec] that uses the given connection.
 // receiver may be nil.
-func NewCodec(rwc io.ReadWriteCloser, receiver NARReceiver) *Codec {
+func NewCodec(rwc io.ReadWriteCloser, receiver zbstore.NARReceiver) *Codec {
 	if receiver == nil {
 		receiver = nopReceiver{}
 	}
@@ -76,7 +76,7 @@ func (c *Codec) ReadResponse() (json.RawMessage, error) {
 	return msg, nil
 }
 
-func readLoop(messages chan<- json.RawMessage, receiver NARReceiver, r *jsonrpc.Reader) error {
+func readLoop(messages chan<- json.RawMessage, receiver zbstore.NARReceiver, r *jsonrpc.Reader) error {
 	for {
 		header, bodySize, err := r.NextMessage()
 		if err != nil {
@@ -96,8 +96,8 @@ func readLoop(messages chan<- json.RawMessage, receiver NARReceiver, r *jsonrpc.
 			}
 			messages <- body
 		case exportContentType:
-			err := receiveExport(receiver, r)
-			if err != nil && (bodySize < 0 || errors.As(err, new(recvError))) {
+			err := zbstore.ReceiveExport(receiver, r)
+			if err != nil && (bodySize < 0 || zbstore.IsReceiverError(err)) {
 				return fmt.Errorf("while receiving export: %w", err)
 			}
 		default:
@@ -137,3 +137,8 @@ func (c *Codec) Close() error {
 	<-c.readDone
 	return err
 }
+
+type nopReceiver struct{}
+
+func (nopReceiver) Write(p []byte) (n int, err error)         { return len(p), nil }
+func (nopReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {}

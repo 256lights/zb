@@ -19,6 +19,7 @@ import (
 	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log/testlog"
@@ -83,7 +84,7 @@ func TestImport(t *testing.T) {
 		// Call exists method.
 		// Exports don't send a response, so this introduces a sync point.
 		var exists bool
-		err = jsonrpc.Do(ctx, client, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
+		err = jsonrpc.Do(ctx, client, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
 			Path: string(storePath1),
 		})
 		if err != nil {
@@ -92,7 +93,7 @@ func TestImport(t *testing.T) {
 		if !exists {
 			t.Errorf("store reports exists=false for %s", storePath1)
 		}
-		err = jsonrpc.Do(ctx, client, zbstore.ExistsMethod, &exists, &zbstore.ExistsRequest{
+		err = jsonrpc.Do(ctx, client, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
 			Path: string(storePath2),
 		})
 		if err != nil {
@@ -103,8 +104,8 @@ func TestImport(t *testing.T) {
 		}
 
 		// Call info method.
-		var info zbstore.InfoResponse
-		err = jsonrpc.Do(ctx, client, zbstore.InfoMethod, &info, &zbstore.InfoRequest{
+		var info zbstorerpc.InfoResponse
+		err = jsonrpc.Do(ctx, client, zbstorerpc.InfoMethod, &info, &zbstorerpc.InfoRequest{
 			Path: storePath1,
 		})
 		if err != nil {
@@ -115,7 +116,7 @@ func TestImport(t *testing.T) {
 				t.Errorf("%s info (-want +got):\n%s", storePath1, diff)
 			}
 		}
-		err = jsonrpc.Do(ctx, client, zbstore.InfoMethod, &info, &zbstore.InfoRequest{
+		err = jsonrpc.Do(ctx, client, zbstorerpc.InfoMethod, &info, &zbstorerpc.InfoRequest{
 			Path: storePath2,
 		})
 		if err != nil {
@@ -169,8 +170,8 @@ func TestImport(t *testing.T) {
 // wantObjectInfo builds the expected [*zbstore.ObjectInfo]
 // for the given data, content address, and references.
 // It uses got.NARHash to determine the hashing algorithm to check against.
-func wantObjectInfo(got *zbstore.ObjectInfo, narData []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) *zbstore.ObjectInfo {
-	info := &zbstore.ObjectInfo{
+func wantObjectInfo(got *zbstorerpc.ObjectInfo, narData []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) *zbstorerpc.ObjectInfo {
+	info := &zbstorerpc.ObjectInfo{
 		NARSize:    int64(len(narData)),
 		References: slices.Collect(refs.Values()),
 		CA:         ca,
@@ -191,7 +192,7 @@ func wantObjectInfo(got *zbstore.ObjectInfo, narData []byte, ca zbstore.ContentA
 	return info
 }
 
-func wantFileObjectInfo(got *zbstore.ObjectInfo, fileData []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) *zbstore.ObjectInfo {
+func wantFileObjectInfo(got *zbstorerpc.ObjectInfo, fileData []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) *zbstorerpc.ObjectInfo {
 	buf := new(bytes.Buffer)
 	if err := storetest.SingleFileNAR(buf, fileData); err != nil {
 		panic(err)
@@ -199,15 +200,15 @@ func wantFileObjectInfo(got *zbstore.ObjectInfo, fileData []byte, ca zbstore.Con
 	return wantObjectInfo(got, buf.Bytes(), ca, refs)
 }
 
-func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstore.Codec, release func(), err error) {
+func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstorerpc.Codec, release func(), err error) {
 	generic, release, err := client.Codec(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	codec, ok := generic.(*zbstore.Codec)
+	codec, ok := generic.(*zbstorerpc.Codec)
 	if !ok {
 		release()
-		return nil, nil, fmt.Errorf("store connection is %T (want %T)", generic, (*zbstore.Codec)(nil))
+		return nil, nil, fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
 	}
 	return codec, release, nil
 }

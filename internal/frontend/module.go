@@ -13,6 +13,7 @@ import (
 
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/luacode"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 )
@@ -104,7 +105,7 @@ func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error)
 
 		var rewrites []string
 		for placeholder, outputReference := range placeholders {
-			outputPath, err := zbstore.FindRealizeOutput(slices.Values(results), outputReference)
+			outputPath, err := zbstorerpc.FindRealizeOutput(slices.Values(results), outputReference)
 			if err != nil {
 				l.PushNil()
 				l.PushString(err.Error())
