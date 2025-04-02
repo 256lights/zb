@@ -1,7 +1,9 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-// Package zbstorerpc is the reference implementation of the zb JSON-RPC store protocol.
+// Package zbstorerpc is the reference implementation of the [zb store RPC protocol].
+//
+// [zb store RPC protocol]: https://github.com/256lights/zb/blob/main/internal/zbstorerpc/README.md
 package zbstorerpc
 
 import (
