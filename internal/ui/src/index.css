@@ -3,4 +3,20 @@ Copyright 2025 The zb Authors
 SPDX-License-Identifier: MIT
 */
 
-@import "tailwindcss" source("../templates");
+@import "tailwindcss" source(none);
+@source "../templates";
+
+@layer components {
+  .link {
+    color: var(--color-indigo-600);
+    @variant visited {
+      color: var(--color-purple-800);
+    }
+    @variant dark {
+      color: var(--color-indigo-300);
+      @variant visited {
+        color: var(--color-purple-300);
+      }
+    }
+  }
+}

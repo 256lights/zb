@@ -4,40 +4,42 @@
   >Recent Builds</h2>
 
   {{- with .RecentBuilds }}
-    <table class="my-4 table-fixed w-fit max-w-4xl">
-      <thead>
-        <tr class="*:px-1 *:py-1">
-          <th
-            scope="col"
-            class="w-20 text-center font-bold"
-          >Status</th>
-          <th
-            scope="col"
-            class="text-left font-bold"
-          >Build ID</th>
-          <th
-            scope="col"
-            class="w-64 text-left font-bold"
-          >Started</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{- range . }}
+    <div class="overflow-x-auto w-full">
+      <table class="my-4 table-fixed w-fit min-w-xl max-w-4xl">
+        <thead>
           <tr class="*:px-1 *:py-1">
-            <td class="text-center">
-              {{ template "status_icon" .Status }}
-            </td>
             <th
-              scope="row"
-              class="text-left font-mono font-normal"
-            ><a href="/build/{{ .ID }}/" class="underline text-indigo-800 visited:text-purple-800 dark:text-indigo-300 dark:visited:text-purple-300">{{ .ID }}</a></th>
-            <td class="text-left">
-              {{ template "time" .StartedAt }}
-            </td>
+              scope="col"
+              class="w-20 text-center font-bold"
+            >Status</th>
+            <th
+              scope="col"
+              class="text-left font-bold"
+            >Build ID</th>
+            <th
+              scope="col"
+              class="w-64 text-left font-bold"
+            >Started</th>
           </tr>
-        {{- end }}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {{- range . }}
+            <tr class="*:px-1 *:py-1">
+              <td class="text-center">
+                {{ template "status_icon" .Status }}
+              </td>
+              <th
+                scope="row"
+                class="text-left font-mono font-normal"
+              ><a href="/build/{{ .ID }}/" class="link underline">{{ .ID }}</a></th>
+              <td class="text-left">
+                {{ template "time" .StartedAt }}
+              </td>
+            </tr>
+          {{- end }}
+        </tbody>
+      </table>
+    </div>
   {{- end }}
 
   <h2

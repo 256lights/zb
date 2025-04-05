@@ -5,9 +5,9 @@
 {{ define "main" }}
   <div class="mb-4">
     <h2
-      class="inline text-2xl font-bold"
+      class="inline text-lg font-bold md:text-2xl"
     >Build <span class="font-mono">{{ .ID }}</span></h2>
-    <span class="ms-2 text-xl">
+    <span class="ms-2 text-base md:text-xl">
       {{ if eq .Status "active" -}}
         <span class="rounded-full bg-stone-300 px-4 py-1 dark:bg-stone-700">In Progress</span>
       {{ else if eq .Status "success" -}}
@@ -36,34 +36,36 @@
   {{- end }}
 
   {{- with .Results }}
-    <table class="my-4 table-fixed w-full">
-      <thead>
-        <tr>
-          <th
-            scope="col"
-            class="w-20 px-1 text-center font-bold"
-          >Status</th>
-          <th
-            scope="col"
-            class="px-1 text-left font-bold"
-          >Derivation</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{- range . }}
+    <div class="overflow-x-auto w-full">
+      <table class="my-4 w-full min-w-2xl table-fixed">
+        <thead>
           <tr>
-            <td class="text-center">
-              {{ template "status_icon" .Status }}
-            </td>
             <th
-              scope="row"
-              class="px-1 text-left font-mono font-normal"
-            >
-              {{- .DrvPath -}}
-            </th>
+              scope="col"
+              class="w-20 px-1 text-center font-bold"
+            >Status</th>
+            <th
+              scope="col"
+              class="px-1 text-left font-bold"
+            >Derivation</th>
           </tr>
-        {{- end }}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {{- range . }}
+            <tr>
+              <td class="text-center align-top">
+                {{ template "status_icon" .Status }}
+              </td>
+              <th
+                scope="row"
+                class="px-1 text-left font-mono font-normal"
+              >
+                {{- .DrvPath -}}
+              </th>
+            </tr>
+          {{- end }}
+        </tbody>
+      </table>
+    </div>
   {{- end }}
 {{ end }}
