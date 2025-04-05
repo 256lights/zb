@@ -1,0 +1,10 @@
+{{ define "title" -}}
+  Build not found • zb
+{{- end }}
+
+{{ define "main" }}
+  <h2
+    class="text-2xl font-bold"
+  >Build not found</h2>
+  {{ template "build_lookup" .ID }}
+{{ end }}

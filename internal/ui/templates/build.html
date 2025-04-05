@@ -41,7 +41,7 @@
         <tr>
           <th
             scope="col"
-            class="w-[5%] px-1 text-center font-bold"
+            class="w-20 px-1 text-center font-bold"
           >Status</th>
           <th
             scope="col"
@@ -53,19 +53,7 @@
         {{- range . }}
           <tr>
             <td class="text-center">
-              {{- with .Status }}
-                {{- if eq . "active" }}
-                  <span aria-label="In Progress">🔨</span>
-                {{- else if eq . "success" }}
-                  <span aria-label="Success">✅</span>
-                {{- else if eq . "fail" }}
-                  <span aria-label="Fail">❌</span>
-                {{- else if eq . "error" }}
-                  <span aria-label="Error">💣</span>
-                {{- else }}
-                  {{ . }}
-                {{- end }}
-              {{- end }}
+              {{ template "status_icon" .Status }}
             </td>
             <th
               scope="row"

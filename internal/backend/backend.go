@@ -505,6 +505,35 @@ func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 	}
 }
 
+// RecentBuildIDs returns the most recent builds started or finished.
+// It returns at most limit values.
+func (s *Server) RecentBuildIDs(ctx context.Context, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	conn, err := s.db.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list recent builds: %v", err)
+	}
+	defer s.db.Put(conn)
+
+	result := make([]string, 0, limit)
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/recent.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":n": limit,
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			result = append(result, stmt.GetText("id"))
+			return nil
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list recent builds: %v", err)
+	}
+	return result, nil
+}
+
 func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
 	ticker := time.NewTicker(min(5*time.Minute, window))
 	defer ticker.Stop()

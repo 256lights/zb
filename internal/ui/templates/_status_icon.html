@@ -1,0 +1,11 @@
+{{- if eq . "active" -}}
+  <span aria-label="In Progress" title="In Progress">🔨</span>
+{{- else if eq . "success" -}}
+  <span aria-label="Success" title="Success">✅</span>
+{{- else if eq . "fail" -}}
+  <span aria-label="Failure" title="Failure">❌</span>
+{{- else if eq . "error" -}}
+  <span aria-label="Error" title="Error">💣</span>
+{{- else -}}
+  {{ . }}
+{{- end -}}

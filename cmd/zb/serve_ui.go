@@ -5,13 +5,13 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/gorilla/handlers"
+	"golang.org/x/sync/errgroup"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xnet"
@@ -53,8 +53,45 @@ func (srv *webServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (srv *webServer) home(ctx context.Context, r *http.Request) (*action.Response, error) {
+	var data struct {
+		Query        string
+		RecentBuilds []*buildResource
+	}
+	buildIDs, err := srv.backend.RecentBuildIDs(ctx, 25)
+	if err != nil {
+		return nil, err
+	}
+
+	grp, grpCtx := errgroup.WithContext(ctx)
+	grp.SetLimit(3)
+	data.RecentBuilds = make([]*buildResource, len(buildIDs))
+	for i, id := range buildIDs {
+		if grpCtx.Err() != nil {
+			break
+		}
+
+		data.RecentBuilds[i] = &buildResource{
+			ID: id,
+			GetBuildResponse: zbstorerpc.GetBuildResponse{
+				Status: zbstorerpc.BuildUnknown,
+			},
+		}
+
+		grp.Go(func() error {
+			req := &zbstorerpc.GetBuildRequest{
+				BuildID: data.RecentBuilds[i].ID,
+			}
+			respPtr := &data.RecentBuilds[i].GetBuildResponse
+			return jsonrpc.Do(grpCtx, srv.backend, zbstorerpc.GetBuildMethod, respPtr, req)
+		})
+	}
+	if err := grp.Wait(); err != nil {
+		return nil, err
+	}
+
 	return &action.Response{
 		HTMLTemplate: "index.html",
+		TemplateData: data,
 	}, nil
 }
 
@@ -64,31 +101,35 @@ func (srv *webServer) listBuilds(ctx context.Context, r *http.Request) (*action.
 			SeeOther: "/build/" + url.PathEscape(buildID) + "/",
 		}, nil
 	}
+	return &action.Response{SeeOther: "/"}, nil
+}
 
-	return nil, action.WithStatusCode(http.StatusNotFound, fmt.Errorf("TODO(soon)"))
+type buildResource struct {
+	ID string
+	zbstorerpc.GetBuildResponse
 }
 
 func (srv *webServer) build(ctx context.Context, r *http.Request) (*action.Response, error) {
-	var data struct {
-		ID string
-		*zbstorerpc.GetBuildResponse
-	}
+	data := new(buildResource)
 	data.ID = r.PathValue("id")
-	data.GetBuildResponse = new(zbstorerpc.GetBuildResponse)
-	err := jsonrpc.Do(ctx, srv.backend, zbstorerpc.GetBuildMethod, data.GetBuildResponse, &zbstorerpc.GetBuildRequest{
+	err := jsonrpc.Do(ctx, srv.backend, zbstorerpc.GetBuildMethod, &data.GetBuildResponse, &zbstorerpc.GetBuildRequest{
 		BuildID: data.ID,
 	})
-	if err != nil {
+	switch {
+	case err != nil:
 		return nil, err
+	case data.Status == zbstorerpc.BuildUnknown:
+		return &action.Response{
+			StatusCode:   http.StatusNotFound,
+			HTMLTemplate: "build404.html",
+			TemplateData: data,
+		}, nil
+	default:
+		return &action.Response{
+			HTMLTemplate: "build.html",
+			TemplateData: data,
+		}, nil
 	}
-	if data.Status == zbstorerpc.BuildUnknown {
-		return nil, action.WithStatusCode(http.StatusNotFound, fmt.Errorf("build %s not found", data.ID))
-	}
-
-	return &action.Response{
-		HTMLTemplate: "build.html",
-		TemplateData: data,
-	}, nil
 }
 
 type localOnlyMiddleware struct {

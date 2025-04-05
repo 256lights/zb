@@ -1,25 +1,47 @@
 {{define "main"}}
-  <form method="GET" action="/build/">
-    <h2
-      class="text-2xl font-bold"
-    >View Build</h2>
-    <div class="my-4 flex w-fit flex-row items-center gap-2 text-lg">
-      <label for="buildID">ID</label>
-      <input
-        type="text"
-        name="id"
-        id="buildID"
-        size="40"
-        class="rounded-lg border border-stone-600 px-4 py-1 font-mono ring-indigo-700 focus:ring-2 focus:outline-hidden dark:border-stone-400 dark:ring-indigo-300"
-        autocomplete="off"
-        required
-        data-1p-ignore
-      >
-      <input
-        type="submit"
-        value="Search"
-        class="rounded-full border border-stone-600 px-4 py-1 text-lg ring-indigo-700 focus:ring-2 focus:outline-hidden dark:border-stone-400 dark:ring-indigo-300"
-      >
-    </div>
-  </form>
+  <h2
+    class="text-2xl font-bold"
+  >Recent Builds</h2>
+
+  {{- with .RecentBuilds }}
+    <table class="my-4 table-fixed w-fit max-w-4xl">
+      <thead>
+        <tr class="*:px-1 *:py-1">
+          <th
+            scope="col"
+            class="w-20 text-center font-bold"
+          >Status</th>
+          <th
+            scope="col"
+            class="text-left font-bold"
+          >Build ID</th>
+          <th
+            scope="col"
+            class="w-64 text-left font-bold"
+          >Started</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{- range . }}
+          <tr class="*:px-1 *:py-1">
+            <td class="text-center">
+              {{ template "status_icon" .Status }}
+            </td>
+            <th
+              scope="row"
+              class="text-left font-mono font-normal"
+            ><a href="/build/{{ .ID }}/" class="underline text-indigo-800 visited:text-purple-800 dark:text-indigo-300 dark:visited:text-purple-300">{{ .ID }}</a></th>
+            <td class="text-left">
+              {{ template "time" .StartedAt }}
+            </td>
+          </tr>
+        {{- end }}
+      </tbody>
+    </table>
+  {{- end }}
+
+  <h2
+    class="mt-12 text-2xl font-bold"
+  >Build Lookup</h2>
+  {{ template "build_lookup" "" }}
 {{end}}

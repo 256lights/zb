@@ -1,0 +1,26 @@
+<form
+  method="GET"
+  action="/build/"
+  data-turbo="false"
+>
+  <div class="my-4 flex w-fit flex-row items-center gap-2 text-lg">
+    <label for="buildID">ID</label>
+    <input
+      type="text"
+      name="id"
+      id="buildID"
+      value="{{ . }}"
+      size="40"
+      class="rounded-lg border border-stone-600 px-4 py-1 font-mono ring-indigo-700 focus:ring-2 focus:outline-hidden dark:border-stone-400 dark:ring-indigo-300"
+      autocomplete="off"
+      {{- if . }} autofocus{{ end }}
+      required
+      data-1p-ignore
+    >
+    <input
+      type="submit"
+      value="Search"
+      class="rounded-full border border-stone-600 px-4 py-1 text-lg ring-indigo-700 focus:ring-2 focus:outline-hidden dark:border-stone-400 dark:ring-indigo-300"
+    >
+  </div>
+</form>
