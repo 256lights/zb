@@ -2,3 +2,6 @@
 /zb.exe
 /cmd/zb/zb
 /cmd/zb/zb.exe
+node_modules/
+/internal/ui/build/
+/internal/ui/public/

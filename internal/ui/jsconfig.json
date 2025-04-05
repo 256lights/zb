@@ -1,0 +1,14 @@
+{
+  "include": ["*.mjs"],
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2023"],
+    "target": "ES2022",
+    "module": "NodeNext",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "moduleResolution": "node16"
+  }
+}

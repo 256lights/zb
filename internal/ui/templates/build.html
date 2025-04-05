@@ -1,0 +1,81 @@
+{{ define "title" -}}
+  Build {{ .ID }} • zb
+{{- end }}
+
+{{ define "main" }}
+  <div class="mb-4">
+    <h2
+      class="inline text-2xl font-bold"
+    >Build <span class="font-mono">{{ .ID }}</span></h2>
+    <span class="ms-2 text-xl">
+      {{ if eq .Status "active" -}}
+        <span class="rounded-full bg-stone-300 px-4 py-1 dark:bg-stone-700">In Progress</span>
+      {{ else if eq .Status "success" -}}
+        <span class="rounded-full bg-green-300 px-4 py-1 dark:bg-green-900">Success</span>
+      {{ else if eq .Status "fail" -}}
+        <span class="rounded-full bg-red-300 px-4 py-1 dark:bg-red-950">Failed</span>
+      {{ else if eq .Status "error" -}}
+        <span class="rounded-full bg-stone-300 px-4 py-1 dark:bg-stone-700">Error</span>
+      {{ else -}}
+        {{ .Status }}
+      {{ end -}}
+    </span>
+  </div>
+  <div>
+    Started at
+    {{ template "time" .StartedAt }}
+  </div>
+  {{- with .EndedAt }}
+    {{- if .Valid }}{{ with .X }}
+      <div>
+        Ended at
+        {{ template "time" . }}
+        ({{ $.Duration.Truncate 1_000_000_000 }})
+      </div>
+    {{- end }}{{ end }}
+  {{- end }}
+
+  {{- with .Results }}
+    <table class="my-4 table-fixed w-full">
+      <thead>
+        <tr>
+          <th
+            scope="col"
+            class="w-[5%] px-1 text-center font-bold"
+          >Status</th>
+          <th
+            scope="col"
+            class="px-1 text-left font-bold"
+          >Derivation</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{- range . }}
+          <tr>
+            <td class="text-center">
+              {{- with .Status }}
+                {{- if eq . "active" }}
+                  <span aria-label="In Progress">🔨</span>
+                {{- else if eq . "success" }}
+                  <span aria-label="Success">✅</span>
+                {{- else if eq . "fail" }}
+                  <span aria-label="Fail">❌</span>
+                {{- else if eq . "error" }}
+                  <span aria-label="Error">💣</span>
+                {{- else }}
+                  {{ . }}
+                {{- end }}
+              {{- end }}
+            </td>
+            <th
+              scope="row"
+              class="px-1 text-left font-mono font-normal"
+            >
+              {{- .DrvPath -}}
+            </th>
+          </tr>
+        {{- end }}
+      </tbody>
+    </table>
+  {{- end }}
+{{ end }}

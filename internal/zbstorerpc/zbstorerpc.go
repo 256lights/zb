@@ -140,6 +140,14 @@ type GetBuildResponse struct {
 	Expand    *ExpandResult       `json:"expand,omitempty"`
 }
 
+// Duration returns the length of the build.
+func (resp *GetBuildResponse) Duration() time.Duration {
+	if !resp.EndedAt.Valid {
+		return 0
+	}
+	return resp.EndedAt.X.Sub(resp.StartedAt)
+}
+
 // ResultForPath returns the build result with the given derivation path.
 // It returns an error if there is not exactly one.
 func (resp *GetBuildResponse) ResultForPath(drvPath zbstore.Path) (*BuildResult, error) {

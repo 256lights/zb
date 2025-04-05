@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/netip"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -19,14 +21,19 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/internal/system"
+	"zb.256lights.llc/pkg/internal/ui"
 	"zb.256lights.llc/pkg/internal/xmaps"
+	"zb.256lights.llc/pkg/internal/xnet"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
+	"zombiezen.com/go/bass/runhttp"
 	"zombiezen.com/go/log"
+	"zombiezen.com/go/log/zstdlog"
 )
 
 type serveOptions struct {
@@ -38,6 +45,11 @@ type serveOptions struct {
 	allowKeepFailed   bool
 	coresPerBuild     int
 	buildLogRetention time.Duration
+
+	webListenAddress   string
+	allowRemoteWeb     bool
+	templatesDirectory string
+	staticDirectory    string
 }
 
 func newServeCommand(g *globalConfig) *cobra.Command {
@@ -65,6 +77,12 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 	c.Flags().BoolVar(&opts.allowKeepFailed, "allow-keep-failed", true, "allow user to skip cleanup of failed builds")
 	c.Flags().IntVar(&opts.coresPerBuild, "cores-per-build", runtime.NumCPU(), "hint to builders for `number` of concurrent jobs to run")
 	c.Flags().DurationVar(&opts.buildLogRetention, "build-log-retention", 7*24*time.Hour, "`duration` before deleting finished build logs")
+	c.Flags().StringVar(&opts.webListenAddress, "ui", "", "`address` to listen on for web UI (disabled by default)")
+	c.Flags().BoolVar(&opts.allowRemoteWeb, "allow-remote-ui", false, "whether to accept non-localhost connections for UI")
+	c.Flags().StringVar(&opts.templatesDirectory, "dev-templates", "", "`directory` to use for templates")
+	c.Flag("dev-templates").Hidden = true
+	c.Flags().StringVar(&opts.staticDirectory, "dev-static", "", "`directory` to use for static assets")
+	c.Flag("dev-static").Hidden = true
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		return runServe(cmd.Context(), g, opts)
 	}
@@ -95,45 +113,60 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 		return err
 	}
 	// TODO(someday): Properly set permissions on the created database.
+	webHandler := new(webServer)
+	if opts.templatesDirectory != "" {
+		root, err := os.OpenRoot(opts.templatesDirectory)
+		if err != nil {
+			return err
+		}
+		webHandler.templateFiles = root.FS()
+	} else {
+		webHandler.templateFiles = ui.TemplateFiles()
+	}
+	if opts.staticDirectory != "" {
+		root, err := os.OpenRoot(opts.staticDirectory)
+		if err != nil {
+			return err
+		}
+		webHandler.staticAssets = root.FS()
+	} else {
+		webHandler.staticAssets = ui.StaticAssets()
+	}
 
 	l, err := listenUnix(g.storeSocket)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	var wg sync.WaitGroup
-	openConns := make(sets.Set[*net.UnixConn])
-	var openConnsMu sync.Mutex
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		// Once the context is Done, refuse new connections and RPCs.
-		<-ctx.Done()
-		log.Infof(ctx, "Shutting down (signal received)...")
-
-		if err := l.Close(); err != nil {
-			log.Errorf(ctx, "Closing Unix socket: %v", err)
-		}
-		openConnsMu.Lock()
-		for conn := range openConns.All() {
-			if err := conn.CloseRead(); err != nil {
-				log.Errorf(ctx, "Closing Unix socket: %v", err)
-			}
-		}
-		openConnsMu.Unlock()
-	}()
 	defer func() {
-		cancel()
-		wg.Wait()
-
 		if err := os.Remove(g.storeSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
 			log.Warnf(ctx, "Failed to clean up socket: %v", err)
 		}
 	}()
 
+	grp, grpCtx := errgroup.WithContext(ctx)
+
+	openConns := make(sets.Set[*net.UnixConn])
+	var openConnsMu sync.Mutex
+	grp.Go(func() error {
+		// Once the context is Done, refuse new connections and RPCs.
+		<-grpCtx.Done()
+		log.Infof(grpCtx, "Shutting down (signal received)...")
+
+		if err := l.Close(); err != nil {
+			log.Errorf(grpCtx, "Closing Unix socket: %v", err)
+		}
+		openConnsMu.Lock()
+		for conn := range openConns.All() {
+			if err := conn.CloseRead(); err != nil {
+				log.Errorf(grpCtx, "Closing Unix socket: %v", err)
+			}
+		}
+		openConnsMu.Unlock()
+		return nil
+	})
+
 	log.Infof(ctx, "Listening on %s", g.storeSocket)
-	srv := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
+	backendServer := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
 		BuildDir:          opts.buildDir,
 		SandboxPaths:      opts.sandboxPaths,
 		DisableSandbox:    !opts.sandbox,
@@ -143,42 +176,92 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 		BuildLogRetention: opts.buildLogRetention,
 	})
 	defer func() {
-		if err := srv.Close(); err != nil {
+		if err := backendServer.Close(); err != nil {
 			log.Errorf(ctx, "%v", err)
 		}
 	}()
+	webHandler.backend = backendServer
 
-	for {
-		conn, err := l.AcceptUnix()
-		if errors.Is(err, net.ErrClosed) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		openConnsMu.Lock()
-		openConns.Add(conn)
-		openConnsMu.Unlock()
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			recv := srv.NewNARReceiver(ctx)
-			defer recv.Cleanup(ctx)
-
-			codec := zbstorerpc.NewCodec(nopCloser{conn}, recv)
-			jsonrpc.Serve(backend.WithExporter(ctx, codec), codec, srv)
-			codec.Close()
-
+	grp.Go(func() error {
+		for {
+			conn, err := l.AcceptUnix()
+			if errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
 			openConnsMu.Lock()
-			openConns.Delete(conn)
+			openConns.Add(conn)
 			openConnsMu.Unlock()
 
-			if err := conn.Close(); err != nil {
-				log.Errorf(ctx, "%v", err)
+			grp.Go(func() error {
+				recv := backendServer.NewNARReceiver(grpCtx)
+				defer recv.Cleanup(grpCtx)
+
+				codec := zbstorerpc.NewCodec(nopCloser{conn}, recv)
+				jsonrpc.Serve(backend.WithExporter(grpCtx, codec), codec, backendServer)
+				codec.Close()
+
+				openConnsMu.Lock()
+				openConns.Delete(conn)
+				openConnsMu.Unlock()
+
+				if err := conn.Close(); err != nil {
+					log.Errorf(grpCtx, "%v", err)
+				}
+				return nil
+			})
+		}
+	})
+
+	if opts.webListenAddress != "" {
+		grp.Go(func() error {
+			httpServer := &http.Server{
+				Addr:    opts.webListenAddress,
+				Handler: webHandler,
+				BaseContext: func(l net.Listener) context.Context {
+					return grpCtx
+				},
+				ErrorLog: zstdlog.New(log.Default(), &zstdlog.Options{
+					Context: grpCtx,
+					Level:   log.Error,
+				}),
+
+				ReadTimeout:       60 * time.Second,
+				ReadHeaderTimeout: 30 * time.Second,
+				WriteTimeout:      60 * time.Second,
 			}
-		}()
+			if !opts.allowRemoteWeb {
+				httpServer.Handler = localOnlyMiddleware{httpServer.Handler}
+			}
+
+			err := runhttp.Serve(grpCtx, httpServer, &runhttp.Options{
+				OnStartup: func(ctx context.Context, addr net.Addr) {
+					addrString := addr.String()
+					if parsed, err := xnet.HostPortToIP(addrString, netip.Addr{}); err != nil {
+						log.Debugf(ctx, "Invalid listen address: %v", err)
+					} else {
+						port := strconv.Itoa(int(parsed.Port()))
+						if host := parsed.Addr(); host.IsLoopback() || host.IsUnspecified() {
+							addrString = net.JoinHostPort("localhost", port)
+						}
+					}
+					log.Infof(ctx, "Listening for HTTP on http://%s", addrString)
+				},
+			})
+			if err == nil {
+				err = net.ErrClosed
+			}
+			return err
+		})
 	}
+
+	waitError := grp.Wait()
+	if errors.Is(waitError, net.ErrClosed) {
+		waitError = nil
+	}
+	return waitError
 }
 
 func ensureStoreDirectory(path string, gid int) error {

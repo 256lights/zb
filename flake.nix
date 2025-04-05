@@ -49,6 +49,9 @@
             (pkgs.gopls.override {
               inherit buildGoModule;
             })
+
+            # JavaScript tooling.
+            pkgs.nodejs_22
           ];
 
           shellHook = ''

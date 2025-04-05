@@ -7,15 +7,24 @@
 	"extensions": {
 		"recommendations": [
 			"golang.go",
-			"sumneko.lua"
+			"sumneko.lua",
+			"bradlc.vscode-tailwindcss",
+			"biomejs.biome"
 		]
 	},
 	"settings": {
+		"files.associations": {
+			"*.css": "tailwindcss"
+		},
+
+		// Go
 		"go.alternateTools": {
 		  "dlv": "${workspaceFolder}/tools/dlv.sh",
 	  	"go": "${workspaceFolder}/tools/go.sh",
 	  	"gopls": "${workspaceFolder}/tools/gopls.sh",
 		},
+
+		// Lua
 		"Lua.runtime.version": "Lua 5.4",
 		"Lua.runtime.builtin": {
 			"coroutine": "disable",
@@ -32,7 +41,25 @@
 			".vscode",
 			"/internal/frontend/prelude.lua",
 			"/internal/lua/testdata/*.lua",
-		]
+		],
+
+		// JavaScript
+		"biome.lspBin": "tools/biome.sh",
+		"typescript.tsdk": "./internal/ui/node_modules/typescript/lib",
+		"[javascript]": {
+			"editor.defaultFormatter": "biomejs.biome",
+			"editor.formatOnSave": true,
+			"editor.codeActionsOnSave": {
+				"source.organizeImports.biome": "explicit",
+			},
+		},
+		"[typescript]": {
+			"editor.defaultFormatter": "biomejs.biome",
+			"editor.formatOnSave": true,
+			"editor.codeActionsOnSave": {
+				"source.organizeImports.biome": "explicit",
+			},
+		}
 	},
 	"launch": {
 		"version": "0.2.0",

@@ -1,0 +1,5 @@
+{{ $utc := .UTC.Format "2006-01-02T15:04:05.999Z" -}}
+<time datetime="{{$utc}}" data-controller="time">
+  {{- .UTC.Format "Mon Jan _2 15:04:05 2006" -}}
+</time>
+{{- /* Strip trailing newline */ -}}

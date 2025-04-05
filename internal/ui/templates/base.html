@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{block "title" .}}zb{{end}}</title>
+  {{/* Just a blank favicon for now, see https://stackoverflow.com/a/13416784 */}}
+  <link rel="icon" href="data:image/png;base64,iVBORw0KGgo=">
+  <link rel="stylesheet" type="text/css" href="/static/index.css">
+  <script async type="module" src="/static/index.js"></script>
+  <meta name="color-scheme" content="light dark">
+</head>
+<body class="bg-white font-sans text-black dark:bg-stone-950 dark:text-stone-50">
+  <header class="bg-slate-200 px-8 pt-2 pb-4 dark:bg-slate-900">
+    <h1 class="text-4xl font-semibold"><a href="/">zb</a></h1>
+  </header>
+  <main class="mx-8 my-4">
+    {{block "main" .}}{{end}}
+  </main>
+</body>
+</html>
