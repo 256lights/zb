@@ -158,14 +158,14 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 
 // WaitForBuild waits until the store finishes a build or the context is canceled,
 // whichever comes first.
-func WaitForBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (*zbstorerpc.GetBuildResponse, error) {
+func WaitForBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (*zbstorerpc.Build, error) {
 	if buildID == "" {
 		return nil, fmt.Errorf("cannot wait for empty build ID")
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		resp := new(zbstorerpc.GetBuildResponse)
+		resp := new(zbstorerpc.Build)
 		err := jsonrpc.Do(ctx, client, zbstorerpc.GetBuildMethod, resp, &zbstorerpc.GetBuildRequest{
 			BuildID: buildID,
 		})
@@ -187,7 +187,7 @@ func WaitForBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (
 // whichever comes first.
 // If the build status is not [zbstore.BuildSuccess],
 // then WaitForSuccessfulBuild returns an error.
-func WaitForSuccessfulBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (*zbstorerpc.GetBuildResponse, error) {
+func WaitForSuccessfulBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (*zbstorerpc.Build, error) {
 	resp, err := WaitForBuild(ctx, client, buildID)
 	if err == nil && resp.Status != zbstorerpc.BuildSuccess {
 		err = fmt.Errorf("build %s failed with status %q", buildID, resp.Status)
@@ -208,7 +208,11 @@ func ReadLog(ctx context.Context, client *jsonrpc.Client, buildID string, drvPat
 		if err != nil {
 			return buf.Bytes(), fmt.Errorf("read log for %s: %w", drvPath, err)
 		}
-		buf.Write(resp.Payload())
+		payload, err := resp.Payload()
+		if err != nil {
+			return buf.Bytes(), fmt.Errorf("read log for %s: %w", drvPath, err)
+		}
+		buf.Write(payload)
 		if resp.EOF {
 			return bytes.ReplaceAll(buf.Bytes(), []byte("\r\n"), []byte("\n")), nil
 		}

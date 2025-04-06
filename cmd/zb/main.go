@@ -343,7 +343,7 @@ func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.Output
 // If the build was not successful,
 // the build response is returned along with a non-nil error.
 // waitForBuild will also copy build logs to stderr.
-func waitForBuild(ctx context.Context, storeClient *jsonrpc.Client, buildID string) (_ *zbstorerpc.GetBuildResponse, _ json.RawMessage, err error) {
+func waitForBuild(ctx context.Context, storeClient jsonrpc.Handler, buildID string) (_ *zbstorerpc.Build, _ json.RawMessage, err error) {
 	defer func() {
 		if err != nil && ctx.Err() != nil {
 			log.Debugf(ctx, "Context canceled while waiting for build %s. Canceling build...", buildID)
@@ -378,7 +378,7 @@ func waitForBuild(ctx context.Context, storeClient *jsonrpc.Client, buildID stri
 			// TODO(maybe): Are some errors retryable?
 			return nil, nil, fmt.Errorf("wait for build %s: %w", buildID, err)
 		}
-		buildResponse := new(zbstorerpc.GetBuildResponse)
+		buildResponse := new(zbstorerpc.Build)
 		if err := json.Unmarshal(buildRPCResponse.Result, buildResponse); err != nil {
 			return nil, nil, fmt.Errorf("wait for build %s: %v", buildID, err)
 		}
@@ -427,37 +427,52 @@ func waitForBuild(ctx context.Context, storeClient *jsonrpc.Client, buildID stri
 	}
 }
 
-func copyLogToStderr(ctx context.Context, storeClient *jsonrpc.Client, buildID string, drvPath zbstore.Path) error {
+func copyLogToStderr(ctx context.Context, storeClient jsonrpc.Handler, buildID string, drvPath zbstore.Path) error {
 	off := int64(0)
 	for {
-		response := new(zbstorerpc.ReadLogResponse)
-		err := jsonrpc.Do(ctx, storeClient, zbstorerpc.ReadLogMethod, response, &zbstorerpc.ReadLogRequest{
+		payload, err := readLog(ctx, storeClient, &zbstorerpc.ReadLogRequest{
 			BuildID:    buildID,
 			DrvPath:    drvPath,
 			RangeStart: off,
 		})
+		if len(payload) > 0 {
+			if off == 0 {
+				// Write header.
+				oldPayload := payload
+				payload = nil
+				payload = append(payload, "--- "...)
+				payload = append(payload, drvPath...)
+				payload = append(payload, " ---\n"...)
+				payload = append(payload, oldPayload...)
+			}
+			if _, err := os.Stderr.Write(payload); err != nil {
+				return err
+			}
+		}
 		if err != nil {
-			return fmt.Errorf("read log for %s in build %s: %w", drvPath, buildID, err)
-		}
-
-		payload := response.Payload()
-		if len(payload) > 0 && off == 0 {
-			// Write header.
-			oldPayload := payload
-			payload = nil
-			payload = append(payload, "--- "...)
-			payload = append(payload, drvPath...)
-			payload = append(payload, " ---\n"...)
-			payload = append(payload, oldPayload...)
-		}
-		off += int64(len(payload))
-		if _, err := os.Stderr.Write(payload); err != nil {
+			if err == io.EOF {
+				err = nil
+			}
 			return err
 		}
-		if response.EOF {
-			return nil
-		}
+		off += int64(len(payload))
 	}
+}
+
+func readLog(ctx context.Context, storeClient jsonrpc.Handler, req *zbstorerpc.ReadLogRequest) ([]byte, error) {
+	response := new(zbstorerpc.ReadLogResponse)
+	err := jsonrpc.Do(ctx, storeClient, zbstorerpc.ReadLogMethod, response, req)
+	if err != nil {
+		return nil, fmt.Errorf("read log for %s in build %s: %w", req.DrvPath, req.BuildID, err)
+	}
+	payload, err := response.Payload()
+	if err != nil {
+		return nil, fmt.Errorf("read log for %s in build %s: %v", req.DrvPath, req.BuildID, err)
+	}
+	if response.EOF {
+		return payload, io.EOF
+	}
+	return payload, nil
 }
 
 // defaultVarDir returns "/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.

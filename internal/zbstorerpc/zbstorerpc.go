@@ -97,7 +97,7 @@ type ExpandResponse struct {
 	BuildID string `json:"buildID"`
 }
 
-// ExpandResult is the result in a [GetBuildResponse] for a build started by [ExpandMethod].
+// ExpandResult is the result in a [Build] for a build started by [ExpandMethod].
 type ExpandResult struct {
 	Builder string            `json:"builder"`
 	Args    []string          `json:"args"`
@@ -106,7 +106,7 @@ type ExpandResult struct {
 
 // GetBuildMethod is the name of the method that queries the status of a build.
 // [GetBuildRequest] is used for the request
-// and [GetBuildResponse] is used for the response.
+// and [Build] is used for the response.
 const GetBuildMethod = "zb.getBuild"
 
 // GetBuildRequest is the set of parameters for [GetBuildMethod].
@@ -114,7 +114,7 @@ type GetBuildRequest struct {
 	BuildID string `json:"buildID"`
 }
 
-// BuildStatus is an enumeration of build states in [GetBuildResponse].
+// BuildStatus is an enumeration of build states in [Build].
 type BuildStatus string
 
 // Defined build states.
@@ -131,8 +131,16 @@ const (
 	BuildError BuildStatus = "error"
 )
 
-// GetBuildResponse is the result for [GetBuildMethod].
-type GetBuildResponse struct {
+// IsFinished reports whether the status indicates that the build has finished.
+func (status BuildStatus) IsFinished() bool {
+	return status == BuildSuccess ||
+		status == BuildFail ||
+		status == BuildError
+}
+
+// Build is the result for [GetBuildMethod].
+type Build struct {
+	ID        string              `json:"id"`
 	Status    BuildStatus         `json:"status"`
 	StartedAt time.Time           `json:"startedAt"`
 	EndedAt   Nullable[time.Time] `json:"endedAt"`
@@ -141,7 +149,7 @@ type GetBuildResponse struct {
 }
 
 // Duration returns the length of the build.
-func (resp *GetBuildResponse) Duration() time.Duration {
+func (resp *Build) Duration() time.Duration {
 	if !resp.EndedAt.Valid {
 		return 0
 	}
@@ -150,7 +158,7 @@ func (resp *GetBuildResponse) Duration() time.Duration {
 
 // ResultForPath returns the build result with the given derivation path.
 // It returns an error if there is not exactly one.
-func (resp *GetBuildResponse) ResultForPath(drvPath zbstore.Path) (*BuildResult, error) {
+func (resp *Build) ResultForPath(drvPath zbstore.Path) (*BuildResult, error) {
 	var seq iter.Seq[*BuildResult]
 	if resp == nil {
 		seq = func(yield func(*BuildResult) bool) {}
@@ -174,7 +182,7 @@ func (resp *GetBuildResponse) ResultForPath(drvPath zbstore.Path) (*BuildResult,
 }
 
 // FindRealizeOutput searches through resp.Results for the given output.
-func (resp *GetBuildResponse) FindRealizeOutput(ref zbstore.OutputReference) (Nullable[zbstore.Path], error) {
+func (resp *Build) FindRealizeOutput(ref zbstore.OutputReference) (Nullable[zbstore.Path], error) {
 	var results []*BuildResult
 	if resp != nil {
 		results = resp.Results
@@ -182,11 +190,24 @@ func (resp *GetBuildResponse) FindRealizeOutput(ref zbstore.OutputReference) (Nu
 	return FindRealizeOutput(slices.Values(results), ref)
 }
 
-// BuildResult is the result of a single derivation in a [GetBuildResponse].
+// GetBuildResultMethod is the name of the method
+// that queries the status of a single builder in a [Build].
+// [GetBuildResultRequest] is used for the request
+// and [BuildResult] is used for the response.
+const GetBuildResultMethod = "zb.getBuildResult"
+
+// GetBuildResultRequest is the set of parameters for [GetBuildMethod].
+type GetBuildResultRequest struct {
+	BuildID string       `json:"buildID"`
+	DrvPath zbstore.Path `json:"drvPath"`
+}
+
+// BuildResult is the result of a single derivation in a [Build].
 type BuildResult struct {
 	DrvPath zbstore.Path     `json:"drvPath"`
 	Status  BuildStatus      `json:"status"`
 	Outputs []*RealizeOutput `json:"outputs"`
+	LogSize int64            `json:"logSize"`
 }
 
 // OutputForName returns the [*RealizeOutput] with the given name.
@@ -295,15 +316,14 @@ type ReadLogResponse struct {
 }
 
 // Payload returns the log's byte content.
-func (resp *ReadLogResponse) Payload() []byte {
+func (resp *ReadLogResponse) Payload() ([]byte, error) {
 	switch {
 	case resp.Base64 != "":
-		b, _ := base64.StdEncoding.DecodeString(resp.Base64)
-		return b
+		return base64.StdEncoding.DecodeString(resp.Base64)
 	case resp.Text != "":
-		return []byte(resp.Text)
+		return []byte(resp.Text), nil
 	default:
-		return nil
+		return nil, nil
 	}
 }
 

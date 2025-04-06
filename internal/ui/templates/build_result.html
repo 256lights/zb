@@ -1,0 +1,67 @@
+{{ define "title" -}}
+  {{ .DrvPath.Name }} Log • zb
+{{- end }}
+
+{{ define "main" }}
+  <h2
+    class="text-2xl font-bold"
+  >{{ .DrvPath.Name }} Log</h2>
+  <div class="my-4 text-xs sm:text-sm">
+    <div class="font-mono">{{ .DrvPath }}</div>
+    <div>
+      part of
+      <a
+        href="/build/{{ .BuildID }}/"
+        class="link"
+      >build <span class="font-mono">{{ .BuildID }}</span></a>
+    </div>
+  </div>
+
+  <div class="my-4">
+    <a
+      href="/build/{{ .BuildID }}/log?drvPath={{ .DrvPath | urlquery }}"
+      data-turbo="false"
+      class="link"
+    >Raw</a>
+  </div>
+
+  {{- if not .Status.IsFinished }}
+  <div
+    data-controller="tail"
+  >
+    <div class="my-2">
+      <label>
+        <input
+          type="checkbox"
+          checked
+          data-action="tail#enable"
+        >
+        Follow Logs
+      </label>
+    </div>
+  {{- end }}
+    <div
+      class="my-8 font-mono overflow-auto h-fit max-h-[25rem] scrollbar-gutter-stable"
+      {{- if .HasMoreLog }}
+      data-controller="log-stream"
+      data-log-stream-href-value="/build/{{ .BuildID }}/log?drvPath={{ .DrvPath | urlquery }}"
+      data-log-stream-next-byte-value="{{ len .InitialLog }}"
+      data-tail-target="scroll"
+      data-action="
+        visibilitychange@document->log-stream#pause:documentHidden
+        visibilitychange@document->log-stream#resume:!documentHidden
+      "
+      {{- end }}
+    >
+      <pre
+        class="whitespace-pre-wrap"
+        {{- if .HasMoreLog }}
+        data-log-stream-target="content"
+        data-tail-target="watch"
+        {{- end }}
+      >{{- .InitialLog -}}</pre>
+    </div>
+  {{- if not .Status.IsFinished }}
+  </div>
+  {{- end }}
+{{ end }}

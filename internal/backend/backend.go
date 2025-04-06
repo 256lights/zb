@@ -216,13 +216,14 @@ func (s *Server) Close() error {
 // and serves the [zbstore] API.
 func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	return jsonrpc.ServeMux{
-		zbstorerpc.ExistsMethod:      jsonrpc.HandlerFunc(s.exists),
-		zbstorerpc.InfoMethod:        jsonrpc.HandlerFunc(s.info),
-		zbstorerpc.ExpandMethod:      jsonrpc.HandlerFunc(s.expand),
-		zbstorerpc.RealizeMethod:     jsonrpc.HandlerFunc(s.realize),
-		zbstorerpc.GetBuildMethod:    jsonrpc.HandlerFunc(s.getBuild),
-		zbstorerpc.CancelBuildMethod: jsonrpc.HandlerFunc(s.cancelBuild),
-		zbstorerpc.ReadLogMethod:     jsonrpc.HandlerFunc(s.readLog),
+		zbstorerpc.ExistsMethod:         jsonrpc.HandlerFunc(s.exists),
+		zbstorerpc.InfoMethod:           jsonrpc.HandlerFunc(s.info),
+		zbstorerpc.ExpandMethod:         jsonrpc.HandlerFunc(s.expand),
+		zbstorerpc.RealizeMethod:        jsonrpc.HandlerFunc(s.realize),
+		zbstorerpc.GetBuildMethod:       jsonrpc.HandlerFunc(s.getBuild),
+		zbstorerpc.GetBuildResultMethod: jsonrpc.HandlerFunc(s.getBuildResult),
+		zbstorerpc.CancelBuildMethod:    jsonrpc.HandlerFunc(s.cancelBuild),
+		zbstorerpc.ReadLogMethod:        jsonrpc.HandlerFunc(s.readLog),
 	}.JSONRPC(ctx, req)
 }
 
@@ -295,8 +296,10 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 	}
 	buildID, ok := parseBuildID(args.BuildID)
 	if !ok {
-		return marshalResponse(&zbstorerpc.GetBuildResponse{
-			Status: zbstorerpc.BuildUnknown,
+		return marshalResponse(&zbstorerpc.Build{
+			ID:      args.BuildID,
+			Status:  zbstorerpc.BuildUnknown,
+			Results: []*zbstorerpc.BuildResult{},
 		})
 	}
 
@@ -321,7 +324,8 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 		}
 	}()
 
-	resp := &zbstorerpc.GetBuildResponse{
+	resp := &zbstorerpc.Build{
+		ID:      args.BuildID,
 		Status:  zbstorerpc.BuildUnknown,
 		Results: []*zbstorerpc.BuildResult{},
 	}
@@ -373,49 +377,49 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 		return marshalResponse(resp)
 	}
 
-	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/results.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{
-			":build_id": buildID.String(),
-		},
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			drvPath, err := zbstore.ParsePath(stmt.GetText("drv_path"))
-			if err != nil {
-				return err
-			}
-			var curr *zbstorerpc.BuildResult
-			if len(resp.Results) > 0 && resp.Results[len(resp.Results)-1].DrvPath == drvPath {
-				curr = resp.Results[len(resp.Results)-1]
-			} else {
-				curr = &zbstorerpc.BuildResult{
-					DrvPath: drvPath,
-					Status:  zbstorerpc.BuildStatus(stmt.GetText("status")),
-					Outputs: []*zbstorerpc.RealizeOutput{},
-				}
-				resp.Results = append(resp.Results, curr)
-			}
-
-			if outputName := stmt.GetText("output_name"); outputName != "" {
-				newOutput := &zbstorerpc.RealizeOutput{
-					Name: outputName,
-				}
-				if s := stmt.GetText("output_path"); s != "" {
-					p, err := zbstore.ParsePath(s)
-					if err != nil {
-						return fmt.Errorf("output %s: %v", outputName, err)
-					}
-					newOutput.Path = zbstorerpc.NonNull(p)
-				}
-				curr.Outputs = append(curr.Outputs, newOutput)
-			}
-
-			return nil
-		},
-	})
+	resp.Results, err = findBuildResults(resp.Results, conn, buildID, "")
 	if err != nil {
-		return nil, fmt.Errorf("get build %v: %v", buildID, err)
+		return nil, err
 	}
 
 	return marshalResponse(resp)
+}
+
+func (s *Server) getBuildResult(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	var args zbstorerpc.GetBuildResultRequest
+	if err := json.Unmarshal(req.Params, &args); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	buildID, ok := parseBuildID(args.BuildID)
+	if !ok || args.DrvPath == "" {
+		return marshalResponse(&zbstorerpc.BuildResult{
+			DrvPath: args.DrvPath,
+			Status:  zbstorerpc.BuildUnknown,
+			Outputs: []*zbstorerpc.RealizeOutput{},
+		})
+	}
+
+	conn, err := s.db.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer s.db.Put(conn)
+
+	results, err := findBuildResults(nil, conn, buildID, args.DrvPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return marshalResponse(&zbstorerpc.BuildResult{
+			DrvPath: args.DrvPath,
+			Status:  zbstorerpc.BuildUnknown,
+			Outputs: []*zbstorerpc.RealizeOutput{},
+		})
+	}
+	if len(results) > 1 {
+		return nil, fmt.Errorf("internal error: multiple build results found for %s in build %v", args.DrvPath, buildID)
+	}
+	return marshalResponse(results[0])
 }
 
 func (s *Server) cancelBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {

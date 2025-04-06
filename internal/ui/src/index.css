@@ -8,6 +8,7 @@ SPDX-License-Identifier: MIT
 
 @layer components {
   .link {
+    text-decoration: underline;
     color: var(--color-indigo-600);
     @variant visited {
       color: var(--color-purple-800);
@@ -19,4 +20,16 @@ SPDX-License-Identifier: MIT
       }
     }
   }
+}
+
+@utility scrollbar-gutter-auto {
+  scrollbar-gutter: auto;
+}
+
+@utility scrollbar-gutter-stable {
+  scrollbar-gutter: stable;
+}
+
+@utility scrollbar-gutter-both-edges {
+  scrollbar-gutter: stable both-edges;
 }

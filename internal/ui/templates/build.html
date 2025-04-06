@@ -60,7 +60,10 @@
                 scope="row"
                 class="px-1 text-left font-mono font-normal"
               >
-                {{- .DrvPath -}}
+                <a
+                  href="/build/{{ $.ID }}/result?drvPath={{ .DrvPath }}"
+                  class="link"
+                >{{ .DrvPath.Base }}</a>
               </th>
             </tr>
           {{- end }}

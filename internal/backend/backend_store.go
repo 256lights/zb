@@ -603,6 +603,59 @@ func insertBuildResult(conn *sqlite.Conn, buildID uuid.UUID, drvPath zbstore.Pat
 	return buildResultID, nil
 }
 
+// findBuildResults appends the build results in the build with the given ID to dst.
+// If drvPath is not empty, then only the result for drvPath is appended (if it exists).
+func findBuildResults(dst []*zbstorerpc.BuildResult, conn *sqlite.Conn, buildID uuid.UUID, drvPath zbstore.Path) ([]*zbstorerpc.BuildResult, error) {
+	initDstLen := len(dst)
+	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/results.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":build_id": buildID.String(),
+			":drv_path": string(drvPath),
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			drvPath, err := zbstore.ParsePath(stmt.GetText("drv_path"))
+			if err != nil {
+				return err
+			}
+			var curr *zbstorerpc.BuildResult
+			if len(dst) > initDstLen && dst[len(dst)-1].DrvPath == drvPath {
+				curr = dst[len(dst)-1]
+			} else {
+				curr = &zbstorerpc.BuildResult{
+					DrvPath: drvPath,
+					Status:  zbstorerpc.BuildStatus(stmt.GetText("status")),
+					Outputs: []*zbstorerpc.RealizeOutput{},
+					LogSize: stmt.GetInt64("log_size"),
+				}
+				dst = append(dst, curr)
+			}
+
+			if outputName := stmt.GetText("output_name"); outputName != "" {
+				newOutput := &zbstorerpc.RealizeOutput{
+					Name: outputName,
+				}
+				if s := stmt.GetText("output_path"); s != "" {
+					p, err := zbstore.ParsePath(s)
+					if err != nil {
+						return fmt.Errorf("output %s: %v", outputName, err)
+					}
+					newOutput.Path = zbstorerpc.NonNull(p)
+				}
+				curr.Outputs = append(curr.Outputs, newOutput)
+			}
+
+			return nil
+		},
+	})
+	if err != nil {
+		if drvPath == "" {
+			return dst, fmt.Errorf("list build results for %v: %v", buildID, err)
+		}
+		return dst, fmt.Errorf("fetch build result for %s in build %v: %v", drvPath, buildID, err)
+	}
+	return dst, nil
+}
+
 func recordBuilderStart(conn *sqlite.Conn, buildResultID int64, t time.Time) error {
 	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/set_builder_start.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{

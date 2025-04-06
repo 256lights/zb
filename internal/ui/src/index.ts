@@ -13,4 +13,8 @@ declare global {
 }
 
 window.Stimulus = Application.start()
+window.Stimulus.registerActionOption(
+  'documentHidden',
+  ({ value }) => document.hidden === value,
+)
 window.Stimulus.load(definitions)

@@ -632,7 +632,8 @@ func TestRealizeFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal("build drv:", err)
 	}
-	want := &zbstorerpc.GetBuildResponse{
+	want := &zbstorerpc.Build{
+		ID:     realizeResponse.BuildID,
 		Status: zbstorerpc.BuildFail,
 		Results: []*zbstorerpc.BuildResult{
 			{
@@ -646,12 +647,12 @@ func TestRealizeFailure(t *testing.T) {
 			},
 		},
 	}
-	getBuildResponseType := reflect.TypeFor[zbstorerpc.GetBuildResponse]()
+	buildType := reflect.TypeFor[zbstorerpc.Build]()
 	diff := cmp.Diff(
 		want, got,
 		cmp.FilterPath(
 			func(p cmp.Path) bool {
-				if p.Index(-2).Type() != getBuildResponseType {
+				if p.Index(-2).Type() != buildType {
 					return false
 				}
 				fieldName := p.Last().(cmp.StructField).Name()
@@ -660,6 +661,7 @@ func TestRealizeFailure(t *testing.T) {
 			},
 			cmp.Ignore(),
 		),
+		buildResultOption,
 	)
 	if diff != "" {
 		t.Errorf("build (-want +got):\n%s", diff)
@@ -833,7 +835,17 @@ func TestRealizeFetchURL(t *testing.T) {
 	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(fileContent), got)
 }
 
-func checkSingleFileOutput(tb testing.TB, drvPath, wantOutputPath zbstore.Path, wantOutputContent []byte, resp *zbstorerpc.GetBuildResponse) {
+var buildResultOption = cmp.Options{
+	cmp.FilterPath(func(p cmp.Path) bool {
+		if p.Index(-2).Type() != reflect.TypeFor[zbstorerpc.BuildResult]() {
+			return false
+		}
+		name := p.Last().(cmp.StructField).Name()
+		return name == "LogSize"
+	}, cmp.Ignore()),
+}
+
+func checkSingleFileOutput(tb testing.TB, drvPath, wantOutputPath zbstore.Path, wantOutputContent []byte, resp *zbstorerpc.Build) {
 	tb.Helper()
 
 	got, err := resp.ResultForPath(drvPath)
@@ -854,7 +866,8 @@ func checkSingleFileOutput(tb testing.TB, drvPath, wantOutputPath zbstore.Path, 
 			},
 		},
 	}
-	if diff := cmp.Diff(want, got); diff != "" {
+	diff := cmp.Diff(want, got, buildResultOption)
+	if diff != "" {
 		tb.Errorf("realize response (-want +got):\n%s", diff)
 	}
 
