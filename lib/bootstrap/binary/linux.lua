@@ -74,7 +74,7 @@ local function forArchitecture(arch)
   ---PATH: string,
   ---C_INCLUDE_PATH: string|nil,
   ---LIBRARY_PATH: string|nil,
-  ---LDFLAGS: string|nil,
+  ---forceStatic: boolean|nil,
   ---postInstall: string|nil,
   ---}
   ---@return derivation
@@ -139,18 +139,36 @@ echo "OUTPUT = $out" >> config.mak
       GMP_VER = "..gmp.version.."\n\z
       MPC_VER = "..mpc.version.."\n\z
       MPFR_VER = "..mpfr.version.."\n\z
-      GCC_CONFIG = --disable-shared\n"
+      COMMON_CONFIG = --disable-shared\n"
     if args.BUILD then
       assert(args.BUILD == target, string.format("unknown config %q", args.BUILD))
       config = config.."BUILD = "..args.BUILD.."\n\z
         HOST = "..args.BUILD.."\n"
     end
-    if args.LDFLAGS then
-      config = config.."COMMON_CONFIG = \z
-        LDFLAGS='"..args.LDFLAGS.."' \z
-        LDFLAGS_FOR_BUILD='"..args.LDFLAGS.."' \z
-        LDFLAGS_FOR_TARGET='"..args.LDFLAGS.."' \z
-        BOOT_LDFLAGS='"..args.LDFLAGS.."' \n"
+    if args.forceStatic then
+      -- The double dash in `--static` is sadly intentional and necessary.
+      -- This terrifying hack courtesy of https://stackoverflow.com/a/29055118.
+      -- binutils uses libtool for linking the programs.
+      -- libtool takes in a GCC command-line as input,
+      -- so an example invocation is `libtool --mode=link gcc $(LDFLAGS) foo.o -o foo`.
+      -- Unfortunately, as per https://www.gnu.org/software/libtool/manual/html_node/Link-mode.html,
+      -- `-static` has a slightly different meaning:
+      -- it avoids libtool shared libraries, but does not pass the flag along to gcc.
+      -- This then picks up the shared object library of musl because of the implicit -lc.
+      -- The `-all-static` flag is what we want,
+      -- but that's not a valid gcc flag,
+      -- and it must be passed as a positional argument to libtool.
+      -- The binutils Makefiles don't allow you to pass libtool-specific LDFLAGS,
+      -- and passing `-all-static` to gcc will kill configure.
+      -- `--static` is accepted by GCC but critically, not recognized by libtool,
+      -- so it is passed through verbatim without special processing.
+      config = config.."BINUTILS_CONFIG = LDFLAGS='--static'\n"
+
+      config = config.."GCC_CONFIG = \z
+        LDFLAGS='-static' \z
+        LDFLAGS_FOR_BUILD='-static' \z
+        LDFLAGS_FOR_TARGET='-static' \z
+        BOOT_LDFLAGS='-static'\n"
     end
     drvArgs.configFile = toFile("config.mak", config)
 
@@ -179,7 +197,7 @@ done
       gcc1.."/lib/gcc/"..target.."/"..gccVersion,
       gcc1.."/"..target.."/lib",
     }, ":");
-    LDFLAGS = "-static";
+    forceStatic = true;
   }
 
   return {
