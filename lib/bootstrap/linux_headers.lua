@@ -1,8 +1,6 @@
 -- Copyright 2025 The zb Authors
 -- SPDX-License-Identifier: MIT
 
-local steps <const> = import "./steps.lua"
-
 local version <const> = "4.14.336"
 local module <const> = { version = version }
 local getters <const> = {}
@@ -27,7 +25,7 @@ rm include/uapi/linux/pktcdvd.h \
     arch/x86/include/uapi/asm/mman.h \
     arch/x86/include/uapi/asm/auxvec.h
 
-"${CC:-gcc}" -o scripts/unifdef scripts/unifdef.c
+"${CC:-gcc}" ${CFLAGS:-} ${LDFLAGS:-} -o scripts/unifdef scripts/unifdef.c
 
 case "$system" in
   i686-linux|x86_64-linux)
@@ -111,6 +109,8 @@ setmetatable(module, {
       PATH = args.PATH;
       C_INCLUDE_PATH = args.C_INCLUDE_PATH;
       LIBRARY_PATH = args.LIBRARY_PATH;
+      CFLAGS = args.CFLAGS;
+      LDFLAGS = args.LDFLAGS;
 
       SOURCE_DATE_EPOCH = args.SOURCE_DATE_EPOCH or 0;
       KBUILD_BUILD_TIMESTAMP = args.KBUILD_BUILD_TIMESTAMP or "@0";

@@ -2,8 +2,10 @@
 -- SPDX-License-Identifier: MIT
 
 local binutils <const> = import "../binutils.lua"
+local busybox <const> = import "../busybox.lua"
 local gcc <const> = import "../gcc.lua"
 local gmp <const> = import "../gmp.lua"
+local linux_headers <const> = import "../linux_headers.lua"
 local mpc <const> = import "../mpc.lua"
 local mpfr <const> = import "../mpfr.lua"
 local musl <const> = import "../musl.lua"
@@ -200,8 +202,56 @@ done
     forceStatic = true;
   }
 
+  local linux_headers <const> = linux_headers {
+    system = system;
+
+    PATH = table.concat({
+      gcc2.."/bin",
+      userPath,
+    }, ":");
+
+    LDFLAGS = "-static";
+
+    C_INCLUDE_PATH = gcc2.."/include";
+    LIBRARY_PATH = table.concat({
+      gcc2.."/lib/gcc/"..target.."/"..gccVersion,
+      gcc2.."/"..target.."/lib",
+    }, ":");
+  }
+
+  local busyboxConfig <const> = path "busybox-config"
+  local busybox = makeDerivation {
+    pname = "busybox";
+    version = busybox.version;
+
+    src = busybox.tarball;
+
+    PATH = table.concat({
+      gcc2.."/bin",
+      userPath,
+    }, ":");
+
+    C_INCLUDE_PATH = table.concat({
+      linux_headers.."/include",
+      gcc2.."/include",
+    }, ":");
+    LIBRARY_PATH = table.concat({
+      gcc2.."/lib/gcc/"..target.."/"..gccVersion,
+      gcc2.."/"..target.."/lib",
+    }, ":");
+
+    CONFIG_INSTALL_NO_USR = "y";
+
+    configFile = busyboxConfig;
+
+    makeFlags = "HOSTCFLAGS=-static HOSTLDFLAGS=-static LDFLAGS=-static";
+    configurePhase = "cp $configFile .config\n";
+    installPhase = "make CONFIG_PREFIX=\"$out\" ${makeFlags:-} ${installFlags:-} install";
+  }
+
   return {
     gcc = gcc2;
+    busybox = busybox;
   }
 end
 
