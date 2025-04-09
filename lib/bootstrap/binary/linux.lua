@@ -256,12 +256,14 @@ find \
     }, ":");
   }
 
-  local busyboxConfig <const> = path "busybox-config"
   local busybox = makeDerivation {
     pname = "busybox";
     version = busybox.version;
 
     src = busybox.tarball;
+    patches = {
+      path "patches/busybox-1.36.1/01-ldflags.diff",
+    };
 
     PATH = table.concat({
       gcc2.."/bin",
@@ -279,9 +281,9 @@ find \
 
     CONFIG_INSTALL_NO_USR = "y";
 
-    configFile = busyboxConfig;
+    configFile = path "busybox-config";
 
-    makeFlags = "HOSTCFLAGS=-static HOSTLDFLAGS=-static LDFLAGS=-static";
+    makeFlags = "LDFLAGS=-static HOSTLDFLAGS=-static";
     configurePhase = "cp $configFile .config\n";
     installPhase = "make CONFIG_PREFIX=\"$out\" ${makeFlags:-} ${installFlags:-} install";
   }
