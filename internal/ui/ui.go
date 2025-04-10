@@ -1,6 +1,7 @@
 // Copyright 2025 The zb Authors
 // SPDX-License-Identifier: MIT
 
+//go:generate npm install
 //go:generate npm run build:prod
 
 // Package ui provides embedded assets for the UI.
