@@ -51,12 +51,13 @@ Prerequisites:
 
 - Knowledge of using the command-line for your OS (e.g. Terminal.app, Command Prompt, etc.)
 - [Go](https://go.dev/dl/) 1.24.0 or later.
+- [Node.js](https://nodejs.org/) 22.
 
 ### Linux
 
 1. `sudo mkdir /zb && sudo chown $(id -u):$(id -g) /zb`
 2. Clone this repository to your computer and `cd` into it.
-3. `go build ./cmd/zb`
+3. `go generate ./internal/ui && go build ./cmd/zb`
 4. Start the build server (only on startup): `./zb serve --sandbox=0 &`
 5. Run a build: `./zb build --file demo/hello_linux.lua`
 
@@ -66,7 +67,7 @@ You can use `./zb --help` to get more information on commands.
 
 1. `mkdir $HOME/zb`
 2. Clone this repository to your computer and `cd` into it.
-3. `go build ./cmd/zb`
+3. `go generate ./internal/ui && go build ./cmd/zb`
 4. `export ZB_STORE_DIR="$HOME/zb/store" ZB_STORE_SOCKET="$HOME/zb/var/zb/server.sock"`
 5. Start the build server (only on startup): `./zb serve --sandbox=0 --db="$HOME/zb/var/zb/db.sqlite" &`
 6. Run a build: `./zb build --file demo/hello_macos.lua`
@@ -81,9 +82,10 @@ since zb depends on Windows support for Unix sockets.
    you can run `choco install mingw`.
 2. Create a `C:\zb` directory.
 3. Clone this repository to your computer and `cd` into it.
-4. `go build .\cmd\zb`
-5. Start the build server in one terminal: `.\zb.exe serve`
-6. Run a build in another terminal: `.\zb.exe build --file demo/hello_windows.lua`
+4. `go generate .\internal\ui`
+5. `go build .\cmd\zb`
+6. Start the build server in one terminal: `.\zb.exe serve`
+7. Run a build in another terminal: `.\zb.exe build --file demo/hello_windows.lua`
 
 ### Next Steps
 

@@ -22,6 +22,9 @@
     "url": "https://github.com/256lights/zb/issues"
   },
   "homepage": "https://github.com/256lights/zb#readme",
+  "engines": {
+    "node": "~22.13.1"
+  },
   "dependencies": {
     "@hotwired/stimulus": "^3.2.2",
     "@hotwired/turbo": "^8.0.13",
