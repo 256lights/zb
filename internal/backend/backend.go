@@ -315,14 +315,11 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 	_, isActive := s.activeBuilds[buildID]
 	s.activeBuildsMu.Unlock()
 
-	if err := sqlitex.Execute(conn, "BEGIN DEFERRED TRANSACTION;", nil); err != nil {
-		return nil, err
+	rollback, err := readonlySavepoint(conn)
+	if err != nil {
+		return nil, fmt.Errorf("get build %v: %v", buildID, err)
 	}
-	defer func() {
-		if err := sqlitex.Execute(conn, "ROLLBACK TRANSACTION;", nil); err != nil {
-			log.Errorf(ctx, "Rollback read-only transaction: %v", err)
-		}
-	}()
+	defer rollback()
 
 	resp := &zbstorerpc.Build{
 		ID:      args.BuildID,

@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"iter"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -1032,4 +1033,80 @@ func unmarshalJSONString(data string, v any) error {
 		return errors.New("unmarshal json: trailing data")
 	}
 	return nil
+}
+
+// readonlySavepoint starts a new SAVEPOINT.
+// The caller is responsible for calling endFn
+// to roll back the SAVEPOINT and remove it from the transaction stack.
+func readonlySavepoint(conn *sqlite.Conn) (rollbackFunc func(), err error) {
+	name := "readonlySavepoint" // safe as names can be reused
+	var pc [3]uintptr
+	if n := runtime.Callers(0, pc[:]); n > 0 {
+		frames := runtime.CallersFrames(pc[:n])
+		if _, more := frames.Next(); more { // runtime.Callers
+			if _, more := frames.Next(); more { // readonlySavepoint
+				frame, _ := frames.Next() // caller we care about
+				if frame.Function != "" {
+					name = frame.Function
+				}
+			}
+		}
+	}
+
+	startedTransaction := conn.AutocommitEnabled()
+	if err := sqlitex.Execute(conn, `SAVEPOINT "`+name+`";`, nil); err != nil {
+		return nil, err
+	}
+	if startedTransaction {
+		rollbackFunc = func() {
+			panicError := recover()
+
+			if conn.AutocommitEnabled() {
+				// Transaction exited by application. Nothing to roll back.
+				if panicError != nil {
+					panic(panicError)
+				}
+				return
+			}
+
+			// Always run ROLLBACK even if the connection has been interrupted.
+			oldDoneChan := conn.SetInterrupt(nil)
+			defer conn.SetInterrupt(oldDoneChan)
+
+			if err := sqlitex.Execute(conn, "ROLLBACK;", nil); err != nil {
+				panic(err.Error())
+			}
+			if panicError != nil {
+				panic(panicError)
+			}
+		}
+	} else {
+		rollbackFunc = func() {
+			panicError := recover()
+
+			if conn.AutocommitEnabled() {
+				// Transaction exited by application. Nothing to roll back.
+				if panicError != nil {
+					panic(panicError)
+				}
+				return
+			}
+
+			// Always run ROLLBACK even if the connection has been interrupted.
+			oldDoneChan := conn.SetInterrupt(nil)
+			defer conn.SetInterrupt(oldDoneChan)
+
+			if err := sqlitex.Execute(conn, `ROLLBACK TO "`+name+`";`, nil); err != nil {
+				panic(err.Error())
+			}
+			if err := sqlitex.Execute(conn, `RELEASE "`+name+`";`, nil); err != nil {
+				panic(err.Error())
+			}
+			if panicError != nil {
+				panic(panicError)
+			}
+		}
+	}
+
+	return rollbackFunc, nil
 }

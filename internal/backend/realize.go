@@ -872,7 +872,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 	}()
 
 	// Save outputs as store objects.
-	inputs, err := b.inputs(ctx, conn, drvPath)
+	inputs, err := b.inputs(conn, drvPath)
 	if err != nil {
 		return err
 	}
@@ -927,7 +927,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 }
 
 // inputs computes the closure of all inputs used by the derivation at drvPath.
-func (b *builder) inputs(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.Path) (map[zbstore.Path]sets.Set[equivalenceClass], error) {
+func (b *builder) inputs(conn *sqlite.Conn, drvPath zbstore.Path) (map[zbstore.Path]sets.Set[equivalenceClass], error) {
 	drv := b.derivations[drvPath]
 	if drv == nil {
 		return nil, fmt.Errorf("input closure for %s: unknown derivation", drvPath)
@@ -952,21 +952,11 @@ func (b *builder) inputs(ctx context.Context, conn *sqlite.Conn, drvPath zbstore
 		}
 	}
 
-	startedTransaction := conn.AutocommitEnabled()
-	if err := sqlitex.Execute(conn, "SAVEPOINT inputs;", nil); err != nil {
+	rollback, err := readonlySavepoint(conn)
+	if err != nil {
 		return nil, fmt.Errorf("input closure for %s: %v", drvPath, err)
 	}
-	defer func() {
-		var sql string
-		if startedTransaction {
-			sql = "ROLLBACK TRANSACTION;"
-		} else {
-			sql = "ROLLBACK TRANSACTION TO SAVEPOINT inputs;"
-		}
-		if err := sqlitex.Execute(conn, sql, nil); err != nil {
-			log.Errorf(ctx, "Rollback read-only savepoint: %v", err)
-		}
-	}()
+	defer rollback()
 
 	for _, input := range drv.InputSources.All() {
 		err := closurePaths(conn, pathAndEquivalenceClass{path: input}, func(pe pathAndEquivalenceClass) bool {
