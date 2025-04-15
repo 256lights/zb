@@ -199,7 +199,9 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 				recv := backendServer.NewNARReceiver(grpCtx)
 				defer recv.Cleanup(grpCtx)
 
-				codec := zbstorerpc.NewCodec(nopCloser{conn}, recv)
+				codec := zbstorerpc.NewCodec(nopCloser{conn}, &zbstorerpc.CodecOptions{
+					NARReceiver: recv,
+				})
 				jsonrpc.Serve(backend.WithExporter(grpCtx, codec), codec, backendServer)
 				codec.Close()
 

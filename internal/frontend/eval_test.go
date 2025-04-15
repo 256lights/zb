@@ -85,7 +85,7 @@ func TestLuaToGo(t *testing.T) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -150,7 +150,7 @@ func TestGetenv(t *testing.T) {
 			storeDir := backendtest.NewStoreDirectory(t)
 
 			const wantKey = "BAR"
-			store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+			_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 				TempDir: t.TempDir(),
 			})
 			if err != nil {
@@ -194,7 +194,7 @@ func TestStringMethod(t *testing.T) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -229,7 +229,7 @@ func TestImportFromDerivation(t *testing.T) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -268,7 +268,7 @@ func TestImportCycle(t *testing.T) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -340,7 +340,7 @@ func TestExtract(t *testing.T) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -452,7 +452,7 @@ func TestNewState(t *testing.T) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -495,7 +495,7 @@ func BenchmarkNewState(b *testing.B) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(b)
 
-	store, err := backendtest.NewServer(ctx, b, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, b, storeDir, &backendtest.Options{
 		TempDir: b.TempDir(),
 	})
 	if err != nil {
@@ -553,7 +553,7 @@ func (store testRPCStore) Import(ctx context.Context, r io.Reader) error {
 	if !ok {
 		return fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
 	}
-	return codec.Export(r)
+	return codec.Export(nil, r)
 }
 
 func (store testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {

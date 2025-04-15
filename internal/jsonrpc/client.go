@@ -341,12 +341,11 @@ func dispatchResponse(ctx context.Context, msg json.RawMessage, inflight map[int
 		if err != nil {
 			continue
 		}
-		idText, ok := id.toString()
-		if !ok {
+		if !id.IsString() {
 			// We only make string IDs.
 			continue
 		}
-		idNum, ok := unmarshalClientID(idText)
+		idNum, ok := unmarshalClientID(id.String())
 		if !ok {
 			// We only make *numeric* string IDs.
 			continue
@@ -484,15 +483,15 @@ func (resp rawResponse) checkVersion() error {
 	return nil
 }
 
-func (resp rawResponse) id() (requestID, error) {
+func (resp rawResponse) id() (RequestID, error) {
 	raw := resp.msg["id"]
 	if len(raw) == 0 {
-		return requestID{}, fmt.Errorf("jsonrpc response missing id")
+		return RequestID{}, fmt.Errorf("jsonrpc response missing id")
 	}
-	var id requestID
+	var id RequestID
 	err := id.UnmarshalJSON(raw)
 	if err != nil {
-		return requestID{}, fmt.Errorf("jsonrpc response id: %v", err)
+		return RequestID{}, fmt.Errorf("jsonrpc response id: %v", err)
 	}
 	return id, nil
 }

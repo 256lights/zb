@@ -5,7 +5,6 @@ package zbstore
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -125,8 +124,9 @@ type NARReceiver interface {
 
 // ReceiveExport processes a stream of NARs in `nix-store --export` format,
 // returning the first error encountered.
-// If the error is due to an error returned from the receiver,
-// then [IsReceiverError] will report true for the returned error.
+//
+// ReceiveExport will not read beyond the end of the export,
+// so there may still be data remaining in r after a call to ReceiveExport.
 func ReceiveExport(receiver NARReceiver, r io.Reader) error {
 	buf := make([]byte, len(exportObjectMarker))
 	ew := &errWriter{w: receiver}
@@ -146,8 +146,8 @@ func ReceiveExport(receiver NARReceiver, r io.Reader) error {
 		for {
 			_, err := nr.Next()
 			if ew.err != nil {
-				// Receiver errors are fatal; signal them specially.
-				return recvError{ew.err}
+				// Always pass through writer errors verbatim.
+				return ew.err
 			}
 			if err == io.EOF {
 				break
@@ -218,24 +218,6 @@ func ReceiveExport(receiver NARReceiver, r io.Reader) error {
 
 		receiver.ReceiveNAR(t)
 	}
-}
-
-// IsReceiverError reports whether err indicates an error
-// from the [NARReceiver] passed to a call of [ReceiveExport].
-func IsReceiverError(err error) bool {
-	return errors.As(err, new(recvError))
-}
-
-type recvError struct {
-	err error
-}
-
-func (e recvError) Error() string {
-	return e.err.Error()
-}
-
-func (e recvError) Unwrap() error {
-	return e.err
 }
 
 const stringAlign = 8

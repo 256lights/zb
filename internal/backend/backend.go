@@ -1,7 +1,7 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-// Package backend provides a [zbstore] implementation backed by local compute resources.
+// Package backend provides a [zbstorerpc] implementation backed by local compute resources.
 package backend
 
 import (
@@ -213,11 +213,12 @@ func (s *Server) Close() error {
 }
 
 // JSONRPC implements the [jsonrpc.Handler] interface
-// and serves the [zbstore] API.
+// and serves the [zbstorerpc] API.
 func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	return jsonrpc.ServeMux{
 		zbstorerpc.ExistsMethod:         jsonrpc.HandlerFunc(s.exists),
 		zbstorerpc.InfoMethod:           jsonrpc.HandlerFunc(s.info),
+		zbstorerpc.ExportMethod:         jsonrpc.HandlerFunc(s.export),
 		zbstorerpc.ExpandMethod:         jsonrpc.HandlerFunc(s.expand),
 		zbstorerpc.RealizeMethod:        jsonrpc.HandlerFunc(s.realize),
 		zbstorerpc.GetBuildMethod:       jsonrpc.HandlerFunc(s.getBuild),
@@ -864,7 +865,7 @@ type exporterContextKey struct{}
 
 // A type that implements Exporter can receive a `nix-store --export` formatted stream.
 type Exporter interface {
-	Export(r io.Reader) error
+	Export(header jsonrpc.Header, r io.Reader) error
 }
 
 // WithExporter returns a copy of parent
@@ -883,7 +884,7 @@ func exporterFromContext(ctx context.Context) Exporter {
 
 type stubExporter struct{}
 
-func (stubExporter) Export(r io.Reader) error {
+func (stubExporter) Export(header jsonrpc.Header, r io.Reader) error {
 	return errors.New("no exporter in context")
 }
 

@@ -54,7 +54,7 @@ type server struct {
 	codec     ServerCodec
 
 	mu        sync.Mutex
-	cancelMap map[requestID]context.CancelFunc
+	cancelMap map[RequestID]context.CancelFunc
 }
 
 // Serve serves JSON-RPC requests for a connection.
@@ -63,7 +63,7 @@ type server struct {
 func Serve(ctx context.Context, codec ServerCodec, handler Handler) error {
 	srv := &server{
 		codec:     codec,
-		cancelMap: make(map[requestID]context.CancelFunc),
+		cancelMap: make(map[RequestID]context.CancelFunc),
 	}
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -107,7 +107,11 @@ func (srv *server) single(ctx context.Context, handler Handler, req *serverReque
 	case cancelMethod:
 		resp, err = srv.cancel(&req.Request)
 	default:
-		resp, err = handler.JSONRPC(ctx, &req.Request)
+		handlerCtx := ctx
+		if !notification {
+			handlerCtx = withRequestID(ctx, req.id)
+		}
+		resp, err = handler.JSONRPC(handlerCtx, &req.Request)
 	}
 	cancel()
 
@@ -172,7 +176,7 @@ func (srv *server) cancel(req *Request) (*Response, error) {
 
 func (srv *server) writeError(err error) {
 	buf := new(bytes.Buffer)
-	marshalError(buf, requestID{}, err)
+	marshalError(buf, RequestID{}, err)
 
 	srv.writeLock.Lock()
 	defer srv.writeLock.Unlock()
@@ -193,7 +197,7 @@ func (mux ServeMux) JSONRPC(ctx context.Context, req *Request) (*Response, error
 }
 
 type serverRequest struct {
-	id requestID
+	id RequestID
 	Request
 }
 
@@ -225,7 +229,7 @@ func (req *serverRequest) UnmarshalJSON(data []byte) error {
 	rawID := raw["id"]
 	req.Notification = len(rawID) == 0
 	if req.Notification {
-		req.id = requestID{}
+		req.id = RequestID{}
 	} else {
 		err = req.id.UnmarshalJSON(rawID)
 		if err != nil {
@@ -238,7 +242,7 @@ func (req *serverRequest) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func marshalError(buf *bytes.Buffer, id requestID, err error) {
+func marshalError(buf *bytes.Buffer, id RequestID, err error) {
 	code, ok := CodeFromError(err)
 	if !ok {
 		code = UnknownErrorCode
@@ -255,4 +259,17 @@ func marshalError(buf *bytes.Buffer, id requestID, err error) {
 	buf.WriteString(`,"message":`)
 	buf.Write(jsonstring.Append(nil, err.Error()))
 	buf.WriteString("}}")
+}
+
+type requestIDContextKey struct{}
+
+func withRequestID(parent context.Context, id RequestID) context.Context {
+	return context.WithValue(parent, requestIDContextKey{}, id)
+}
+
+// RequestIDFromContext returns the request ID from the context.
+// This is only set on contexts that come from [Serve].
+func RequestIDFromContext(ctx context.Context) (id RequestID, ok bool) {
+	id, ok = ctx.Value(requestIDContextKey{}).(RequestID)
+	return
 }

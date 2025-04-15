@@ -338,6 +338,22 @@ func (resp *ReadLogResponse) SetPayload(src []byte) {
 	}
 }
 
+// ExportMethod is the name of the method that triggers an export of store objects.
+// [ExportRequest] is used for the request and the response is null.
+// It can be sent as a notification,
+// but sending it as a normal request will cause the export to include an X-Request-ID header
+// that can be used to correlate the response.
+const ExportMethod = "zb.export"
+
+// ExportRequest is the set of parameters for [ExportMethod].
+type ExportRequest struct {
+	Paths []zbstore.Path `json:"paths"`
+
+	// If ExcludeReferences is true, then only the paths in Paths will be exported.
+	// Otherwise, paths that are referenced by those store objects will also be included.
+	ExcludeReferences bool `json:"excludeReferences"`
+}
+
 // Nullable wraps a type to permit a null JSON serialization.
 // The zero value is null.
 type Nullable[T any] struct {

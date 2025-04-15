@@ -10,7 +10,8 @@ require (
 	github.com/spf13/pflag v1.0.5
 	go4.org v0.0.0-20230225012048-214862532bf5
 	golang.org/x/sync v0.12.0
-	golang.org/x/sys v0.28.0
+	golang.org/x/sys v0.32.0
+	golang.org/x/term v0.31.0
 	zombiezen.com/go/bass v0.0.0-20230823162859-0399f01327dd
 	zombiezen.com/go/batchio v0.0.0-20230820161343-02ff90ec9384
 	zombiezen.com/go/log v1.1.0

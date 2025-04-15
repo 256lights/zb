@@ -7,10 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"sync"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
@@ -40,6 +44,7 @@ func newStoreObjectCommand(g *globalConfig) *cobra.Command {
 	}
 	c.AddCommand(
 		newStoreObjectInfoCommand(g),
+		newStoreObjectExportCommand(g),
 	)
 	return c
 }
@@ -145,3 +150,88 @@ func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectI
 
 	return nil
 }
+
+type storeObjectExportOptions struct {
+	paths             []string
+	includeReferences bool
+	output            io.WriteCloser
+}
+
+func newStoreObjectExportCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:                   "export [options] PATH [...]",
+		Short:                 "export one or more store objects",
+		DisableFlagsInUseLine: true,
+		Args:                  cobra.MinimumNArgs(1),
+		SilenceErrors:         true,
+		SilenceUsage:          true,
+	}
+	opts := new(storeObjectExportOptions)
+	c.Flags().BoolVar(&opts.includeReferences, "references", true, "include referenced store objects")
+	outputPath := c.Flags().StringP("output", "o", "", "output `file`")
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		switch {
+		case *outputPath == "" && term.IsTerminal(int(os.Stdout.Fd())):
+			return errors.New("refusing to send binary export to stdout (a tty). Pass --output=- to override.")
+		case *outputPath == "" || *outputPath == "*":
+			opts.output = nopWriteCloser{os.Stdout}
+		default:
+			var err error
+			opts.output, err = os.Create(*outputPath)
+			if err != nil {
+				return err
+			}
+		}
+
+		opts.paths = args
+		return runStoreObjectExport(cmd.Context(), g, opts)
+	}
+	return c
+}
+
+func runStoreObjectExport(ctx context.Context, g *globalConfig, opts *storeObjectExportOptions) error {
+	closeFunc := sync.OnceValue(opts.output.Close)
+	defer closeFunc()
+
+	toOutput := zbstorerpc.ImportFunc(func(header jsonrpc.Header, body io.Reader) error {
+		return zbstore.ReceiveExport(nopReceiver{}, io.TeeReader(body, opts.output))
+	})
+	storeClient, waitStoreClient := g.storeClient(&zbstorerpc.CodecOptions{
+		Importer: toOutput,
+	})
+	defer func() {
+		storeClient.Close()
+		waitStoreClient()
+	}()
+
+	req := &zbstorerpc.ExportRequest{
+		Paths:             make([]zbstore.Path, len(opts.paths)),
+		ExcludeReferences: !opts.includeReferences,
+	}
+	for i, p := range opts.paths {
+		var err error
+		req.Paths[i], err = zbstore.ParsePath(p)
+		if err != nil {
+			return err
+		}
+	}
+	if err := jsonrpc.Do(ctx, storeClient, zbstorerpc.ExportMethod, nil, req); err != nil {
+		return err
+	}
+
+	// The export message is sent before the RPC response, so if we received the response,
+	// the export is complete.
+	if err := closeFunc(); err != nil {
+		return err
+	}
+	return nil
+}
+
+type nopReceiver struct{}
+
+func (nopReceiver) Write(p []byte) (n int, err error)         { return len(p), nil }
+func (nopReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {}
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }

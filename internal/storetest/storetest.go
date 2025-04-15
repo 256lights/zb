@@ -91,43 +91,55 @@ func exportFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data 
 	return p, nil
 }
 
+// SourceExportOptions is the set of common arguments to [ExportSourceFile], [ExportSourceDir], and [ExportSourceNAR].
+type SourceExportOptions struct {
+	Name       string
+	Directory  zbstore.Directory
+	References zbstore.References
+
+	// TempDigest is the placeholder digest used in the source's content for self references.
+	// TempDigest may be empty.
+	TempDigest string
+}
+
 // ExportSourceFile writes a file with the given content to the exporter.
-func ExportSourceFile(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name string, data []byte, refs zbstore.References) (zbstore.Path, zbstore.ContentAddress, error) {
+func ExportSourceFile(exp *zbstore.Exporter, data []byte, opts SourceExportOptions) (zbstore.Path, zbstore.ContentAddress, error) {
 	narBuffer := new(bytes.Buffer)
 	if err := SingleFileNAR(narBuffer, data); err != nil {
 		return "", zbstore.ContentAddress{}, err
 	}
-	return exportSource(exp, dir, tempDigest, name, narBuffer.Bytes(), refs)
+	return ExportSourceNAR(exp, narBuffer.Bytes(), opts)
 }
 
 // ExportSourceDir writes the given filesystem to the exporter.
-func ExportSourceDir(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name string, fsys fs.FS, refs zbstore.References) (zbstore.Path, zbstore.ContentAddress, error) {
+func ExportSourceDir(exp *zbstore.Exporter, fsys fs.FS, opts SourceExportOptions) (zbstore.Path, zbstore.ContentAddress, error) {
 	narBuffer := new(bytes.Buffer)
 	if err := new(nar.Dumper).Dump(narBuffer, fsys, "."); err != nil {
 		return "", zbstore.ContentAddress{}, err
 	}
-	return exportSource(exp, dir, tempDigest, name, narBuffer.Bytes(), refs)
+	return ExportSourceNAR(exp, narBuffer.Bytes(), opts)
 }
 
-func exportSource(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name string, narBytes []byte, refs zbstore.References) (zbstore.Path, zbstore.ContentAddress, error) {
-	if !refs.Self {
-		tempDigest = ""
+// ExportSourceNAR writes narBytes to the exporter.
+func ExportSourceNAR(exp *zbstore.Exporter, narBytes []byte, opts SourceExportOptions) (zbstore.Path, zbstore.ContentAddress, error) {
+	if !opts.References.Self {
+		opts.TempDigest = ""
 	}
-	refs = trimRefs(narBytes, refs)
+	opts.References = trimRefs(narBytes, opts.References)
 
-	ca, offsets, err := zbstore.SourceSHA256ContentAddress(tempDigest, bytes.NewReader(narBytes))
+	ca, offsets, err := zbstore.SourceSHA256ContentAddress(opts.TempDigest, bytes.NewReader(narBytes))
 	if err != nil {
 		return "", zbstore.ContentAddress{}, err
 	}
-	p, err := zbstore.FixedCAOutputPath(dir, name, ca, refs)
+	p, err := zbstore.FixedCAOutputPath(opts.Directory, opts.Name, ca, opts.References)
 	if err != nil {
 		return "", ca, err
 	}
 
 	// Rewrite NAR in-place.
 	newDigest := p.Digest()
-	if tempDigest != "" && len(tempDigest) != len(newDigest) {
-		return p, ca, fmt.Errorf("export source %s: temporary digest %q is wrong size (expected %d)", p, tempDigest, len(newDigest))
+	if opts.TempDigest != "" && len(opts.TempDigest) != len(newDigest) {
+		return p, ca, fmt.Errorf("export source %s: temporary digest %q is wrong size (expected %d)", p, opts.TempDigest, len(newDigest))
 	}
 	for _, off := range offsets {
 		copy(narBytes[off:int(off)+len(newDigest)], newDigest)
@@ -139,7 +151,7 @@ func exportSource(exp *zbstore.Exporter, dir zbstore.Directory, tempDigest, name
 	err = exp.Trailer(&zbstore.ExportTrailer{
 		StorePath:      p,
 		ContentAddress: ca,
-		References:     *refs.ToSet(p),
+		References:     *opts.References.ToSet(p),
 	})
 	if err != nil {
 		return p, ca, fmt.Errorf("export source %s: %v", p, err)

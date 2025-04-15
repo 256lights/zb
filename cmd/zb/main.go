@@ -34,14 +34,14 @@ type globalConfig struct {
 	cacheDB     string
 }
 
-func (g *globalConfig) storeClient(receiver zbstore.NARReceiver) (_ *jsonrpc.Client, wait func()) {
+func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) (_ *jsonrpc.Client, wait func()) {
 	var wg sync.WaitGroup
 	c := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
 		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", g.storeSocket)
 		if err != nil {
 			return nil, err
 		}
-		return zbstorerpc.NewCodec(conn, receiver), nil
+		return zbstorerpc.NewCodec(conn, opts), nil
 	})
 	return c, wg.Wait
 }
@@ -312,7 +312,7 @@ func (store *rpcStore) Import(ctx context.Context, r io.Reader) error {
 	if !ok {
 		return fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
 	}
-	return codec.Export(r)
+	return codec.Export(nil, r)
 }
 
 func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
