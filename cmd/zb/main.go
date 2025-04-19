@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/signal"
@@ -303,16 +304,7 @@ func (store *rpcStore) Exists(ctx context.Context, path string) (bool, error) {
 }
 
 func (store *rpcStore) Import(ctx context.Context, r io.Reader) error {
-	generic, releaseConn, err := store.client.Codec(ctx)
-	if err != nil {
-		return err
-	}
-	defer releaseConn()
-	codec, ok := generic.(*zbstorerpc.Codec)
-	if !ok {
-		return fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
-	}
-	return codec.Export(nil, r)
+	return importToStore(ctx, store.client, r, -1)
 }
 
 func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
@@ -473,6 +465,48 @@ func readLog(ctx context.Context, storeClient jsonrpc.Handler, req *zbstorerpc.R
 		return payload, io.EOF
 	}
 	return payload, nil
+}
+
+// openInputFile opens a file for reading using [os.Open].
+// If name is "-", then it returns [os.Stdin].
+func openInputFile(name string) (fs.File, error) {
+	if name == "-" {
+		return stdinInputFile{}, nil
+	}
+	return os.Open(name)
+}
+
+type stdinInputFile struct{}
+
+func (stdinInputFile) Read(p []byte) (int, error) { return os.Stdin.Read(p) }
+func (stdinInputFile) Stat() (fs.FileInfo, error) { return os.Stdin.Stat() }
+func (stdinInputFile) Close() error               { return nil }
+
+func inputFileName(name string) string {
+	if name == "-" {
+		return "stdin"
+	}
+	return name
+}
+
+// openOutputFile opens a file for writing using [os.Create].
+// If name is "-", then it returns [os.Stdout].
+func openOutputFile(name string) (io.WriteCloser, error) {
+	if name == "-" {
+		return nopWriteCloser{os.Stdout}, nil
+	}
+	return os.Create(name)
+}
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
+
+func outputFileName(name string) string {
+	if name == "-" {
+		return "stdout"
+	}
+	return name
 }
 
 // defaultVarDir returns "/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
