@@ -59,18 +59,18 @@ end
 ---containing the binaries for a set of packages.
 ---@param pkgs derivation[]
 ---@return string # colon-separated paths
-function mkBinPath(pkgs)
+function makeBinPath(pkgs)
   return makeSearchPathOutput("out", "bin", pkgs)
 end
 
 ---@param pkgs derivation[]
 ---@return string
-function mkIncludePath(pkgs)
+function makeIncludePath(pkgs)
   return makeSearchPathOutput("out", "include", pkgs)
 end
 
 ---@param pkgs derivation[]
 ---@return string
-function mkLibraryPath(pkgs)
+function makeLibraryPath(pkgs)
   return makeSearchPathOutput("out", "lib", pkgs)
 end

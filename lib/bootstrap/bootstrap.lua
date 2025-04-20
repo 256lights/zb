@@ -145,7 +145,7 @@ do
     pname = pname;
     version = version;
 
-    PATH = mkBinPath { stage0.stage0, boot.simple_patch, boot.mes };
+    PATH = makeBinPath { stage0.stage0, boot.simple_patch, boot.mes };
     M2LIBC_PATH = stage0.M2libc;
     MES_PKG = "mes-0.26";
     MES_PREFIX = boot.mes;
@@ -203,7 +203,7 @@ do
     version = version;
 
     pkg = pname.."-"..version;
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.tcc["0.9.26"],
       boot.simple_patch,
       stage0.stage0,
@@ -268,7 +268,7 @@ do
     version = version;
 
     pkg = pname.."-"..version;
-    PATH = mkBinPath { boot.tcc["0.9.27-pass1"], boot.simple_patch, stage0.stage0 };
+    PATH = makeBinPath { boot.tcc["0.9.27-pass1"], boot.simple_patch, stage0.stage0 };
     INCDIR = boot.tcc["0.9.27-pass1"].INCDIR;
     tcc = boot.tcc["0.9.27-pass1"];
 
@@ -314,7 +314,7 @@ do
     version = version;
 
     pkg = pname.."-"..version;
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.make["3.82-pass1"],
       boot.tcc["0.9.27-pass1"],
       boot.simple_patch,
@@ -363,7 +363,7 @@ do
     version = version;
 
     pkg = pname.."-"..version;
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.patch["2.5.9"],
       boot.make["3.82-pass1"],
       boot.tcc["0.9.27-pass1"],
@@ -415,7 +415,7 @@ do
     version = version;
 
     pkg = pname.."-"..version;
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.gzip["1.2.4"],
       boot.patch["2.5.9"],
       boot.make["3.82-pass1"],
@@ -468,7 +468,7 @@ do
     version = version;
 
     pkg = pname.."-"..version;
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.tar["1.12"],
       boot.gzip["1.2.4"],
       boot.patch["2.5.9"],
@@ -519,7 +519,7 @@ do
     version = bzip2_version;
 
     pkg = pname.."-"..bzip2_version;
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.tar["1.12"],
       boot.gzip["1.2.4"],
       boot.patch["2.5.9"],
@@ -572,7 +572,7 @@ do
     version = version;
 
     pkg = pname.."-"..version;
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.bzip2.pass1,
       boot.sed["4.0.9-pass1"],
       boot.tar["1.12"],
@@ -633,7 +633,7 @@ do
     version = version;
 
     pkg = pname.."-"..version;
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.coreutils["5.0-pass1"],
       boot.sed["4.0.9-pass1"],
       boot.tar["1.12"],
@@ -683,7 +683,7 @@ do
     version = version;
 
     pkg = pname.."-"..version;
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.byacc,
       boot.coreutils["5.0-pass1"],
       boot.sed["4.0.9-pass1"],
@@ -808,7 +808,7 @@ do
     version = "0.9.27";
     revision = 1;
 
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.bash["2.05b-pass1"],
       boot.byacc,
       boot.coreutils["5.0-pass1"],
@@ -841,7 +841,7 @@ boot.musl["1.1.24-pass1"] = bashStep {
   version = "1.1.24";
   revision = 0;
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.tcc["0.9.27-pass2"],
     boot.bash["2.05b-pass1"],
     boot.byacc,
@@ -866,7 +866,7 @@ do
     version = "0.9.27";
     revision = 2;
 
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.bash["2.05b-pass1"],
       boot.byacc,
       boot.coreutils["5.0-pass1"],
@@ -891,7 +891,7 @@ boot.musl["1.1.24-pass2"] = bashStep {
   version = "1.1.24";
   revision = 1;
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.tcc["0.9.27-pass3"],
     boot.bash["2.05b-pass1"],
     boot.byacc,
@@ -916,7 +916,7 @@ do
     version = "0.9.27";
     revision = 3;
 
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.bash["2.05b-pass1"],
       boot.byacc,
       boot.coreutils["5.0-pass1"],
@@ -941,7 +941,7 @@ boot.sed["4.0.9-pass2"] = bashStep {
   version = "4.0.9";
   revision = 1;
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.tcc["0.9.27-pass4"],
     boot.bash["2.05b-pass1"],
     boot.byacc,
@@ -962,7 +962,7 @@ boot.bzip2.pass2 = bashStep {
   version = bzip2_version;
   revision = 1;
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.tcc["0.9.27-pass4"],
     boot.bash["2.05b-pass1"],
     boot.coreutils["5.0-pass1"],
@@ -982,7 +982,7 @@ boot.m4["1.4.7"] = bashStep {
   pname = "m4";
   version = "1.4.7";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.tcc["0.9.27-pass4"],
     boot.bash["2.05b-pass1"],
     boot.coreutils["5.0-pass1"],
@@ -1007,7 +1007,7 @@ local heirloom_devtools = bashStep {
   pname = "heirloom-devtools";
   version = "070527";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.m4["1.4.7"],
     boot.tcc["0.9.27-pass4"],
     boot.bash["2.05b-pass1"],
@@ -1035,7 +1035,7 @@ boot.flex["2.5.11"] = bashStep {
   pname = "flex";
   version = "2.5.11";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     heirloom_devtools,
     boot.byacc,
     boot.m4["1.4.7"],
@@ -1064,7 +1064,7 @@ boot.flex["2.6.4"] = bashStep {
   pname = "flex";
   version = "2.6.4";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.flex["2.5.11"],
     boot.byacc,
     boot.m4["1.4.7"],
@@ -1105,7 +1105,7 @@ do
 
       m4 = boot.m4["1.4.7"];
 
-      PATH = mkBinPath {
+      PATH = makeBinPath {
         yacc,
         boot.flex["2.6.4"],
         boot.m4["1.4.7"],
@@ -1132,7 +1132,7 @@ boot.grep["2.4"] = bashStep {
   pname = "grep";
   version = "2.4";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.bison["3.4.1"],
     boot.flex["2.6.4"],
     boot.m4["1.4.7"],
@@ -1161,7 +1161,7 @@ boot.diffutils["2.7"] = bashStep {
   pname = "diffutils";
   version = "2.7";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.grep["2.4"],
     boot.bison["3.4.1"],
     boot.flex["2.6.4"],
@@ -1191,7 +1191,7 @@ boot.coreutils["5.0-pass2"] = bashStep {
   version = "5.0";
   revision = 1;
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.diffutils["2.7"],
     boot.grep["2.4"],
     boot.bison["3.4.1"],
@@ -1216,7 +1216,7 @@ boot.coreutils["6.10"] = bashStep {
   pname = "coreutils";
   version = "6.10";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.diffutils["2.7"],
     boot.grep["2.4"],
     boot.bison["3.4.1"],
@@ -1247,7 +1247,7 @@ boot.gawk["3.0.4"] = bashStep {
   pname = "gawk";
   version = "3.0.4";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.diffutils["2.7"],
     boot.grep["2.4"],
     boot.bison["3.4.1"],
@@ -1336,7 +1336,7 @@ do
       version = src.version;
       pkg = src.pkg;
 
-      PATH = mkBinPath(pathDrvs);
+      PATH = makeBinPath(pathDrvs);
 
       musl = boot.musl["1.1.24-pass2"];
       sed = sed;
@@ -1358,7 +1358,7 @@ boot.autoconf["2.52"] = bashStep {
   pname = "autoconf";
   version = "2.52";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.perl["5.6.2"],
     boot.gawk["3.0.4"],
     boot.diffutils["2.7"],
@@ -1401,7 +1401,7 @@ do
     pname = pname;
     version = version;
 
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.autoconf["2.52"],
       perl,
       boot.gawk["3.0.4"],
@@ -1431,7 +1431,7 @@ do
     version = version;
     revision = 1;
 
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       pass1,
       boot.autoconf["2.52"],
       perl,
@@ -1463,7 +1463,7 @@ boot.autoconf["2.53"] = bashStep {
   pname = "autoconf";
   version = "2.53";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.automake["1.6.3"],
     boot.autoconf["2.52"],
     boot.perl["5.6.2"],
@@ -1498,7 +1498,7 @@ boot.automake["1.7"] = bashStep {
   pname = "automake";
   version = "1.7";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.automake["1.6.3"],
     boot.autoconf["2.53"],
     boot.perl["5.6.2"],
@@ -1533,7 +1533,7 @@ boot.autoconf["2.54"] = bashStep {
   pname = "autoconf";
   version = "2.54";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.automake["1.7"],
     boot.autoconf["2.53"],
     boot.perl["5.6.2"],
@@ -1568,7 +1568,7 @@ boot.autoconf["2.55"] = bashStep {
   pname = "autoconf";
   version = "2.55";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.automake["1.7"],
     boot.autoconf["2.54"],
     boot.perl["5.6.2"],
@@ -1603,7 +1603,7 @@ boot.automake["1.7.8"] = bashStep {
   pname = "automake";
   version = "1.7.8";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.automake["1.7"],
     boot.autoconf["2.55"],
     boot.perl["5.6.2"],
@@ -1638,7 +1638,7 @@ boot.autoconf["2.57"] = bashStep {
   pname = "autoconf";
   version = "2.57";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.automake["1.7.8"],
     boot.autoconf["2.55"],
     boot.perl["5.6.2"],
@@ -1673,7 +1673,7 @@ boot.autoconf["2.59"] = bashStep {
   pname = "autoconf";
   version = "2.59";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.automake["1.7.8"],
     boot.autoconf["2.57"],
     boot.perl["5.6.2"],
@@ -1708,7 +1708,7 @@ boot.automake["1.8.5"] = bashStep {
   pname = "automake";
   version = "1.8.5";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.automake["1.7.8"],
     boot.autoconf["2.59"],
     boot.perl["5.6.2"],
@@ -1743,7 +1743,7 @@ boot.help2man = bashStep {
   pname = "help2man";
   version = "1.36.4";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.automake["1.8.5"],
     boot.autoconf["2.59"],
     boot.perl["5.6.2"],
@@ -1778,7 +1778,7 @@ boot.autoconf["2.61"] = bashStep {
   pname = "autoconf";
   version = "2.61";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.help2man,
     boot.automake["1.8.5"],
     boot.autoconf["2.59"],
@@ -1814,7 +1814,7 @@ boot.automake["1.9.6"] = bashStep {
   pname = "automake";
   version = "1.9.6";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.help2man,
     boot.automake["1.8.5"],
     boot.autoconf["2.61"],
@@ -1850,7 +1850,7 @@ boot.automake["1.10.3"] = bashStep {
   pname = "automake";
   version = "1.10.3";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.help2man,
     boot.automake["1.9.6"],
     boot.autoconf["2.61"],
@@ -1886,7 +1886,7 @@ boot.autoconf["2.64"] = bashStep {
   pname = "autoconf";
   version = "2.64";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.help2man,
     boot.automake["1.10.3"],
     boot.autoconf["2.61"],
@@ -1922,7 +1922,7 @@ boot.automake["1.11.2"] = bashStep {
   pname = "automake";
   version = "1.11.2";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.help2man,
     boot.automake["1.10.3"],
     boot.autoconf["2.64"],
@@ -1958,7 +1958,7 @@ boot.autoconf["2.69"] = bashStep {
   pname = "autoconf";
   version = "2.69";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.help2man,
     boot.automake["1.11.2"],
     boot.autoconf["2.64"],
@@ -1995,7 +1995,7 @@ boot.libtool["2.2.4"] = bashStep {
   pname = "libtool";
   version = "2.2.4";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.help2man,
     boot.automake["1.10.3"], -- Deliberately an older version.
     boot.autoconf["2.61"],   -- Deliberately an older version.
@@ -2031,7 +2031,7 @@ boot.automake["1.15.1"] = bashStep {
   pname = "automake";
   version = "1.15.1";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.libtool["2.2.4"],
     boot.help2man,
     boot.automake["1.11.2"],
@@ -2069,7 +2069,7 @@ boot.binutils["2.30"] = bashStep {
   pname = "binutils";
   version = "2.30";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.libtool["2.2.4"],
     boot.help2man,
     boot.automake["1.11.2"], -- Deliberately using an older version.
@@ -2107,7 +2107,7 @@ boot.musl["1.1.24-pass3"] = bashStep {
   version = "1.1.24";
   revision = 2;
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.binutils["2.30"],
     boot.libtool["2.2.4"],
     boot.help2man,
@@ -2145,7 +2145,7 @@ do
     version = "0.9.27";
     revision = 4;
 
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.binutils["2.30"],
       boot.libtool["2.2.4"],
       tcc,
@@ -2182,7 +2182,7 @@ boot.gcc["4.0.4-pass1"] = bashStep {
   pname = "gcc";
   version = "4.0.4";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.binutils["2.30"],
     boot.libtool["2.2.4"],
     boot.help2man,
@@ -2222,7 +2222,7 @@ boot.findutils = bashStep {
   pname = "findutils";
   version = "4.2.33";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.binutils["2.30"],
     boot.libtool["2.2.4"],
     boot.help2man,
@@ -2268,7 +2268,7 @@ boot.musl["1.2.4-pass1"] = bashStep {
   pname = "musl";
   version = "1.2.4";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.gcc["4.0.4-pass1"],
     boot.binutils["2.30"],
     boot.libtool["2.2.4"],
@@ -2299,7 +2299,7 @@ boot.linux_headers = bashStep {
   version = "4.14.336";
   pkg = "linux-headers-4.14.341-openela";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.findutils,
     boot.gcc["4.0.4-pass1"],
     boot.binutils["2.30"],
@@ -2322,10 +2322,10 @@ boot.linux_headers = bashStep {
     boot.make["3.82-pass1"],
     stage0.stage0,
   };
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass1"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass1"],
   };
 
@@ -2342,7 +2342,7 @@ boot.gcc["4.0.4-pass2"] = bashStep {
   version = "4.0.4";
   revision = 1;
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.findutils,
     boot.gcc["4.0.4-pass1"],
     boot.binutils["2.30"],
@@ -2370,11 +2370,11 @@ boot.gcc["4.0.4-pass2"] = bashStep {
     stage0.stage0,
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass1"],
     boot.linux_headers,
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass1"],
   };
 
@@ -2389,7 +2389,7 @@ boot.musl["1.2.4-pass2"] = bashStep {
   version = "1.2.4";
   revision = 1;
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
     boot.libtool["2.2.4"],
@@ -2412,10 +2412,10 @@ boot.musl["1.2.4-pass2"] = bashStep {
     stage0.stage0,
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass1"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass1"],
   };
 
@@ -2426,7 +2426,7 @@ boot.bash["5.2.15"] = bashStep {
   pname = "bash";
   version = "5.2.15";
 
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
@@ -2453,10 +2453,10 @@ boot.bash["5.2.15"] = bashStep {
     stage0.stage0,
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
 
@@ -2473,7 +2473,7 @@ boot.xz = bashStep {
   version = "5.4.1";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
@@ -2499,10 +2499,10 @@ boot.xz = bashStep {
     boot.make["3.82-pass1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
 
@@ -2519,7 +2519,7 @@ boot.file = bashStep {
   version = "5.44";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
@@ -2545,10 +2545,10 @@ boot.file = bashStep {
     boot.make["3.82-pass1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
 
@@ -2565,7 +2565,7 @@ boot.libtool["2.4.7"] = bashStep {
   version = "2.4.7";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
@@ -2592,10 +2592,10 @@ boot.libtool["2.4.7"] = bashStep {
     boot.make["3.82-pass1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
 
@@ -2616,7 +2616,7 @@ boot.tar["1.34"] = bashStep {
   version = "1.34";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
@@ -2643,10 +2643,10 @@ boot.tar["1.34"] = bashStep {
     boot.make["3.82-pass1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
 
@@ -2667,7 +2667,7 @@ boot.coreutils["9.4"] = bashStep {
   version = "9.4";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
@@ -2694,10 +2694,10 @@ boot.coreutils["9.4"] = bashStep {
     boot.make["3.82-pass1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
 
@@ -2793,7 +2793,7 @@ boot.pkg_config = bashStep {
   version = "0.29.2";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
     boot.binutils["2.30"],
@@ -2819,10 +2819,10 @@ boot.pkg_config = bashStep {
     boot.make["3.82-pass1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -2842,7 +2842,7 @@ boot.make["4.2.1"] = bashStep {
   version = "4.2.1";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -2869,10 +2869,10 @@ boot.make["4.2.1"] = bashStep {
     boot.make["3.82-pass1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -2893,7 +2893,7 @@ boot.gmp = bashStep {
   version = "6.2.1";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -2920,10 +2920,10 @@ boot.gmp = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -2944,7 +2944,7 @@ boot.autoconf_archive = bashStep {
   version = "2021.02.19";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -2971,10 +2971,10 @@ boot.autoconf_archive = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -2995,7 +2995,7 @@ boot.mpfr = bashStep {
   version = "4.1.0";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3022,11 +3022,11 @@ boot.mpfr = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
     boot.gmp,
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
     boot.gmp,
   };
@@ -3052,7 +3052,7 @@ boot.mpc = bashStep {
   version = "1.2.1";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3079,12 +3079,12 @@ boot.mpc = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
     boot.gmp,
     boot.mpfr,
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
     boot.gmp,
     boot.mpfr,
@@ -3112,7 +3112,7 @@ boot.flex["2.5.33"] = bashStep {
   version = "2.5.33";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3139,10 +3139,10 @@ boot.flex["2.5.33"] = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3164,7 +3164,7 @@ boot.bison["2.3"] = bashStep {
   version = "2.3";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3191,10 +3191,10 @@ boot.bison["2.3"] = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3220,7 +3220,7 @@ boot.bison["3.4.2"] = bashStep {
   version = "3.4.2";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3247,10 +3247,10 @@ boot.bison["3.4.2"] = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3276,7 +3276,7 @@ local perl_5_10_1 = bashStep {
   version = "5.10.1";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3303,10 +3303,10 @@ local perl_5_10_1 = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3328,7 +3328,7 @@ boot.dist = bashStep {
   version = "3.5-236";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3354,10 +3354,10 @@ boot.dist = bashStep {
   };
 
   PRIVLIB = perl_5_10_1.."/lib/perl5/5.10.1";
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3379,7 +3379,7 @@ boot.perl["5.32.1"] = bashStep {
   version = "5.32.1";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.dist,
     boot.pkg_config,
     boot.findutils,
@@ -3407,10 +3407,10 @@ boot.perl["5.32.1"] = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3436,7 +3436,7 @@ boot.libarchive = bashStep {
   version = "3.5.2";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3463,10 +3463,10 @@ boot.libarchive = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3488,7 +3488,7 @@ boot.openssl = bashStep {
   version = "3.0.13";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3515,11 +3515,11 @@ boot.openssl = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
     boot.linux_headers,
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3565,7 +3565,7 @@ do
     system = "x86_64-linux";
 
     builder = shell;
-    PATH = mkBinPath {
+    PATH = makeBinPath {
       boot.pkg_config,
       boot.perl["5.32.1"],
       boot.gawk["3.0.4"],
@@ -3594,7 +3594,7 @@ boot.ca_certificates = bashStep {
   version = "3.99";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     mk_ca_bundle,
     boot.pkg_config,
     boot.findutils,
@@ -3622,10 +3622,10 @@ boot.ca_certificates = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3648,7 +3648,7 @@ boot.curl = bashStep {
   revision = 1;
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3675,10 +3675,10 @@ boot.curl = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3701,7 +3701,7 @@ boot.zlib = bashStep {
   version = "1.2.13";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3728,10 +3728,10 @@ boot.zlib = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3753,7 +3753,7 @@ boot.automake["1.16.3"] = bashStep {
   version = "1.16.3";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3780,10 +3780,10 @@ boot.automake["1.16.3"] = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3805,7 +3805,7 @@ boot.autoconf["2.71"] = bashStep {
   version = "2.71";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3832,10 +3832,10 @@ boot.autoconf["2.71"] = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3857,7 +3857,7 @@ boot.patch["2.7.6"] = bashStep {
   version = "2.7.6";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3884,10 +3884,10 @@ boot.patch["2.7.6"] = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3913,7 +3913,7 @@ boot.gettext = bashStep {
   version = "0.21";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.pkg_config,
     boot.findutils,
     boot.gcc["4.0.4-pass2"],
@@ -3940,10 +3940,10 @@ boot.gettext = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
@@ -3969,7 +3969,7 @@ boot.texinfo = bashStep {
   version = "6.7";
 
   builder = boot.bash["5.2.15"].."/bin/bash";
-  PATH = mkBinPath {
+  PATH = makeBinPath {
     boot.gettext,
     boot.pkg_config,
     boot.findutils,
@@ -3997,10 +3997,10 @@ boot.texinfo = bashStep {
     boot.make["4.2.1"],
   };
 
-  C_INCLUDE_PATH = mkIncludePath {
+  C_INCLUDE_PATH = makeIncludePath {
     boot.musl["1.2.4-pass2"],
   };
-  LIBRARY_PATH = mkLibraryPath {
+  LIBRARY_PATH = makeLibraryPath {
     boot.musl["1.2.4-pass2"],
   };
   ACLOCAL_PATH = makeSearchPathOutput("out", "share/aclocal", {
