@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"zb.256lights.llc/pkg/internal/lua"
+	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -165,6 +166,7 @@ func (eval *Eval) initZygote() error {
 		"import":     eval.importFunction,
 		"toFile":     eval.toFileFunction,
 		"path":       eval.pathFunction,
+		"storePath":  eval.storePathFunction,
 	}
 	if err := lua.SetPureFunctions(ctx, l, 0, extraBaseFunctions); err != nil {
 		return err
@@ -279,6 +281,27 @@ func (eval *Eval) openOS(ctx context.Context, l *lua.State) (int, error) {
 			return 1, nil
 		},
 	})
+	return 1, nil
+}
+
+func (eval *Eval) storePathFunction(ctx context.Context, l *lua.State) (int, error) {
+	rawPath, err := lua.CheckString(l, 1)
+	if err != nil {
+		return 0, err
+	}
+	path, _, err := eval.storeDir.ParsePath(rawPath)
+	if err != nil {
+		return 0, fmt.Errorf("%sstorePath: path %s is not under %s",
+			lua.Where(l, 1), lualex.Quote(rawPath), lualex.Quote(string(eval.storeDir)))
+	}
+	exists, err := eval.store.Exists(ctx, string(path))
+	if err != nil {
+		return 0, fmt.Errorf("%sstorePath: %v", lua.Where(l, 1), err)
+	}
+	if !exists {
+		return 0, fmt.Errorf("%sstorePath: %s does not exist", lua.Where(l, 1), path)
+	}
+	l.PushStringContext(rawPath, sets.New(contextValue{path: path}.String()))
 	return 1, nil
 }
 

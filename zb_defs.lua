@@ -36,6 +36,13 @@ function import(path) end
 ---@return string # store path of the copied file or directory
 function path(p) end
 
+---Adds a dependency on an existing store path.
+---If the store object named by the path does not exist in the store,
+---storePath raises an error.
+---@param path string
+---@return string
+function storePath(path) end
+
 ---Store a plain file in the store.
 ---@param name string
 ---@param s string File contents
