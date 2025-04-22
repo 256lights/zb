@@ -1,8 +1,27 @@
 with
-  "valid_objects" ("id") as (
+  "valid_objects"("id") as (
     select "id" from "objects"
     union
     select "referrer" from "reference_classes"
+  ),
+  "normalized_references"("referrer", "referrer_drv_hash", "referrer_output_name", "reference", "reference_drv_hash", "reference_output_name") as (
+    select
+      "referrer",
+      null,
+      null,
+      "reference",
+      null,
+      null
+    from "references"
+    union
+    select
+      "referrer",
+      "referrer_drv_hash",
+      "referrer_output_name",
+      "reference",
+      "reference_drv_hash",
+      "reference_output_name"
+    from "reference_classes"
   ),
   "closure"("path_id", "drv_hash_id", "output_name") as (
     select
@@ -23,18 +42,14 @@ with
       where "path" = :path
     union
       select
-        coalesce(rc."reference", r."reference"),
-        rc."reference_drv_hash",
-        rc."reference_output_name"
+        r."reference",
+        r."reference_drv_hash",
+        r."reference_output_name"
       from
-        "reference_classes" as rc
-        full join "references" as r on
-          (r."referrer", r."reference") = (rc."referrer", rc."reference") and
-          rc."reference_drv_hash" is null and
-          rc."reference_output_name" is null
-        join "closure" on
-          ("closure"."path_id", "closure"."drv_hash_id", "closure"."output_name") is
-            (coalesce(rc."referrer", r."referrer"), rc."referrer_drv_hash", rc."referrer_output_name")
+        "normalized_references" as r
+        join "closure" on "closure"."path_id" = r."referrer"
+      where
+        r."referrer" <> r."reference"
   )
 
 select
