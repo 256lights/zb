@@ -37,12 +37,17 @@ end
 ---to the specified `output` of each of the packages.
 ---@param output string
 ---@param subDir string
----@param paths derivation[]
+---@param paths (derivation|string)[]
 ---@return string
 function makeSearchPathOutput(output, subDir, paths)
   local parts = {}
   for i, x in ipairs(paths) do
-    local xout = x[output]
+    local xout
+    if type(x) == "string" then
+      xout = x
+    else
+      xout = x[output] or x.out
+    end
     if xout then
       if #parts > 0 then
         parts[#parts + 1] = ":"
@@ -66,7 +71,7 @@ end
 ---@param pkgs derivation[]
 ---@return string
 function makeIncludePath(pkgs)
-  return makeSearchPathOutput("out", "include", pkgs)
+  return makeSearchPathOutput("dev", "include", pkgs)
 end
 
 ---@param pkgs derivation[]
