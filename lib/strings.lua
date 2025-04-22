@@ -79,3 +79,39 @@ end
 function makeLibraryPath(pkgs)
   return makeSearchPathOutput("out", "lib", pkgs)
 end
+
+---@param name string
+---@return {name: string, version: string}
+local function parseDrvName(name)
+  local base, version = name:match("(.*)-([^a-zA-Z].*)")
+  return {
+    name = base or name;
+    version = version or "";
+  }
+end
+
+---Extracts the derivation's base name from the argument.
+---@param drvOrName derivation|string a derivation or a derivation's name field
+---@return string
+function getName(drvOrName)
+  local name
+  if type(drvOrName) == "string" then
+    name = drvOrName
+  else
+    name = drvOrName.name
+  end
+  return parseDrvName(name).name
+end
+
+---Extracts the derivation's version from the argument.
+---@param drvOrName derivation|string a derivation or a derivation's name field
+---@return string
+function getVersion(drvOrName)
+  local name
+  if type(drvOrName) == "string" then
+    name = drvOrName
+  else
+    name = drvOrName.name
+  end
+  return parseDrvName(name).version
+end
