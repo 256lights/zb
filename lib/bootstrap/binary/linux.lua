@@ -3,7 +3,7 @@
 
 local binutils <const> = import "../binutils.lua"
 local busybox <const> = import "../busybox.lua"
-local gcc <const> = import "../gcc.lua"
+local gcc <const> = import "../../packages/gcc/gcc.lua"
 local gmp <const> = import "../gmp.lua"
 local linux_headers <const> = import "../linux_headers.lua"
 local mpc <const> = import "../mpc.lua"
