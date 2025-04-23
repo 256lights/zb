@@ -1,0 +1,28 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+Fix broken logic reported in https://lists.gnu.org/archive/html/bug-bash/2022-10/msg00000.html
+Index: bash-5.2.15/m4/strtoimax.m4
+===================================================================
+--- bash-5.2.15.orig/m4/strtoimax.m4
++++ bash-5.2.15/m4/strtoimax.m4
+@@ -29,7 +29,7 @@ AC_CACHE_VAL(bash_cv_func_strtoimax,
+   fi
+ ])
+ AC_MSG_RESULT($bash_cv_func_strtoimax)
+-if test $bash_cv_func_strtoimax = yes; then
++if test $bash_cv_func_strtoimax = no; then
+ AC_LIBOBJ(strtoimax)
+ fi
+ ])
+Index: bash-5.2.15/configure
+===================================================================
+--- bash-5.2.15.orig/configure
++++ bash-5.2.15/configure
+@@ -20443,7 +20443,7 @@ fi
+ 
+ { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $bash_cv_func_strtoimax" >&5
+ printf "%s\n" "$bash_cv_func_strtoimax" >&6; }
+-if test $bash_cv_func_strtoimax = yes; then
++if test $bash_cv_func_strtoimax = no; then
+ case " $LIBOBJS " in
+   *" strtoimax.$ac_objext "* ) ;;
+   *) LIBOBJS="$LIBOBJS strtoimax.$ac_objext"
