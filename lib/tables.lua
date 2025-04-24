@@ -26,6 +26,14 @@ function map(f, list)
   return result
 end
 
+---Returns a shallow copy of t.
+---@generic K, V
+---@param t table<K, V>
+---@return table<K, V>
+function clone(t)
+  return map(function (x) return x end, t)
+end
+
 ---Copy the pairs from each argument into the first argument.
 ---@generic T: table
 ---@param t T
