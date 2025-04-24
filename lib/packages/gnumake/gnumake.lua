@@ -55,6 +55,8 @@ function module.makeBootstrap(args)
       args.bzip2,
     };
     LDFLAGS = { "-static" };
+    SOURCE_DATE_EPOCH = 0;
+    KBUILD_BUILD_TIMESTAMP = "@0";
   }
 end
 
