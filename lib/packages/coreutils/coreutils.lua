@@ -30,6 +30,8 @@ function module.new(makeDerivation, system, version)
     version = version;
     system = system;
     src = src;
+    -- stdbuf insists on creating a .so file, which fails. Disable it.
+    configureFlags = { "utils_cv_stdbuf_supported=no" };
   }
 end
 

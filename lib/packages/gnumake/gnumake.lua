@@ -54,7 +54,6 @@ function module.makeBootstrap(args)
       args.gnutar,
       args.bzip2,
     };
-    LDFLAGS = { "-static" };
     SOURCE_DATE_EPOCH = 0;
     KBUILD_BUILD_TIMESTAMP = "@0";
   }

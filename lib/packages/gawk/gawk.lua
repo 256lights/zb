@@ -30,6 +30,7 @@ function module.new(makeDerivation, system, version)
     version = version;
     system = system;
     src = src;
+    configureFlags = { "--disable-shared" };
   }
 end
 

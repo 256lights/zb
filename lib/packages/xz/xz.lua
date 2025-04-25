@@ -30,8 +30,7 @@ function module.new(makeDerivation, system, version)
     system = system;
     src = src;
 
-    -- TODO(someday): Allow dynamic linking and pass -static properly.
-    LDFLAGS = "--static";
+    -- TODO(someday): Allow dynamic linking.
     configureFlags = { "--disable-shared" };
   }
 end

@@ -68,10 +68,6 @@ function module.makeBootstrapDerivation(args)
   local gnumake = import("../packages/gnumake/gnumake.lua")[args.system].bootstrap
   local busybox = import("../bootstrap/seeds.lua")[args.system].busybox
   local bash = import("../packages/bash/bash.lua")[args.system].bootstrap
-  if not args.LDFLAGS then
-    args = tables.clone(args)
-    args.LDFLAGS = "-static"
-  end
   return makeDerivation(bash, { gcc, gnumake, bash, busybox }, args)
 end
 
