@@ -6,8 +6,8 @@ local busybox <const> = import "../busybox.lua"
 local gcc <const> = import "../../packages/gcc/gcc.lua"
 local gmp <const> = import "../../packages/gmp/gmp.lua"
 local linux_headers <const> = import "../linux_headers.lua"
-local mpc <const> = import "../mpc.lua"
-local mpfr <const> = import "../mpfr.lua"
+local mpc <const> = import "../../packages/libmpc/libmpc.lua"
+local mpfr <const> = import "../../packages/mpfr/mpfr.lua"
 local musl <const> = import "../musl.lua"
 
 local builderScript <const> = path "builder.sh"
@@ -71,6 +71,8 @@ local function forArchitecture(arch)
   local gccVersion <const> = "4.2.1"
   local muslVersion <const> = "1.2.4"
   local gmpVersion <const> = "6.2.1"
+  local mpcVersion <const> = "1.2.1"
+  local mpfrVersion <const> = "4.1.0"
 
   ---@param args {
   ---BUILD: string|nil,
@@ -98,8 +100,8 @@ local function forArchitecture(arch)
         gcc.tarballs[gccVersion],
         musl.tarballs[muslVersion],
         gmp.tarballs[gmpVersion],
-        mpc.tarball,
-        mpfr.tarball,
+        mpc.tarballs[mpcVersion],
+        mpfr.tarballs[mpfrVersion],
         configSub,
         configGuess,
       };
@@ -139,8 +141,8 @@ echo "OUTPUT = $out" >> config.mak
       GCC_VER = "..gccVersion.."\n\z
       MUSL_VER = "..muslVersion.."\n\z
       GMP_VER = "..gmpVersion.."\n\z
-      MPC_VER = "..mpc.version.."\n\z
-      MPFR_VER = "..mpfr.version.."\n\z
+      MPC_VER = "..mpcVersion.."\n\z
+      MPFR_VER = "..mpfrVersion.."\n\z
       MUSL_CONFIG = --disable-shared\n\z
       COMMON_CONFIG = --disable-shared\n"
     if args.BUILD then
