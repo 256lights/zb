@@ -8,7 +8,7 @@ local gmp <const> = import "../../packages/gmp/gmp.lua"
 local linux_headers <const> = import "../linux_headers.lua"
 local mpc <const> = import "../../packages/libmpc/libmpc.lua"
 local mpfr <const> = import "../../packages/mpfr/mpfr.lua"
-local musl <const> = import "../musl.lua"
+local musl <const> = import "../../packages/musl/musl.lua"
 
 local builderScript <const> = path "builder.sh"
 
