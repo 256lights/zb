@@ -4,7 +4,7 @@
 local binutils <const> = import "../binutils.lua"
 local busybox <const> = import "../busybox.lua"
 local gcc <const> = import "../../packages/gcc/gcc.lua"
-local gmp <const> = import "../gmp.lua"
+local gmp <const> = import "../../packages/gmp/gmp.lua"
 local linux_headers <const> = import "../linux_headers.lua"
 local mpc <const> = import "../mpc.lua"
 local mpfr <const> = import "../mpfr.lua"
@@ -70,6 +70,7 @@ local function forArchitecture(arch)
   local binutilsVersion <const> = "2.27"
   local gccVersion <const> = "4.2.1"
   local muslVersion <const> = "1.2.4"
+  local gmpVersion <const> = "6.2.1"
 
   ---@param args {
   ---BUILD: string|nil,
@@ -96,7 +97,7 @@ local function forArchitecture(arch)
         binutils.tarballs[binutilsVersion],
         gcc.tarballs[gccVersion],
         musl.tarballs[muslVersion],
-        gmp.tarball,
+        gmp.tarballs[gmpVersion],
         mpc.tarball,
         mpfr.tarball,
         configSub,
@@ -137,7 +138,7 @@ echo "OUTPUT = $out" >> config.mak
       BINUTILS_VER = "..binutilsVersion.."\n\z
       GCC_VER = "..gccVersion.."\n\z
       MUSL_VER = "..muslVersion.."\n\z
-      GMP_VER = "..gmp.version.."\n\z
+      GMP_VER = "..gmpVersion.."\n\z
       MPC_VER = "..mpc.version.."\n\z
       MPFR_VER = "..mpfr.version.."\n\z
       MUSL_CONFIG = --disable-shared\n\z
