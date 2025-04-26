@@ -7,6 +7,7 @@ package system
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -24,101 +25,37 @@ type System struct {
 // If Parse does not return an error,
 // it guarantees that all of the System's fields will be filled in.
 func Parse(s string) (System, error) {
-	parts := make([]string, 0, 4)
+	var parts [4]string
+	var numParts int
 	for part := range strings.SplitSeq(s, "-") {
-		if len(parts) == cap(parts) {
-			return System{}, fmt.Errorf("parse system %q: too many hyphen-separated components", s)
+		if numParts == cap(parts) {
+			return System{}, fmt.Errorf("parse system %q: trailing components after %s", s, parts[numParts-1])
 		}
-		parts = append(parts, part)
+		parts[numParts] = part
+		numParts++
 	}
-
-	var found [4]bool
-	for i, part := range parts {
-		found[i] = isKnown(i, part)
-	}
-
-	for i := range found {
-		if found[i] {
-			continue
-		}
-		for j := 0; j < len(parts); j++ {
-			if j < len(found) && found[j] {
-				continue
-			}
-			// Move the component to the target position,
-			// pushing any non-fixed components that are in the way to the right.
-			// This tends to give good results in the common cases of a forgotten vendor component
-			// or a wrongly positioned environment.
-			if isKnown(i, parts[j]) {
-				switch {
-				case i < j:
-					// Insert left, pushing the existing components to the right.
-					// For example, a-b-i386 -> i386-a-b when moving i386 to the front.
-					curr := parts[j]
-					parts[j] = ""
-					for k := i; curr != ""; k++ {
-						for k < len(found) && found[k] {
-							k++
-						}
-						curr, parts[k] = parts[k], curr
-					}
-				case i > j:
-					// Push right by inserting empty components
-					// until the component at j reaches the target position i.
-					// For example, pc-a -> -pc-a when moving pc to the second position.
-					for {
-						curr := ""
-						for k := j; k < len(parts); {
-							curr, parts[k] = parts[k], curr
-							if curr == "" {
-								break
-							}
-							k++
-							for k < len(found) && found[k] {
-								k++
-							}
-						}
-						if curr != "" {
-							parts = append(parts, curr)
-						}
-						j++
-						for j < len(found) && found[j] {
-							j++
-						}
-						if j >= i {
-							break
-						}
-					}
-				}
-				found[i] = true
-				break
-			}
+	isNonEmpty := func(s string) bool { return s != "" }
+	for i, part := range parts[:len(parts)-1] {
+		if (isCygwin(part) || isMinGW32(part)) && slices.ContainsFunc(parts[i+1:], isNonEmpty) {
+			return System{}, fmt.Errorf("parse system %q: trailing components after %s", s, parts[1])
 		}
 	}
-
-	if len(parts) > 4 {
-		return System{}, fmt.Errorf("parse system %q: trailing components after %s", s, parts[3])
-	}
-	if len(parts) < 4 {
-		parts = parts[:4]
-	}
-	// If "none" is in the middle component in a three-component triple,
-	// treat it as the OS instead of the vendor.
-	if found[0] && !found[1] && !found[2] && !found[3] && parts[1] == "none" && parts[2] == "" {
-		parts[1], parts[2] = parts[2], parts[1]
+	switch numParts {
+	case 1:
+		return System{}, fmt.Errorf("parse system %q: missing operating system", s)
+	case 2:
+		parts[1], parts[2] = "", parts[1]
+	case 3:
+		if OS(parts[1]).isKnown() || parts[1] == "none" {
+			parts[1], parts[2], parts[3] = "", parts[1], parts[2]
+		}
 	}
 
 	// Expand Cygwin/MinGW first, since that can trigger other implications.
 	if isCygwin(parts[2]) {
-		if parts[3] != "" {
-			return System{}, fmt.Errorf("parse system %q: trailing components after %s", s, parts[2])
-		}
 		parts[2] = "windows"
 		parts[3] = "cygnus"
 	} else if isMinGW32(parts[2]) {
-		if parts[3] != "" {
-			return System{}, fmt.Errorf("parse system %q: trailing components after %s", s, parts[2])
-		}
 		parts[2] = "windows"
 		parts[3] = "gnu"
 	}

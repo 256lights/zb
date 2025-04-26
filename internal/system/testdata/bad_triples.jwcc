@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 [
-  // More than 4 components should be a bust.
+  // More than 4 components should fail.
   "foo-bar-baz-quux-xyzzy",
   // If something comes after cygwin or mingw
   // (which both imply an environment),
@@ -11,4 +11,8 @@
   "x86_64-cygwin-cygnus",
   "x86_64-pc-mingw-gnu",
   "x86_64-mingw-gnu",
+  // Single components should fail.
+  "foo",
+  "linux",
+  "darwin",
 ]
