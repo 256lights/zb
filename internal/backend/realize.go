@@ -1666,12 +1666,28 @@ func canBuildLocally(drv *zbstore.Derivation) bool {
 	if err != nil {
 		return false
 	}
-	if host.OS != want.OS || host.ABI != want.ABI {
+
+	// If the OS/architecture pair matches exactly, don't bother with anything else.
+	if host.OS == want.OS && host.Arch == want.Arch {
+		return true
+	}
+
+	// Perform a fuzzy match on operating systems and architectures we know about.
+	sameOS := want.OS.IsMacOS() && host.OS.IsMacOS() ||
+		want.OS.IsLinux() && host.OS.IsLinux() ||
+		want.OS.IsWindows() && host.OS.IsWindows()
+	if !sameOS {
 		return false
 	}
-	return want.Arch == host.Arch ||
-		want.IsIntel32() && host.IsIntel64() ||
-		want.IsARM32() && host.IsARM64()
+	// TODO(someday): There's probably more subtlety to the ARM comparison.
+	sameFamily := want.Arch.IsX86() && host.Arch.IsX86() ||
+		want.Arch.IsARM() && host.Arch.IsARM() ||
+		want.Arch.IsRISCV() && host.Arch.IsRISCV()
+	if !sameFamily {
+		return false
+	}
+	return host.Arch.Is64Bit() && (want.Arch.Is64Bit() || want.Arch.Is32Bit()) ||
+		host.Arch.Is32Bit() && want.Arch.Is32Bit()
 }
 
 // tempPath generates a [zbstore.Path] that can be used as a temporary build path
