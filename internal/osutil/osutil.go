@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 )
 
 // MkdirPerm creates a new directory with the given permission bits (after umask).
@@ -80,14 +81,15 @@ const (
 	rootGID = 0
 )
 
-// MakePublicReadOnly removes any write permissions on the filesystem object at the given path
+// Freeze removes any write permissions on the filesystem object at the given path
 // and adds read permissions for all users.
 // If the path names a directory,
 // then this applies recursively to any filesystem objects in the directory.
+// If epoch is non-zero, the modification time of all files is set to epoch.
 //
 // If onError is not nil, it will be used to handle any errors encountered.
 // Its return value is handled in the same manner as in [io/fs.WalkDirFunc].
-func MakePublicReadOnly(path string, onError func(error) error) error {
+func Freeze(path string, epoch time.Time, onError func(error) error) error {
 	if onError == nil {
 		onError = func(err error) error { return err }
 	}
@@ -111,12 +113,24 @@ func MakePublicReadOnly(path string, onError func(error) error) error {
 			newMode |= 0o111 // +x
 		}
 		if err := os.Chmod(path, newMode); err != nil {
-			return onError(err)
+			if err = onError(err); err != nil {
+				return err
+			}
+		}
+
+		if !epoch.IsZero() {
+			if err := os.Chtimes(path, time.Time{}, epoch); err != nil {
+				if err = onError(err); err != nil {
+					return err
+				}
+			}
 		}
 
 		if IsRoot() {
 			if err := os.Chown(path, rootUID, rootGID); err != nil {
-				return onError(err)
+				if err = onError(err); err != nil {
+					return err
+				}
 			}
 		}
 

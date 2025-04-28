@@ -712,7 +712,7 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		return
 	}
 
-	makePublicReadOnly(ctx, realPath)
+	freeze(ctx, realPath)
 
 	log.Infof(ctx, "Imported %s", trailer.StorePath)
 }
@@ -848,11 +848,11 @@ func (r *NARReceiver) Cleanup(ctx context.Context) {
 	}
 }
 
-// makePublicReadOnly calls [osutil.MakePublicReadOnly]
+// freeze calls [osutil.Freeze]
 // and logs any errors instead of causing them to stop the operation.
-func makePublicReadOnly(ctx context.Context, path string) {
+func freeze(ctx context.Context, path string) {
 	log.Debugf(ctx, "Marking %s read-only...", path)
-	osutil.MakePublicReadOnly(path, func(err error) error {
+	osutil.Freeze(path, time.Unix(0, 0), func(err error) error {
 		// Log errors, but don't abort the chmod attempt.
 		// Subsequent use of this store object can still succeed,
 		// and we want to mark as many files read-only as possible.

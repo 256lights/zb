@@ -1350,7 +1350,7 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn,
 		err = fmt.Errorf("post-process %v: %v", outputPath, err)
 	}
 
-	makePublicReadOnly(ctx, realOutputPath)
+	freeze(ctx, realOutputPath)
 
 	return info, nil
 }
@@ -1424,7 +1424,7 @@ func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Co
 		return nil, fmt.Errorf("post-process %v: %v", buildPath, err)
 	}
 
-	makePublicReadOnly(ctx, realFinalPath)
+	freeze(ctx, realFinalPath)
 
 	return info, nil
 }
