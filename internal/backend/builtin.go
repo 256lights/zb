@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"zb.256lights.llc/pkg/internal/osutil"
+	"zb.256lights.llc/pkg/internal/useragent"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 )
@@ -70,6 +71,8 @@ func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string)
 	if err != nil {
 		return err
 	}
+	req.Header.Set("User-Agent", useragent.String)
+	req.Header.Set("Accept", "*/*")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
