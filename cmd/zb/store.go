@@ -12,11 +12,11 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"sync"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -192,8 +192,8 @@ func newStoreObjectExportCommand(g *globalConfig) *cobra.Command {
 }
 
 func runStoreObjectExport(ctx context.Context, g *globalConfig, opts *storeObjectExportOptions) error {
-	closeFunc := sync.OnceValue(opts.output.Close)
-	defer closeFunc()
+	closer := xio.CloseOnce(opts.output)
+	defer closer.Close()
 
 	toOutput := zbstorerpc.ImportFunc(func(header jsonrpc.Header, body io.Reader) error {
 		return zbstore.ReceiveExport(nopReceiver{}, io.TeeReader(body, opts.output))
@@ -223,7 +223,7 @@ func runStoreObjectExport(ctx context.Context, g *globalConfig, opts *storeObjec
 
 	// The export message is sent before the RPC response, so if we received the response,
 	// the export is complete.
-	if err := closeFunc(); err != nil {
+	if err := closer.Close(); err != nil {
 		return err
 	}
 	return nil

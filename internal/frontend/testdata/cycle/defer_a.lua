@@ -9,8 +9,9 @@ local x = {
 return setmetatable(x, {
   -- Accessing each number key calls the b function.
   __index = function(_, k)
-    if type(k) == 'number' then
-      return b(k)
+    local n = tonumber(k)
+    if n then
+      return b(n)
     else
       return nil
     end

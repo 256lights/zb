@@ -15,6 +15,8 @@ import (
 	"io"
 	"io/fs"
 	"math"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +50,9 @@ type Options struct {
 	// LookupEnv is called for the Lua os.getenv function.
 	// If nil, os.getenv will always return nil.
 	LookupEnv func(ctx context.Context, key string) (string, bool)
+	// HTTPClient is used for making web requests.
+	// If nil, [http.DefaultClient] will be used.
+	HTTPClient *http.Client
 }
 
 // Store is the set of store operations that [Eval] needs.
@@ -67,10 +72,11 @@ type Store interface {
 }
 
 type Eval struct {
-	store     Store
-	storeDir  zbstore.Directory
-	cachePool *sqlitemigration.Pool
-	lookupEnv func(ctx context.Context, key string) (string, bool)
+	store      Store
+	storeDir   zbstore.Directory
+	cachePool  *sqlitemigration.Pool
+	lookupEnv  func(ctx context.Context, key string) (string, bool)
+	httpClient *http.Client
 
 	baseImportContext context.Context
 	cancelImports     context.CancelFunc
@@ -88,14 +94,18 @@ type Eval struct {
 
 func NewEval(opts *Options) (_ *Eval, err error) {
 	eval := &Eval{
-		store:     opts.Store,
-		storeDir:  opts.StoreDirectory,
-		lookupEnv: opts.LookupEnv,
+		store:      opts.Store,
+		storeDir:   opts.StoreDirectory,
+		lookupEnv:  opts.LookupEnv,
+		httpClient: opts.HTTPClient,
 	}
 	if eval.lookupEnv == nil {
 		eval.lookupEnv = func(ctx context.Context, key string) (string, bool) {
 			return "", false
 		}
+	}
+	if eval.httpClient == nil {
+		eval.httpClient = http.DefaultClient
 	}
 
 	var schema sqlitemigration.Schema
@@ -439,27 +449,8 @@ func (eval *Eval) Close() error {
 	return eval.cachePool.Close()
 }
 
-func (eval *Eval) File(ctx context.Context, exprFile string, attrPaths []string) ([]any, error) {
-	l, err := eval.newState()
-	if err != nil {
-		return nil, err
-	}
-	defer l.Close()
-
-	l.PushClosure(0, messageHandler)
-	l.PushPureFunction(0, eval.importFunction)
-	l.PushString(exprFile)
-	if err := l.PCall(ctx, 1, 2, -3); err != nil {
-		return nil, err
-	}
-	if errMsg, _ := l.ToString(-1); errMsg != "" {
-		return nil, errors.New(errMsg)
-	}
-	l.Pop(1)
-	return evalAttrPaths(ctx, l, attrPaths)
-}
-
-func (eval *Eval) Expression(ctx context.Context, expr string, attrPaths []string) ([]any, error) {
+// Expression evaluates a single Lua expression and returns the result.
+func (eval *Eval) Expression(ctx context.Context, expr string) (any, error) {
 	l, err := eval.newState()
 	if err != nil {
 		return nil, err
@@ -473,46 +464,7 @@ func (eval *Eval) Expression(ctx context.Context, expr string, attrPaths []strin
 	if err := l.PCall(ctx, 0, 1, -2); err != nil {
 		return nil, err
 	}
-	return evalAttrPaths(ctx, l, attrPaths)
-}
-
-// evalAttrPaths evaluates all the attribute paths given
-// against the value on the top of the stack.
-func evalAttrPaths(ctx context.Context, l *lua.State, paths []string) ([]any, error) {
-	defer l.SetTop(l.Top())
-	if len(paths) == 0 {
-		l.PushValue(-1) // Modules can cause luaToGo to mutate the stack.
-		x, err := luaToGo(ctx, l)
-		if err != nil {
-			return nil, err
-		}
-		return []any{x}, nil
-	}
-
-	result := make([]any, 0, len(paths))
-	l.PushPureFunction(0, messageHandler)
-	for _, p := range paths {
-		expr := "local x = ...; return x"
-		if !strings.HasPrefix(p, "[") {
-			expr += "."
-		}
-		expr += p + ";"
-		if err := l.Load(strings.NewReader(expr), lua.LiteralSource(expr), "t"); err != nil {
-			l.Pop(1)
-			return result, fmt.Errorf("%s: %v", p, err)
-		}
-		l.PushValue(-3)
-		if err := l.PCall(ctx, 1, 1, -3); err != nil {
-			return result, fmt.Errorf("%s: %v", p, err)
-		}
-		x, err := luaToGo(ctx, l)
-		l.Pop(1)
-		if err != nil {
-			return result, fmt.Errorf("%s: %v", p, err)
-		}
-		result = append(result, x)
-	}
-	return result, nil
+	return luaToGo(ctx, l)
 }
 
 func luaToGo(ctx context.Context, l *lua.State) (any, error) {
@@ -789,4 +741,15 @@ func sqlFiles() fs.FS {
 		panic(err)
 	}
 	return fsys
+}
+
+func stripFragment(u *url.URL) *url.URL {
+	if u.Fragment == "" && u.RawFragment == "" {
+		return u
+	}
+	u2 := new(url.URL)
+	*u2 = *u
+	u2.Fragment = ""
+	u2.RawFragment = ""
+	return u2
 }

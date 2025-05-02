@@ -29,55 +29,55 @@ import (
 func TestLuaToGo(t *testing.T) {
 	tests := []struct {
 		expr string
-		want []any
+		want any
 	}{
 		{
 			expr: "nil",
-			want: []any{nil},
+			want: nil,
 		},
 		{
 			expr: "true",
-			want: []any{true},
+			want: true,
 		},
 		{
 			expr: "false",
-			want: []any{false},
+			want: false,
 		},
 		{
 			expr: `"foo"`,
-			want: []any{"foo"},
+			want: "foo",
 		},
 		{
 			expr: "42",
-			want: []any{int64(42)},
+			want: int64(42),
 		},
 		{
 			expr: "3.14",
-			want: []any{3.14},
+			want: 3.14,
 		},
 		{
 			expr: `{n=0}`,
-			want: []any{[]any{}},
+			want: []any{},
 		},
 		{
 			expr: "{123, 456}",
-			want: []any{[]any{int64(123), int64(456)}},
+			want: []any{int64(123), int64(456)},
 		},
 		{
 			expr: "{123, nil, 456}",
-			want: []any{[]any{int64(123), nil, int64(456)}},
+			want: []any{int64(123), nil, int64(456)},
 		},
 		{
 			expr: "{n=3, 123}",
-			want: []any{[]any{int64(123), nil, nil}},
+			want: []any{int64(123), nil, nil},
 		},
 		{
 			expr: `{}`,
-			want: []any{map[string]any{}},
+			want: map[string]any{},
 		},
 		{
 			expr: `{foo="bar", baz=42}`,
-			want: []any{map[string]any{"foo": "bar", "baz": int64(42)}},
+			want: map[string]any{"foo": "bar", "baz": int64(42)},
 		},
 	}
 
@@ -105,7 +105,7 @@ func TestLuaToGo(t *testing.T) {
 	}()
 
 	for _, test := range tests {
-		got, err := eval.Expression(ctx, test.expr, nil)
+		got, err := eval.Expression(ctx, test.expr)
 		if err != nil {
 			t.Errorf("%s: %v", test.expr, err)
 			continue
@@ -178,11 +178,11 @@ func TestGetenv(t *testing.T) {
 			}()
 
 			expr := "os.getenv('" + wantKey + "')"
-			got, err := eval.Expression(ctx, expr, nil)
+			got, err := eval.Expression(ctx, expr)
 			if err != nil {
 				t.Fatalf("%s: %v", expr, err)
 			}
-			if diff := cmp.Diff([]any{test.want}, got, cmpopts.EquateEmpty()); diff != "" {
+			if diff := cmp.Diff(test.want, got, cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("%s (-want +got):\n%s", expr, diff)
 			}
 		})
@@ -214,11 +214,11 @@ func TestStringMethod(t *testing.T) {
 	}()
 
 	const expr = `("abcdef"):sub(2, 4)`
-	got, err := eval.Expression(ctx, expr, nil)
+	got, err := eval.Expression(ctx, expr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []any{"bcd"}
+	want := any("bcd")
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("%s (-want +got):\n%s", expr, diff)
 	}
@@ -248,8 +248,8 @@ func TestImportFromDerivation(t *testing.T) {
 		}
 	}()
 
-	results, err := eval.File(ctx, filepath.Join("testdata", "ifd.lua"), []string{
-		`["` + system.Current().String() + `"]`,
+	results, err := eval.URLs(ctx, []string{
+		filepath.Join("testdata", "ifd.lua") + `#` + system.Current().String(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -294,7 +294,7 @@ func TestImportCycle(t *testing.T) {
 
 	t.Run("Self", func(t *testing.T) {
 		path := filepath.Join("testdata", "cycle", "self.lua")
-		results, err := eval.File(ctx, path, nil)
+		results, err := eval.URLs(ctx, []string{path})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -309,7 +309,7 @@ func TestImportCycle(t *testing.T) {
 
 	t.Run("MultipleFiles", func(t *testing.T) {
 		path := filepath.Join("testdata", "cycle", "a.lua")
-		results, err := eval.File(ctx, path, nil)
+		results, err := eval.URLs(ctx, []string{path})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -324,7 +324,7 @@ func TestImportCycle(t *testing.T) {
 
 	t.Run("Defer", func(t *testing.T) {
 		path := filepath.Join("testdata", "cycle", "defer_a.lua")
-		got, err := eval.File(ctx, path, []string{"[4]"})
+		got, err := eval.URLs(ctx, []string{path + "#4"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -359,9 +359,10 @@ func TestExtract(t *testing.T) {
 		}
 	}()
 
-	results, err := eval.File(ctx, filepath.Join("testdata", "extract.lua"), []string{
-		"full",
-		"stripped",
+	path := filepath.Join("testdata", "extract.lua")
+	results, err := eval.URLs(ctx, []string{
+		path + "#full",
+		path + "#stripped",
 	})
 	if err != nil {
 		t.Fatal(err)
