@@ -86,21 +86,6 @@ func Parse(s string) (System, error) {
 	return sys, nil
 }
 
-func isKnown(i int, s string) bool {
-	switch i {
-	case 0:
-		return Architecture(s).isKnown()
-	case 1:
-		return Vendor(s).isKnown()
-	case 2:
-		return OS(s).isKnown() || isCygwin(s) || isMinGW32(s)
-	case 3:
-		return Environment(s).isKnown()
-	default:
-		return false
-	}
-}
-
 func isCygwin(s string) bool {
 	return strings.HasPrefix(s, "cygwin")
 }

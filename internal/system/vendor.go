@@ -19,21 +19,3 @@ func (vendor Vendor) String() string {
 	}
 	return string(vendor)
 }
-
-func (vendor Vendor) isKnown() bool {
-	return vendor == "apple" ||
-		vendor == "pc" ||
-		vendor == "scei" ||
-		vendor == "sie" ||
-		vendor == "fsl" ||
-		vendor == "ibm" ||
-		vendor == "img" ||
-		vendor == "mti" ||
-		vendor == "nvidia" ||
-		vendor == "csr" ||
-		vendor == "amd" ||
-		vendor == "mesa" ||
-		vendor == "suse" ||
-		vendor == "oe" ||
-		vendor == "intel"
-}

@@ -12,11 +12,6 @@ func (arch Architecture) IsUnknown() bool {
 	return arch == "" || arch == Unknown
 }
 
-func (arch Architecture) isKnown() bool {
-	_, ok := arch.pointerBitWidth()
-	return ok
-}
-
 // String returns string(arch) or [Unknown] if arch is the empty string.
 func (arch Architecture) String() string {
 	if arch == "" {
