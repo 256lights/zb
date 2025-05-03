@@ -46,7 +46,7 @@ type InfoResponse struct {
 	Info *ObjectInfo `json:"info"`
 }
 
-// ObjectInfo is a condensed version of [NARInfo] used in [InfoResponse].
+// ObjectInfo is a condensed version of [zbstore.NARInfo] used in [InfoResponse].
 type ObjectInfo struct {
 	// NARHash is the hash of the decompressed .nar file.
 	// Nix requires this field to be set.

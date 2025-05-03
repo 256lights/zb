@@ -46,6 +46,10 @@ type Options struct {
 	// If empty, defaults to [os.TempDir].
 	BuildDir string
 
+	// DatabasePoolSize is the maximum permitted number of concurrent connections to the database.
+	// If less than 1, a reasonable default is used.
+	DatabasePoolSize int
+
 	// If AllowKeepFailed is true, then the KeepFailed field in [zbstore.RealizeRequest] will be respected.
 	AllowKeepFailed bool
 
@@ -154,6 +158,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
 			PrepareConn: prepareConn,
+			PoolSize:    opts.DatabasePoolSize,
 			OnStartMigrate: func() {
 				ctx := context.Background()
 				log.Debugf(ctx, "Migrating...")
@@ -281,12 +286,8 @@ func (s *Server) info(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Respo
 	if errors.Is(err, errObjectNotExist) {
 		return marshalResponse(&zbstorerpc.InfoResponse{})
 	}
-	if info.References == nil {
-		// Don't send null for the array.
-		info.References = []zbstore.Path{}
-	}
 	return marshalResponse(&zbstorerpc.InfoResponse{
-		Info: info,
+		Info: info.ToRPC(),
 	})
 }
 
@@ -695,13 +696,12 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		}
 		defer endFn(&err)
 
-		return insertObject(ctx, conn, &zbstore.NARInfo{
-			StorePath:   trailer.StorePath,
-			NARSize:     r.size,
-			NARHash:     r.hasher.SumHash(),
-			Compression: zbstore.NoCompression,
-			CA:          ca,
-			References:  trailer.References,
+		return insertObject(ctx, conn, &ObjectInfo{
+			StorePath:  trailer.StorePath,
+			NARSize:    r.size,
+			NARHash:    r.hasher.SumHash(),
+			CA:         ca,
+			References: trailer.References,
 		})
 	}()
 	if err != nil {

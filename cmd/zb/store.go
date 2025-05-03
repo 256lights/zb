@@ -4,17 +4,21 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -48,6 +52,7 @@ func newStoreObjectCommand(g *globalConfig) *cobra.Command {
 		newStoreObjectInfoCommand(g),
 		newStoreObjectImportCommand(g),
 		newStoreObjectExportCommand(g),
+		newStoreObjectRegisterCommand(g),
 	)
 	return c
 }
@@ -85,7 +90,7 @@ func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectI
 	const errNotExist = "does not exist"
 
 	// TODO(someday): Batch.
-	buf := new(bytes.Buffer)
+	var buf []byte
 	for i, p := range opts.paths {
 		path, err := zbstore.ParsePath(p)
 		if err != nil {
@@ -127,26 +132,16 @@ func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectI
 			return fmt.Errorf("%s: %v", path, errNotExist)
 		}
 
-		buf.Reset()
+		buf = buf[:0]
 		if i > 0 {
 			// Blank line between entries.
-			buf.WriteByte('\n')
+			buf = append(buf, '\n')
 		}
-		fmt.Fprintf(buf, "StorePath: %s\n", path)
-		fmt.Fprintf(buf, "NarHash: %v\n", resp.Info.NARHash.Base32())
-		fmt.Fprintf(buf, "NarSize: %d\n", resp.Info.NARSize)
-		if len(resp.Info.References) > 0 {
-			buf.WriteString("References:")
-			for _, ref := range resp.Info.References {
-				buf.WriteByte(' ')
-				buf.WriteString(ref.Base())
-			}
-			buf.WriteByte('\n')
+		buf, err = backend.NewObjectInfo(path, resp.Info).AppendText(buf)
+		if err != nil {
+			return err
 		}
-		if !resp.Info.CA.IsZero() {
-			fmt.Fprintf(buf, "CA: %v\n", resp.Info.CA)
-		}
-		if _, err := os.Stdout.Write(buf.Bytes()); err != nil {
+		if _, err := os.Stdout.Write(buf); err != nil {
 			return err
 		}
 	}
@@ -458,5 +453,77 @@ func (rec *exportPathRecorder) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 
 	if rec.wrapped != nil {
 		rec.wrapped.ReceiveNAR(trailer)
+	}
+}
+
+type storeObjectRegisterOptions struct {
+	input  io.Reader
+	dbPath string
+}
+
+//go:embed docs/store_object_register.txt
+var storeObjectRegisterDoc string
+
+func newStoreObjectRegisterCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:                   "register [options]",
+		Short:                 "add info for objects already present in the store directory",
+		Long:                  storeObjectRegisterDoc,
+		DisableFlagsInUseLine: true,
+		Args:                  cobra.NoArgs,
+		SilenceErrors:         true,
+		SilenceUsage:          true,
+		Hidden:                true,
+	}
+	opts := &storeObjectRegisterOptions{
+		input:  os.Stdin,
+		dbPath: filepath.Join(defaultVarDir(), "db.sqlite"),
+	}
+	c.Flags().StringVar(&opts.dbPath, "db", opts.dbPath, "`path` to store database file")
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		return runStoreObjectRegister(cmd.Context(), g, opts)
+	}
+	return c
+}
+
+func runStoreObjectRegister(ctx context.Context, g *globalConfig, opts *storeObjectRegisterOptions) error {
+	backendServer := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
+		DatabasePoolSize:  1,
+		DisableSandbox:    true,
+		BuildLogRetention: -1,
+	})
+	defer backendServer.Close()
+
+	s := bufio.NewScanner(opts.input)
+	s.Split(splitObjectInfos)
+	ok := true
+	for info := new(backend.ObjectInfo); s.Scan(); {
+		err := info.UnmarshalText(s.Bytes())
+		if err != nil {
+			log.Errorf(ctx, "Invalid object (skipping): %v", err)
+			ok = false
+			continue
+		}
+		if err := backendServer.Register(ctx, info); err != nil {
+			log.Errorf(ctx, "Failed: %v", err)
+			ok = false
+		}
+	}
+	if !ok {
+		return fmt.Errorf("one or more objects were not registered")
+	}
+	return nil
+}
+
+func splitObjectInfos(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	switch i := bytes.Index(data, []byte("\nStorePath:")); {
+	case i >= 0:
+		return i + 1, data[:i+1], nil
+	case atEOF && len(data) == 0:
+		return 0, nil, bufio.ErrFinalToken
+	case atEOF && len(data) > 0:
+		return len(data), data, bufio.ErrFinalToken
+	default:
+		return 0, nil, nil
 	}
 }

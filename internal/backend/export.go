@@ -12,7 +12,6 @@ import (
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
-	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix/nar"
@@ -111,11 +110,7 @@ func (s *Server) fetchInfoForExport(ctx context.Context, paths []zbstore.Path) (
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, &zbstore.ExportTrailer{
-			StorePath:      path,
-			References:     *sets.NewSorted(info.References...),
-			ContentAddress: info.CA,
-		})
+		result = append(result, info.ToExportTrailer())
 	}
 	return result, nil
 }
@@ -157,16 +152,12 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 			if hasPath(result, pe.path) {
 				return true
 			}
-			var info *zbstorerpc.ObjectInfo
+			var info *ObjectInfo
 			info, infoError = pathInfo(conn, pe.path)
 			if infoError != nil {
 				return false
 			}
-			result = append(result, &zbstore.ExportTrailer{
-				StorePath:      pe.path,
-				References:     *sets.NewSorted(info.References...),
-				ContentAddress: info.CA,
-			})
+			result = append(result, info.ToExportTrailer())
 			return true
 		})
 		if infoError != nil {

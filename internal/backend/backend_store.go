@@ -252,14 +252,15 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash
 }
 
 // pathInfo returns basic information about an object in the store.
-func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *zbstorerpc.ObjectInfo, err error) {
+func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *ObjectInfo, err error) {
 	defer sqlitex.Save(conn)(&err)
 
-	var info *zbstorerpc.ObjectInfo
+	var info *ObjectInfo
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "info.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{":path": string(path)},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			info = new(zbstorerpc.ObjectInfo)
+			info = new(ObjectInfo)
+			info.StorePath = path
 			info.NARSize = stmt.GetInt64("nar_size")
 			var err error
 			info.NARHash, err = nix.ParseHash(stmt.GetText("nar_hash"))
@@ -287,7 +288,7 @@ func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *zbstorerpc.ObjectInfo, e
 			if err != nil {
 				return err
 			}
-			info.References = append(info.References, ref)
+			info.References.Add(ref)
 			return nil
 		},
 	})
@@ -394,15 +395,12 @@ func objectExists(conn *sqlite.Conn, path zbstore.Path) (bool, error) {
 	return exists, nil
 }
 
-func insertObject(ctx context.Context, conn *sqlite.Conn, info *zbstore.NARInfo) (err error) {
+func insertObject(ctx context.Context, conn *sqlite.Conn, info *ObjectInfo) (err error) {
 	log.Debugf(ctx, "Registering metadata for %s", info.StorePath)
 
 	defer sqlitex.Save(conn)(&err)
 
 	if err := upsertPath(conn, zbstore.Path(info.StorePath)); err != nil {
-		return fmt.Errorf("insert %s into database: %v", info.StorePath, err)
-	}
-	if err := upsertPath(conn, zbstore.Path(info.Deriver)); err != nil {
 		return fmt.Errorf("insert %s into database: %v", info.StorePath, err)
 	}
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "insert_object.sql", &sqlitex.ExecOptions{
@@ -427,7 +425,7 @@ func insertObject(ctx context.Context, conn *sqlite.Conn, info *zbstore.NARInfo)
 	defer addRefStmt.Finalize()
 
 	addRefStmt.SetText(":referrer", string(info.StorePath))
-	for _, ref := range info.References.All() {
+	for ref := range info.References.Values() {
 		if err := upsertPath(conn, ref); err != nil {
 			return fmt.Errorf("insert %s into database: %v", info.StorePath, err)
 		}
