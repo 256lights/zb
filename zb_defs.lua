@@ -32,7 +32,7 @@ function await(x) end
 function import(path) end
 
 ---Make a file or directory available to a derivation.
----@param p (string|{path: string, name: string?}) path to import, relative to the source file that called `path`
+---@param p (string|{path: string, name: string?, filter: (fun(name: string, type: "regular"|"directory"|"symlink"): boolean)?}) path to import, relative to the source file that called `path`
 ---@return string # store path of the copied file or directory
 function path(p) end
 

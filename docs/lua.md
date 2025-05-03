@@ -252,6 +252,16 @@ with the following fields:
 - `path` (required string): The meaning is the same as the string argument form of `path`.
 - `name` (optional string): The name to use for the store object (excluding the digest).
   If omitted, then the last path component of `path` is used as the name.
+- `filter` (optional function): If `filter` is given and `path` names a directory,
+  then `path` calls `filter` for each file, directory, or symlink inside the directory.
+  The first argument to the `filter` function is a slash-separated path
+  relative to the top of the directory of the file currently being filtered.
+  The second argument to the `filter` function
+  is one of `"regular"`, `"directory"`, or `"symlink"`
+  to indicate the type of the file.
+  If the filter function returns `nil` or `false`,
+  then the file will be excluded from import into the store.
+  The default behavior of `path` is equivalent to passing `filter = function() return true end`.
 
 ### `derivation`
 
