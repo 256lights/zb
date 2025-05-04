@@ -215,9 +215,13 @@ func (eval *Eval) resolveModule(ctx context.Context, l *lua.State, filename stri
 	if err := loadFile(l, filename); err != nil {
 		return err
 	}
-	if err := l.Call(ctx, 0, lua.MultipleReturns); err != nil {
+	l.PushClosure(0, messageHandler)
+	l.Insert(1)
+	if err := l.PCall(ctx, 0, lua.MultipleReturns, 1); err != nil {
+		l.SetTop(0)
 		return err
 	}
+	l.Remove(1) // Remove message handler.
 	if l.Top() >= 1 {
 		// If the file returned at least one value,
 		// use that directly.
