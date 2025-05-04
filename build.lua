@@ -29,20 +29,24 @@ function getters.src()
     path = ".";
     name = "zb-source";
     filter = function(name)
+      ---@param name string
+      ---@param prefix string
+      ---@return boolean
+      local function allowSubtree(name, prefix)
+        return name == prefix or name:sub(1, #prefix) == prefix
+      end
       local base = strings.baseNameOf(name)
       -- TODO(256lights/zb-stdlib#21): name ~= "internal/ui/public"
-      return name ~= "zb" and
-          name ~= "zb.exe" and
+      return (allowSubtree(name, "cmd") or
+            allowSubtree(name, "internal") or
+            allowSubtree(name, "sets") or
+            allowSubtree(name, "zbstore") or
+            name == "LICENSE" or
+            name == "go.mod" or
+            name == "go.sum") and
           name ~= "cmd/zb/zb" and
           name ~= "cmd/zb/zb.exe" and
           name ~= "internal/ui/build" and
-          name ~= ".github" and
-          name ~= "demo" and
-          name ~= "docs" and
-          name ~= "installer" and
-          name ~= "tools" and
-          name ~= "website" and
-          name ~= "build.lua" and
           base ~= ".vscode" and
           base ~= "node_modules" and
           base ~= ".git" and
