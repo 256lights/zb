@@ -3,11 +3,13 @@ module zb.256lights.llc/pkg
 go 1.24.0
 
 require (
+	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/google/go-cmp v0.5.9
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/handlers v1.5.2
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.5
+	github.com/tailscale/hujson v0.0.0-20250226034555-ec1d1c113d33
 	go4.org v0.0.0-20230225012048-214862532bf5
 	golang.org/x/sync v0.12.0
 	golang.org/x/sys v0.32.0
@@ -27,7 +29,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/tailscale/hujson v0.0.0-20250226034555-ec1d1c113d33
 	golang.org/x/exp v0.0.0-20230315142452-642cacee5cc0 // indirect
 	modernc.org/libc v1.61.13 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
