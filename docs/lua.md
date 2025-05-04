@@ -296,6 +296,8 @@ The following fields in the table passed to `derivation` are treated specially:
   then the builder's output,
   when serialized as a NAR file and hashed with the algorithm given by `outputHash`,
   must produce the same hash as `outputHash`.
+- `__network` (optional boolean): If `true`, then the derivation is given network access.
+  It is assumed that the derivation is still deterministic.
 
 The `derivation` function returns a derivation object.
 This object will have a copy of all the fields of the table passed into the `derivation` function that produced it,
