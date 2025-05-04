@@ -10,6 +10,7 @@ local stdlib <const> = fetchArchive {
 }
 
 local strings <const> = import(stdlib.."/strings.lua")
+local systems <const> = import(stdlib.."/systems.lua")
 local tables <const> = import(stdlib.."/tables.lua")
 
 local module <const> = {}
@@ -55,14 +56,43 @@ end
 ---makeDerivationNoCC: (fun(args: table<string, any>): derivation)?,
 ---go: derivation|string,
 ---buildSystem: string,
+---targetSystem: string?,
 ---}
 ---@return derivation
 function module.new(args)
+  local targetSystem = systems.parse(args.targetSystem or args.buildSystem)
+  if not targetSystem then
+    error(string.format("invalid target system %q", args.targetSystem or args.buildSystem))
+  end
+  local GOOS, GOARCH
+  if targetSystem.isLinux then
+    GOOS = "linux"
+  elseif targetSystem.isMacOS then
+    GOOS = "darwin"
+  elseif targetSystem.isWindows then
+    GOOS = "windows"
+  else
+    error(string.format("unsupported OS for %q", tostring(targetSystem)))
+  end
+  if targetSystem.isX86 and targetSystem.is64Bit then
+    GOARCH = "amd64"
+  elseif targetSystem.isX86 and targetSystem.is32Bit then
+    GOARCH = "386"
+  elseif targetSystem.isARM and targetSystem.is64Bit then
+    GOARCH = "arm64"
+  elseif targetSystem.isARM and targetSystem.is32Bit then
+    GOARCH = "arm"
+  else
+    error(string.format("unsupported architecture for %q", tostring(targetSystem)))
+  end
+
   local modules = (args.makeDerivationNoCC or args.makeDerivation) {
     pname = "zb-go-modules";
     src = module.gomod;
     buildSystem = args.buildSystem;
 
+    -- GOOS/GOARCH not needed for downloading.
+    -- Omitting it allows all targets to reuse the same derivation.
     PATH = strings.makeBinPath {
       args.go,
     };
@@ -78,34 +108,54 @@ function module.new(args)
     src = module.src;
     buildSystem = args.buildSystem;
 
+    GOOS = GOOS;
+    GOARCH = GOARCH;
     GOMODCACHE = modules;
     PATH = strings.makeBinPath {
       args.go,
     };
 
     preBuild = [[export GOCACHE="$ZB_BUILD_TOP/cache"]];
-    buildPhase = [[go build zb.256lights.llc/pkg/cmd/zb]];
-    installPhase = [[mkdir -p "$out/bin" && cp --reflink=auto zb "$out/bin/zb"]];
+    buildPhase = [[go build -trimpath -ldflags="-s -w" zb.256lights.llc/pkg/cmd/zb]];
+    installPhase = [=[
+mkdir -p "$out/bin"
+name="zb$(go env GOEXE)"
+cp --reflink=auto "$name" "$out/bin/$name"
+]=];
   }
 end
 
-local supportedSystems <const> = {
+local supportedBuildSystems <const> = {
   "x86_64-unknown-linux",
 }
 
-for _, system in ipairs(supportedSystems) do
-  module[system] = tables.lazyModule {
-    zb = function()
+local supportedTargetSystems <const> = {
+  "x86_64-unknown-linux",
+  "x86_64-pc-windows",
+  "aarch64-apple-darwin",
+}
+
+for _, buildSystem in ipairs(supportedBuildSystems) do
+  local modTable = {}
+  local function new(targetSystem)
+    return function()
       local go <const> = import(stdlib.."/packages/go/go.lua")
       local stdenv <const> = import(stdlib.."/stdenv/stdenv.lua")
 
       return module.new {
         makeDerivation = stdenv.makeDerivationNoCC;
-        buildSystem = system;
-        go = go[system]["1.24.2"];
+        buildSystem = buildSystem;
+        targetSystem = targetSystem;
+        go = go[buildSystem]["1.24.2"];
       }
-    end;
-  }
+    end
+  end
+  modTable.zb = new(buildSystem)
+  for _, targetSystem in ipairs(supportedTargetSystems) do
+    modTable["zb-"..targetSystem] = new(targetSystem)
+  end
+
+  module[buildSystem] = tables.lazyModule(modTable)
 end
 
 return setmetatable(module, { __index = tables.lazyModule(getters) })
