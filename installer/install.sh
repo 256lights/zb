@@ -11,12 +11,12 @@ to_abs() {
   cd -- "$1" &> /dev/null && pwd
 }
 
-if [[ "${ZB_STORE_DIR:-/zb/store}" != /zb/store ]]; then
-  log "ZB_STORE_DIR must be either unset or set to the default, /zb/store."
+if [[ "${ZB_STORE_DIR:-/opt/zb/store}" != /opt/zb/store ]]; then
+  log "ZB_STORE_DIR must be either unset or set to the default, /opt/zb/store."
   log "The store objects in this release use the default path."
   exit 1
 fi
-export ZB_STORE_DIR="/zb/store"
+export ZB_STORE_DIR="/opt/zb/store"
 
 installer_dir="$( to_abs "$( dirname -- "${BASH_SOURCE[0]}" )" )"
 bin_dir=/usr/local/bin

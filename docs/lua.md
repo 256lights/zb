@@ -417,4 +417,4 @@ Most users should avoid this function, as it is mostly intended for bootstrappin
 ### `storeDir`
 
 `storeDir` is a string constant with the running evaluator's store directory
-(e.g. `/zb/store` or `C:\zb\store`).
+(e.g. `/opt/zb/store` or `C:\zb\store`).

@@ -26,7 +26,7 @@ import (
 // However, it is is more suitable as an in-memory representation.
 type ObjectInfo struct {
 	// StorePath is the absolute path of this store object
-	// (e.g. "/zb/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1").
+	// (e.g. "/opt/zb/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1").
 	StorePath zbstore.Path
 	// NARHash is the hash of the store object as an uncompressed .nar file.
 	NARHash nix.Hash

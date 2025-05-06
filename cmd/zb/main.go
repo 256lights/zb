@@ -508,7 +508,7 @@ func outputFileName(name string) string {
 	return name
 }
 
-// defaultVarDir returns "/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
+// defaultVarDir returns "/opt/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
 func defaultVarDir() string {
 	return filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "zb")
 }

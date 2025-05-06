@@ -23,7 +23,7 @@ see the early blog posts:
 
 ## Examples
 
-The [hello world](demo/hello_linux.lua) example:
+The [hello world](demo/hello.lua) example:
 
 ```lua
 return derivation {
@@ -53,24 +53,15 @@ Prerequisites:
 - [Go](https://go.dev/dl/) 1.24.0 or later.
 - [Node.js](https://nodejs.org/) 22.
 
-### Linux
+### Linux and macOS
 
-1. `sudo mkdir /zb && sudo chown $(id -u):$(id -g) /zb`
+1. `sudo mkdir -p /opt/zb && sudo chown $(id -u):$(id -g) /opt/zb`
 2. Clone this repository to your computer and `cd` into it.
 3. `go generate ./internal/ui && go build ./cmd/zb`
 4. Start the build server (only on startup): `./zb serve --sandbox=0 &`
-5. Run a build: `./zb build --file demo/hello_linux.lua`
+5. Run a build: `./zb build 'demo/hello.lua#hello'`
 
 You can use `./zb --help` to get more information on commands.
-
-### macOS
-
-1. `mkdir $HOME/zb`
-2. Clone this repository to your computer and `cd` into it.
-3. `go generate ./internal/ui && go build ./cmd/zb`
-4. `export ZB_STORE_DIR="$HOME/zb/store" ZB_STORE_SOCKET="$HOME/zb/var/zb/server.sock"`
-5. Start the build server (only on startup): `./zb serve --sandbox=0 --db="$HOME/zb/var/zb/db.sqlite" &`
-6. Run a build: `./zb build --file demo/hello_macos.lua`
 
 ### Windows
 
@@ -87,32 +78,10 @@ since zb depends on Windows support for Unix sockets.
 6. Start the build server in one terminal: `.\zb.exe serve`
 7. Run a build in another terminal: `.\zb.exe build --file demo/hello_windows.lua`
 
-### Next Steps
+### Learn More
 
-zb uses a slightly modified version of Lua 5.4.
-The primary difference is that strings
-(like those returned from the `path` function
-or the `.out` field of a derivation)
-can carry dependency information,
-like in the Nix expression language.
-This is largely hidden from the user.
-From there, the following libraries are available:
-
-- [Basic functions](https://www.lua.org/manual/5.4/manual.html#6.1)
-- The [`table` module](https://www.lua.org/manual/5.4/manual.html#6.6)
-- [Additional functions](zb_defs.lua), such as `path` and `derivation`.
-  These are intentionally similar to the [Nix built-in functions](https://nixos.org/manual/nix/stable/language/builtins.html).
-
-## Objectives
-
-- Prove that Lua is a viable alternative to a domain-specific build language. (Done!)
-- Exclusively use content-addressed outputs. (Done!)
-  This enables shallow builds, as described in [Build systems à la carte][mokhov_build_2018].
-- Establish a [source bootstrap](https://bootstrappable.org/benefits.html)
-  that is equivalent to the [nixpkgs standard environment](https://nixos.org/manual/nixpkgs/unstable/#chap-stdenv).
-  ([Partially implemented](demo/bootstrap.lua)
-  by following the [live-bootstrap](https://github.com/fosslinux/live-bootstrap/) steps.
-  See [#30](https://github.com/256lights/zb/issues/30) for ongoing work.)
+See the [standard library](https://github.com/256lights/zb-stdlib)
+and the [language reference](docs/lua.md).
 
 ## License
 

@@ -11,7 +11,7 @@ Typically, a machine runs a single store server.
 The store server manages a single store directory, which contains build artifacts.
 By default, this store directory is located at:
 
-- `/zb/store` on Linux and macOS
+- `/opt/zb/store` on Linux and macOS
 - `C:\zb\store` on Windows
 
 The store directory can be overridden with the `ZB_STORE_DIR` environment variable,
@@ -26,7 +26,7 @@ A zb client communicates with the store server using an [RPC protocol][].
 By default, it expects a store server running on the local machine on a Unix domain socket.
 The default path of this socket is:
 
-- `/zb/var/zb/server.sock` on Linux and macOS
+- `/opt/zb/var/zb/server.sock` on Linux and macOS
 - `C:\zb\var\zb\server.sock` on Windows
 
 The socket used can be overridden with the `ZB_STORE_SOCKET` environment variable.
@@ -42,7 +42,7 @@ If this metadata is lost, zb is unable to use the store artifacts.
 Such metadata is stored in a [SQLite][] database.
 The default path of this database is:
 
-- `/zb/var/zb/db.sqlite` on Linux and macOS
+- `/opt/zb/var/zb/db.sqlite` on Linux and macOS
 - `C:\zb\var\zb\db.sqlite` on Windows
 
 The database used can be overridden with the `zb serve --db` flag.
