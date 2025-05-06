@@ -24,23 +24,25 @@ module.gomod = path {
   end;
 }
 
+---@param name string
+---@param prefix string
+---@return boolean
+local function allowSubtree(name, prefix)
+  return name == prefix or name:sub(1, #prefix + 1) == prefix.."/"
+end
+
 function getters.src()
   return path {
     path = ".";
     name = "zb-source";
     filter = function(name)
-      ---@param name string
-      ---@param prefix string
-      ---@return boolean
-      local function allowSubtree(name, prefix)
-        return name == prefix or name:sub(1, #prefix) == prefix
-      end
       local base = strings.baseNameOf(name)
       -- TODO(256lights/zb-stdlib#21): name ~= "internal/ui/public"
       return (allowSubtree(name, "cmd") or
             allowSubtree(name, "internal") or
             allowSubtree(name, "sets") or
             allowSubtree(name, "zbstore") or
+            allowSubtree(name, "systemd") or
             name == "LICENSE" or
             name == "go.mod" or
             name == "go.sum") and
@@ -125,6 +127,15 @@ function module.new(args)
 mkdir -p "$out/bin"
 name="zb$(go env GOEXE)"
 cp --reflink=auto "$name" "$out/bin/$name"
+
+if [[ "$GOOS" = linux ]]; then
+  mkdir -p "$out/lib/systemd/system"
+  cp systemd/zb-serve.socket "$out/lib/systemd/system/zb-serve.socket"
+  sed \
+    -e "s:@zb@:$out/bin/zb:g" \
+    -e 's:@serveFlags@::g' \
+    systemd/zb-serve.service.in > "$out/lib/systemd/system/zb-serve.service"
+fi
 ]=];
   }
 end

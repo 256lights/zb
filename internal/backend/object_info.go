@@ -305,7 +305,7 @@ func (s *Server) Register(ctx context.Context, info *ObjectInfo) error {
 	if want := int64(*wc); want != info.NARSize {
 		return fmt.Errorf("register %s: nar size %d does not match %d from filesystem", info.StorePath, info.NARSize, want)
 	}
-	if want := hasher.SumHash(); want.Equal(info.NARHash) {
+	if want := hasher.SumHash(); !want.Equal(info.NARHash) {
 		return fmt.Errorf("register %s: nar hash %v does not match %v from filesystem", info.StorePath, info.NARHash, want)
 	}
 
