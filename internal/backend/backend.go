@@ -39,15 +39,15 @@ const DefaultBuildUsersGroup = "zbld"
 
 // Options is the set of optional parameters to [NewServer].
 type Options struct {
-	// RealDir is where the store objects are located physically on disk.
+	// RealStoreDirectory is where the store objects are located physically on disk.
 	// If empty, defaults to the store directory.
-	RealDir string
-	// BuildDir is where realizations' working directories will be placed.
+	RealStoreDirectory string
+	// BuildDirectory is where realizations' working directories will be placed.
 	// If empty, defaults to [os.TempDir].
-	BuildDir string
-	// LogDir is where builder logs will be stored.
+	BuildDirectory string
+	// LogDirectory is where builder logs will be stored.
 	// If empty, defaults to a directory called "log" in the same directory as the database.
-	LogDir string
+	LogDirectory string
 
 	// DatabasePoolSize is the maximum permitted number of concurrent connections to the database.
 	// If less than 1, a reasonable default is used.
@@ -147,9 +147,9 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	gcLogsDone := make(chan struct{})
 	srv := &Server{
 		dir:             dir,
-		realDir:         opts.RealDir,
-		buildDir:        opts.BuildDir,
-		logDir:          opts.LogDir,
+		realDir:         opts.RealStoreDirectory,
+		buildDir:        opts.BuildDirectory,
+		logDir:          opts.LogDirectory,
 		allowKeepFailed: opts.AllowKeepFailed,
 		sandbox:         !opts.DisableSandbox && CanSandbox(),
 		sandboxPaths:    opts.SandboxPaths,

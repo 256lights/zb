@@ -64,7 +64,7 @@ func TestImport(t *testing.T) {
 		_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 			TempDir: t.TempDir(),
 			Options: Options{
-				RealDir: realStoreDir,
+				RealStoreDirectory: realStoreDir,
 			},
 		})
 		if err != nil {

@@ -236,7 +236,7 @@ func TestExport(t *testing.T) {
 					srv, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 						TempDir: t.TempDir(),
 						Options: backend.Options{
-							RealDir: realDir,
+							RealStoreDirectory: realDir,
 						},
 					})
 					if err != nil {

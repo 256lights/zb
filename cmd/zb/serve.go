@@ -188,8 +188,8 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 
 	log.Infof(ctx, "Listening on %s", g.storeSocket)
 	backendServer := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
-		BuildDir:          opts.buildDir,
-		LogDir:            opts.logDir,
+		BuildDirectory:    opts.buildDir,
+		LogDirectory:      opts.logDir,
 		SandboxPaths:      opts.sandboxPaths,
 		DisableSandbox:    !opts.sandbox,
 		BuildUsers:        buildUsers,

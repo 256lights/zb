@@ -90,7 +90,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 	if opts != nil {
 		*opts2 = opts.Options
 	}
-	opts2.BuildDir = buildDir
+	opts2.BuildDirectory = buildDir
 	opts2.DisableSandbox = true
 	if opts2.CoresPerBuild < 1 {
 		opts2.CoresPerBuild = 1
@@ -100,7 +100,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 			return ctx
 		}
 	}
-	realStoreDir := opts2.RealDir
+	realStoreDir := opts2.RealStoreDirectory
 	if realStoreDir == "" {
 		realStoreDir = string(storeDir)
 	}
