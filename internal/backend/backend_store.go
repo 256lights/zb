@@ -852,7 +852,13 @@ func appendToBuilderLog(dir string, buildID uuid.UUID, drvPath zbstore.Path, dat
 }
 
 func prepareConn(conn *sqlite.Conn) error {
+	if err := sqlitex.ExecuteTransient(conn, "PRAGMA auto_vacuum = incremental;", nil); err != nil {
+		return err
+	}
 	if err := sqlitex.ExecuteTransient(conn, "PRAGMA journal_mode = wal;", nil); err != nil {
+		return err
+	}
+	if err := sqlitex.ExecuteTransient(conn, "PRAGMA optimize = 0x10002;", nil); err != nil {
 		return err
 	}
 	if err := sqlitex.ExecuteTransient(conn, "PRAGMA foreign_keys = on;", nil); err != nil {

@@ -88,11 +88,11 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		return nil, fmt.Errorf("build %s: %v", drvPathList, err)
 	}
 
-	s.buildWaitGroup.Add(1)
+	s.background.Add(1)
 	go func() {
 		defer func() {
 			cancelBuild()
-			s.buildWaitGroup.Done()
+			s.background.Done()
 		}()
 
 		wantOutputs := make(sets.Set[zbstore.OutputReference])
@@ -176,11 +176,11 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
 	}
 
-	s.buildWaitGroup.Add(1)
+	s.background.Add(1)
 	go func() {
 		defer func() {
 			endBuild()
-			s.buildWaitGroup.Done()
+			s.background.Done()
 		}()
 
 		drv := drvCache[drvPath]

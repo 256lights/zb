@@ -119,15 +119,14 @@ type Server struct {
 	sandbox      bool
 	sandboxPaths map[string]string
 
-	cancelGCLogs context.CancelFunc
-	gcLogsDone   <-chan struct{}
+	cancelBackground context.CancelFunc
+	background       sync.WaitGroup
 
 	coresPerBuild int
 
-	writing        mutexMap[zbstore.Path] // store objects being written
-	building       mutexMap[zbstore.Path] // derivations being built
-	users          *userSet
-	buildWaitGroup sync.WaitGroup
+	writing  mutexMap[zbstore.Path] // store objects being written
+	building mutexMap[zbstore.Path] // derivations being built
+	users    *userSet
 
 	activeBuildsMu sync.Mutex
 	activeBuilds   map[uuid.UUID]context.CancelFunc
@@ -144,7 +143,6 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	if err != nil {
 		panic(err)
 	}
-	gcLogsDone := make(chan struct{})
 	srv := &Server{
 		dir:             dir,
 		realDir:         opts.RealStoreDirectory,
@@ -157,8 +155,6 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		users:           users,
 		activeBuilds:    make(map[uuid.UUID]context.CancelFunc),
 		buildContext:    opts.BuildContext,
-
-		gcLogsDone: gcLogsDone,
 
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
@@ -195,15 +191,18 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 			return context.Background()
 		}
 	}
-	if opts.BuildLogRetention <= 0 {
-		srv.cancelGCLogs = func() {}
-		close(gcLogsDone)
-	} else {
-		var gcLogContext context.Context
-		gcLogContext, srv.cancelGCLogs = context.WithCancel(context.Background())
+	var bgCtx context.Context
+	bgCtx, srv.cancelBackground = context.WithCancel(context.Background())
+	srv.background.Add(1)
+	go func() {
+		defer srv.background.Done()
+		srv.optimizeDatabase(bgCtx)
+	}()
+	if opts.BuildLogRetention > 0 {
+		srv.background.Add(1)
 		go func() {
-			defer close(gcLogsDone)
-			srv.gcLogs(gcLogContext, opts.BuildLogRetention)
+			defer srv.background.Done()
+			srv.gcLogs(bgCtx, opts.BuildLogRetention)
 		}()
 	}
 	return srv
@@ -211,7 +210,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 
 // Close releases any resources associated with the server.
 func (s *Server) Close() error {
-	s.cancelGCLogs()
+	s.cancelBackground()
 	s.activeBuildsMu.Lock()
 	s.draining = true
 	for _, cancel := range s.activeBuilds {
@@ -219,8 +218,7 @@ func (s *Server) Close() error {
 	}
 	s.activeBuildsMu.Unlock()
 
-	s.buildWaitGroup.Wait()
-	<-s.gcLogsDone
+	s.background.Wait()
 
 	return s.db.Close()
 }
@@ -646,6 +644,10 @@ func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
 		} else {
 			log.Debugf(ctx, "No build logs to clean up.")
 		}
+		// Attempt to reclaim disk space.
+		if err := sqlitex.ExecuteTransient(conn, "PRAGMA incremental_vacuum(128);", nil); err != nil {
+			log.Warnf(ctx, "Incremental vacuum failed: %v", err)
+		}
 		s.db.Put(conn)
 
 		select {
@@ -653,6 +655,30 @@ func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+func (s *Server) optimizeDatabase(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+
+		conn, err := s.db.Get(ctx)
+		if err != nil {
+			// Likely means context was canceled.
+			log.Debugf(ctx, "Exiting background optimization due to: %v", err)
+			return
+		}
+		if err := sqlitex.ExecuteTransient(conn, "PRAGMA optimize;", nil); err != nil {
+			log.Warnf(ctx, "Incremental vacuum failed: %v", err)
+		}
+		s.db.Put(conn)
 	}
 }
 
