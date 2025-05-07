@@ -49,9 +49,19 @@ The database used can be overridden with the `zb serve --db` flag.
 The exact schema of this database and its contents is considered internal
 and may change from release to release.
 
-zb also stores builder logs inside its database.
+zb also stores build logs alongside its database.
 These logs are periodically deleted to reclaim space.
 The exact interval can be configured using the `zb serve --build-log-retention` flag.
+The default directory for the logs is:
+
+- `/opt/zb/var/log/zb` on Linux and macOS
+- `C:\zb\var\log\zb` on Windows
+
+The directory used can be overridden with the `zb serve --log-directory` flag.
+The exact schema of this database and its contents is considered internal
+and may change from release to release,
+but generally, it will contain plain text files with the combined stdout and stderr
+of builders run.
 
 [SQLite]: https://www.sqlite.org/
 

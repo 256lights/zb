@@ -32,6 +32,7 @@ import (
 	"zb.256lights.llc/pkg/internal/xnet"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/bass/runhttp"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/log/zstdlog"
@@ -41,6 +42,7 @@ type serveOptions struct {
 	dbPath            string
 	buildDir          string
 	buildUsersGroup   string
+	logDir            string
 	sandbox           bool
 	sandboxPaths      map[string]string
 	allowKeepFailed   bool
@@ -76,6 +78,7 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 	}
 	c.Flags().StringVar(&opts.dbPath, "db", opts.dbPath, "`path` to store database file")
 	c.Flags().StringVar(&opts.buildDir, "build-root", os.TempDir(), "`dir`ectory to store temporary build artifacts")
+	c.Flags().StringVar(&opts.logDir, "log-directory", filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "log", "zb"), "`dir`ectory to store builder logs in")
 	c.Flags().StringVar(&opts.buildUsersGroup, "build-users-group", opts.buildUsersGroup, "name of Unix `group` of users to run builds as")
 	c.Flags().BoolVar(&opts.sandbox, "sandbox", opts.sandbox, "run builders in a restricted environment")
 	c.Flags().Var(pathMapFlag(opts.sandboxPaths), "sandbox-path", "`path` to allow in sandbox (can be passed multiple times)")
@@ -186,6 +189,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 	log.Infof(ctx, "Listening on %s", g.storeSocket)
 	backendServer := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
 		BuildDir:          opts.buildDir,
+		LogDir:            opts.logDir,
 		SandboxPaths:      opts.sandboxPaths,
 		DisableSandbox:    !opts.sandbox,
 		BuildUsers:        buildUsers,

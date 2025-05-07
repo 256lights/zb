@@ -15,7 +15,6 @@ require (
 	golang.org/x/sys v0.32.0
 	golang.org/x/term v0.31.0
 	zombiezen.com/go/bass v0.0.0-20230823162859-0399f01327dd
-	zombiezen.com/go/batchio v0.0.0-20230820161343-02ff90ec9384
 	zombiezen.com/go/log v1.1.0
 	zombiezen.com/go/nix v0.0.0-20240505035425-db1ac175083f
 	zombiezen.com/go/sqlite v1.4.0

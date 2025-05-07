@@ -45,6 +45,9 @@ type Options struct {
 	// BuildDir is where realizations' working directories will be placed.
 	// If empty, defaults to [os.TempDir].
 	BuildDir string
+	// LogDir is where builder logs will be stored.
+	// If empty, defaults to a directory called "log" in the same directory as the database.
+	LogDir string
 
 	// DatabasePoolSize is the maximum permitted number of concurrent connections to the database.
 	// If less than 1, a reasonable default is used.
@@ -108,6 +111,7 @@ type Server struct {
 	dir             zbstore.Directory
 	realDir         string
 	buildDir        string
+	logDir          string
 	db              *sqlitemigration.Pool
 	allowKeepFailed bool
 	buildContext    func(context.Context, string) context.Context
@@ -145,6 +149,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		dir:             dir,
 		realDir:         opts.RealDir,
 		buildDir:        opts.BuildDir,
+		logDir:          opts.LogDir,
 		allowKeepFailed: opts.AllowKeepFailed,
 		sandbox:         !opts.DisableSandbox && CanSandbox(),
 		sandboxPaths:    opts.SandboxPaths,
@@ -181,6 +186,9 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	}
 	if srv.buildDir == "" {
 		srv.buildDir = os.TempDir()
+	}
+	if srv.logDir == "" {
+		srv.logDir = filepath.Join(filepath.Dir(dbPath), "log")
 	}
 	if srv.buildContext == nil {
 		srv.buildContext = func(_ context.Context, _ string) context.Context {
@@ -376,7 +384,7 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 		return marshalResponse(resp)
 	}
 
-	resp.Results, err = findBuildResults(resp.Results, conn, buildID, "")
+	resp.Results, err = findBuildResults(resp.Results, conn, s.logDir, buildID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +412,7 @@ func (s *Server) getBuildResult(ctx context.Context, req *jsonrpc.Request) (*jso
 	}
 	defer s.db.Put(conn)
 
-	results, err := findBuildResults(nil, conn, buildID, args.DrvPath)
+	results, err := findBuildResults(nil, conn, s.logDir, buildID, args.DrvPath)
 	if err != nil {
 		return nil, err
 	}
@@ -462,11 +470,27 @@ func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 		return nil, newNotFoundError()
 	}
 
-	conn, err := s.db.Get(ctx)
-	if err != nil {
-		return nil, err
+	f, openError := os.Open(builderLogPath(s.logDir, buildID, args.DrvPath))
+	if errors.Is(openError, os.ErrNotExist) {
+		conn, err := s.db.Get(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("fetch build result for %s in build %v: %v", args.DrvPath, buildID, err)
+		}
+		defer s.db.Put(conn)
+		results, err := findBuildResults(nil, conn, "", buildID, args.DrvPath)
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, newNotFoundError()
+		}
+		// Treat like a zero-length log.
+		return marshalResponse(&zbstorerpc.ReadLogResponse{EOF: true})
 	}
-	defer s.db.Put(conn)
+	if openError != nil {
+		return nil, openError
+	}
+	defer f.Close()
 
 	const maxRead = 64 * 1024
 	end := args.RangeStart + maxRead
@@ -474,36 +498,93 @@ func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 		end = min(end, args.RangeEnd.X)
 	}
 	buf := make([]byte, end-args.RangeStart)
-	n := 0
+
+	size, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+	}
+	if args.RangeStart+int64(len(buf)) < size {
+		// Special case: if the requested range is within what's already written,
+		// we can skip acquiring a database connection.
+		// We only need the database connection to check whether the builder is finished.
+		if _, err := f.Seek(args.RangeStart, io.SeekStart); err != nil {
+			return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+		}
+		n, err := io.ReadFull(f, buf)
+		if n == 0 {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+		}
+		resp := &zbstorerpc.ReadLogResponse{EOF: err == io.EOF}
+		resp.SetPayload(buf[:n])
+		return marshalResponse(resp)
+	}
+
+	conn, err := s.db.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer s.db.Put(conn)
+
+	var results []*zbstorerpc.BuildResult
 	for {
-		nn, err := readBuildLogAt(conn, buildID, args.DrvPath, buf[n:], args.RangeStart+int64(n))
-		n += nn
-		switch {
-		case err == nil || err == io.EOF:
-			resp := &zbstorerpc.ReadLogResponse{EOF: err == io.EOF}
+		var err error
+		results, err = findBuildResults(results[:0], conn, "", buildID, args.DrvPath)
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, newNotFoundError()
+		}
+
+		// Read log size after reading builder status.
+		// If the status is finished, then the log should be at its final size.
+		size, err := f.Seek(0, io.SeekEnd)
+		if err != nil {
+			return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+		}
+		// At least one byte should be available.
+		if args.RangeStart < size {
+			if _, err := f.Seek(args.RangeStart, io.SeekStart); err != nil {
+				return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+			}
+			n := 0
+			var readError error
+			for n < len(buf) && readError == nil {
+				var nn int
+				nn, readError = f.Read(buf[n:])
+				n += nn
+			}
+			if n == 0 {
+				if readError == io.EOF {
+					readError = io.ErrUnexpectedEOF
+				}
+				return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, readError)
+			}
+			resp := &zbstorerpc.ReadLogResponse{
+				EOF: readError == io.EOF && results[0].Status.IsFinished(),
+			}
 			resp.SetPayload(buf[:n])
 			return marshalResponse(resp)
-		case errors.Is(err, errBuildLogPending):
-			if n > 0 {
-				// Prefer returning what we have rather than blocking.
-				resp := new(zbstorerpc.ReadLogResponse)
-				resp.SetPayload(buf[:n])
-				return marshalResponse(resp)
-			}
+		}
 
-			// Wait for more.
-			// TODO(someday): Have build logs signal when there's more data rather than polling.
-			t := time.NewTimer(builderLogInterval)
-			select {
-			case <-t.C:
-			case <-ctx.Done():
-				t.Stop()
-				return nil, fmt.Errorf("read log for %s in build %v: %w", args.DrvPath, buildID, ctx.Err())
+		if results[0].Status.IsFinished() {
+			if args.RangeStart > size {
+				return nil, fmt.Errorf("read log for %s in build %v: start byte %d out of range",
+					args.DrvPath, buildID, args.RangeStart)
 			}
-		case errors.Is(err, errBuildLogNotFound):
-			return nil, newNotFoundError()
-		default:
-			return nil, err
+			return marshalResponse(&zbstorerpc.ReadLogResponse{EOF: true})
+		}
+
+		// Wait for more.
+		t := time.NewTimer(builderLogInterval)
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			t.Stop()
+			return nil, fmt.Errorf("read log for %s in build %v: %w", args.DrvPath, buildID, ctx.Err())
 		}
 	}
 }
@@ -554,7 +635,11 @@ func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
 		activeBuilds := slices.Collect(maps.Keys(s.activeBuilds))
 		s.activeBuildsMu.Unlock()
 		log.Debugf(ctx, "Cleaning up build logs older than %v...", cutoff.UTC())
-		if n, err := deleteOldBuilds(conn, cutoff, slices.Values(activeBuilds)); err != nil {
+		n, err := deleteOldBuilds(ctx, conn, cutoff, &deleteOldBuildOptions{
+			logDir: s.logDir,
+			keep:   slices.Values(activeBuilds),
+		})
+		if err != nil {
 			log.Warnf(ctx, "Failed to clean up build logs: %v", err)
 		} else if n > 0 {
 			log.Infof(ctx, "Deleted %d build logs older than %v", n, cutoff.Truncate(time.Millisecond).UTC())

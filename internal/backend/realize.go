@@ -34,7 +34,6 @@ import (
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
-	"zombiezen.com/go/batchio"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
@@ -759,7 +758,14 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 			// If there was a realization or the search had an abnormal failure,
 			// we can finalize the result inside this transaction.
 			hasExisting = reuseError == nil
-			if err := finalizeBuildResult(ctx, conn, buildResultID, time.Now(), reuseError); err != nil {
+			err := finalizeBuildResult(ctx, conn, b.server.logDir, &buildFinalResults{
+				buildID: b.id,
+				drvPath: drvPath,
+				id:      buildResultID,
+				endTime: time.Now(),
+				error:   reuseError,
+			})
+			if err != nil {
 				log.Warnf(ctx, "For build %s: %v", drvPath, err)
 			}
 			return reuseError
@@ -774,7 +780,13 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		return nil
 	}
 	defer func() {
-		finalizeError := finalizeBuildResult(ctx, conn, buildResultID, time.Now(), err)
+		finalizeError := finalizeBuildResult(ctx, conn, b.server.logDir, &buildFinalResults{
+			buildID: b.id,
+			drvPath: drvPath,
+			id:      buildResultID,
+			endTime: time.Now(),
+			error:   err,
+		})
 		if finalizeError != nil {
 			log.Warnf(ctx, "For build %s: %v", drvPath, finalizeError)
 		}
@@ -1074,24 +1086,21 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 			return nil, fmt.Errorf("build %s: %v", drvPath, err)
 		}
 	}
+	logFile, err := createBuilderLog(b.server.logDir, b.id, drvPath)
+	if err != nil {
+		return nil, fmt.Errorf("build %s: %v", drvPath, err)
+	}
+	defer func() {
+		if err := logFile.Close(); err != nil {
+			log.Warnf(ctx, "Closing build log for %s: %v", drvPath, err)
+		}
+	}()
 
 	r := newReplacer(xiter.Chain2(
 		outputPathRewrites(outPaths),
 		maps.All(inputRewrites),
 	))
 	expandedDrv := expandDerivationPlaceholders(r, drv)
-
-	logger := newBuildLogger(ctx, conn, buildResultID)
-	// Per https://www.sqlite.org/intern-v-extern-blob.html,
-	// ~50KB was still faster than filesystem for the default page size of 4096.
-	// We use 32
-	bufferedLogger := batchio.NewWriter(logger, 32*1024, builderLogInterval)
-	defer func() {
-		bufferedLogger.Flush()
-		if err := logger.Close(); err != nil {
-			log.Warnf(ctx, "Closing build log for %s: %v", drvPath, err)
-		}
-	}()
 
 	log.Debugf(ctx, "Starting builder for %s...", drvPath)
 	if err := recordBuilderStart(conn, buildResultID, time.Now()); err != nil {
@@ -1105,7 +1114,7 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 
 		realStoreDir: b.server.realDir,
 		buildDir:     buildDir,
-		logWriter:    bufferedLogger,
+		logWriter:    logFile,
 		user:         buildUser,
 		sandboxPaths: b.server.sandboxPaths,
 		cores:        b.server.coresPerBuild,
@@ -1126,12 +1135,9 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 		buf = append(buf, "Build failed. Build directory available at "...)
 		buf = append(buf, buildDir...)
 		buf = append(buf, "\n"...)
-		if _, err := bufferedLogger.Write(buf); err != nil {
+		if _, err := logFile.Write(buf); err != nil {
 			log.Debugf(ctx, "While writing failed build directory info: %v", err)
 		}
-	}
-	if err := bufferedLogger.Flush(); err != nil {
-		log.Errorf(ctx, "Flushing build log for %s: %v", drvPath, err)
 	}
 	if err := recordBuilderEnd(conn, buildResultID, builderEndTime); err != nil {
 		log.Warnf(ctx, "For %s: %v", drvPath, err)
