@@ -317,21 +317,21 @@ func searchKeyPaths(ctx context.Context, l *lua.State, fieldPath string, prefixe
 				l.Pop(1)
 			}
 			if firstError == nil {
-				firstError = err
+				firstError = fmt.Errorf("in %s/%s: %w", prefix, fieldPath, err)
 			} else {
 				log.Debugf(ctx, "Error when trying %s/%s: %v", prefix, fieldPath, err)
 			}
-		}
-		if l.Type(-1) != lua.TypeNil {
+		} else if l.Type(-1) == lua.TypeNil {
+			log.Debugf(ctx, "%s/%s not found", prefix, fieldPath)
+			l.Pop(1)
+		} else {
 			// Found!
 			log.Debugf(ctx, "Found non-nil at %s/%s", prefix, fieldPath)
 			return nil
 		}
-		log.Debugf(ctx, "%s/%s not found", prefix, fieldPath)
-		l.Pop(1)
 	}
 	l.PushNil()
-	return nil
+	return firstError
 }
 
 // followKeyPath is a [lua.Function] that accesses a slash-separated field path
