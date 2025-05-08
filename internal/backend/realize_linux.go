@@ -397,6 +397,9 @@ func bindMount(ctx context.Context, oldname, newname string) (err error) {
 		if err != nil {
 			return err
 		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(oldname), target)
+		}
 		log.Debugf(ctx, "ln -s %s %s", target, newname)
 		if err := os.Symlink(target, newname); err != nil {
 			return err
