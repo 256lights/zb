@@ -93,3 +93,35 @@ func TestParseGroup(t *testing.T) {
 		}
 	}
 }
+
+func TestParseDSCLGroup(t *testing.T) {
+	tests := []struct {
+		output        string
+		want          *user.Group
+		wantUsernames []string
+	}{
+		{
+			output: "PrimaryGroupID: -2\nRecordName: nobody BUILTIN\\Nobody\n",
+			want: &user.Group{
+				Gid:  "-2",
+				Name: "nobody",
+			},
+		},
+		{
+			output: "GroupMembership: root light\nPrimaryGroupID: 80\nRecordName: admin BUILTIN\\Administrators\n",
+			want: &user.Group{
+				Gid:  "80",
+				Name: "admin",
+			},
+			wantUsernames: []string{"root", "light"},
+		},
+	}
+
+	for _, test := range tests {
+		got, gotUsernames := parseDSCLGroup([]byte(test.output))
+		if got == nil || got.Gid != test.want.Gid || got.Name != test.want.Name || !slices.Equal(gotUsernames, test.wantUsernames) {
+			t.Errorf("parseDSCLGroup(%q) = %+v, %q; want %+v, %q",
+				test.output, got, gotUsernames, test.want, test.wantUsernames)
+		}
+	}
+}
