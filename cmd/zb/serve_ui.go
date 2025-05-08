@@ -240,9 +240,9 @@ func (srv *webServer) showLog(w http.ResponseWriter, r *http.Request) {
 			h.Set("Content-Range", "bytes */"+rangeLength)
 			var msg string
 			if result.Status.IsFinished() {
-				msg = fmt.Sprintf("Range not satisfiable with %d bytes available in active log", result.LogSize)
-			} else {
 				msg = fmt.Sprintf("Range not satisfiable with log of %d bytes", result.LogSize)
+			} else {
+				msg = fmt.Sprintf("Range not satisfiable with %d bytes available in active log", result.LogSize)
 			}
 			http.Error(w, msg, http.StatusRequestedRangeNotSatisfiable)
 			return

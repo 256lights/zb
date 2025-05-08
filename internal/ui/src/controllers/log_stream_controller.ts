@@ -7,13 +7,11 @@ export default class LogStreamController extends Controller {
   static values = {
     href: String,
     nextByte: Number,
-    chunkSize: { type: Number, default: 256 * 1024 },
-    backoff: { type: Number, default: 250 },
+    backoff: { type: Number, default: 1000 },
     jitter: { type: Number, default: 500 },
   }
   declare hrefValue: string
   declare nextByteValue: number
-  declare chunkSizeValue: number
   declare backoffValue: number
   declare jitterValue: number
 
@@ -47,84 +45,80 @@ export default class LogStreamController extends Controller {
     }
   }
 
-  private async stream(abortSignal: AbortSignal): Promise<void> {
-    let hasMore = true
-    let size: number | null = null
-    while (hasMore) {
-      ;[size, hasMore] = await this.streamNext(abortSignal, size)
+  private async stream(signal: AbortSignal): Promise<void> {
+    for (;;) {
+      try {
+        if (!(await this.readRemainingContent(signal))) {
+          return
+        }
+      } catch (e) {
+        console.warn('Log stream interrupted: %s', e)
+      }
+      await this.backoff(signal)
     }
   }
 
-  private async streamNext(
-    signal: AbortSignal,
-    resourceSize: number | null,
-  ): Promise<[number | null, boolean]> {
-    if (this.nextByteValue < 0) {
-      return [null, false]
-    }
-
-    const maxRangeEnd = this.nextByteValue + this.chunkSizeValue - 1
-    const rangeEnd =
-      resourceSize !== null && resourceSize - 1 < maxRangeEnd
-        ? resourceSize - 1
-        : maxRangeEnd
-    let response: Response
-    try {
-      response = await window.fetch(this.hrefValue, {
-        headers: {
-          Accept: 'text/plain',
-          Range: `bytes=${this.nextByteValue}-${rangeEnd}`,
-        },
-        signal,
-      })
-    } catch (err) {
-      console.warn('Log stream error:', err)
-      return [resourceSize, await this.backoff(signal)]
-    }
+  /**
+   * @return whether there is potentially more content
+   */
+  private async readRemainingContent(signal: AbortSignal): Promise<boolean> {
+    const response = await window.fetch(this.hrefValue, {
+      headers: {
+        Accept: 'text/plain, text/*;q=0.9',
+        Range: `bytes=${this.nextByteValue}-`,
+      },
+      signal,
+    })
 
     switch (response.status) {
       case 200: {
-        let text: string
-        try {
-          text = await response.text()
-        } catch (err) {
-          console.warn('Log stream error:', err)
-          return [resourceSize, await this.backoff(signal)]
+        if (!response.body) {
+          throw new Error('log stream response missing body')
         }
-        this.contentTarget.replaceChildren(text)
-        this.nextByteValue = -1
-        return [null, false]
+        await this.streamBytes(
+          signal,
+          response.body.pipeThrough(skipFirst(this.nextByteValue)),
+        )
+        return false
       }
       case 206: {
-        let bytes: ArrayBuffer
-        try {
-          bytes = await response.arrayBuffer()
-        } catch (err) {
-          console.warn('Log stream error:', err)
-          return [resourceSize, await this.backoff(signal)]
+        if (!response.body) {
+          throw new Error('log stream response missing body')
         }
-        this.nextByteValue += bytes.byteLength
-        const newSize = getSize(response) ?? resourceSize
-        let hasMore = newSize === null || this.nextByteValue < newSize
+        await this.streamBytes(signal, response.body)
+        return getSize(response) === '*'
+      }
+      case 404:
+        // Don't retry a 404.
+        return false
+      case 416:
+        // If we got Range Not Satisfiable, it's because our starting byte
+        // is beyond the end. Stop reading data.
+        return false
+      default:
+        throw new Error(`log stream status: ${response.statusText}`)
+    }
+  }
 
+  private async streamBytes(
+    signal: AbortSignal,
+    stream: ReadableStream<Uint8Array>,
+  ): Promise<void> {
+    const reader = stream.getReader()
+    try {
+      for (;;) {
+        const { value: chunk } = await readWithAbort(signal, reader)
+        if (!chunk) {
+          break
+        }
+        this.nextByteValue += chunk.byteLength
         if (!this.decoder) {
           this.decoder = new TextDecoder('utf-8')
         }
-        const newTextNode = this.decoder.decode(bytes, { stream: hasMore })
-        this.contentTarget.append(newTextNode)
-        if (!hasMore) {
-          this.nextByteValue = -1
-        }
-
-        if (hasMore && bytes.byteLength === 0) {
-          // No progress: back off for a little bit.
-          hasMore = await this.backoff(signal)
-        }
-        return [newSize, hasMore]
+        this.contentTarget.append(this.decoder.decode(chunk, { stream: true }))
       }
-      default:
-        // TODO(someday): Handle 416 to compute new end.
-        throw new Error(`stream log status: ${response.statusText}`)
+    } finally {
+      await reader.cancel()
     }
   }
 
@@ -137,6 +131,40 @@ export default class LogStreamController extends Controller {
       () => false,
     )
   }
+}
+
+function readWithAbort<T>(
+  signal: AbortSignal,
+  stream: ReadableStreamDefaultReader<T>,
+): Promise<ReadableStreamReadResult<T>> {
+  let f: EventListener
+  const signalPromise = new Promise<never>((_, reject) => {
+    f = () => {
+      reject(new Error('abort read'))
+    }
+    signal.addEventListener('abort', f)
+  })
+  return Promise.race([
+    stream.read().finally(() => signal.removeEventListener('abort', f)),
+    signalPromise,
+  ])
+}
+
+function skipFirst(n: number): TransformStream<Uint8Array, Uint8Array> {
+  let bytesSeen = 0
+  return new TransformStream({
+    start() {
+      bytesSeen = 0
+    },
+
+    transform(chunk, controller) {
+      const chunkEnd = bytesSeen + chunk.byteLength
+      if (chunkEnd > n) {
+        controller.enqueue(bytesSeen >= n ? chunk : chunk.slice(n - bytesSeen))
+      }
+      bytesSeen += chunk.byteLength
+    },
+  })
 }
 
 function sleep(millis: number, signal: AbortSignal): Promise<void> {
@@ -153,12 +181,17 @@ function sleep(millis: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-function getSize(response: Pick<Response, 'headers'>): number | undefined {
+function getSize(
+  response: Pick<Response, 'headers'>,
+): number | '*' | undefined {
   const contentRangeHeader = response.headers.get('Content-Range')
   if (!contentRangeHeader) {
     return undefined
   }
-  const matches = contentRangeHeader.match(/bytes .*\/([0-9]+)/)
+  const matches = contentRangeHeader.match(/bytes .*\/(\*|0|[1-9][0-9]*)/)
   const end = matches?.[1]
+  if (end === '*') {
+    return '*'
+  }
   return end ? Number.parseInt(end, 10) : undefined
 }
