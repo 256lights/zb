@@ -427,16 +427,16 @@ func copyLogToStderr(ctx context.Context, storeClient jsonrpc.Handler, buildID s
 			RangeStart: off,
 		})
 		if len(payload) > 0 {
+			toWrite := payload
 			if off == 0 {
 				// Write header.
-				oldPayload := payload
-				payload = nil
-				payload = append(payload, "--- "...)
-				payload = append(payload, drvPath...)
-				payload = append(payload, " ---\n"...)
-				payload = append(payload, oldPayload...)
+				toWrite = nil
+				toWrite = append(toWrite, "--- "...)
+				toWrite = append(toWrite, drvPath...)
+				toWrite = append(toWrite, " ---\n"...)
+				toWrite = append(toWrite, payload...)
 			}
-			if _, err := os.Stderr.Write(payload); err != nil {
+			if _, err := os.Stderr.Write(toWrite); err != nil {
 				return err
 			}
 		}
