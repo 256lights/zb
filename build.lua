@@ -4,11 +4,12 @@
 -- This is the zb build script that builds zb. :)
 
 local stdlib <const> = fetchArchive {
-  url = "https://github.com/256lights/zb-stdlib/archive/171d05f2a6532210c6b0befd0912a714303b394c.zip";
-  hash = "sha256:8a2e874e37b5c95173a50b597b183a9965a7e689e0167d8ba4b44793523c4086";
-  name = "zb-stdlib-171d05f2a.zip";
+  url = "https://github.com/256lights/zb-stdlib/archive/839b839dc8194f34bf0741e01429168cbb75614c.zip";
+  hash = "sha256:9b22a7000fdbef1093f7fd3a3cc16802cfc7f53575bd8e4887cc79be2252ce97";
+  name = "zb-stdlib-839b839dc.zip";
 }
 
+local seeds <const> = import(stdlib.."/bootstrap/seeds.lua")
 local strings <const> = import(stdlib.."/strings.lua")
 local systems <const> = import(stdlib.."/systems.lua")
 local tables <const> = import(stdlib.."/tables.lua")
@@ -121,6 +122,8 @@ function module.new(args)
       args.go,
     };
 
+    busybox = seeds[args.targetSystem or args.buildSystem].busybox;
+
     preBuild = [[export GOCACHE="$ZB_BUILD_TOP/cache"]];
     buildPhase = [[go build -trimpath -ldflags="-s -w" zb.256lights.llc/pkg/cmd/zb]];
     installPhase = [=[
@@ -133,7 +136,7 @@ if [[ "$GOOS" = linux ]]; then
   cp systemd/zb-serve.socket "$out/lib/systemd/system/zb-serve.socket"
   sed \
     -e "s:@zb@:$out/bin/zb:g" \
-    -e 's:@serveFlags@::g' \
+    -e "s:@sh@:$busybox/bin/sh:g" \
     systemd/zb-serve.service.in > "$out/lib/systemd/system/zb-serve.service"
 fi
 ]=];

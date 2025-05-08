@@ -1,0 +1,15 @@
+[Unit]
+Description=zb Store Server
+RequiresMountsFor=/opt/zb/store
+RequiresMountsFor=/opt/zb/var
+RequiresMountsFor=/opt/zb/var/zb
+ConditionPathIsReadWrite=/opt/zb/var/zb
+Requires=zb-serve.socket
+
+[Service]
+Environment=ZB_BUILD_USERS_GROUP=zbld ZB_SERVE_FLAGS=
+ExecStart=@zb@ serve --systemd --sandbox-path=/bin/sh=@sh@ --build-users-group=${ZB_BUILD_USERS_GROUP} $ZB_SERVE_FLAGS
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
