@@ -373,7 +373,7 @@ func ParseURL(s string) (*url.URL, error) {
 			return nil, err
 		}
 		if i >= len(s)-1 {
-			return &url.URL{Path: path}, nil
+			return &url.URL{Path: path, RawPath: s[:i]}, nil
 		}
 
 		u, err := url.Parse(s[i:])
@@ -384,6 +384,7 @@ func ParseURL(s string) (*url.URL, error) {
 		if err != nil {
 			return nil, err
 		}
+		u.RawPath = s[:i]
 		return u, nil
 	}
 

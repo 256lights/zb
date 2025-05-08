@@ -24,6 +24,14 @@ func TestParseURL(t *testing.T) {
 			want: &url.URL{Path: "foo.txt"},
 		},
 		{
+			s:    "foo bar.txt",
+			want: &url.URL{Path: "foo bar.txt", RawPath: "foo bar.txt"},
+		},
+		{
+			s:    "foo%20bar.txt",
+			want: &url.URL{Path: "foo bar.txt"},
+		},
+		{
 			s: "foo.txt#bar",
 			want: &url.URL{
 				Path:     "foo.txt",
@@ -57,36 +65,37 @@ func TestParseURL(t *testing.T) {
 			urlTest{
 				s: `foo\bar.txt`,
 				want: &url.URL{
-					Path: "foo/bar.txt",
+					Path:    `foo\bar.txt`,
+					RawPath: `foo\bar.txt`,
 				},
 			},
 			urlTest{
 				s: `C:\foo\bar.txt`,
 				want: &url.URL{
-					Scheme: "file",
-					Path:   "/C:/foo/bar.txt",
+					Path:    `C:\foo\bar.txt`,
+					RawPath: `C:\foo\bar.txt`,
 				},
 			},
 			urlTest{
 				s: `C:\foo\bar baz.txt`,
 				want: &url.URL{
-					Scheme: "file",
-					Path:   "/C:/foo/bar%20baz.txt",
+					Path:    `C:\foo\bar baz.txt`,
+					RawPath: `C:\foo\bar baz.txt`,
 				},
 			},
 			urlTest{
 				s: `C:\foo\bar.txt#baz`,
 				want: &url.URL{
-					Scheme:   "file",
-					Path:     `/C:/foo/bar.txt`,
+					Path:     `C:\foo\bar.txt`,
+					RawPath:  `C:\foo\bar.txt`,
 					Fragment: "baz",
 				},
 			},
 			urlTest{
 				s: `C:\foo\bar.txt#baz quux`,
 				want: &url.URL{
-					Scheme:      "file",
-					Path:        "/C:/foo/bar.txt",
+					Path:        `C:\foo\bar.txt`,
+					RawPath:     `C:\foo\bar.txt`,
 					Fragment:    "baz quux",
 					RawFragment: "baz quux",
 				},
@@ -94,9 +103,8 @@ func TestParseURL(t *testing.T) {
 			urlTest{
 				s: `\\example.com\share\foo.txt`,
 				want: &url.URL{
-					Scheme: "file",
-					Host:   "example.com",
-					Path:   "/share/foo.txt",
+					Path:    `\\example.com\share\foo.txt`,
+					RawPath: `\\example.com\share\foo.txt`,
 				},
 			},
 		)
