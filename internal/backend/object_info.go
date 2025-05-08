@@ -278,6 +278,7 @@ func (s *Server) Register(ctx context.Context, info *ObjectInfo) error {
 		if !objectInfosEqual(info, existingInfo) {
 			return fmt.Errorf("register %s: does not match existing data", info.StorePath)
 		}
+		return nil
 	}
 	if !errors.Is(err, errObjectNotExist) {
 		return fmt.Errorf("register %s: %v", info.StorePath, err)
