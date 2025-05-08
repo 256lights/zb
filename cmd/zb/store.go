@@ -487,6 +487,10 @@ func newStoreObjectRegisterCommand(g *globalConfig) *cobra.Command {
 }
 
 func runStoreObjectRegister(ctx context.Context, g *globalConfig, opts *storeObjectRegisterOptions) error {
+	if err := os.MkdirAll(filepath.Dir(opts.dbPath), 0o755); err != nil {
+		return err
+	}
+
 	backendServer := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
 		DatabasePoolSize:  1,
 		DisableSandbox:    true,
