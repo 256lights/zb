@@ -37,8 +37,16 @@ bin_dir=/usr/local/bin
 bin_dir_explicit=0
 single_user=0
 install_units="$isLinux"
+install_launchdaemon="$isMacOS"
 build_users_group="zbld"
 build_gid=256000
+if [[ "$isMacOS" -eq 1 ]]; then
+  # As per https://serverfault.com/a/390671,
+  # must be <500 to be a "system" group and thus hidden in System Settings.
+  # 0-304 are effectively reserved, as are 400-500.
+  # Nix uses 350.
+  build_gid=356
+fi
 first_build_uid=256001
 build_user_count=32
 usage() {
@@ -52,6 +60,8 @@ usage() {
   log "    --first-build-uid UID       ID of first build user if creating build group (default $first_build_uid)"
   log "    --systemd                   install systemd units (default to yes on Linux)"
   log "    --no-systemd                do not install systemd units"
+  log "    --launchd                   install launchd daemon (default to yes on macOS)"
+  log "    --no-launchd                do not install launchd daemon"
   log "    --installer-dir DIR         install resources from the given directory (default $installer_dir)"
 }
 while [[ $# -gt 0 ]]; do
@@ -91,6 +101,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-systemd)
       install_units=0
+      shift
+      ;;
+    --launchd)
+      install_launchdaemon=1
+      shift
+      ;;
+    --no-launchd)
+      install_launchdaemon=0
       shift
       ;;
     --)
@@ -195,31 +213,63 @@ else
 fi
 
 if [[ -n "$build_users_group" ]]; then
-  if getent group "$build_users_group" > /dev/null; then
-    log "Reusing existing group $build_users_group"
-  elif [[ "$isLinux" -eq 1 ]]; then
-    log "Adding group $build_users_group"
-    run_as_target_user groupadd \
-      --gid "$build_gid" \
-      -- "$build_users_group"
-    for i in $( seq "$build_user_count" ); do
-      build_user_name="${build_users_group}${i}"
-      log "Adding user $build_user_name"
-      run_as_target_user useradd \
-        --uid $(( first_build_uid + i - 1 )) \
+  if [[ "$isLinux" -eq 1 ]]; then
+    if getent group "$build_users_group" > /dev/null; then
+      log "Reusing existing group $build_users_group"
+    else
+      log "Adding group $build_users_group"
+      run_as_target_user groupadd \
         --gid "$build_gid" \
-        --groups "$build_users_group" \
-        --comment "zb build user $i" \
-        --no-user-group \
-        --system \
-        --no-create-home \
-        --shell /usr/sbin/nologin \
-        --password '!' \
-        -- "$build_user_name"
-    done
+        -- "$build_users_group"
+      for i in $( seq "$build_user_count" ); do
+        build_user_name="${build_users_group}${i}"
+        log "Adding user $build_user_name"
+        run_as_target_user useradd \
+          --uid $(( first_build_uid + i - 1 )) \
+          --gid "$build_gid" \
+          --groups "$build_users_group" \
+          --comment "zb build user $i" \
+          --no-user-group \
+          --system \
+          --no-create-home \
+          --shell /usr/sbin/nologin \
+          --password '!' \
+          -- "$build_user_name"
+      done
+    fi
   elif [[ "$isMacOS" -eq 1 ]]; then
-    log "TODO(now)"
-    exit 1
+    if dscl . -read "/Groups/$build_users_group" >& /dev/null; then
+      log "Reusing existing group $build_users_group"
+    else
+      log "Adding group $build_users_group"
+      run_as_target_user dseditgroup \
+        -o create \
+        -r "zb build user group" \
+        -i "$build_gid" \
+        -- "$build_users_group" >&2
+      for i in $( seq "$build_user_count" ); do
+        build_user_name="${build_users_group}${i}"
+        log "Adding user $build_user_name"
+        run_as_target_user dscl . create "/Users/$build_user_name" \
+          UniqueID $(( first_build_uid + i - 1 ))
+        run_as_target_user dscl . create "/Users/$build_user_name" \
+          IsHidden 1
+        run_as_target_user dscl . create "/Users/$build_user_name" \
+          NFSHomeDirectory /var/empty
+        run_as_target_user dscl . create "/Users/$build_user_name" \
+          RealName "zb build user $i"
+        run_as_target_user dscl . create "/Users/$build_user_name" \
+          UserShell /usr/bin/false
+        run_as_target_user dscl . create "/Users/$build_user_name" \
+          PrimaryGroupID "$build_gid"
+
+        run_as_target_user dseditgroup \
+          -o edit \
+          -t user \
+          -a "$build_user_name" \
+          -- "$build_users_group"
+      done
+    fi
   else
     log "Do not know how to create groups on $(uname -s)"
   fi
@@ -231,6 +281,7 @@ if [[ "$install_units" -eq 1 ]]; then
   else
     systemd_install_dir="/etc/systemd/system"
   fi
+  run_as_target_user mkdir -p "$systemd_install_dir"
 
   zb_systemd="$ZB_STORE_DIR/$zb_object/lib/systemd/system"
   log "Installing ${systemd_install_dir}/zb-serve.socket..."
@@ -257,6 +308,28 @@ if [[ "$install_units" -eq 1 ]]; then
     run_as_target_user systemctl enable zb-serve.socket zb-serve.service
     run_as_target_user systemctl restart zb-serve.service
   fi
+fi
+
+if [[ "$install_launchdaemon" -eq 1 ]]; then
+  if [[ "$single_user" -eq 1 ]]; then
+    launchd_install_dir="$HOME/Library/LaunchAgents"
+  else
+    launchd_install_dir="/Library/LaunchDaemons"
+  fi
+  run_as_target_user mkdir -p "$launchd_install_dir"
+
+  log "Installing ${launchd_install_dir}/dev.zb-build.serve.plist..."
+  run_as_target_user cp \
+    "$ZB_STORE_DIR/$zb_object/Library/LaunchDaemons/dev.zb-build.serve.plist" \
+    "$launchd_install_dir/dev.zb-build.serve.plist"
+  if [[ "$build_users_group" != zbld ]]; then
+    run_as_target_user defaults write \
+      "$launchd_install_dir/dev.zb-build.serve.plist" \
+      ProgramArguments \
+      -array-add "--build-users-group=$build_users_group"
+  fi
+
+  run_as_target_user launchctl load -w "$launchd_install_dir/dev.zb-build.serve.plist"
 fi
 
 log "Installation complete."

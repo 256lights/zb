@@ -43,6 +43,7 @@ function getters.src()
             allowSubtree(name, "internal") or
             allowSubtree(name, "sets") or
             allowSubtree(name, "zbstore") or
+            allowSubtree(name, "launchd") or
             allowSubtree(name, "systemd") or
             name == "LICENSE" or
             name == "go.mod" or
@@ -110,6 +111,11 @@ function module.new(args)
     buildPhase = [[go mod download]];
     installPhase = [[cp --reflink=auto -R "$GOMODCACHE" "$out"]];
   }
+  local busybox
+  local seedsForSystem = seeds[args.targetSystem or args.buildSystem]
+  if seedsForSystem then
+    busybox = seedsForSystem.busybox
+  end
   return args.makeDerivation {
     pname = "zb";
     src = module.src;
@@ -122,7 +128,7 @@ function module.new(args)
       args.go,
     };
 
-    busybox = seeds[args.targetSystem or args.buildSystem].busybox;
+    busybox = busybox;
 
     preBuild = [[export GOCACHE="$ZB_BUILD_TOP/cache"]];
     buildPhase = [[go build -trimpath -ldflags="-s -w" zb.256lights.llc/pkg/cmd/zb]];
@@ -138,6 +144,11 @@ if [[ "$GOOS" = linux ]]; then
     -e "s:@zb@:$out/bin/zb:g" \
     -e "s:@sh@:$busybox/bin/sh:g" \
     systemd/zb-serve.service.in > "$out/lib/systemd/system/zb-serve.service"
+elif [[ "$GOOS" = darwin ]]; then
+  mkdir -p "$out/Library/LaunchDaemons"
+  sed \
+    -e "s:@zb@:$out/bin/zb:g" \
+    launchd/dev.zb-build.serve.plist.in > "$out/Library/LaunchDaemons/dev.zb-build.serve.plist"
 fi
 ]=];
   }
@@ -150,12 +161,12 @@ local supportedBuildSystems <const> = {
 local supportedTargetSystems <const> = {
   "x86_64-unknown-linux",
   "x86_64-pc-windows",
-  "aarch64-apple-darwin",
+  "aarch64-apple-macos",
 }
 
 for _, buildSystem in ipairs(supportedBuildSystems) do
   local modTable = {}
-  local function new(targetSystem)
+  local function new(buildSystem, targetSystem)
     return function()
       local go <const> = import(stdlib.."/packages/go/go.lua")
       local stdenv <const> = import(stdlib.."/stdenv/stdenv.lua")
@@ -168,9 +179,9 @@ for _, buildSystem in ipairs(supportedBuildSystems) do
       }
     end
   end
-  modTable.zb = new(buildSystem)
+  modTable.zb = new(buildSystem, buildSystem)
   for _, targetSystem in ipairs(supportedTargetSystems) do
-    modTable["zb-"..targetSystem] = new(targetSystem)
+    modTable["zb-"..targetSystem] = new(buildSystem, targetSystem)
   end
 
   module[buildSystem] = tables.lazyModule(modTable)
