@@ -176,10 +176,10 @@ else
 fi
 
 log "Creating ${ZB_STORE_DIR}..."
-run_as_target_user mkdir -p -- "$ZB_STORE_DIR"
-run_as_target_user chmod 1775 -- "$ZB_STORE_DIR"
+run_as_target_user mkdir -p "$ZB_STORE_DIR"
+run_as_target_user chmod 1775 "$ZB_STORE_DIR"
 if [[ -n "$build_users_group" ]]; then
-  run_as_target_user chown ":$build_users_group" -- "$ZB_STORE_DIR"
+  run_as_target_user chown ":$build_users_group" "$ZB_STORE_DIR"
 fi
 
 for i in $( cd "$installer_dir/store" > /dev/null && echo * ); do
