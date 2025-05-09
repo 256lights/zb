@@ -79,6 +79,7 @@ When `zb serve` is run as root, it will look for the `zbld` group by default
 and try to run builders with users from that group.
 The group name used can be overridden with the `zb serve --build-users-group` flag.
 The group name created by the installer can be changed via the `./install --build-users-group` flag.
+The store directory must be writable by members of the group.
 
 zb supports sandboxing builds on Linux systems
 so that builders can only access the inputs declared by the build,
