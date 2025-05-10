@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -92,7 +93,7 @@ func TestLuaToGo(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -158,7 +159,7 @@ func TestGetenv(t *testing.T) {
 			}
 			callCount := 0
 			eval, err := NewEval(&Options{
-				Store:          testRPCStore{store},
+				Store:          newTestRPCStore(store),
 				StoreDirectory: storeDir,
 				LookupEnv: func(ctx context.Context, key string) (string, bool) {
 					callCount++
@@ -201,7 +202,7 @@ func TestStringMethod(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -236,7 +237,7 @@ func TestImportFromDerivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -275,7 +276,7 @@ func TestImportCycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -347,7 +348,7 @@ func TestExtract(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -460,7 +461,7 @@ func TestNewState(t *testing.T) {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -503,7 +504,7 @@ func BenchmarkNewState(b *testing.B) {
 		b.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -528,12 +529,26 @@ func BenchmarkNewState(b *testing.B) {
 
 // testRPCStore is an implementation of [Store]
 // that communicates to a real backend using JSON-RPC.
+// Imported paths are tracked.
 // Realization logs are ignored.
 type testRPCStore struct {
 	client *jsonrpc.Client
+
+	mu      sync.Mutex
+	imports []zbstore.Path
 }
 
-func (store testRPCStore) Exists(ctx context.Context, path string) (bool, error) {
+func newTestRPCStore(client *jsonrpc.Client) *testRPCStore {
+	return &testRPCStore{client: client}
+}
+
+func (store *testRPCStore) readImports() []zbstore.Path {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return slices.Clone(store.imports)
+}
+
+func (store *testRPCStore) Exists(ctx context.Context, path string) (bool, error) {
 	var response bool
 	err := jsonrpc.Do(ctx, store.client, zbstorerpc.ExistsMethod, &response, &zbstorerpc.ExistsRequest{
 		Path: path,
@@ -544,7 +559,7 @@ func (store testRPCStore) Exists(ctx context.Context, path string) (bool, error)
 	return response, nil
 }
 
-func (store testRPCStore) Import(ctx context.Context, r io.Reader) error {
+func (store *testRPCStore) Import(ctx context.Context, r io.Reader) error {
 	generic, releaseConn, err := store.client.Codec(ctx)
 	if err != nil {
 		return err
@@ -554,10 +569,18 @@ func (store testRPCStore) Import(ctx context.Context, r io.Reader) error {
 	if !ok {
 		return fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
 	}
-	return codec.Export(nil, r)
+	done := make(chan struct{})
+	pr, pw := io.Pipe()
+	go func() {
+		defer close(done)
+		zbstore.ReceiveExport(exportSpy{store}, pr)
+	}()
+	err = codec.Export(nil, io.TeeReader(r, pw))
+	<-done
+	return err
 }
 
-func (store testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
+func (store *testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
 	var realizeResponse zbstorerpc.RealizeResponse
 	err := jsonrpc.Do(ctx, store.client, zbstorerpc.RealizeMethod, &realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: slices.Collect(func(yield func(zbstore.Path) bool) {
@@ -576,6 +599,20 @@ func (store testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.Out
 		return nil, err
 	}
 	return build.Results, nil
+}
+
+type exportSpy struct {
+	store *testRPCStore
+}
+
+func (e exportSpy) Write(p []byte) (n int, err error) {
+	return len(p), nil
+}
+
+func (e exportSpy) ReceiveNAR(trailer *zbstore.ExportTrailer) {
+	e.store.mu.Lock()
+	defer e.store.mu.Unlock()
+	e.store.imports = append(e.store.imports, trailer.StorePath)
 }
 
 func TestMain(m *testing.M) {

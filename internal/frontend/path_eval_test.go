@@ -5,13 +5,17 @@ package frontend
 
 import (
 	"bytes"
-	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"zb.256lights.llc/pkg/internal/backendtest"
+	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/testcontext"
+	"zb.256lights.llc/pkg/zbstore"
 )
 
 func TestPath(t *testing.T) {
@@ -31,8 +35,9 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		testStore := newTestRPCStore(store)
 		eval, err := NewEval(&Options{
-			Store:          testRPCStore{store},
+			Store:          testStore,
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -44,28 +49,123 @@ func TestPath(t *testing.T) {
 			}
 		}()
 
-		got, err := eval.Expression(ctx, `path("testdata/hello.txt")`)
-		if err != nil {
+		for range 3 {
+			got, err := eval.Expression(ctx, `path("testdata/hello.txt")`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotString, ok := got.(string)
+			if !ok {
+				t.Fatalf("expression result is %T; want string", got)
+			}
+			gotPath, gotSubpath, err := storeDir.ParsePath(gotString)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotSubpath != "" {
+				t.Errorf("expression result contains subpath %q", gotSubpath)
+			}
+
+			gotContent, err := os.ReadFile(filepath.Join(string(storeDir), gotPath.Base()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(gotContent, wantContent) {
+				t.Errorf("content of %s = %q; want %q", gotPath, gotContent, wantContent)
+			}
+
+			// Verify that we only attempted a single import during the whole test.
+			if diff := cmp.Diff([]zbstore.Path{gotPath}, testStore.readImports()); diff != "" {
+				t.Errorf("imported paths (-want +got):\n%s", diff)
+			}
+		}
+	})
+
+	t.Run("FileChange", func(t *testing.T) {
+		const wantContent1 = "AAA\n"
+		const wantContent2 = "BBB\n"
+
+		myPath := filepath.Join(t.TempDir(), "file.txt")
+		if err := os.WriteFile(myPath, []byte(wantContent1), 0o666); err != nil {
 			t.Fatal(err)
-		}
-		gotString, ok := got.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got)
-		}
-		gotPath, gotSubpath, err := storeDir.ParsePath(gotString)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if gotSubpath != "" {
-			t.Errorf("expression result contains subpath %q", gotSubpath)
 		}
 
-		gotContent, err := os.ReadFile(filepath.Join(string(storeDir), gotPath.Base()))
+		ctx, cancel := testcontext.New(t)
+		defer cancel()
+		storeDir := backendtest.NewStoreDirectory(t)
+
+		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+			TempDir: t.TempDir(),
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(gotContent, wantContent) {
-			t.Errorf("content of %s = %q; want %q", gotPath, gotContent, wantContent)
+		testStore := newTestRPCStore(store)
+		eval, err := NewEval(&Options{
+			Store:          testStore,
+			StoreDirectory: storeDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := eval.Close(); err != nil {
+				t.Error("eval.Close:", err)
+			}
+		}()
+
+		got1, err := eval.Expression(ctx, "path("+lualex.Quote(myPath)+")")
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotString1, ok := got1.(string)
+		if !ok {
+			t.Fatalf("expression result is %T; want string", got1)
+		}
+		gotPath1, gotSubpath1, err := storeDir.ParsePath(gotString1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotSubpath1 != "" {
+			t.Errorf("expression result contains subpath %q", gotSubpath1)
+		}
+
+		gotContent1, err := os.ReadFile(filepath.Join(string(storeDir), gotPath1.Base()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(gotContent1) != wantContent1 {
+			t.Errorf("content of %s = %q; want %q", gotPath1, gotContent1, wantContent1)
+		}
+
+		if err := os.WriteFile(myPath, []byte(wantContent2), 0o666); err != nil {
+			t.Fatal(err)
+		}
+		got2, err := eval.Expression(ctx, "path("+lualex.Quote(myPath)+")")
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotString2, ok := got2.(string)
+		if !ok {
+			t.Fatalf("expression result is %T; want string", got2)
+		}
+		if gotString1 == gotString2 {
+			t.Errorf("first path (%q) == second path", gotString1)
+		}
+		gotPath2, gotSubpath2, err := storeDir.ParsePath(gotString2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotSubpath2 != "" {
+			t.Errorf("expression result contains subpath %q", gotSubpath2)
+		}
+
+		gotContent2, err := os.ReadFile(filepath.Join(string(storeDir), gotPath2.Base()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(gotContent2) != wantContent2 {
+			t.Errorf("content of %s = %q; want %q", gotPath2, gotContent2, wantContent2)
 		}
 	})
 
@@ -80,8 +180,9 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		testStore := newTestRPCStore(store)
 		eval, err := NewEval(&Options{
-			Store:          testRPCStore{store},
+			Store:          testStore,
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -93,35 +194,27 @@ func TestPath(t *testing.T) {
 			}
 		}()
 
-		got, err := eval.Expression(ctx, `path("testdata/dir")`)
-		if err != nil {
-			t.Fatal(err)
-		}
-		gotString, ok := got.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got)
-		}
-		gotPath, gotSubpath, err := storeDir.ParsePath(gotString)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if gotSubpath != "" {
-			t.Errorf("expression result contains subpath %q", gotSubpath)
-		}
+		for range 3 {
+			got, err := eval.Expression(ctx, `path("testdata/dir")`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotString, ok := got.(string)
+			if !ok {
+				t.Fatalf("expression result is %T; want string", got)
+			}
+			gotPath, gotSubpath, err := storeDir.ParsePath(gotString)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotSubpath != "" {
+				t.Errorf("expression result contains subpath %q", gotSubpath)
+			}
+			compareDirectoryToTestdata(t, string(gotPath), "a.txt", "b.txt", "c", "c/d.txt")
 
-		wantFiles := []string{"a.txt", "b.txt", "c/d.txt"}
-		for _, name := range wantFiles {
-			wantContent, err := os.ReadFile(filepath.Join("testdata", "dir", filepath.FromSlash(name)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			gotContent, err := os.ReadFile(filepath.Join(string(storeDir), gotPath.Base(), filepath.FromSlash(name)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(gotContent, wantContent) {
-				t.Errorf("content of %s = %q; want %q",
-					filepath.Join(string(gotPath), filepath.FromSlash(name)), gotContent, wantContent)
+			// Verify that we only attempted a single import during the whole test.
+			if diff := cmp.Diff([]zbstore.Path{gotPath}, testStore.readImports()); diff != "" {
+				t.Errorf("imported paths (-want +got):\n%s", diff)
 			}
 		}
 	})
@@ -138,7 +231,7 @@ func TestPath(t *testing.T) {
 			t.Fatal(err)
 		}
 		eval, err := NewEval(&Options{
-			Store:          testRPCStore{store},
+			Store:          newTestRPCStore(store),
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -166,29 +259,7 @@ func TestPath(t *testing.T) {
 			t.Errorf("expression result contains subpath %q", gotSubpath)
 		}
 
-		wantFiles := []string{"a.txt", "b.txt"}
-		for _, name := range wantFiles {
-			wantContent, err := os.ReadFile(filepath.Join("testdata", "dir", filepath.FromSlash(name)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			gotContent, err := os.ReadFile(filepath.Join(string(storeDir), gotPath.Base(), filepath.FromSlash(name)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(gotContent, wantContent) {
-				t.Errorf("content of %s = %q; want %q",
-					filepath.Join(string(gotPath), filepath.FromSlash(name)), gotContent, wantContent)
-			}
-		}
-		if _, err := os.Lstat(filepath.Join(string(storeDir), gotPath.Base(), "c", "d.txt")); err == nil {
-			t.Error("c/d.txt included")
-		} else if !errors.Is(err, os.ErrNotExist) {
-			t.Error(err)
-		}
-		if _, err := os.Lstat(filepath.Join(string(storeDir), gotPath.Base(), "c")); err != nil {
-			t.Error(err)
-		}
+		compareDirectoryToTestdata(t, string(gotPath), "a.txt", "b.txt", "c")
 	})
 
 	t.Run("FilteredFile", func(t *testing.T) {
@@ -208,7 +279,7 @@ func TestPath(t *testing.T) {
 			t.Fatal(err)
 		}
 		eval, err := NewEval(&Options{
-			Store:          testRPCStore{store},
+			Store:          newTestRPCStore(store),
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -244,6 +315,76 @@ func TestPath(t *testing.T) {
 			t.Errorf("content of %s = %q; want %q", gotPath, gotContent, wantContent)
 		}
 	})
+}
+
+// compareDirectoryToTestdata compares dir to the directory at testdata/dir.
+// If dir does not contain exactly the files named in wantFiles,
+// then compareDirectoryToTestdata logs a failure to tb.
+func compareDirectoryToTestdata(tb testing.TB, dir string, wantFiles ...string) {
+	tb.Helper()
+
+	for _, name := range wantFiles {
+		goldenPath := filepath.Join("testdata", "dir", filepath.FromSlash(name))
+		wantInfo, err := os.Lstat(goldenPath)
+		if err != nil {
+			tb.Error(err)
+			continue
+		}
+
+		testPath := filepath.Join(dir, filepath.FromSlash(name))
+		gotInfo, err := os.Lstat(testPath)
+		if err != nil {
+			tb.Errorf("file %s: %v", name, err)
+			continue
+		}
+		wantMode := wantInfo.Mode()
+		gotMode := gotInfo.Mode()
+		if wantMode.Type() != gotMode.Type() {
+			tb.Errorf("file %s: mode is %v; want %v", name, gotMode, wantMode)
+			continue
+		}
+
+		switch wantMode.Type() {
+		case 0:
+			if (wantMode&0o111 == 0) != (gotMode&0o111 == 0) {
+				tb.Errorf("file %s: mode is %v; want %v", name, gotMode, wantMode)
+			}
+			wantContent, err := os.ReadFile(goldenPath)
+			if err != nil {
+				tb.Error(err)
+				continue
+			}
+			gotContent, err := os.ReadFile(testPath)
+			if err != nil {
+				tb.Fatal(err)
+			}
+			if !bytes.Equal(gotContent, wantContent) {
+				tb.Errorf("file %s: content = %q; want %q", name, gotContent, wantContent)
+			}
+		case os.ModeDir:
+			// Nothing additional to check.
+		default:
+			tb.Errorf("file %s: unsupported mode %v", name, wantMode)
+		}
+	}
+
+	err := filepath.WalkDir(dir, func(path string, info os.DirEntry, err error) error {
+		if err != nil {
+			tb.Error(err)
+			return nil
+		}
+		if path == dir {
+			return nil
+		}
+		got := filepath.ToSlash(strings.TrimPrefix(path, dir+string(filepath.Separator)))
+		if !slices.Contains(wantFiles, got) {
+			tb.Errorf("unexpected file %q", got)
+		}
+		return nil
+	})
+	if err != nil {
+		tb.Error(err)
+	}
 }
 
 func TestCollatePath(t *testing.T) {
