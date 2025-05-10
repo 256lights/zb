@@ -5,6 +5,7 @@ package frontend
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -219,6 +220,145 @@ func TestPath(t *testing.T) {
 		}
 	})
 
+	t.Run("DirectoryAdd", func(t *testing.T) {
+		myDir := t.TempDir()
+		if err := copyFile(filepath.Join("testdata", "dir", "a.txt"), filepath.Join(myDir, "a.txt")); err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := testcontext.New(t)
+		defer cancel()
+		storeDir := backendtest.NewStoreDirectory(t)
+
+		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+			TempDir: t.TempDir(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		eval, err := NewEval(&Options{
+			Store:          newTestRPCStore(store),
+			StoreDirectory: storeDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := eval.Close(); err != nil {
+				t.Error("eval.Close:", err)
+			}
+		}()
+
+		got1, err := eval.Expression(ctx, "path("+lualex.Quote(myDir)+")")
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotString1, ok := got1.(string)
+		if !ok {
+			t.Fatalf("expression result is %T; want string", got1)
+		}
+		gotPath1, gotSubpath1, err := storeDir.ParsePath(gotString1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotSubpath1 != "" {
+			t.Errorf("expression result contains subpath %q", gotSubpath1)
+		}
+		compareDirectoryToTestdata(t, string(gotPath1), "a.txt")
+
+		if err := copyFile(filepath.Join("testdata", "dir", "b.txt"), filepath.Join(myDir, "b.txt")); err != nil {
+			t.Fatal(err)
+		}
+
+		got2, err := eval.Expression(ctx, "path("+lualex.Quote(myDir)+")")
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotString2, ok := got2.(string)
+		if !ok {
+			t.Fatalf("expression result is %T; want string", got2)
+		}
+		gotPath2, gotSubpath2, err := storeDir.ParsePath(gotString2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotSubpath2 != "" {
+			t.Errorf("expression result contains subpath %q", gotSubpath2)
+		}
+		compareDirectoryToTestdata(t, string(gotPath2), "a.txt", "b.txt")
+	})
+
+	t.Run("DirectoryRemove", func(t *testing.T) {
+		myDir := t.TempDir()
+		if err := copyFile(filepath.Join("testdata", "dir", "a.txt"), filepath.Join(myDir, "a.txt")); err != nil {
+			t.Fatal(err)
+		}
+		if err := copyFile(filepath.Join("testdata", "dir", "b.txt"), filepath.Join(myDir, "b.txt")); err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := testcontext.New(t)
+		defer cancel()
+		storeDir := backendtest.NewStoreDirectory(t)
+
+		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+			TempDir: t.TempDir(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		eval, err := NewEval(&Options{
+			Store:          newTestRPCStore(store),
+			StoreDirectory: storeDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := eval.Close(); err != nil {
+				t.Error("eval.Close:", err)
+			}
+		}()
+
+		got1, err := eval.Expression(ctx, "path("+lualex.Quote(myDir)+")")
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotString1, ok := got1.(string)
+		if !ok {
+			t.Fatalf("expression result is %T; want string", got1)
+		}
+		gotPath1, gotSubpath1, err := storeDir.ParsePath(gotString1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotSubpath1 != "" {
+			t.Errorf("expression result contains subpath %q", gotSubpath1)
+		}
+		compareDirectoryToTestdata(t, string(gotPath1), "a.txt", "b.txt")
+
+		if err := os.Remove(filepath.Join(myDir, "b.txt")); err != nil {
+			t.Fatal(err)
+		}
+
+		got2, err := eval.Expression(ctx, "path("+lualex.Quote(myDir)+")")
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotString2, ok := got2.(string)
+		if !ok {
+			t.Fatalf("expression result is %T; want string", got2)
+		}
+		gotPath2, gotSubpath2, err := storeDir.ParsePath(gotString2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotSubpath2 != "" {
+			t.Errorf("expression result contains subpath %q", gotSubpath2)
+		}
+		compareDirectoryToTestdata(t, string(gotPath2), "a.txt")
+	})
+
 	t.Run("FilteredDirectory", func(t *testing.T) {
 		ctx, cancel := testcontext.New(t)
 		defer cancel()
@@ -408,4 +548,46 @@ func TestCollatePath(t *testing.T) {
 			t.Errorf("collatePath(%q, %q) = %d; want %d", test.a, test.b, got, test.want)
 		}
 	}
+}
+
+func copyFile(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return &os.LinkError{
+			Op:  "copy",
+			Old: src,
+			New: dst,
+			Err: err,
+		}
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return &os.LinkError{
+			Op:  "copy",
+			Old: src,
+			New: dst,
+			Err: err,
+		}
+	}
+	_, writeError := io.Copy(dstFile, srcFile)
+	closeError := dstFile.Close()
+	if writeError != nil {
+		return &os.LinkError{
+			Op:  "copy",
+			Old: src,
+			New: dst,
+			Err: writeError,
+		}
+	}
+	if closeError != nil {
+		return &os.LinkError{
+			Op:  "copy",
+			Old: src,
+			New: dst,
+			Err: closeError,
+		}
+	}
+	return nil
 }
