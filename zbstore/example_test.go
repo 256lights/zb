@@ -10,13 +10,13 @@ import (
 )
 
 func ExampleParseOutputReference() {
-	ref, err := zbstore.ParseOutputReference("/zb/store/ib3sh3pcz10wsmavxvkdbayhqivbghlq-hello-2.12.1.drv!out")
+	ref, err := zbstore.ParseOutputReference("/opt/zb/store/ib3sh3pcz10wsmavxvkdbayhqivbghlq-hello-2.12.1.drv!out")
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(ref.DrvPath)
 	fmt.Println(ref.OutputName)
 	// Output:
-	// /zb/store/ib3sh3pcz10wsmavxvkdbayhqivbghlq-hello-2.12.1.drv
+	// /opt/zb/store/ib3sh3pcz10wsmavxvkdbayhqivbghlq-hello-2.12.1.drv
 	// out
 }

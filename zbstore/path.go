@@ -26,7 +26,7 @@ type Directory string
 const (
 	// DefaultUnixDirectory is the default zb store directory
 	// on Unix-like systems.
-	DefaultUnixDirectory Directory = "/zb/store"
+	DefaultUnixDirectory Directory = "/opt/zb/store"
 
 	// DefaultWindowsDirectory is the default zb store directory
 	// on Windows systems.
@@ -161,7 +161,7 @@ func (dir Directory) IsNative() bool {
 
 // Path is a zb store path:
 // the absolute path of a zb store object in the filesystem.
-// For example: "/zb/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1"
+// For example: "/opt/zb/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1"
 // or "C:\zb\store\s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1".
 type Path string
 

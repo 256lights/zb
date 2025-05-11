@@ -24,5 +24,11 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: internal/ui/package.json
+      - name: Build UI
+        run: go generate ./internal/ui
       - name: Run tests
         run: go test -mod=readonly -race ./...

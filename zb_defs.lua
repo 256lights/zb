@@ -32,9 +32,16 @@ function await(x) end
 function import(path) end
 
 ---Make a file or directory available to a derivation.
----@param p (string|{path: string, name: string?}) path to import, relative to the source file that called `path`
+---@param p (string|{path: string, name: string?, filter: (fun(name: string, type: "regular"|"directory"|"symlink"): boolean)?}) path to import, relative to the source file that called `path`
 ---@return string # store path of the copied file or directory
 function path(p) end
+
+---Adds a dependency on an existing store path.
+---If the store object named by the path does not exist in the store,
+---storePath raises an error.
+---@param path string
+---@return string
+function storePath(path) end
 
 ---Store a plain file in the store.
 ---@param name string

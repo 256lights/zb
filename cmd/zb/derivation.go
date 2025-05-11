@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -47,28 +48,63 @@ func newDerivationShowCommand(g *globalConfig) *cobra.Command {
 		Use:                   "show [options] [PATH [...]]",
 		Short:                 "show the contents of one or more derivations",
 		DisableFlagsInUseLine: true,
-		Args:                  cobra.ArbitraryArgs,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
+		Args: func(c *cobra.Command, args []string) error {
+			if expr, _ := c.Flags().GetBool("expression"); expr {
+				return cobra.ExactArgs(1)(c, args)
+			}
+			return cobra.MinimumNArgs(1)(c, args)
+		},
+		SilenceErrors: true,
+		SilenceUsage:  true,
 	}
 	opts := new(derivationShowOptions)
-	c.Flags().StringVar(&opts.expr, "expr", "", "interpret arguments as attribute paths relative to the Lua expression `expr`")
-	c.Flags().StringVar(&opts.file, "file", "", "interpret arguments as attribute paths relative to the Lua expression stored in `path`")
+	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as Lua expression")
 	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
 	c.Flags().BoolVar(&opts.jsonFormat, "json", false, "print derivation as JSON")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.installables = args
+		opts.args = args
 		return runDerivationShow(cmd.Context(), g, opts)
 	}
 	return c
 }
 
 func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationShowOptions) error {
-	switch {
-	case opts.expr != "" && opts.file != "":
-		return fmt.Errorf("can specify at most one of --expr or --file")
-	case opts.expr == "" && opts.file == "":
-		return runDerivationShowFiles(ctx, g, opts)
+	var drvPaths []string
+	if !opts.expression {
+		// The handling of arguments for `derivation show` is slightly different than other commands.
+		// If the user passes .drv file paths as arguments,
+		// we'll show the .drv file directly rather than trying to interpret it as a Lua file.
+		// These can be interspersed with other URLs.
+		drvPaths = make([]string, len(opts.args))
+		for i, arg := range opts.args {
+			u, err := frontend.ParseURL(arg)
+			if err != nil {
+				return err
+			}
+			if (u.Scheme == "" || u.Scheme == "file") && u.Fragment == "" &&
+				strings.HasSuffix(u.Path, zbstore.DerivationExt) {
+				drvPaths[i], err = frontend.URLToPath(u)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		if !slices.Contains(drvPaths, "") {
+			// Fast path: don't connect to the store. All arguments are local paths to .drv files.
+			for _, drvPath := range drvPaths {
+				drvBytes, err := showDerivationFile(drvPath, opts.jsonFormat)
+				if err != nil {
+					return err
+				}
+				if !opts.jsonFormat && len(opts.args) > 1 {
+					drvBytes = append(drvBytes, '\n')
+				}
+				if _, err := os.Stdout.Write(drvBytes); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 	}
 
 	storeClient, waitStoreClient := g.storeClient(nil)
@@ -87,13 +123,18 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 	}()
 
 	var results []any
-	switch {
-	case opts.expr != "":
-		results, err = eval.Expression(ctx, opts.expr, opts.installables)
-	case opts.file != "":
-		results, err = eval.File(ctx, opts.file, opts.installables)
-	default:
-		panic("unreachable")
+	if opts.expression {
+		results = make([]any, 1)
+		results[0], err = eval.Expression(ctx, opts.args[0])
+	} else {
+		urls := make([]string, 0, len(opts.args))
+		for i, arg := range opts.args {
+			if drvPaths[i] != "" {
+				continue
+			}
+			urls = append(urls, arg)
+		}
+		results, err = eval.URLs(ctx, urls)
 	}
 	if err != nil {
 		return err
@@ -102,32 +143,28 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 		return fmt.Errorf("no evaluation results")
 	}
 
-	for _, result := range results {
-		drv, _ := result.(*frontend.Derivation)
-		if drv == nil {
-			return fmt.Errorf("%v is not a derivation", result)
+	resultIndex := 0
+	for i := range opts.args {
+		var drvBytes []byte
+		var err error
+		if i < len(drvPaths) && drvPaths[i] != "" {
+			drvBytes, err = showDerivationFile(drvPaths[i], opts.jsonFormat)
+		} else {
+			result := results[resultIndex]
+			resultIndex++
+			drv, _ := result.(*frontend.Derivation)
+			if drv == nil {
+				return fmt.Errorf("%v is not a derivation", result)
+			}
+			drvBytes, err = showDerivation(drv, opts.jsonFormat)
 		}
-
-		if !opts.jsonFormat {
-			drvBytes, err := drv.MarshalText()
-			if err != nil {
-				return err
-			}
-			if len(results) > 1 {
-				drvBytes = append(drvBytes, '\n')
-			}
-			if _, err := os.Stdout.Write(drvBytes); err != nil {
-				return err
-			}
-			continue
-		}
-
-		jsonData, err := marshalDerivationJSON(string(drv.Path), drv.Derivation)
 		if err != nil {
 			return err
 		}
-		jsonData = append(jsonData, '\n')
-		if _, err := os.Stdout.Write(jsonData); err != nil {
+		if !opts.jsonFormat && len(results) > 1 {
+			drvBytes = append(drvBytes, '\n')
+		}
+		if _, err := os.Stdout.Write(drvBytes); err != nil {
 			return err
 		}
 	}
@@ -135,51 +172,46 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 	return nil
 }
 
-func runDerivationShowFiles(ctx context.Context, g *globalConfig, opts *derivationShowOptions) error {
-	if len(opts.installables) == 0 {
-		return fmt.Errorf("no files")
+func showDerivationFile(drvPath string, jsonFormat bool) ([]byte, error) {
+	drvPath, err := filepath.Abs(drvPath)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := zbstore.CleanDirectory(filepath.Dir(drvPath))
+	if err != nil {
+		return nil, err
+	}
+	drvBytes, err := os.ReadFile(drvPath)
+	if err != nil {
+		return nil, err
+	}
+	if !jsonFormat {
+		// If we're not outputting JSON, no need to parse. Pass through, even if it's invalid.
+		return drvBytes, nil
+	}
+	drv, err := zbstore.ParseDerivation(dir, inferDerivationName(drvPath), drvBytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %v", drvPath, err)
 	}
 
-	for _, drvPath := range opts.installables {
-		drvPath, err := filepath.Abs(drvPath)
-		if err != nil {
-			return err
-		}
-		dir, err := zbstore.CleanDirectory(filepath.Dir(drvPath))
-		if err != nil {
-			return err
-		}
-		drvBytes, err := os.ReadFile(drvPath)
-		if err != nil {
-			return err
-		}
-
-		if !opts.jsonFormat {
-			if len(opts.installables) > 1 {
-				drvBytes = append(drvBytes, '\n')
-			}
-			if _, err := os.Stdout.Write(drvBytes); err != nil {
-				return err
-			}
-			continue
-		}
-
-		drv, err := zbstore.ParseDerivation(dir, inferDerivationName(drvPath), drvBytes)
-		if err != nil {
-			return fmt.Errorf("parse %s: %v", drvPath, err)
-		}
-
-		jsonData, err := marshalDerivationJSON(drvPath, drv)
-		if err != nil {
-			return err
-		}
-		jsonData = append(jsonData, '\n')
-		if _, err := os.Stdout.Write(jsonData); err != nil {
-			return err
-		}
+	jsonData, err := marshalDerivationJSON(drvPath, drv)
+	if err != nil {
+		return nil, err
 	}
+	jsonData = append(jsonData, '\n')
+	return jsonData, nil
+}
 
-	return nil
+func showDerivation(drv *frontend.Derivation, jsonFormat bool) ([]byte, error) {
+	if !jsonFormat {
+		return drv.MarshalText()
+	}
+	jsonData, err := marshalDerivationJSON(string(drv.Path), drv.Derivation)
+	if err != nil {
+		return nil, err
+	}
+	jsonData = append(jsonData, '\n')
+	return jsonData, nil
 }
 
 func inferDerivationName(path string) string {
@@ -297,18 +329,22 @@ func newDerivationEnvCommand(g *globalConfig) *cobra.Command {
 		Use:                   "env [options] [INSTALLABLE [...]]",
 		Short:                 "show the environment of one or more derivations",
 		DisableFlagsInUseLine: true,
-		Args:                  cobra.ArbitraryArgs,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
+		Args: func(c *cobra.Command, args []string) error {
+			if expr, _ := c.Flags().GetBool("expr"); expr {
+				return cobra.ExactArgs(1)(c, args)
+			}
+			return cobra.MinimumNArgs(1)(c, args)
+		},
+		SilenceErrors: true,
+		SilenceUsage:  true,
 	}
 	opts := new(derivationEnvOptions)
-	c.Flags().StringVar(&opts.expr, "expr", "", "interpret installables as attribute paths relative to the Lua expression `expr`")
-	c.Flags().StringVar(&opts.file, "file", "", "interpret installables as attribute paths relative to the Lua expression stored in `path`")
+	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as Lua expression")
 	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
 	c.Flags().BoolVar(&opts.jsonFormat, "json", false, "print environments as JSON")
 	c.Flags().StringVar(&opts.tempDir, "temp-dir", os.TempDir(), "temporary `dir`ectory to fill in")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.installables = args
+		opts.args = args
 		return runDerivationEnv(cmd.Context(), g, opts)
 	}
 	return c
@@ -331,15 +367,11 @@ func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvO
 	}()
 
 	var results []any
-	switch {
-	case opts.expr != "" && opts.file != "":
-		return fmt.Errorf("can specify at most one of --expr or --file")
-	case opts.expr != "":
-		results, err = eval.Expression(ctx, opts.expr, opts.installables)
-	case opts.file != "":
-		results, err = eval.File(ctx, opts.file, opts.installables)
-	default:
-		return fmt.Errorf("installables not supported yet")
+	if opts.expression {
+		results = make([]any, 1)
+		results[0], err = eval.Expression(ctx, opts.args[0])
+	} else {
+		results, err = eval.URLs(ctx, opts.args)
 	}
 	if err != nil {
 		return err

@@ -1,1 +1,2 @@
 *.drv eol=lf
+/cmd/zb/docs/*.txt eol=lf

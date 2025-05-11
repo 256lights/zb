@@ -28,6 +28,7 @@ func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int,
 	var p string
 	var pcontext sets.Set[string]
 	var name string
+	var filterFuncIndex int
 	switch l.Type(1) {
 	case lua.TypeString:
 		p, _ = l.ToString(1)
@@ -54,6 +55,14 @@ func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int,
 			name, _, _ = lua.ToString(ctx, l, -1)
 		}
 		l.Pop(1)
+
+		typ, err = l.Field(ctx, 1, "filter")
+		if err != nil {
+			return 0, fmt.Errorf("path: %v", err)
+		}
+		if typ != lua.TypeNil {
+			filterFuncIndex = l.Top()
+		}
 	default:
 		return 0, lua.NewTypeError(l, 1, "string or table")
 	}
@@ -72,7 +81,29 @@ func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int,
 	}
 	defer eval.cachePool.Put(cache)
 
-	if err := walkPath(ctx, cache, p); err != nil {
+	var filterFunc func(name string, typ fs.FileMode) (bool, error)
+	if filterFuncIndex != 0 {
+		filterFunc = func(name string, typ fs.FileMode) (bool, error) {
+			defer l.SetTop(l.Top())
+			l.PushValue(filterFuncIndex)
+			l.PushString(name)
+			switch typ.Type() {
+			case 0:
+				l.PushString("regular")
+			case fs.ModeDir:
+				l.PushString("directory")
+			case fs.ModeSymlink:
+				l.PushString("symlink")
+			default:
+				return false, fmt.Errorf("internal error: unsupported file type %v", typ)
+			}
+			if err := l.Call(ctx, 2, 1); err != nil {
+				return false, err
+			}
+			return l.ToBoolean(-1), nil
+		}
+	}
+	if err := walkPath(ctx, cache, p, filterFunc); err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
 	defer func() {
@@ -355,7 +386,7 @@ func absSourcePath(l *lua.State, path string, context sets.Set[string]) (string,
 // if the cache still matches the metadata of the files on disk.
 // path must be a cleaned, absolute path.
 // name is the intended name of the store object.
-// [Eval.walkPath] must be called before calling checkStamp.
+// [walkPath] must be called before calling checkStamp.
 func (eval *Eval) checkStamp(cache *sqlite.Conn, path, name string) (_ zbstore.Path, err error) {
 	var found zbstore.Path
 	err = sqlitex.ExecuteTransientFS(cache, sqlFiles(), "find.sql", &sqlitex.ExecOptions{
@@ -387,7 +418,7 @@ func (eval *Eval) checkStamp(cache *sqlite.Conn, path, name string) (_ zbstore.P
 // walkPath creates a temporary table on the connection called "curr"
 // and inserts the paths and their stamps into the table.
 // walkPath only operates on the TEMP schema.
-func walkPath(ctx context.Context, conn *sqlite.Conn, path string) (err error) {
+func walkPath(ctx context.Context, conn *sqlite.Conn, path string, filter func(name string, typ fs.FileMode) (bool, error)) (err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("walk %s: %v", path, err)
@@ -410,55 +441,70 @@ func walkPath(ctx context.Context, conn *sqlite.Conn, path string) (err error) {
 		return err
 	}
 	defer insertStmt.Finalize()
-
-	if rootInfo.Mode().Type() == os.ModeSymlink {
-		// If the root is a symlink, we don't want to walk it:
-		// we want to use it directly.
-		rootStamp, err := stamp(path, rootInfo)
+	stampAndInsert := func(path string, info fs.FileInfo) error {
+		entryStamp, err := stamp(path, info)
 		if err != nil {
 			return err
 		}
+
 		insertStmt.SetText(":path", path)
-		insertStmt.SetInt64(":mode", int64(rootInfo.Mode()))
-		insertStmt.SetInt64(":size", -1)
-		insertStmt.SetText(":stamp", rootStamp)
-		log.Debugf(ctx, "walk %s stamp=%s", path, rootStamp)
-		if _, err := insertStmt.Step(); err != nil {
-			return err
+		insertStmt.SetInt64(":mode", int64(info.Mode()))
+		if info.Mode().IsRegular() {
+			insertStmt.SetInt64(":size", info.Size())
+		} else {
+			insertStmt.SetInt64(":size", -1)
 		}
-	} else {
+		insertStmt.SetText(":stamp", entryStamp)
+		log.Debugf(ctx, "walk %s stamp=%s", path, entryStamp)
+		_, insertError := insertStmt.Step()
+		insertStmt.ClearBindings()
+		resetError := insertStmt.Reset()
+		if insertError != nil {
+			return insertError
+		}
+		if resetError != nil {
+			return resetError
+		}
+		return nil
+	}
+
+	if rootInfo.IsDir() {
+		rootPath := path
 		err = filepath.WalkDir(path, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
+			isDescendant := len(path) > len(rootPath)
+			if !strings.HasPrefix(path, rootPath) ||
+				isDescendant && path[len(rootPath)] != filepath.Separator {
+				return fmt.Errorf("internal error: %s is not prefixed by %s", path, rootPath)
+			}
+			if isDescendant && filter != nil {
+				pathArg := filepath.ToSlash(path[len(rootPath)+1:])
+				entryType := entry.Type()
+				keep, err := filter(pathArg, entryType)
+				if err != nil {
+					return fmt.Errorf("filter %s: %v", path, err)
+				}
+				if !keep {
+					if entryType.IsDir() {
+						return fs.SkipDir
+					}
+					return nil
+				}
+			}
+
 			info, err := entry.Info()
 			if err != nil {
 				return err
 			}
-			entryStamp, err := stamp(path, info)
-			if err != nil {
-				return err
-			}
-
-			insertStmt.SetText(":path", path)
-			insertStmt.SetInt64(":mode", int64(info.Mode()))
-			if info.Mode().IsRegular() {
-				insertStmt.SetInt64(":size", info.Size())
-			} else {
-				insertStmt.SetInt64(":size", -1)
-			}
-			insertStmt.SetText(":stamp", entryStamp)
-			log.Debugf(ctx, "walk %s stamp=%s", path, entryStamp)
-			_, err = insertStmt.Step()
-			insertStmt.ClearBindings()
-			insertStmt.Reset()
-			if err != nil {
-				return err
-			}
-
-			return nil
+			return stampAndInsert(path, info)
 		})
 		if err != nil {
+			return err
+		}
+	} else {
+		if err := stampAndInsert(path, rootInfo); err != nil {
 			return err
 		}
 	}

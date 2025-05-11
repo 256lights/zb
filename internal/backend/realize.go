@@ -34,7 +34,6 @@ import (
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
-	"zombiezen.com/go/batchio"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
@@ -89,11 +88,11 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		return nil, fmt.Errorf("build %s: %v", drvPathList, err)
 	}
 
-	s.buildWaitGroup.Add(1)
+	s.background.Add(1)
 	go func() {
 		defer func() {
 			cancelBuild()
-			s.buildWaitGroup.Done()
+			s.background.Done()
 		}()
 
 		wantOutputs := make(sets.Set[zbstore.OutputReference])
@@ -177,11 +176,11 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
 	}
 
-	s.buildWaitGroup.Add(1)
+	s.background.Add(1)
 	go func() {
 		defer func() {
 			endBuild()
-			s.buildWaitGroup.Done()
+			s.background.Done()
 		}()
 
 		drv := drvCache[drvPath]
@@ -759,7 +758,14 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 			// If there was a realization or the search had an abnormal failure,
 			// we can finalize the result inside this transaction.
 			hasExisting = reuseError == nil
-			if err := finalizeBuildResult(ctx, conn, buildResultID, time.Now(), reuseError); err != nil {
+			err := finalizeBuildResult(ctx, conn, b.server.logDir, &buildFinalResults{
+				buildID: b.id,
+				drvPath: drvPath,
+				id:      buildResultID,
+				endTime: time.Now(),
+				error:   reuseError,
+			})
+			if err != nil {
 				log.Warnf(ctx, "For build %s: %v", drvPath, err)
 			}
 			return reuseError
@@ -774,7 +780,13 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		return nil
 	}
 	defer func() {
-		finalizeError := finalizeBuildResult(ctx, conn, buildResultID, time.Now(), err)
+		finalizeError := finalizeBuildResult(ctx, conn, b.server.logDir, &buildFinalResults{
+			buildID: b.id,
+			drvPath: drvPath,
+			id:      buildResultID,
+			endTime: time.Now(),
+			error:   err,
+		})
 		if finalizeError != nil {
 			log.Warnf(ctx, "For build %s: %v", drvPath, finalizeError)
 		}
@@ -872,7 +884,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 	}()
 
 	// Save outputs as store objects.
-	inputs, err := b.inputs(ctx, conn, drvPath)
+	inputs, err := b.inputs(conn, drvPath)
 	if err != nil {
 		return err
 	}
@@ -927,7 +939,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 }
 
 // inputs computes the closure of all inputs used by the derivation at drvPath.
-func (b *builder) inputs(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.Path) (map[zbstore.Path]sets.Set[equivalenceClass], error) {
+func (b *builder) inputs(conn *sqlite.Conn, drvPath zbstore.Path) (map[zbstore.Path]sets.Set[equivalenceClass], error) {
 	drv := b.derivations[drvPath]
 	if drv == nil {
 		return nil, fmt.Errorf("input closure for %s: unknown derivation", drvPath)
@@ -952,21 +964,11 @@ func (b *builder) inputs(ctx context.Context, conn *sqlite.Conn, drvPath zbstore
 		}
 	}
 
-	startedTransaction := conn.AutocommitEnabled()
-	if err := sqlitex.Execute(conn, "SAVEPOINT inputs;", nil); err != nil {
+	rollback, err := readonlySavepoint(conn)
+	if err != nil {
 		return nil, fmt.Errorf("input closure for %s: %v", drvPath, err)
 	}
-	defer func() {
-		var sql string
-		if startedTransaction {
-			sql = "ROLLBACK TRANSACTION;"
-		} else {
-			sql = "ROLLBACK TRANSACTION TO SAVEPOINT inputs;"
-		}
-		if err := sqlitex.Execute(conn, sql, nil); err != nil {
-			log.Errorf(ctx, "Rollback read-only savepoint: %v", err)
-		}
-	}()
+	defer rollback()
 
 	for _, input := range drv.InputSources.All() {
 		err := closurePaths(conn, pathAndEquivalenceClass{path: input}, func(pe pathAndEquivalenceClass) bool {
@@ -1084,24 +1086,21 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 			return nil, fmt.Errorf("build %s: %v", drvPath, err)
 		}
 	}
+	logFile, err := createBuilderLog(b.server.logDir, b.id, drvPath)
+	if err != nil {
+		return nil, fmt.Errorf("build %s: %v", drvPath, err)
+	}
+	defer func() {
+		if err := logFile.Close(); err != nil {
+			log.Warnf(ctx, "Closing build log for %s: %v", drvPath, err)
+		}
+	}()
 
 	r := newReplacer(xiter.Chain2(
 		outputPathRewrites(outPaths),
 		maps.All(inputRewrites),
 	))
 	expandedDrv := expandDerivationPlaceholders(r, drv)
-
-	logger := newBuildLogger(ctx, conn, buildResultID)
-	// Per https://www.sqlite.org/intern-v-extern-blob.html,
-	// ~50KB was still faster than filesystem for the default page size of 4096.
-	// We use 32
-	bufferedLogger := batchio.NewWriter(logger, 32*1024, builderLogInterval)
-	defer func() {
-		bufferedLogger.Flush()
-		if err := logger.Close(); err != nil {
-			log.Warnf(ctx, "Closing build log for %s: %v", drvPath, err)
-		}
-	}()
 
 	log.Debugf(ctx, "Starting builder for %s...", drvPath)
 	if err := recordBuilderStart(conn, buildResultID, time.Now()); err != nil {
@@ -1115,7 +1114,7 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 
 		realStoreDir: b.server.realDir,
 		buildDir:     buildDir,
-		logWriter:    bufferedLogger,
+		logWriter:    logFile,
 		user:         buildUser,
 		sandboxPaths: b.server.sandboxPaths,
 		cores:        b.server.coresPerBuild,
@@ -1136,12 +1135,9 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 		buf = append(buf, "Build failed. Build directory available at "...)
 		buf = append(buf, buildDir...)
 		buf = append(buf, "\n"...)
-		if _, err := bufferedLogger.Write(buf); err != nil {
+		if _, err := logFile.Write(buf); err != nil {
 			log.Debugf(ctx, "While writing failed build directory info: %v", err)
 		}
-	}
-	if err := bufferedLogger.Flush(); err != nil {
-		log.Errorf(ctx, "Flushing build log for %s: %v", drvPath, err)
 	}
 	if err := recordBuilderEnd(conn, buildResultID, builderEndTime); err != nil {
 		log.Warnf(ctx, "For %s: %v", drvPath, err)
@@ -1281,7 +1277,7 @@ func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.Derivatio
 // and unlockBuildPath must be the unlock function obtained from b.server.writing.
 // If the outputType is floating,
 // then postprocess will move the store object at buildPath to its computed path.
-func (b *builder) postprocess(ctx context.Context, conn *sqlite.Conn, output zbstore.OutputReference, buildPath zbstore.Path, unlockBuildPath func(), inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
+func (b *builder) postprocess(ctx context.Context, conn *sqlite.Conn, output zbstore.OutputReference, buildPath zbstore.Path, unlockBuildPath func(), inputs *sets.Sorted[zbstore.Path]) (*ObjectInfo, error) {
 	drv := b.derivations[output.DrvPath]
 	if drv == nil {
 		return nil, fmt.Errorf("post-process %v: unknown derivation", output)
@@ -1291,7 +1287,7 @@ func (b *builder) postprocess(ctx context.Context, conn *sqlite.Conn, output zbs
 		return nil, fmt.Errorf("post-process %v: no such output", output)
 	}
 
-	var info *zbstore.NARInfo
+	var info *ObjectInfo
 	var err error
 	if ca, ok := outputType.FixedCA(); ok {
 		if unlockBuildPath == nil {
@@ -1308,15 +1304,12 @@ func (b *builder) postprocess(ctx context.Context, conn *sqlite.Conn, output zbs
 		// outputType has presumably been validated with [validateOutputs].
 		info, err = b.postprocessFloatingOutput(ctx, conn, buildPath, inputs)
 	}
-	if info != nil {
-		info.Deriver = output.DrvPath
-	}
 	return info, err
 }
 
 // postprocessFixedOutput computes the NAR hash of the given store path
 // and verifies that it matches the content address.
-func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn, outputPath zbstore.Path, ca zbstore.ContentAddress) (info *zbstore.NARInfo, err error) {
+func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn, outputPath zbstore.Path, ca zbstore.ContentAddress) (info *ObjectInfo, err error) {
 	log.Debugf(ctx, "Verifying fixed output %s...", outputPath)
 
 	realOutputPath := b.server.realPath(outputPath)
@@ -1341,12 +1334,11 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn,
 		return nil, err
 	}
 
-	info = &zbstore.NARInfo{
-		StorePath:   outputPath,
-		Compression: nix.NoCompression,
-		NARHash:     h.SumHash(),
-		NARSize:     int64(*wc),
-		CA:          ca,
+	info = &ObjectInfo{
+		StorePath: outputPath,
+		NARHash:   h.SumHash(),
+		NARSize:   int64(*wc),
+		CA:        ca,
 	}
 	err = func() (err error) {
 		endFn, err := sqlitex.ImmediateTransaction(conn)
@@ -1360,12 +1352,12 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn,
 		err = fmt.Errorf("post-process %v: %v", outputPath, err)
 	}
 
-	makePublicReadOnly(ctx, realOutputPath)
+	freeze(ctx, realOutputPath)
 
 	return info, nil
 }
 
-func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Conn, buildPath zbstore.Path, inputs *sets.Sorted[zbstore.Path]) (*zbstore.NARInfo, error) {
+func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Conn, buildPath zbstore.Path, inputs *sets.Sorted[zbstore.Path]) (*ObjectInfo, error) {
 	log.Debugf(ctx, "Processing floating output %s...", buildPath)
 	realBuildPath := b.server.realPath(buildPath)
 	scan, err := scanFloatingOutput(ctx, realBuildPath, buildPath.Digest(), inputs)
@@ -1385,12 +1377,11 @@ func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Co
 	defer unlock()
 	log.Debugf(ctx, "Acquired lock on %s", finalPath)
 
-	info := &zbstore.NARInfo{
-		StorePath:   finalPath,
-		Compression: zbstore.NoCompression,
-		NARSize:     scan.narSize,
-		References:  *scan.refs.ToSet(finalPath),
-		CA:          scan.ca,
+	info := &ObjectInfo{
+		StorePath:  finalPath,
+		NARSize:    scan.narSize,
+		References: *scan.refs.ToSet(finalPath),
+		CA:         scan.ca,
 	}
 	if !scan.refs.Self {
 		info.NARHash = scan.narHash
@@ -1434,7 +1425,7 @@ func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Co
 		return nil, fmt.Errorf("post-process %v: %v", buildPath, err)
 	}
 
-	makePublicReadOnly(ctx, realFinalPath)
+	freeze(ctx, realFinalPath)
 
 	return info, nil
 }
@@ -1676,12 +1667,28 @@ func canBuildLocally(drv *zbstore.Derivation) bool {
 	if err != nil {
 		return false
 	}
-	if host.OS != want.OS || host.ABI != want.ABI {
+
+	// If the OS/architecture pair matches exactly, don't bother with anything else.
+	if host.OS == want.OS && host.Arch == want.Arch {
+		return true
+	}
+
+	// Perform a fuzzy match on operating systems and architectures we know about.
+	sameOS := want.OS.IsMacOS() && host.OS.IsMacOS() ||
+		want.OS.IsLinux() && host.OS.IsLinux() ||
+		want.OS.IsWindows() && host.OS.IsWindows()
+	if !sameOS {
 		return false
 	}
-	return want.Arch == host.Arch ||
-		want.IsIntel32() && host.IsIntel64() ||
-		want.IsARM32() && host.IsARM64()
+	// TODO(someday): There's probably more subtlety to the ARM comparison.
+	sameFamily := want.Arch.IsX86() && host.Arch.IsX86() ||
+		want.Arch.IsARM() && host.Arch.IsARM() ||
+		want.Arch.IsRISCV() && host.Arch.IsRISCV()
+	if !sameFamily {
+		return false
+	}
+	return host.Arch.Is64Bit() && (want.Arch.Is64Bit() || want.Arch.Is32Bit()) ||
+		host.Arch.Is32Bit() && want.Arch.Is32Bit()
 }
 
 // tempPath generates a [zbstore.Path] that can be used as a temporary build path

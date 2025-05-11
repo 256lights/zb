@@ -1,7 +1,7 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-// Package backend provides a [zbstore] implementation backed by local compute resources.
+// Package backend provides a [zbstorerpc] implementation backed by local compute resources.
 package backend
 
 import (
@@ -39,12 +39,19 @@ const DefaultBuildUsersGroup = "zbld"
 
 // Options is the set of optional parameters to [NewServer].
 type Options struct {
-	// RealDir is where the store objects are located physically on disk.
+	// RealStoreDirectory is where the store objects are located physically on disk.
 	// If empty, defaults to the store directory.
-	RealDir string
-	// BuildDir is where realizations' working directories will be placed.
+	RealStoreDirectory string
+	// BuildDirectory is where realizations' working directories will be placed.
 	// If empty, defaults to [os.TempDir].
-	BuildDir string
+	BuildDirectory string
+	// LogDirectory is where builder logs will be stored.
+	// If empty, defaults to a directory called "log" in the same directory as the database.
+	LogDirectory string
+
+	// DatabasePoolSize is the maximum permitted number of concurrent connections to the database.
+	// If less than 1, a reasonable default is used.
+	DatabasePoolSize int
 
 	// If AllowKeepFailed is true, then the KeepFailed field in [zbstore.RealizeRequest] will be respected.
 	AllowKeepFailed bool
@@ -104,6 +111,7 @@ type Server struct {
 	dir             zbstore.Directory
 	realDir         string
 	buildDir        string
+	logDir          string
 	db              *sqlitemigration.Pool
 	allowKeepFailed bool
 	buildContext    func(context.Context, string) context.Context
@@ -111,15 +119,14 @@ type Server struct {
 	sandbox      bool
 	sandboxPaths map[string]string
 
-	cancelGCLogs context.CancelFunc
-	gcLogsDone   <-chan struct{}
+	cancelBackground context.CancelFunc
+	background       sync.WaitGroup
 
 	coresPerBuild int
 
-	writing        mutexMap[zbstore.Path] // store objects being written
-	building       mutexMap[zbstore.Path] // derivations being built
-	users          *userSet
-	buildWaitGroup sync.WaitGroup
+	writing  mutexMap[zbstore.Path] // store objects being written
+	building mutexMap[zbstore.Path] // derivations being built
+	users    *userSet
 
 	activeBuildsMu sync.Mutex
 	activeBuilds   map[uuid.UUID]context.CancelFunc
@@ -136,11 +143,11 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	if err != nil {
 		panic(err)
 	}
-	gcLogsDone := make(chan struct{})
 	srv := &Server{
 		dir:             dir,
-		realDir:         opts.RealDir,
-		buildDir:        opts.BuildDir,
+		realDir:         opts.RealStoreDirectory,
+		buildDir:        opts.BuildDirectory,
+		logDir:          opts.LogDirectory,
 		allowKeepFailed: opts.AllowKeepFailed,
 		sandbox:         !opts.DisableSandbox && CanSandbox(),
 		sandboxPaths:    opts.SandboxPaths,
@@ -149,11 +156,10 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		activeBuilds:    make(map[uuid.UUID]context.CancelFunc),
 		buildContext:    opts.BuildContext,
 
-		gcLogsDone: gcLogsDone,
-
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
 			PrepareConn: prepareConn,
+			PoolSize:    opts.DatabasePoolSize,
 			OnStartMigrate: func() {
 				ctx := context.Background()
 				log.Debugf(ctx, "Migrating...")
@@ -177,20 +183,26 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	if srv.buildDir == "" {
 		srv.buildDir = os.TempDir()
 	}
+	if srv.logDir == "" {
+		srv.logDir = filepath.Join(filepath.Dir(dbPath), "log")
+	}
 	if srv.buildContext == nil {
 		srv.buildContext = func(_ context.Context, _ string) context.Context {
 			return context.Background()
 		}
 	}
-	if opts.BuildLogRetention <= 0 {
-		srv.cancelGCLogs = func() {}
-		close(gcLogsDone)
-	} else {
-		var gcLogContext context.Context
-		gcLogContext, srv.cancelGCLogs = context.WithCancel(context.Background())
+	var bgCtx context.Context
+	bgCtx, srv.cancelBackground = context.WithCancel(context.Background())
+	srv.background.Add(1)
+	go func() {
+		defer srv.background.Done()
+		srv.optimizeDatabase(bgCtx)
+	}()
+	if opts.BuildLogRetention > 0 {
+		srv.background.Add(1)
 		go func() {
-			defer close(gcLogsDone)
-			srv.gcLogs(gcLogContext, opts.BuildLogRetention)
+			defer srv.background.Done()
+			srv.gcLogs(bgCtx, opts.BuildLogRetention)
 		}()
 	}
 	return srv
@@ -198,7 +210,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 
 // Close releases any resources associated with the server.
 func (s *Server) Close() error {
-	s.cancelGCLogs()
+	s.cancelBackground()
 	s.activeBuildsMu.Lock()
 	s.draining = true
 	for _, cancel := range s.activeBuilds {
@@ -206,18 +218,18 @@ func (s *Server) Close() error {
 	}
 	s.activeBuildsMu.Unlock()
 
-	s.buildWaitGroup.Wait()
-	<-s.gcLogsDone
+	s.background.Wait()
 
 	return s.db.Close()
 }
 
 // JSONRPC implements the [jsonrpc.Handler] interface
-// and serves the [zbstore] API.
+// and serves the [zbstorerpc] API.
 func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	return jsonrpc.ServeMux{
 		zbstorerpc.ExistsMethod:         jsonrpc.HandlerFunc(s.exists),
 		zbstorerpc.InfoMethod:           jsonrpc.HandlerFunc(s.info),
+		zbstorerpc.ExportMethod:         jsonrpc.HandlerFunc(s.export),
 		zbstorerpc.ExpandMethod:         jsonrpc.HandlerFunc(s.expand),
 		zbstorerpc.RealizeMethod:        jsonrpc.HandlerFunc(s.realize),
 		zbstorerpc.GetBuildMethod:       jsonrpc.HandlerFunc(s.getBuild),
@@ -280,12 +292,8 @@ func (s *Server) info(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Respo
 	if errors.Is(err, errObjectNotExist) {
 		return marshalResponse(&zbstorerpc.InfoResponse{})
 	}
-	if info.References == nil {
-		// Don't send null for the array.
-		info.References = []zbstore.Path{}
-	}
 	return marshalResponse(&zbstorerpc.InfoResponse{
-		Info: info,
+		Info: info.ToRPC(),
 	})
 }
 
@@ -315,14 +323,11 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 	_, isActive := s.activeBuilds[buildID]
 	s.activeBuildsMu.Unlock()
 
-	if err := sqlitex.Execute(conn, "BEGIN DEFERRED TRANSACTION;", nil); err != nil {
-		return nil, err
+	rollback, err := readonlySavepoint(conn)
+	if err != nil {
+		return nil, fmt.Errorf("get build %v: %v", buildID, err)
 	}
-	defer func() {
-		if err := sqlitex.Execute(conn, "ROLLBACK TRANSACTION;", nil); err != nil {
-			log.Errorf(ctx, "Rollback read-only transaction: %v", err)
-		}
-	}()
+	defer rollback()
 
 	resp := &zbstorerpc.Build{
 		ID:      args.BuildID,
@@ -377,7 +382,7 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 		return marshalResponse(resp)
 	}
 
-	resp.Results, err = findBuildResults(resp.Results, conn, buildID, "")
+	resp.Results, err = findBuildResults(resp.Results, conn, s.logDir, buildID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +410,7 @@ func (s *Server) getBuildResult(ctx context.Context, req *jsonrpc.Request) (*jso
 	}
 	defer s.db.Put(conn)
 
-	results, err := findBuildResults(nil, conn, buildID, args.DrvPath)
+	results, err := findBuildResults(nil, conn, s.logDir, buildID, args.DrvPath)
 	if err != nil {
 		return nil, err
 	}
@@ -463,11 +468,27 @@ func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 		return nil, newNotFoundError()
 	}
 
-	conn, err := s.db.Get(ctx)
-	if err != nil {
-		return nil, err
+	f, openError := os.Open(builderLogPath(s.logDir, buildID, args.DrvPath))
+	if errors.Is(openError, os.ErrNotExist) {
+		conn, err := s.db.Get(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("fetch build result for %s in build %v: %v", args.DrvPath, buildID, err)
+		}
+		defer s.db.Put(conn)
+		results, err := findBuildResults(nil, conn, "", buildID, args.DrvPath)
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, newNotFoundError()
+		}
+		// Treat like a zero-length log.
+		return marshalResponse(&zbstorerpc.ReadLogResponse{EOF: true})
 	}
-	defer s.db.Put(conn)
+	if openError != nil {
+		return nil, openError
+	}
+	defer f.Close()
 
 	const maxRead = 64 * 1024
 	end := args.RangeStart + maxRead
@@ -475,36 +496,93 @@ func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 		end = min(end, args.RangeEnd.X)
 	}
 	buf := make([]byte, end-args.RangeStart)
-	n := 0
+
+	size, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+	}
+	if args.RangeStart+int64(len(buf)) < size {
+		// Special case: if the requested range is within what's already written,
+		// we can skip acquiring a database connection.
+		// We only need the database connection to check whether the builder is finished.
+		if _, err := f.Seek(args.RangeStart, io.SeekStart); err != nil {
+			return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+		}
+		n, err := io.ReadFull(f, buf)
+		if n == 0 {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+		}
+		resp := &zbstorerpc.ReadLogResponse{EOF: err == io.EOF}
+		resp.SetPayload(buf[:n])
+		return marshalResponse(resp)
+	}
+
+	conn, err := s.db.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer s.db.Put(conn)
+
+	var results []*zbstorerpc.BuildResult
 	for {
-		nn, err := readBuildLogAt(conn, buildID, args.DrvPath, buf[n:], args.RangeStart+int64(n))
-		n += nn
-		switch {
-		case err == nil || err == io.EOF:
-			resp := &zbstorerpc.ReadLogResponse{EOF: err == io.EOF}
+		var err error
+		results, err = findBuildResults(results[:0], conn, "", buildID, args.DrvPath)
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, newNotFoundError()
+		}
+
+		// Read log size after reading builder status.
+		// If the status is finished, then the log should be at its final size.
+		size, err := f.Seek(0, io.SeekEnd)
+		if err != nil {
+			return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+		}
+		// At least one byte should be available.
+		if args.RangeStart < size {
+			if _, err := f.Seek(args.RangeStart, io.SeekStart); err != nil {
+				return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+			}
+			n := 0
+			var readError error
+			for n < len(buf) && readError == nil {
+				var nn int
+				nn, readError = f.Read(buf[n:])
+				n += nn
+			}
+			if n == 0 {
+				if readError == io.EOF {
+					readError = io.ErrUnexpectedEOF
+				}
+				return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, readError)
+			}
+			resp := &zbstorerpc.ReadLogResponse{
+				EOF: readError == io.EOF && results[0].Status.IsFinished(),
+			}
 			resp.SetPayload(buf[:n])
 			return marshalResponse(resp)
-		case errors.Is(err, errBuildLogPending):
-			if n > 0 {
-				// Prefer returning what we have rather than blocking.
-				resp := new(zbstorerpc.ReadLogResponse)
-				resp.SetPayload(buf[:n])
-				return marshalResponse(resp)
-			}
+		}
 
-			// Wait for more.
-			// TODO(someday): Have build logs signal when there's more data rather than polling.
-			t := time.NewTimer(builderLogInterval)
-			select {
-			case <-t.C:
-			case <-ctx.Done():
-				t.Stop()
-				return nil, fmt.Errorf("read log for %s in build %v: %w", args.DrvPath, buildID, ctx.Err())
+		if results[0].Status.IsFinished() {
+			if args.RangeStart > size {
+				return nil, fmt.Errorf("read log for %s in build %v: start byte %d out of range",
+					args.DrvPath, buildID, args.RangeStart)
 			}
-		case errors.Is(err, errBuildLogNotFound):
-			return nil, newNotFoundError()
-		default:
-			return nil, err
+			return marshalResponse(&zbstorerpc.ReadLogResponse{EOF: true})
+		}
+
+		// Wait for more.
+		t := time.NewTimer(builderLogInterval)
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			t.Stop()
+			return nil, fmt.Errorf("read log for %s in build %v: %w", args.DrvPath, buildID, ctx.Err())
 		}
 	}
 }
@@ -555,12 +633,20 @@ func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
 		activeBuilds := slices.Collect(maps.Keys(s.activeBuilds))
 		s.activeBuildsMu.Unlock()
 		log.Debugf(ctx, "Cleaning up build logs older than %v...", cutoff.UTC())
-		if n, err := deleteOldBuilds(conn, cutoff, slices.Values(activeBuilds)); err != nil {
+		n, err := deleteOldBuilds(ctx, conn, cutoff, &deleteOldBuildOptions{
+			logDir: s.logDir,
+			keep:   slices.Values(activeBuilds),
+		})
+		if err != nil {
 			log.Warnf(ctx, "Failed to clean up build logs: %v", err)
 		} else if n > 0 {
 			log.Infof(ctx, "Deleted %d build logs older than %v", n, cutoff.Truncate(time.Millisecond).UTC())
 		} else {
 			log.Debugf(ctx, "No build logs to clean up.")
+		}
+		// Attempt to reclaim disk space.
+		if err := sqlitex.ExecuteTransient(conn, "PRAGMA incremental_vacuum(128);", nil); err != nil {
+			log.Warnf(ctx, "Incremental vacuum failed: %v", err)
 		}
 		s.db.Put(conn)
 
@@ -569,6 +655,30 @@ func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+func (s *Server) optimizeDatabase(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+
+		conn, err := s.db.Get(ctx)
+		if err != nil {
+			// Likely means context was canceled.
+			log.Debugf(ctx, "Exiting background optimization due to: %v", err)
+			return
+		}
+		if err := sqlitex.ExecuteTransient(conn, "PRAGMA optimize;", nil); err != nil {
+			log.Warnf(ctx, "Incremental vacuum failed: %v", err)
+		}
+		s.db.Put(conn)
 	}
 }
 
@@ -697,13 +807,12 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		}
 		defer endFn(&err)
 
-		return insertObject(ctx, conn, &zbstore.NARInfo{
-			StorePath:   trailer.StorePath,
-			NARSize:     r.size,
-			NARHash:     r.hasher.SumHash(),
-			Compression: zbstore.NoCompression,
-			CA:          ca,
-			References:  trailer.References,
+		return insertObject(ctx, conn, &ObjectInfo{
+			StorePath:  trailer.StorePath,
+			NARSize:    r.size,
+			NARHash:    r.hasher.SumHash(),
+			CA:         ca,
+			References: trailer.References,
 		})
 	}()
 	if err != nil {
@@ -714,7 +823,7 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		return
 	}
 
-	makePublicReadOnly(ctx, realPath)
+	freeze(ctx, realPath)
 
 	log.Infof(ctx, "Imported %s", trailer.StorePath)
 }
@@ -850,11 +959,11 @@ func (r *NARReceiver) Cleanup(ctx context.Context) {
 	}
 }
 
-// makePublicReadOnly calls [osutil.MakePublicReadOnly]
+// freeze calls [osutil.Freeze]
 // and logs any errors instead of causing them to stop the operation.
-func makePublicReadOnly(ctx context.Context, path string) {
+func freeze(ctx context.Context, path string) {
 	log.Debugf(ctx, "Marking %s read-only...", path)
-	osutil.MakePublicReadOnly(path, func(err error) error {
+	osutil.Freeze(path, time.Unix(0, 0), func(err error) error {
 		// Log errors, but don't abort the chmod attempt.
 		// Subsequent use of this store object can still succeed,
 		// and we want to mark as many files read-only as possible.
@@ -867,7 +976,7 @@ type exporterContextKey struct{}
 
 // A type that implements Exporter can receive a `nix-store --export` formatted stream.
 type Exporter interface {
-	Export(r io.Reader) error
+	Export(header jsonrpc.Header, r io.Reader) error
 }
 
 // WithExporter returns a copy of parent
@@ -886,7 +995,7 @@ func exporterFromContext(ctx context.Context) Exporter {
 
 type stubExporter struct{}
 
-func (stubExporter) Export(r io.Reader) error {
+func (stubExporter) Export(header jsonrpc.Header, r io.Reader) error {
 	return errors.New("no exporter in context")
 }
 

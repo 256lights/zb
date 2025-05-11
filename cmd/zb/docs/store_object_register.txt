@@ -1,0 +1,9 @@
+Adds information for objects already present in the store directory to the store
+database. Information is read from stdin in the same format as
+`zb store object info`. Multiple records may be concatenated together into a
+single stream. Each record must start with "StorePath:". Blank lines are
+ignored.
+
+This command is intended for use by the installer to add the initial store
+objects. Prefer `zb store object import` for adding objects, as the import
+process won't leave partial objects in the store.

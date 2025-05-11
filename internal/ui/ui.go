@@ -1,6 +1,7 @@
 // Copyright 2025 The zb Authors
 // SPDX-License-Identifier: MIT
 
+//go:generate npm install
 //go:generate npm run build:prod
 
 // Package ui provides embedded assets for the UI.
@@ -12,7 +13,7 @@ import (
 	"sync"
 )
 
-//go:embed templates public
+//go:embed templates templates/_*.html public
 var files embed.FS
 
 var templateFiles = sub("templates")

@@ -46,7 +46,7 @@ type InfoResponse struct {
 	Info *ObjectInfo `json:"info"`
 }
 
-// ObjectInfo is a condensed version of [NARInfo] used in [InfoResponse].
+// ObjectInfo is a condensed version of [zbstore.NARInfo] used in [InfoResponse].
 type ObjectInfo struct {
 	// NARHash is the hash of the decompressed .nar file.
 	// Nix requires this field to be set.
@@ -336,6 +336,22 @@ func (resp *ReadLogResponse) SetPayload(src []byte) {
 		resp.Text = ""
 		resp.Base64 = base64.StdEncoding.EncodeToString(src)
 	}
+}
+
+// ExportMethod is the name of the method that triggers an export of store objects.
+// [ExportRequest] is used for the request and the response is null.
+// It can be sent as a notification,
+// but sending it as a normal request will cause the export to include an X-Request-ID header
+// that can be used to correlate the response.
+const ExportMethod = "zb.export"
+
+// ExportRequest is the set of parameters for [ExportMethod].
+type ExportRequest struct {
+	Paths []zbstore.Path `json:"paths"`
+
+	// If ExcludeReferences is true, then only the paths in Paths will be exported.
+	// Otherwise, paths that are referenced by those store objects will also be included.
+	ExcludeReferences bool `json:"excludeReferences"`
 }
 
 // Nullable wraps a type to permit a null JSON serialization.

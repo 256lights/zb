@@ -55,14 +55,14 @@ type Options struct {
 	// If empty, then a new directory is created and registered for cleanup.
 	TempDir string
 
-	ClientReceiver zbstore.NARReceiver
+	ClientOptions zbstorerpc.CodecOptions
 }
 
 // NewServer creates a new [backend.Server] suitable for testing
 // and returns a client connected to it.
 // The server and the client will be closed as part of test cleanup.
 // If opts is nil, it is treated the same as if it was passed new(Options).
-func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Options) (*jsonrpc.Client, error) {
+func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Options) (*backend.Server, *jsonrpc.Client, error) {
 	if opts == nil {
 		opts = new(Options)
 	}
@@ -71,7 +71,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 		var err error
 		tempDir, err = os.MkdirTemp("", "zb-backendtest-*")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		tb.Cleanup(func() {
 			if err := os.RemoveAll(tempDir); err != nil {
@@ -82,7 +82,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 
 	buildDir := filepath.Join(tempDir, "build")
 	if err := os.Mkdir(buildDir, 0o777); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var wg sync.WaitGroup
@@ -90,7 +90,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 	if opts != nil {
 		*opts2 = opts.Options
 	}
-	opts2.BuildDir = buildDir
+	opts2.BuildDirectory = buildDir
 	opts2.DisableSandbox = true
 	if opts2.CoresPerBuild < 1 {
 		opts2.CoresPerBuild = 1
@@ -100,7 +100,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 			return ctx
 		}
 	}
-	realStoreDir := opts2.RealDir
+	realStoreDir := opts2.RealStoreDirectory
 	if realStoreDir == "" {
 		realStoreDir = string(storeDir)
 	}
@@ -109,7 +109,9 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 
 	serveCtx, stopServe := context.WithCancel(context.WithoutCancel(ctx))
 	serverReceiver := srv.NewNARReceiver(serveCtx)
-	serverCodec := zbstorerpc.NewCodec(serverConn, serverReceiver)
+	serverCodec := zbstorerpc.NewCodec(serverConn, &zbstorerpc.CodecOptions{
+		NARReceiver: serverReceiver,
+	})
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -117,7 +119,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 		serverCodec.Close()
 	}()
 
-	clientCodec := zbstorerpc.NewCodec(clientConn, opts.ClientReceiver)
+	clientCodec := zbstorerpc.NewCodec(clientConn, &opts.ClientOptions)
 	client := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
 		return clientCodec, nil
 	})
@@ -153,7 +155,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 		})
 	})
 
-	return client, nil
+	return srv, client, nil
 }
 
 // WaitForBuild waits until the store finishes a build or the context is canceled,

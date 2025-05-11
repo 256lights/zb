@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -29,55 +30,55 @@ import (
 func TestLuaToGo(t *testing.T) {
 	tests := []struct {
 		expr string
-		want []any
+		want any
 	}{
 		{
 			expr: "nil",
-			want: []any{nil},
+			want: nil,
 		},
 		{
 			expr: "true",
-			want: []any{true},
+			want: true,
 		},
 		{
 			expr: "false",
-			want: []any{false},
+			want: false,
 		},
 		{
 			expr: `"foo"`,
-			want: []any{"foo"},
+			want: "foo",
 		},
 		{
 			expr: "42",
-			want: []any{int64(42)},
+			want: int64(42),
 		},
 		{
 			expr: "3.14",
-			want: []any{3.14},
+			want: 3.14,
 		},
 		{
 			expr: `{n=0}`,
-			want: []any{[]any{}},
+			want: []any{},
 		},
 		{
 			expr: "{123, 456}",
-			want: []any{[]any{int64(123), int64(456)}},
+			want: []any{int64(123), int64(456)},
 		},
 		{
 			expr: "{123, nil, 456}",
-			want: []any{[]any{int64(123), nil, int64(456)}},
+			want: []any{int64(123), nil, int64(456)},
 		},
 		{
 			expr: "{n=3, 123}",
-			want: []any{[]any{int64(123), nil, nil}},
+			want: []any{int64(123), nil, nil},
 		},
 		{
 			expr: `{}`,
-			want: []any{map[string]any{}},
+			want: map[string]any{},
 		},
 		{
 			expr: `{foo="bar", baz=42}`,
-			want: []any{map[string]any{"foo": "bar", "baz": int64(42)}},
+			want: map[string]any{"foo": "bar", "baz": int64(42)},
 		},
 	}
 
@@ -85,14 +86,14 @@ func TestLuaToGo(t *testing.T) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -105,7 +106,7 @@ func TestLuaToGo(t *testing.T) {
 	}()
 
 	for _, test := range tests {
-		got, err := eval.Expression(ctx, test.expr, nil)
+		got, err := eval.Expression(ctx, test.expr)
 		if err != nil {
 			t.Errorf("%s: %v", test.expr, err)
 			continue
@@ -150,7 +151,7 @@ func TestGetenv(t *testing.T) {
 			storeDir := backendtest.NewStoreDirectory(t)
 
 			const wantKey = "BAR"
-			store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+			_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 				TempDir: t.TempDir(),
 			})
 			if err != nil {
@@ -158,7 +159,7 @@ func TestGetenv(t *testing.T) {
 			}
 			callCount := 0
 			eval, err := NewEval(&Options{
-				Store:          testRPCStore{store},
+				Store:          newTestRPCStore(store),
 				StoreDirectory: storeDir,
 				LookupEnv: func(ctx context.Context, key string) (string, bool) {
 					callCount++
@@ -178,11 +179,11 @@ func TestGetenv(t *testing.T) {
 			}()
 
 			expr := "os.getenv('" + wantKey + "')"
-			got, err := eval.Expression(ctx, expr, nil)
+			got, err := eval.Expression(ctx, expr)
 			if err != nil {
 				t.Fatalf("%s: %v", expr, err)
 			}
-			if diff := cmp.Diff([]any{test.want}, got, cmpopts.EquateEmpty()); diff != "" {
+			if diff := cmp.Diff(test.want, got, cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("%s (-want +got):\n%s", expr, diff)
 			}
 		})
@@ -194,14 +195,14 @@ func TestStringMethod(t *testing.T) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -214,11 +215,11 @@ func TestStringMethod(t *testing.T) {
 	}()
 
 	const expr = `("abcdef"):sub(2, 4)`
-	got, err := eval.Expression(ctx, expr, nil)
+	got, err := eval.Expression(ctx, expr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []any{"bcd"}
+	want := any("bcd")
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("%s (-want +got):\n%s", expr, diff)
 	}
@@ -229,14 +230,14 @@ func TestImportFromDerivation(t *testing.T) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -248,8 +249,8 @@ func TestImportFromDerivation(t *testing.T) {
 		}
 	}()
 
-	results, err := eval.File(ctx, filepath.Join("testdata", "ifd.lua"), []string{
-		`["` + system.Current().String() + `"]`,
+	results, err := eval.URLs(ctx, []string{
+		filepath.Join("testdata", "ifd.lua") + `#` + system.Current().String(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -268,14 +269,14 @@ func TestImportCycle(t *testing.T) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -294,7 +295,7 @@ func TestImportCycle(t *testing.T) {
 
 	t.Run("Self", func(t *testing.T) {
 		path := filepath.Join("testdata", "cycle", "self.lua")
-		results, err := eval.File(ctx, path, nil)
+		results, err := eval.URLs(ctx, []string{path})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -309,7 +310,7 @@ func TestImportCycle(t *testing.T) {
 
 	t.Run("MultipleFiles", func(t *testing.T) {
 		path := filepath.Join("testdata", "cycle", "a.lua")
-		results, err := eval.File(ctx, path, nil)
+		results, err := eval.URLs(ctx, []string{path})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -324,7 +325,7 @@ func TestImportCycle(t *testing.T) {
 
 	t.Run("Defer", func(t *testing.T) {
 		path := filepath.Join("testdata", "cycle", "defer_a.lua")
-		got, err := eval.File(ctx, path, []string{"[4]"})
+		got, err := eval.URLs(ctx, []string{path + "#4"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -340,14 +341,14 @@ func TestExtract(t *testing.T) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -359,9 +360,10 @@ func TestExtract(t *testing.T) {
 		}
 	}()
 
-	results, err := eval.File(ctx, filepath.Join("testdata", "extract.lua"), []string{
-		"full",
-		"stripped",
+	path := filepath.Join("testdata", "extract.lua")
+	results, err := eval.URLs(ctx, []string{
+		path + "#full",
+		path + "#stripped",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -452,14 +454,14 @@ func TestNewState(t *testing.T) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -495,14 +497,14 @@ func BenchmarkNewState(b *testing.B) {
 	defer cancel()
 	storeDir := backendtest.NewStoreDirectory(b)
 
-	store, err := backendtest.NewServer(ctx, b, storeDir, &backendtest.Options{
+	_, store, err := backendtest.NewServer(ctx, b, storeDir, &backendtest.Options{
 		TempDir: b.TempDir(),
 	})
 	if err != nil {
 		b.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          testRPCStore{store},
+		Store:          newTestRPCStore(store),
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -527,12 +529,26 @@ func BenchmarkNewState(b *testing.B) {
 
 // testRPCStore is an implementation of [Store]
 // that communicates to a real backend using JSON-RPC.
+// Imported paths are tracked.
 // Realization logs are ignored.
 type testRPCStore struct {
 	client *jsonrpc.Client
+
+	mu      sync.Mutex
+	imports []zbstore.Path
 }
 
-func (store testRPCStore) Exists(ctx context.Context, path string) (bool, error) {
+func newTestRPCStore(client *jsonrpc.Client) *testRPCStore {
+	return &testRPCStore{client: client}
+}
+
+func (store *testRPCStore) readImports() []zbstore.Path {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return slices.Clone(store.imports)
+}
+
+func (store *testRPCStore) Exists(ctx context.Context, path string) (bool, error) {
 	var response bool
 	err := jsonrpc.Do(ctx, store.client, zbstorerpc.ExistsMethod, &response, &zbstorerpc.ExistsRequest{
 		Path: path,
@@ -543,7 +559,7 @@ func (store testRPCStore) Exists(ctx context.Context, path string) (bool, error)
 	return response, nil
 }
 
-func (store testRPCStore) Import(ctx context.Context, r io.Reader) error {
+func (store *testRPCStore) Import(ctx context.Context, r io.Reader) error {
 	generic, releaseConn, err := store.client.Codec(ctx)
 	if err != nil {
 		return err
@@ -553,10 +569,18 @@ func (store testRPCStore) Import(ctx context.Context, r io.Reader) error {
 	if !ok {
 		return fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
 	}
-	return codec.Export(r)
+	done := make(chan struct{})
+	pr, pw := io.Pipe()
+	go func() {
+		defer close(done)
+		zbstore.ReceiveExport(exportSpy{store}, pr)
+	}()
+	err = codec.Export(nil, io.TeeReader(r, pw))
+	<-done
+	return err
 }
 
-func (store testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
+func (store *testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
 	var realizeResponse zbstorerpc.RealizeResponse
 	err := jsonrpc.Do(ctx, store.client, zbstorerpc.RealizeMethod, &realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: slices.Collect(func(yield func(zbstore.Path) bool) {
@@ -575,6 +599,20 @@ func (store testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.Out
 		return nil, err
 	}
 	return build.Results, nil
+}
+
+type exportSpy struct {
+	store *testRPCStore
+}
+
+func (e exportSpy) Write(p []byte) (n int, err error) {
+	return len(p), nil
+}
+
+func (e exportSpy) ReceiveNAR(trailer *zbstore.ExportTrailer) {
+	e.store.mu.Lock()
+	defer e.store.mu.Unlock()
+	e.store.imports = append(e.store.imports, trailer.StorePath)
 }
 
 func TestMain(m *testing.M) {

@@ -5,3 +5,4 @@
 node_modules/
 /internal/ui/build/
 /internal/ui/public/
+.env

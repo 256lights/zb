@@ -61,10 +61,10 @@ func TestImport(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 			TempDir: t.TempDir(),
 			Options: Options{
-				RealDir: realStoreDir,
+				RealStoreDirectory: realStoreDir,
 			},
 		})
 		if err != nil {
@@ -75,7 +75,7 @@ func TestImport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = codec.Export(exportBuffer)
+		err = codec.Export(nil, exportBuffer)
 		releaseCodec()
 		if err != nil {
 			t.Fatal(err)

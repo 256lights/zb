@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 	"zb.256lights.llc/pkg/internal/backend"
@@ -31,6 +32,7 @@ import (
 	"zb.256lights.llc/pkg/internal/xnet"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/bass/runhttp"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/log/zstdlog"
@@ -40,11 +42,13 @@ type serveOptions struct {
 	dbPath            string
 	buildDir          string
 	buildUsersGroup   string
+	logDir            string
 	sandbox           bool
 	sandboxPaths      map[string]string
 	allowKeepFailed   bool
 	coresPerBuild     int
 	buildLogRetention time.Duration
+	systemdSocket     bool
 
 	webListenAddress   string
 	allowRemoteWeb     bool
@@ -69,8 +73,12 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 	if osutil.IsRoot() {
 		opts.buildUsersGroup = backend.DefaultBuildUsersGroup
 	}
+	if runtime.GOOS == "linux" {
+		c.Flags().BoolVar(&opts.systemdSocket, "systemd", false, "use systemd socket activation")
+	}
 	c.Flags().StringVar(&opts.dbPath, "db", opts.dbPath, "`path` to store database file")
 	c.Flags().StringVar(&opts.buildDir, "build-root", os.TempDir(), "`dir`ectory to store temporary build artifacts")
+	c.Flags().StringVar(&opts.logDir, "log-directory", filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "log", "zb"), "`dir`ectory to store builder logs in")
 	c.Flags().StringVar(&opts.buildUsersGroup, "build-users-group", opts.buildUsersGroup, "name of Unix `group` of users to run builds as")
 	c.Flags().BoolVar(&opts.sandbox, "sandbox", opts.sandbox, "run builders in a restricted environment")
 	c.Flags().Var(pathMapFlag(opts.sandboxPaths), "sandbox-path", "`path` to allow in sandbox (can be passed multiple times)")
@@ -133,19 +141,32 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 		webHandler.staticAssets = ui.StaticAssets()
 	}
 
-	l, err := listenUnix(g.storeSocket)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := os.Remove(g.storeSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
-			log.Warnf(ctx, "Failed to clean up socket: %v", err)
+	var l net.Listener
+	if runtime.GOOS == "linux" && opts.systemdSocket {
+		listeners, err := activation.Listeners()
+		if err != nil {
+			return err
 		}
-	}()
+		if len(listeners) != 1 {
+			return fmt.Errorf("systemd passed in %d sockets (want 1)", len(listeners))
+		}
+		l = listeners[0]
+	} else {
+		var err error
+		l, err = listenUnix(g.storeSocket)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := os.Remove(g.storeSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
+				log.Warnf(ctx, "Failed to clean up socket: %v", err)
+			}
+		}()
+	}
 
 	grp, grpCtx := errgroup.WithContext(ctx)
 
-	openConns := make(sets.Set[*net.UnixConn])
+	openConns := make(sets.Set[net.Conn])
 	var openConnsMu sync.Mutex
 	grp.Go(func() error {
 		// Once the context is Done, refuse new connections and RPCs.
@@ -157,7 +178,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 		}
 		openConnsMu.Lock()
 		for conn := range openConns.All() {
-			if err := conn.CloseRead(); err != nil {
+			if err := closeRead(conn); err != nil {
 				log.Errorf(grpCtx, "Closing Unix socket: %v", err)
 			}
 		}
@@ -167,7 +188,8 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 
 	log.Infof(ctx, "Listening on %s", g.storeSocket)
 	backendServer := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
-		BuildDir:          opts.buildDir,
+		BuildDirectory:    opts.buildDir,
+		LogDirectory:      opts.logDir,
 		SandboxPaths:      opts.sandboxPaths,
 		DisableSandbox:    !opts.sandbox,
 		BuildUsers:        buildUsers,
@@ -184,7 +206,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 
 	grp.Go(func() error {
 		for {
-			conn, err := l.AcceptUnix()
+			conn, err := l.Accept()
 			if errors.Is(err, net.ErrClosed) {
 				return nil
 			}
@@ -199,7 +221,9 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 				recv := backendServer.NewNARReceiver(grpCtx)
 				defer recv.Cleanup(grpCtx)
 
-				codec := zbstorerpc.NewCodec(nopCloser{conn}, recv)
+				codec := zbstorerpc.NewCodec(nopCloser{conn}, &zbstorerpc.CodecOptions{
+					NARReceiver: recv,
+				})
 				jsonrpc.Serve(backend.WithExporter(grpCtx, codec), codec, backendServer)
 				codec.Close()
 
@@ -340,6 +364,14 @@ func listenUnix(path string) (*net.UnixListener, error) {
 	}
 
 	return l, nil
+}
+
+func closeRead(c net.Conn) error {
+	cr, ok := c.(interface{ CloseRead() error })
+	if !ok {
+		return fmt.Errorf("%T does not support uni-directional close", c)
+	}
+	return cr.CloseRead()
 }
 
 type pathMapFlag map[string]string

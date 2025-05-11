@@ -30,10 +30,21 @@ func IsRoot() bool {
 // including all known members of the group.
 // If the group cannot be found, the returned error is of type [user.UnknownGroupError].
 func LookupGroup(ctx context.Context, name string) (g *user.Group, userNames []string, err error) {
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		g, err = user.LookupGroup(name)
 		return g, nil, err
+	case "darwin":
+		c := exec.CommandContext(ctx, "dscl", ".", "-read", "/Groups/"+name, "RecordName", "PrimaryGroupID", "GroupMembership")
+		data, err := c.Output()
+		if err != nil {
+			return nil, nil, user.UnknownGroupError(name)
+		}
+		g, userNames = parseDSCLGroup(data)
+		return g, userNames, nil
 	}
+
+	// Fallback: Read /etc/group or portable equivalents.
 	groupData, err := readGroup(ctx, name)
 	if err != nil {
 		return nil, nil, err
@@ -127,6 +138,32 @@ func parseGroup(line string) (*user.Group, []string) {
 		return g, nil
 	}
 	return g, strings.Split(fields[3], ",")
+}
+
+func parseDSCLGroup(output []byte) (*user.Group, []string) {
+	g := new(user.Group)
+	var users []string
+	for line := range splitLines(output) {
+		switch {
+		case bytes.HasPrefix(line, []byte("RecordName: ")):
+			data := line[len("RecordName: "):]
+			end := bytes.IndexByte(data, ' ')
+			if end < 0 {
+				end = len(data)
+			}
+			g.Name = string(data[:end])
+		case bytes.HasPrefix(line, []byte("PrimaryGroupID: ")):
+			g.Gid = string(line[len("PrimaryGroupID: "):])
+		case bytes.HasPrefix(line, []byte("GroupMembership: ")):
+			for u := range strings.FieldsSeq(string(line[len("GroupMembership: "):])) {
+				users = append(users, u)
+			}
+		}
+	}
+	if g.Name == "" {
+		return nil, nil
+	}
+	return g, users
 }
 
 func splitLines(s []byte) iter.Seq[[]byte] {

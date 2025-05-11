@@ -94,8 +94,9 @@ func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
 		builderUID: os.Geteuid(),
 		builderGID: os.Getegid(),
 
-		network: invocation.derivation.Outputs[zbstore.DefaultDerivationOutputName].IsFixed(),
-		caFile:  caFile,
+		network: invocation.derivation.Outputs[zbstore.DefaultDerivationOutputName].IsFixed() ||
+			invocation.derivation.Env["__network"] == "1",
+		caFile: caFile,
 		// TODO(maybe): This seems high to me.
 		shmSize: "50%",
 	}
@@ -395,6 +396,9 @@ func bindMount(ctx context.Context, oldname, newname string) (err error) {
 		target, err := os.Readlink(oldname)
 		if err != nil {
 			return err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(oldname), target)
 		}
 		log.Debugf(ctx, "ln -s %s %s", target, newname)
 		if err := os.Symlink(target, newname); err != nil {

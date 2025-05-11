@@ -5,13 +5,16 @@ package zbstorerpc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"strconv"
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/zbstore"
+	"zombiezen.com/go/log"
 )
 
 const (
@@ -36,11 +39,48 @@ type Codec struct {
 	readDone  <-chan struct{}
 }
 
+// CodecOptions is the set of optional parameters to [NewCodec].
+type CodecOptions struct {
+	// If Importer is non-nil, then it is used to handle application/zb-store-export messages
+	// and NARReceiver will be ignored.
+	// If both Importer and NARReceiver are nil, such messages are discarded.
+	Importer Importer
+	// If NARReceiver is non-nil, then it will be used to handle individual NAR files
+	// from application/zb-store-export messages.
+	// This field is ignored if Importer is non-nil.
+	NARReceiver zbstore.NARReceiver
+}
+
+// Importer is the interface used by [Codec] to handle application/zb-store-export messages.
+//
+// Import is called with the message's header and a reader for the message's body.
+// Import is responsible for reading the entirety of the export from body.
+// If the export was not fully read or contains invalid data,
+// then Import must return an error.
+// Import must not retain header or body after it returns.
+type Importer interface {
+	Import(header jsonrpc.Header, body io.Reader) error
+}
+
+// ImportFunc is a function that implements [Importer].
+type ImportFunc func(header jsonrpc.Header, body io.Reader) error
+
+// Import implements [Importer] by calling f.
+func (f ImportFunc) Import(header jsonrpc.Header, body io.Reader) error {
+	return f(header, body)
+}
+
 // NewCodec returns a new [Codec] that uses the given connection.
-// receiver may be nil.
-func NewCodec(rwc io.ReadWriteCloser, receiver zbstore.NARReceiver) *Codec {
-	if receiver == nil {
-		receiver = nopReceiver{}
+// If opts is nil, it is treated the same as the zero value.
+func NewCodec(rwc io.ReadWriteCloser, opts *CodecOptions) *Codec {
+	var importer Importer
+	switch {
+	case opts != nil && opts.Importer != nil:
+		importer = opts.Importer
+	case opts != nil && opts.NARReceiver != nil:
+		importer = receiverImporter{opts.NARReceiver}
+	default:
+		importer = receiverImporter{nopReceiver{}}
 	}
 
 	c := new(Codec)
@@ -57,7 +97,7 @@ func NewCodec(rwc io.ReadWriteCloser, receiver zbstore.NARReceiver) *Codec {
 			close(messages)
 			close(readDone)
 		}()
-		c.readError = readLoop(messages, receiver, jsonrpc.NewReader(rwc))
+		c.readError = readLoop(messages, importer, jsonrpc.NewReader(rwc))
 	}()
 	return c
 }
@@ -76,7 +116,7 @@ func (c *Codec) ReadResponse() (json.RawMessage, error) {
 	return msg, nil
 }
 
-func readLoop(messages chan<- json.RawMessage, receiver zbstore.NARReceiver, r *jsonrpc.Reader) error {
+func readLoop(messages chan<- json.RawMessage, importer Importer, r *jsonrpc.Reader) error {
 	for {
 		header, bodySize, err := r.NextMessage()
 		if err != nil {
@@ -96,9 +136,11 @@ func readLoop(messages chan<- json.RawMessage, receiver zbstore.NARReceiver, r *
 			}
 			messages <- body
 		case exportContentType:
-			err := zbstore.ReceiveExport(receiver, r)
-			if err != nil && (bodySize < 0 || zbstore.IsReceiverError(err)) {
-				return fmt.Errorf("while receiving export: %w", err)
+			if err := importer.Import(header, r); err != nil {
+				if bodySize < 0 {
+					return fmt.Errorf("while receiving export: %w", err)
+				}
+				log.Warnf(context.Background(), "While receiving export: %v", err)
 			}
 		default:
 			// Ignore, if possible.
@@ -124,11 +166,12 @@ func (c *Codec) WriteResponse(response json.RawMessage) error {
 }
 
 // Export sends a `nix-store --export` dump.
-func (c *Codec) Export(r io.Reader) error {
-	hdr := jsonrpc.Header{
-		"Content-Type": {exportContentType},
-	}
-	return c.w.WriteMessage(hdr, r)
+// The Content-Type header is always sent as "application/zb-store-export".
+func (c *Codec) Export(header jsonrpc.Header, r io.Reader) error {
+	fullHeader := make(jsonrpc.Header, len(header)+1)
+	maps.Copy(fullHeader, header)
+	fullHeader.Set("Content-Type", exportContentType)
+	return c.w.WriteMessage(fullHeader, r)
 }
 
 // Close closes the underlying connection.
@@ -136,6 +179,14 @@ func (c *Codec) Close() error {
 	err := c.c.Close()
 	<-c.readDone
 	return err
+}
+
+type receiverImporter struct {
+	receiver zbstore.NARReceiver
+}
+
+func (imp receiverImporter) Import(header jsonrpc.Header, body io.Reader) error {
+	return zbstore.ReceiveExport(imp.receiver, body)
 }
 
 type nopReceiver struct{}

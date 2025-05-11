@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/signal"
@@ -34,14 +35,14 @@ type globalConfig struct {
 	cacheDB     string
 }
 
-func (g *globalConfig) storeClient(receiver zbstore.NARReceiver) (_ *jsonrpc.Client, wait func()) {
+func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) (_ *jsonrpc.Client, wait func()) {
 	var wg sync.WaitGroup
 	c := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
 		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", g.storeSocket)
 		if err != nil {
 			return nil, err
 		}
-		return zbstorerpc.NewCodec(conn, receiver), nil
+		return zbstorerpc.NewCodec(conn, opts), nil
 	})
 	return c, wg.Wait
 }
@@ -104,11 +105,10 @@ func main() {
 }
 
 type evalOptions struct {
-	expr         string
-	file         string
-	installables []string
-	allowEnv     stringAllowList
-	keepFailed   bool
+	expression bool
+	args       []string
+	allowEnv   stringAllowList
+	keepFailed bool
 }
 
 func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client) (*frontend.Eval, error) {
@@ -134,17 +134,21 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 		Use:                   "eval [options] [INSTALLABLE [...]]",
 		Short:                 "evaluate a Lua expression",
 		DisableFlagsInUseLine: true,
-		Args:                  cobra.ArbitraryArgs,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
+		Args: func(c *cobra.Command, args []string) error {
+			if expr, _ := c.Flags().GetBool("expression"); expr {
+				return cobra.ExactArgs(1)(c, args)
+			}
+			return cobra.MinimumNArgs(1)(c, args)
+		},
+		SilenceErrors: true,
+		SilenceUsage:  true,
 	}
 	opts := new(evalOptions)
-	c.Flags().StringVar(&opts.expr, "expr", "", "interpret installables as attribute paths relative to the Lua expression `expr`")
-	c.Flags().StringVar(&opts.file, "file", "", "interpret installables as attribute paths relative to the Lua expression stored in `path`")
+	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as Lua expression")
 	c.Flags().BoolVarP(&opts.keepFailed, "keep-failed", "k", false, "keep temporary directories of failed builds")
 	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.installables = args
+		opts.args = args
 		return runEval(cmd.Context(), g, opts)
 	}
 	return c
@@ -167,15 +171,11 @@ func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 	}()
 
 	var results []any
-	switch {
-	case opts.expr != "" && opts.file != "":
-		return fmt.Errorf("can specify at most one of --expr or --file")
-	case opts.expr != "":
-		results, err = eval.Expression(ctx, opts.expr, opts.installables)
-	case opts.file != "":
-		results, err = eval.File(ctx, opts.file, opts.installables)
-	default:
-		return fmt.Errorf("installables not supported yet")
+	if opts.expression {
+		results = make([]any, 1)
+		results[0], err = eval.Expression(ctx, opts.args[0])
+	} else {
+		results, err = eval.URLs(ctx, opts.args)
 	}
 	if err != nil {
 		return err
@@ -195,21 +195,25 @@ type buildOptions struct {
 
 func newBuildCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
-		Use:                   "build [options] [INSTALLABLE [...]]",
+		Use:                   "build [options] URL [...]",
 		Short:                 "build one or more derivations",
 		DisableFlagsInUseLine: true,
-		Args:                  cobra.ArbitraryArgs,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
+		Args: func(c *cobra.Command, args []string) error {
+			if expr, _ := c.Flags().GetBool("expression"); expr {
+				return cobra.ExactArgs(1)(c, args)
+			}
+			return cobra.MinimumNArgs(1)(c, args)
+		},
+		SilenceErrors: true,
+		SilenceUsage:  true,
 	}
 	opts := new(buildOptions)
-	c.Flags().StringVar(&opts.expr, "expr", "", "interpret installables as attribute paths relative to the Lua expression `expr`")
-	c.Flags().StringVar(&opts.file, "file", "", "interpret installables as attribute paths relative to the Lua expression stored in `path`")
+	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as a Lua expression")
 	c.Flags().BoolVarP(&opts.keepFailed, "keep-failed", "k", false, "keep temporary directories of failed builds")
 	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
 	c.Flags().StringVarP(&opts.outLink, "out-link", "o", "result", "change the name of the output path symlink to `path`")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.installables = args
+		opts.args = args
 		return runBuild(cmd.Context(), g, opts)
 	}
 	return c
@@ -232,15 +236,11 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 	}()
 
 	var results []any
-	switch {
-	case opts.expr != "" && opts.file != "":
-		return fmt.Errorf("can specify at most one of --expr or --file")
-	case opts.expr != "":
-		results, err = eval.Expression(ctx, opts.expr, opts.installables)
-	case opts.file != "":
-		results, err = eval.File(ctx, opts.file, opts.installables)
-	default:
-		return fmt.Errorf("installables not supported yet")
+	if opts.expression {
+		results = make([]any, 1)
+		results[0], err = eval.Expression(ctx, opts.args[0])
+	} else {
+		results, err = eval.URLs(ctx, opts.args)
 	}
 	if err != nil {
 		return err
@@ -303,16 +303,7 @@ func (store *rpcStore) Exists(ctx context.Context, path string) (bool, error) {
 }
 
 func (store *rpcStore) Import(ctx context.Context, r io.Reader) error {
-	generic, releaseConn, err := store.client.Codec(ctx)
-	if err != nil {
-		return err
-	}
-	defer releaseConn()
-	codec, ok := generic.(*zbstorerpc.Codec)
-	if !ok {
-		return fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
-	}
-	return codec.Export(r)
+	return importToStore(ctx, store.client, r, -1)
 }
 
 func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
@@ -436,16 +427,16 @@ func copyLogToStderr(ctx context.Context, storeClient jsonrpc.Handler, buildID s
 			RangeStart: off,
 		})
 		if len(payload) > 0 {
+			toWrite := payload
 			if off == 0 {
 				// Write header.
-				oldPayload := payload
-				payload = nil
-				payload = append(payload, "--- "...)
-				payload = append(payload, drvPath...)
-				payload = append(payload, " ---\n"...)
-				payload = append(payload, oldPayload...)
+				toWrite = nil
+				toWrite = append(toWrite, "--- "...)
+				toWrite = append(toWrite, drvPath...)
+				toWrite = append(toWrite, " ---\n"...)
+				toWrite = append(toWrite, payload...)
 			}
-			if _, err := os.Stderr.Write(payload); err != nil {
+			if _, err := os.Stderr.Write(toWrite); err != nil {
 				return err
 			}
 		}
@@ -475,7 +466,49 @@ func readLog(ctx context.Context, storeClient jsonrpc.Handler, req *zbstorerpc.R
 	return payload, nil
 }
 
-// defaultVarDir returns "/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
+// openInputFile opens a file for reading using [os.Open].
+// If name is "-", then it returns [os.Stdin].
+func openInputFile(name string) (fs.File, error) {
+	if name == "-" {
+		return stdinInputFile{}, nil
+	}
+	return os.Open(name)
+}
+
+type stdinInputFile struct{}
+
+func (stdinInputFile) Read(p []byte) (int, error) { return os.Stdin.Read(p) }
+func (stdinInputFile) Stat() (fs.FileInfo, error) { return os.Stdin.Stat() }
+func (stdinInputFile) Close() error               { return nil }
+
+func inputFileName(name string) string {
+	if name == "-" {
+		return "stdin"
+	}
+	return name
+}
+
+// openOutputFile opens a file for writing using [os.Create].
+// If name is "-", then it returns [os.Stdout].
+func openOutputFile(name string) (io.WriteCloser, error) {
+	if name == "-" {
+		return nopWriteCloser{os.Stdout}, nil
+	}
+	return os.Create(name)
+}
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
+
+func outputFileName(name string) string {
+	if name == "-" {
+		return "stdout"
+	}
+	return name
+}
+
+// defaultVarDir returns "/opt/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
 func defaultVarDir() string {
 	return filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "zb")
 }

@@ -188,7 +188,7 @@ func (drv *Derivation) OutputPath(outputName string) (Path, error) {
 }
 
 // derivationOutputPath returns a fixed output's store object path
-// for the given store (e.g. "/zb/store"),
+// for the given store (e.g. "/opt/zb/store"),
 // derivation name (e.g. "hello"),
 // and output name (e.g. "out").
 func derivationOutputPath(store Directory, drvName, outputName string, t *DerivationOutputType) (Path, error) {

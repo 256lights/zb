@@ -144,17 +144,19 @@ func Error(code ErrorCode, err error) error {
 func (e *codeError) Error() string { return e.err.Error() }
 func (e *codeError) Unwrap() error { return e.err }
 
-// requestID is an opaque JSON-RPC request ID.
+// RequestID is an opaque JSON-RPC request ID.
 // IDs can be integers, strings, or null
 // (although nulls are discouraged).
 // The zero value is null.
-type requestID struct {
+type RequestID struct {
 	n   int64
 	s   string
 	typ int8
 }
 
-func (id requestID) String() string {
+// String returns the request ID's string content if it is a string,
+// or the request ID's JSON representation otherwise.
+func (id RequestID) String() string {
 	switch id.typ {
 	case 0:
 		return "null"
@@ -167,15 +169,28 @@ func (id requestID) String() string {
 	}
 }
 
-func (id requestID) toInt() (_ int64, ok bool) {
+// Int64 returns the request ID as an integer.
+func (id RequestID) Int64() (_ int64, ok bool) {
 	return id.n, id.typ == 1
 }
 
-func (id requestID) toString() (_ string, ok bool) {
-	return id.s, id.typ == 2
+// IsNull reports whether the request ID is null.
+func (id RequestID) IsNull() bool {
+	return id.typ == 0
 }
 
-func (id requestID) MarshalJSON() ([]byte, error) {
+// IsInteger reports whether the request ID is an integer.
+func (id RequestID) IsInteger() bool {
+	return id.typ == 1
+}
+
+// IsString reports whether the request ID is a string.
+func (id RequestID) IsString() bool {
+	return id.typ == 2
+}
+
+// MarshalJSON returns the request ID's JSON representation.
+func (id RequestID) MarshalJSON() ([]byte, error) {
 	switch id.typ {
 	case 0:
 		return []byte("null"), nil
@@ -188,19 +203,21 @@ func (id requestID) MarshalJSON() ([]byte, error) {
 	}
 }
 
-func (id *requestID) UnmarshalJSON(data []byte) error {
+// UnmarshalJSON parses the request ID.
+// UnmarshalJSON returns an error if the data is not null, a string, or an integer.
+func (id *RequestID) UnmarshalJSON(data []byte) error {
 	if len(data) == 0 {
 		return fmt.Errorf("empty request id json")
 	}
 	switch {
 	case string(data) == "null":
-		*id = requestID{}
+		*id = RequestID{}
 		return nil
 	case data[0] == '"':
-		*id = requestID{typ: 2}
+		*id = RequestID{typ: 2}
 		return json.Unmarshal(data, &id.s)
 	default:
-		*id = requestID{typ: 1}
+		*id = RequestID{typ: 1}
 		var err error
 		id.n, err = strconv.ParseInt(string(data), 10, 64)
 		return err
@@ -214,7 +231,7 @@ const cancelMethod = "$/cancelRequest"
 // cancelParams is the parameter object for a cancellation request.
 // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#cancelRequest
 type cancelParams struct {
-	ID requestID `json:"id"`
+	ID RequestID `json:"id"`
 }
 
 // inverseFilterMap returns a new map that contains all the keys

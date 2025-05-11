@@ -1,0 +1,11 @@
+[Unit]
+Description=zb Store Server Socket
+Before=multi-user.target
+RequiresMountsFor=/opt/zb
+ConditionPathIsReadWrite=/opt/zb/var/zb
+
+[Socket]
+ListenStream=/opt/zb/var/zb/server.sock
+
+[Install]
+WantedBy=sockets.target

@@ -41,7 +41,10 @@ func TestRealizeSingleDerivation(t *testing.T) {
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExporter(exportBuffer)
-	inputFilePath, _, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
+		Name:      "hello.txt",
+		Directory: dir,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +73,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -80,7 +83,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = codec.Export(exportBuffer)
+	err = codec.Export(nil, exportBuffer)
 	releaseCodec()
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +128,10 @@ func TestRealizeReuse(t *testing.T) {
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExporter(exportBuffer)
-	inputFilePath, _, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
+		Name:      "hello.txt",
+		Directory: dir,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +160,7 @@ func TestRealizeReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -164,7 +170,7 @@ func TestRealizeReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = codec.Export(exportBuffer)
+	err = codec.Export(nil, exportBuffer)
 	releaseCodec()
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +224,10 @@ func TestRealizeMultiStep(t *testing.T) {
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExporter(exportBuffer)
-	inputFilePath, _, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
+		Name:      "hello.txt",
+		Directory: dir,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +279,7 @@ func TestRealizeMultiStep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -280,7 +289,7 @@ func TestRealizeMultiStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = codec.Export(exportBuffer)
+	err = codec.Export(nil, exportBuffer)
 	releaseCodec()
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +325,10 @@ func TestRealizeReferenceToDep(t *testing.T) {
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExporter(exportBuffer)
-	inputFilePath, _, err := storetest.ExportSourceFile(exporter, dir, "", "hello.txt", []byte(inputContent), zbstore.References{})
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
+		Name:      "hello.txt",
+		Directory: dir,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +393,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -391,7 +403,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = codec.Export(exportBuffer)
+	err = codec.Export(nil, exportBuffer)
 	releaseCodec()
 	if err != nil {
 		t.Fatal(err)
@@ -524,7 +536,7 @@ func TestRealizeFixed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -534,7 +546,7 @@ func TestRealizeFixed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = codec.Export(exportBuffer)
+	err = codec.Export(nil, exportBuffer)
 	releaseCodec()
 	if err != nil {
 		t.Fatal(err)
@@ -605,7 +617,7 @@ func TestRealizeFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -615,7 +627,7 @@ func TestRealizeFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = codec.Export(exportBuffer)
+	err = codec.Export(nil, exportBuffer)
 	releaseCodec()
 	if err != nil {
 		t.Fatal(err)
@@ -720,7 +732,7 @@ func TestRealizeCores(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+			_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 				TempDir: t.TempDir(),
 				Options: Options{
 					CoresPerBuild: n,
@@ -733,7 +745,7 @@ func TestRealizeCores(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = codec.Export(exportBuffer)
+			err = codec.Export(nil, exportBuffer)
 			releaseCodec()
 			if err != nil {
 				t.Fatal(err)
@@ -799,7 +811,7 @@ func TestRealizeFetchURL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -809,7 +821,7 @@ func TestRealizeFetchURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = codec.Export(exportBuffer)
+	err = codec.Export(nil, exportBuffer)
 	releaseCodec()
 	if err != nil {
 		t.Fatal(err)

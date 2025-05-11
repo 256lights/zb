@@ -1,4 +1,0 @@
-#! kaem doesn't support shebangs
-# but it does allow # line comments
-echo "hello" \
-"world" # and \ line escapes

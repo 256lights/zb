@@ -13,6 +13,8 @@ import (
 	"io/fs"
 	"iter"
 	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -251,14 +253,15 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash
 }
 
 // pathInfo returns basic information about an object in the store.
-func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *zbstorerpc.ObjectInfo, err error) {
+func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *ObjectInfo, err error) {
 	defer sqlitex.Save(conn)(&err)
 
-	var info *zbstorerpc.ObjectInfo
+	var info *ObjectInfo
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "info.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{":path": string(path)},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			info = new(zbstorerpc.ObjectInfo)
+			info = new(ObjectInfo)
+			info.StorePath = path
 			info.NARSize = stmt.GetInt64("nar_size")
 			var err error
 			info.NARHash, err = nix.ParseHash(stmt.GetText("nar_hash"))
@@ -286,7 +289,7 @@ func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *zbstorerpc.ObjectInfo, e
 			if err != nil {
 				return err
 			}
-			info.References = append(info.References, ref)
+			info.References.Add(ref)
 			return nil
 		},
 	})
@@ -393,15 +396,12 @@ func objectExists(conn *sqlite.Conn, path zbstore.Path) (bool, error) {
 	return exists, nil
 }
 
-func insertObject(ctx context.Context, conn *sqlite.Conn, info *zbstore.NARInfo) (err error) {
+func insertObject(ctx context.Context, conn *sqlite.Conn, info *ObjectInfo) (err error) {
 	log.Debugf(ctx, "Registering metadata for %s", info.StorePath)
 
 	defer sqlitex.Save(conn)(&err)
 
 	if err := upsertPath(conn, zbstore.Path(info.StorePath)); err != nil {
-		return fmt.Errorf("insert %s into database: %v", info.StorePath, err)
-	}
-	if err := upsertPath(conn, zbstore.Path(info.Deriver)); err != nil {
 		return fmt.Errorf("insert %s into database: %v", info.StorePath, err)
 	}
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "insert_object.sql", &sqlitex.ExecOptions{
@@ -426,7 +426,7 @@ func insertObject(ctx context.Context, conn *sqlite.Conn, info *zbstore.NARInfo)
 	defer addRefStmt.Finalize()
 
 	addRefStmt.SetText(":referrer", string(info.StorePath))
-	for _, ref := range info.References.All() {
+	for ref := range info.References.Values() {
 		if err := upsertPath(conn, ref); err != nil {
 			return fmt.Errorf("insert %s into database: %v", info.StorePath, err)
 		}
@@ -504,9 +504,14 @@ func recordBuildEnd(conn *sqlite.Conn, buildID uuid.UUID, buildError error) erro
 	return nil
 }
 
+type deleteOldBuildOptions struct {
+	logDir string
+	keep   iter.Seq[uuid.UUID]
+}
+
 // deleteOldBuilds deletes builds that occurred before the time cutoff.
 // Any build IDs yielded by the keep sequence will be retained.
-func deleteOldBuilds(conn *sqlite.Conn, cutoff time.Time, keep iter.Seq[uuid.UUID]) (numDeleted int64, err error) {
+func deleteOldBuilds(ctx context.Context, conn *sqlite.Conn, cutoff time.Time, opts *deleteOldBuildOptions) (numDeleted int64, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("delete old builds: %v", err)
@@ -518,26 +523,45 @@ func deleteOldBuilds(conn *sqlite.Conn, cutoff time.Time, keep iter.Seq[uuid.UUI
 	if err != nil {
 		return 0, err
 	}
-	stmt, _, err := conn.PrepareTransient(`insert into temp."active_builds" values (?);`)
-	if err != nil {
-		return 0, err
-	}
-	defer stmt.Finalize()
-	for id := range keep {
-		stmt.BindBytes(1, id[:])
-		var stmtErrors [2]error
-		_, stmtErrors[0] = stmt.Step()
-		stmtErrors[1] = stmt.Reset()
-		for _, err := range stmtErrors {
-			if err != nil {
-				return 0, err
+	if opts != nil && opts.keep != nil {
+		stmt, _, err := conn.PrepareTransient(`insert into temp."active_builds" values (?);`)
+		if err != nil {
+			return 0, err
+		}
+		defer stmt.Finalize()
+		for id := range opts.keep {
+			stmt.BindBytes(1, id[:])
+			var stmtErrors [2]error
+			_, stmtErrors[0] = stmt.Step()
+			stmtErrors[1] = stmt.Reset()
+			for _, err := range stmtErrors {
+				if err != nil {
+					return 0, err
+				}
 			}
 		}
 	}
 
+	var n int64
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/gc.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":cutoff_millis": cutoff.UnixMilli(),
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			n++
+			if opts == nil || opts.logDir == "" {
+				return nil
+			}
+
+			buildID, err := uuid.Parse(stmt.GetText("id"))
+			if err != nil {
+				log.Debugf(ctx, "Not deleting logs for build with invalid ID %q", buildID)
+				return nil
+			}
+			if err := os.RemoveAll(buildLogRoot(opts.logDir, buildID)); err != nil {
+				log.Warnf(ctx, "Failed to clean up logs for build %v: %v", buildID, err)
+			}
+			return nil
 		},
 	})
 	if err != nil {
@@ -545,9 +569,9 @@ func deleteOldBuilds(conn *sqlite.Conn, cutoff time.Time, keep iter.Seq[uuid.UUI
 	}
 	err = sqlitex.ExecuteTransient(conn, `drop table temp."active_builds";`, nil)
 	if err != nil {
-		return 0, err
+		return n, err
 	}
-	return int64(conn.Changes()), nil
+	return n, nil
 }
 
 func recordExpandResult(conn *sqlite.Conn, buildID uuid.UUID, result *zbstorerpc.ExpandResult) error {
@@ -605,7 +629,8 @@ func insertBuildResult(conn *sqlite.Conn, buildID uuid.UUID, drvPath zbstore.Pat
 
 // findBuildResults appends the build results in the build with the given ID to dst.
 // If drvPath is not empty, then only the result for drvPath is appended (if it exists).
-func findBuildResults(dst []*zbstorerpc.BuildResult, conn *sqlite.Conn, buildID uuid.UUID, drvPath zbstore.Path) ([]*zbstorerpc.BuildResult, error) {
+// If logDir is not empty, then the LogSize field in [*zbstorerpc.BuildResult] will be populated.
+func findBuildResults(dst []*zbstorerpc.BuildResult, conn *sqlite.Conn, logDir string, buildID uuid.UUID, drvPath zbstore.Path) ([]*zbstorerpc.BuildResult, error) {
 	initDstLen := len(dst)
 	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/results.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
@@ -625,7 +650,15 @@ func findBuildResults(dst []*zbstorerpc.BuildResult, conn *sqlite.Conn, buildID 
 					DrvPath: drvPath,
 					Status:  zbstorerpc.BuildStatus(stmt.GetText("status")),
 					Outputs: []*zbstorerpc.RealizeOutput{},
-					LogSize: stmt.GetInt64("log_size"),
+				}
+				if logDir != "" {
+					logInfo, err := os.Stat(builderLogPath(logDir, buildID, drvPath))
+					if err != nil && !errors.Is(err, os.ErrNotExist) {
+						return fmt.Errorf("stat log for %s: %v", drvPath, err)
+					}
+					if err == nil {
+						curr.LogSize = logInfo.Size()
+					}
 				}
 				dst = append(dst, curr)
 			}
@@ -725,7 +758,15 @@ func recordBuilderEnd(conn *sqlite.Conn, buildResultID int64, t time.Time) error
 	return nil
 }
 
-func finalizeBuildResult(ctx context.Context, conn *sqlite.Conn, buildResultID int64, t time.Time, buildError error) (err error) {
+type buildFinalResults struct {
+	buildID uuid.UUID
+	drvPath zbstore.Path
+	id      int64
+	endTime time.Time
+	error   error
+}
+
+func finalizeBuildResult(ctx context.Context, conn *sqlite.Conn, logDir string, result *buildFinalResults) (err error) {
 	// If build is being cancelled, allow some amount of time to write.
 	ctx, cancel := xcontext.KeepAlive(ctx, 30*time.Second)
 	defer cancel()
@@ -735,29 +776,26 @@ func finalizeBuildResult(ctx context.Context, conn *sqlite.Conn, buildResultID i
 	defer sqlitex.Save(conn)(&err)
 
 	status := zbstorerpc.BuildSuccess
-	if buildError != nil {
-		if isBuilderFailure(buildError) {
+	if result.error != nil {
+		if isBuilderFailure(result.error) {
 			status = zbstorerpc.BuildFail
 		} else {
 			status = zbstorerpc.BuildError
-			logger := newBuildLogger(ctx, conn, buildResultID)
 			var buf []byte
 			buf = append(buf, "zb internal error: "...)
-			buf = append(buf, buildError.Error()...)
+			buf = append(buf, result.error.Error()...)
 			buf = append(buf, '\n')
-			if _, err := logger.Write(buf); err != nil {
+
+			if err := appendToBuilderLog(logDir, result.buildID, result.drvPath, buf); err != nil {
 				log.Warnf(ctx, "Failed to write build error to log: %v", err)
-			}
-			if err := logger.Close(); err != nil {
-				log.Debugf(ctx, "Failed to write close build logger: %v", err)
 			}
 		}
 	}
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/end_result.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
-			":id":               buildResultID,
+			":id":               result.id,
 			":status":           string(status),
-			":timestamp_millis": t.UnixMilli(),
+			":timestamp_millis": result.endTime.UnixMilli(),
 		},
 	})
 	if err != nil {
@@ -766,155 +804,61 @@ func finalizeBuildResult(ctx context.Context, conn *sqlite.Conn, buildResultID i
 	return nil
 }
 
-var (
-	errBuildLogNotFound = errors.New("not found")
-	errBuildLogPending  = errors.New("log not finished")
-)
-
-// readBuildLogAt reads len(p) bytes into p starting at offset off
-// in the builder log for the derivation path drvPath from build with ID buildID.
-// It returns the number of bytes read (0 <= n <= len(p))
-// and any error encountered.
-// When readBuildLogAt returns n < len(p),
-// it returns a non-nil error explaining why more bytes were not returned.
-//
-// If the n < len(p) bytes returned by readBuildLogAt are at the end of the build log
-// and the builder has not finished,
-// readBuildLogAt will return an error that wraps [errBuildLogPending].
-// readBuildLogAt will not block until more data is written.
-// If the n = len(p) bytes returned by readBuildLogAt are at the end of the build log
-// and the builder has already finished,
-// readBuildLogAt returns err == [io.EOF].
-//
-// If the build log does not exist in the database,
-// then readBuildLogAt will return an error that wraps [errBuildLogNotFound].
-func readBuildLogAt(conn *sqlite.Conn, buildID uuid.UUID, drvPath zbstore.Path, p []byte, off int64) (n int, err error) {
-	defer sqlitex.Save(conn)(&err)
-
-	var buildResultID int64
-	found := false
-	finished := false
-	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/find_result.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{
-			":build_id": buildID.String(),
-			":drv_path": drvPath,
-		},
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			found = true
-			buildResultID = stmt.GetInt64("id")
-			status := zbstorerpc.BuildStatus(stmt.GetText("status"))
-			finished = status != zbstorerpc.BuildActive
-			return nil
-		},
-	})
-	if err != nil {
-		return 0, fmt.Errorf("read log for %s in build %v: %v", drvPath, buildID, err)
-	}
-	if !found {
-		return 0, fmt.Errorf("read log for %s in build %v: %w", drvPath, buildID, errBuildLogNotFound)
-	}
-	end := off + int64(len(p))
-	if finished {
-		// Read an additional byte to check for EOF.
-		end++
-	}
-	maxSeen := off
-	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/read_log.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{
-			":build_result_id": buildResultID,
-			":start":           off,
-			":end":             end,
-		},
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			start := stmt.GetInt64("start")
-			i := stmt.ColumnIndex("data")
-			stmt.ColumnBytes(i, p[start-off:])
-			maxSeen = max(maxSeen, start+int64(stmt.ColumnLen(i)))
-			return nil
-		},
-	})
-	if err != nil {
-		return int(maxSeen - off), fmt.Errorf("read log for %s in build %v: %v", drvPath, buildID, err)
-	}
-	switch want := off + int64(len(p)); {
-	case finished && maxSeen <= want:
-		return int(maxSeen - off), io.EOF
-	case !finished && maxSeen < want:
-		return int(maxSeen - off), errBuildLogPending
-	default:
-		return len(p), nil
-	}
+// buildLogRoot returns the path to the directory that contains the logs for build with ID buildID.
+func buildLogRoot(dir string, buildID uuid.UUID) string {
+	buildIDString := buildID.String()
+	return filepath.Join(dir, buildIDString[:4], buildIDString)
 }
 
-// buildLogger is an [io.Writer] that inserts log chunks into the store database.
-// It has no buffering: callers should introduce buffering as needed.
-type buildLogger struct {
-	ctx  context.Context
-	conn *sqlite.Conn
-	stmt *sqlite.Stmt
-	err  error
+// builderLogPath returns the filesystem path for the build log with the given identifiers.
+// This will always be a direct child of the directory returned by [buildLogRoot]
+// for buildLogRoot(dir, buildID).
+func builderLogPath(dir string, buildID uuid.UUID, drvPath zbstore.Path) string {
+	buildIDString := buildID.String()
+	name := strings.TrimSuffix(drvPath.Base(), zbstore.DerivationExt) + ".txt"
+	return filepath.Join(dir, buildIDString[:4], buildIDString, name)
 }
 
-// newBuildLogger returns a logger that appends to the log for the given build result.
-// The caller is responsible for calling [*buildLogger.Close] when it is done writing to the logger.
-func newBuildLogger(ctx context.Context, conn *sqlite.Conn, buildResultID int64) *buildLogger {
-	stmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "build/insert_log_chunk.sql")
+// createBuilderLog creates a new builder log file for writing.
+// If the log file already exists, createBuilderLog returns an error.
+func createBuilderLog(dir string, buildID uuid.UUID, drvPath zbstore.Path) (*os.File, error) {
+	path := builderLogPath(dir, buildID, drvPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+		return nil, fmt.Errorf("create log for %s in build %s: %v", drvPath.Base(), buildID, err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
 	if err != nil {
-		return &buildLogger{err: err}
+		return nil, fmt.Errorf("create log for %s in build %s: %v", drvPath.Base(), buildID, err)
 	}
-	stmt.SetInt64(":build_result_id", buildResultID)
-	return &buildLogger{
-		ctx:  ctx,
-		conn: conn,
-		stmt: stmt,
-	}
+	return f, nil
 }
 
-// Write writes the bytes as a new log chunk in the log.
-func (logger *buildLogger) Write(p []byte) (n int, err error) {
-	now := time.Now()
-	if logger.err != nil {
-		return 0, logger.err
+// appendToBuilderLog writes data to the end of the builder log file.
+func appendToBuilderLog(dir string, buildID uuid.UUID, drvPath zbstore.Path, data []byte) error {
+	path := builderLogPath(dir, buildID, drvPath)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
+	if err != nil {
+		return err
 	}
-	if len(p) == 0 {
-		return 0, nil
-	}
-
-	// Avoid interrupting writes if the overall build is being cancelled.
-	ctx, cancel := xcontext.KeepAlive(logger.ctx, 30*time.Second)
-	defer cancel()
-	oldDone := logger.conn.SetInterrupt(ctx.Done())
-	defer logger.conn.SetInterrupt(oldDone)
-
-	logger.stmt.SetInt64(":received_at", now.UnixMilli())
-	logger.stmt.SetBytes(":data", p)
-	var stmtErrors [2]error
-	_, stmtErrors[0] = logger.stmt.Step()
-	stmtErrors[1] = logger.stmt.Reset()
-	for _, err := range stmtErrors {
+	var logErrors [2]error
+	_, logErrors[0] = f.Write(data)
+	logErrors[1] = f.Close()
+	for _, err := range logErrors {
 		if err != nil {
-			logger.err = fmt.Errorf("write to build log: %v", err)
-			return 0, logger.err
+			return err
 		}
 	}
-	return len(p), nil
-}
-
-// Close releases the resources associated with the logger.
-func (logger *buildLogger) Close() error {
-	logger.err = errors.New("logger closed")
-	var err error
-	if logger.stmt != nil {
-		err = logger.stmt.Finalize()
-		logger.stmt = nil
-	}
-	logger.conn = nil
-	logger.ctx = nil
-	return err
+	return nil
 }
 
 func prepareConn(conn *sqlite.Conn) error {
+	if err := sqlitex.ExecuteTransient(conn, "PRAGMA auto_vacuum = incremental;", nil); err != nil {
+		return err
+	}
 	if err := sqlitex.ExecuteTransient(conn, "PRAGMA journal_mode = wal;", nil); err != nil {
+		return err
+	}
+	if err := sqlitex.ExecuteTransient(conn, "PRAGMA optimize = 0x10002;", nil); err != nil {
 		return err
 	}
 	if err := sqlitex.ExecuteTransient(conn, "PRAGMA foreign_keys = on;", nil); err != nil {
@@ -1032,4 +976,80 @@ func unmarshalJSONString(data string, v any) error {
 		return errors.New("unmarshal json: trailing data")
 	}
 	return nil
+}
+
+// readonlySavepoint starts a new SAVEPOINT.
+// The caller is responsible for calling endFn
+// to roll back the SAVEPOINT and remove it from the transaction stack.
+func readonlySavepoint(conn *sqlite.Conn) (rollbackFunc func(), err error) {
+	name := "readonlySavepoint" // safe as names can be reused
+	var pc [3]uintptr
+	if n := runtime.Callers(0, pc[:]); n > 0 {
+		frames := runtime.CallersFrames(pc[:n])
+		if _, more := frames.Next(); more { // runtime.Callers
+			if _, more := frames.Next(); more { // readonlySavepoint
+				frame, _ := frames.Next() // caller we care about
+				if frame.Function != "" {
+					name = frame.Function
+				}
+			}
+		}
+	}
+
+	startedTransaction := conn.AutocommitEnabled()
+	if err := sqlitex.Execute(conn, `SAVEPOINT "`+name+`";`, nil); err != nil {
+		return nil, err
+	}
+	if startedTransaction {
+		rollbackFunc = func() {
+			panicError := recover()
+
+			if conn.AutocommitEnabled() {
+				// Transaction exited by application. Nothing to roll back.
+				if panicError != nil {
+					panic(panicError)
+				}
+				return
+			}
+
+			// Always run ROLLBACK even if the connection has been interrupted.
+			oldDoneChan := conn.SetInterrupt(nil)
+			defer conn.SetInterrupt(oldDoneChan)
+
+			if err := sqlitex.Execute(conn, "ROLLBACK;", nil); err != nil {
+				panic(err.Error())
+			}
+			if panicError != nil {
+				panic(panicError)
+			}
+		}
+	} else {
+		rollbackFunc = func() {
+			panicError := recover()
+
+			if conn.AutocommitEnabled() {
+				// Transaction exited by application. Nothing to roll back.
+				if panicError != nil {
+					panic(panicError)
+				}
+				return
+			}
+
+			// Always run ROLLBACK even if the connection has been interrupted.
+			oldDoneChan := conn.SetInterrupt(nil)
+			defer conn.SetInterrupt(oldDoneChan)
+
+			if err := sqlitex.Execute(conn, `ROLLBACK TO "`+name+`";`, nil); err != nil {
+				panic(err.Error())
+			}
+			if err := sqlitex.Execute(conn, `RELEASE "`+name+`";`, nil); err != nil {
+				panic(err.Error())
+			}
+			if panicError != nil {
+				panic(panicError)
+			}
+		}
+	}
+
+	return rollbackFunc, nil
 }

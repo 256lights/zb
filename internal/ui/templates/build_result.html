@@ -1,11 +1,11 @@
 {{ define "title" -}}
-  {{ .DrvPath.Name }} Log • zb
+  {{ .DrvPath.Name }} • zb
 {{- end }}
 
 {{ define "main" }}
   <h2
     class="text-2xl font-bold"
-  >{{ .DrvPath.Name }} Log</h2>
+  >{{ .DrvPath.Name }}</h2>
   <div class="my-4 text-xs sm:text-sm">
     <div class="font-mono">{{ .DrvPath }}</div>
     <div>
@@ -17,11 +17,45 @@
     </div>
   </div>
 
+  {{- if eq .Status "success" }}
+    <h3 class="mt-8 mb-4 text-xl font-bold">Outputs</h3>
+    <div class="w-full overflow-x-auto">
+      <table class="my-4 table-fixed">
+        <thead>
+          <th
+            scope="col"
+            class="w-24 pe-2 py-0.5 text-left font-bold"
+          >Output</th>
+          <th
+            scope="col"
+            class="px-2 py-0.5 text-left font-bold"
+          >Path</th>
+        </thead>
+        <tbody>
+          {{- range .Outputs }}
+            <tr>
+              <th
+                scope="row"
+                class="pe-2 py-0.5 text-left font-mono font-normal"
+              >{{ .Name }}</th>
+              <th
+                scope="row"
+                class="px-2 py-0.5 text-left font-mono font-normal"
+              >{{ if .Path.Valid }}{{ .Path.X }}{{ end }}</th>
+            </tr>
+          {{- end }}
+        </tbody>
+      </table>
+    </div>
+  {{- end }}
+
+  <h3 class="mt-8 mb-4 text-xl font-bold">Logs</h3>
+
   <div class="my-4">
     <a
       href="/build/{{ .BuildID }}/log?drvPath={{ .DrvPath | urlquery }}"
       data-turbo="false"
-      class="link"
+      class="link text-lg"
     >Raw</a>
   </div>
 

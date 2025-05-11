@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>dev.zb-build.serve</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ProgramArguments</key>
+    <array>
+      <string>@zb@</string>
+      <string>serve</string>
+    </array>
+    <key>StandardErrorPath</key>
+    <string>/opt/zb/var/log/zb-serve.log</string>
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+  </dict>
+</plist>

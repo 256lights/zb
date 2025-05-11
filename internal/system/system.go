@@ -1,72 +1,97 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-// Package system implements parsing of "system" values.
+// Package system implements parsing of target triples.
 package system
 
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 )
 
+const Unknown = "unknown"
+
 // System represents a platform target for zb.
 type System struct {
-	OS   string
-	Arch string
-	ABI  string
+	Arch   Architecture
+	Vendor Vendor
+	OS     OS
+	Env    Environment
 }
 
 // Parse parses a system string into a [System].
 // If Parse does not return an error,
 // it guarantees that all of the System's fields will be filled in.
 func Parse(s string) (System, error) {
-	var sys System
-	parts := strings.Split(s, "-")
-	switch {
-	case len(parts) < 2:
-		return System{}, fmt.Errorf("parse system %q: not enough hyphen-separated components", s)
-	case len(parts) == 2 && parts[1] == "cygwin":
-		sys = System{
-			OS:   "windows",
-			Arch: parts[0],
-			ABI:  "cygnus",
+	var parts [4]string
+	var numParts int
+	for part := range strings.SplitSeq(s, "-") {
+		if numParts == cap(parts) {
+			return System{}, fmt.Errorf("parse system %q: trailing components after %s", s, parts[numParts-1])
 		}
-	case len(parts) == 2 && parts[1] == "windows":
-		sys = System{
-			OS:   "windows",
-			Arch: parts[0],
-			ABI:  "msvc",
-		}
-	case len(parts) == 2:
-		sys = System{
-			Arch: parts[0],
-			OS:   parts[1],
-		}
-	case len(parts) == 3 && parts[1] == "linux" && parts[2] == "gnu":
-		sys = System{
-			Arch: parts[0],
-			OS:   parts[1],
-			ABI:  parts[2],
-		}
-	case len(parts) == 3:
-		return System{}, fmt.Errorf("parse system %q: invalid triple", s)
-	case len(parts) == 4 && parts[1] == osVendor(parts[2]):
-		sys = System{
-			Arch: parts[0],
-			OS:   parts[2],
-			ABI:  parts[3],
-		}
-	case len(parts) == 4:
-		return System{}, fmt.Errorf("parse system %q: invalid vendor %q", s, parts[1])
-	default:
-		return System{}, fmt.Errorf("parse system %q: too many hyphen-separated components", s)
+		parts[numParts] = part
+		numParts++
 	}
-	sys, err := sys.Fill()
-	if err != nil {
-		return System{}, fmt.Errorf("parse system %q: %v", s, err)
+	isNonEmpty := func(s string) bool { return s != "" }
+	for i, part := range parts[:len(parts)-1] {
+		if (isCygwin(part) || isMinGW32(part)) && slices.ContainsFunc(parts[i+1:], isNonEmpty) {
+			return System{}, fmt.Errorf("parse system %q: trailing components after %s", s, parts[1])
+		}
+	}
+	switch numParts {
+	case 1:
+		return System{}, fmt.Errorf("parse system %q: missing operating system", s)
+	case 2:
+		parts[1], parts[2] = "", parts[1]
+	case 3:
+		if OS(parts[1]).isKnown() || parts[1] == "none" {
+			parts[1], parts[2], parts[3] = "", parts[1], parts[2]
+		}
+	}
+
+	// Expand Cygwin/MinGW first, since that can trigger other implications.
+	if isCygwin(parts[2]) {
+		parts[2] = "windows"
+		parts[3] = "cygnus"
+	} else if isMinGW32(parts[2]) {
+		parts[2] = "windows"
+		parts[3] = "gnu"
+	}
+
+	// Now fill in the system based on the parts.
+	sys := System{
+		Arch:   Unknown,
+		Vendor: Unknown,
+		OS:     Unknown,
+		Env:    Unknown,
+	}
+	if got := Architecture(parts[0]); got != "" {
+		sys.Arch = got
+	}
+	if got := OS(parts[2]); got != "" {
+		sys.OS = got
+	}
+	if got := Vendor(parts[1]); got != "" {
+		sys.Vendor = got
+	} else {
+		sys.Vendor = sys.OS.defaultVendor()
+	}
+	if got := Environment(parts[3]); got != "" {
+		sys.Env = got
+	} else {
+		sys.Env = sys.OS.defaultEnvironment()
 	}
 	return sys, nil
+}
+
+func isCygwin(s string) bool {
+	return strings.HasPrefix(s, "cygwin")
+}
+
+func isMinGW32(s string) bool {
+	return strings.HasPrefix(s, "mingw")
 }
 
 // Current returns a [System] value for the current process's execution environment.
@@ -90,137 +115,51 @@ func Current() System {
 	}
 	switch runtime.GOOS {
 	case "linux":
+		sys.Vendor = Unknown
 		sys.OS = "linux"
-		sys.ABI = "gnu"
+		sys.Env = Unknown
 	case "android":
+		sys.Vendor = Unknown
 		sys.OS = "linux"
 		if sys.Arch == "arm" {
-			sys.ABI = "androideabi"
+			sys.Env = "androideabi"
 		} else {
-			sys.ABI = "android"
+			sys.Env = "android"
 		}
 	case "darwin":
+		sys.Vendor = "apple"
 		sys.OS = "macos"
-		sys.ABI = "unknown"
+		sys.Env = Unknown
 	case "windows":
+		sys.Vendor = "pc"
 		sys.OS = "windows"
-		sys.ABI = "msvc"
+		sys.Env = "msvc"
 	case "ios":
+		sys.Vendor = "apple"
 		sys.OS = "ios"
-		sys.ABI = "unknown"
+		sys.Env = Unknown
 	default:
 		panic("unknown GOOS=" + runtime.GOOS)
 	}
 	return sys
 }
 
-// Fill returns a [System] with any missing fields filled in,
-// if they can be inferred.
-// An error is returned otherwise.
-func (sys System) Fill() (System, error) {
-	switch sys.Arch {
-	case "":
-		return sys, fmt.Errorf("architecture missing")
-	case "i686", "x86_64", "arm", "aarch64", "riscv32", "riscv64":
-		// Valid.
-	default:
-		return sys, fmt.Errorf("unknown architecture %q", sys.Arch)
-	}
-
-	switch sys.OS {
-	case "":
-		return sys, fmt.Errorf("os missing")
-	case "linux", "macos", "ios", "windows":
-		// Valid.
-	default:
-		return sys, fmt.Errorf("unknown os %q", sys.OS)
-	}
-
-	switch sys.ABI {
-	case "":
-		switch sys.OS {
-		case "linux":
-			// TODO(someday): Specific versions of ARM and PPC.
-			sys.ABI = "gnu"
-		case "windows":
-			sys.ABI = "msvc"
-		default:
-			sys.ABI = "unknown"
-		}
-	case "gnu", "musl", "android", "androideabi":
-		if sys.OS != "linux" {
-			return sys, fmt.Errorf("cannot use %s abi with %s", sys.ABI, sys.OS)
-		}
-	case "msvc", "cygnus":
-		if sys.OS != "windows" {
-			return sys, fmt.Errorf("cannot use %s abi with %s", sys.ABI, sys.OS)
-		}
-	case "unknown":
-		// Valid.
-	default:
-		return sys, fmt.Errorf("unknown abi %q", sys.ABI)
-	}
-
-	return sys, nil
-}
-
 // String returns sys as a string that can be passed to [Parse].
 func (sys System) String() string {
 	switch {
-	case isDarwin(sys.OS) && sys.ABI == "unknown" && sys.Arch != "":
-		return sys.Arch + "-" + sys.OS
-	case sys.OS == "linux" && sys.ABI == "gnu" && sys.Arch != "":
-		return sys.Arch + "-linux"
-	case sys.OS == "windows" && sys.ABI == "msvc" && sys.Arch != "":
-		return sys.Arch + "-windows"
-	case sys.OS == "windows" && sys.ABI == "cygnus" && sys.Arch != "":
-		return sys.Arch + "-cygwin"
+	case sys.OS == "linux" && sys.Vendor.IsUnknown() && sys.Env.IsUnknown():
+		// All parsers should know about "linux" as an OS.
+		// If vendor and environment are unknown (a very common case),
+		// we can drop them it should parse correctly.
+		return sys.Arch.String() + "-" + sys.OS.String()
+	case sys.OS == "windows" && sys.Env == "cygnus":
+		// Abbreviate Cygwin.
+		return sys.Arch.String() + "-" + sys.Vendor.String() + "-cygwin"
+	case Environment(sys.Env.String()) == sys.OS.defaultEnvironment():
+		// Prefer showing a triple.
+		return sys.Arch.String() + "-" + sys.Vendor.String() + "-" + sys.OS.String()
 	default:
-		return sys.Arch + "-" + osVendor(sys.OS) + "-" + sys.OS + "-" + sys.ABI
+		// Full 4-part "triple".
+		return sys.Arch.String() + "-" + sys.Vendor.String() + "-" + sys.OS.String() + "-" + sys.Env.String()
 	}
-}
-
-// IsIntel reports whether sys uses an Intel-based instruction set.
-func (sys System) IsIntel() bool {
-	return sys.IsIntel32() || sys.IsIntel64()
-}
-
-// IsIntel32 reports whether sys uses a 32-bit Intel-based instruction set.
-func (sys System) IsIntel32() bool {
-	return sys.Arch == "i686"
-}
-
-// IsIntel64 reports whether sys uses a 64-bit Intel-based instruction set.
-func (sys System) IsIntel64() bool {
-	return sys.Arch == "x86_64"
-}
-
-// IsARM reports whether sys uses an ARM-based instruction set.
-func (sys System) IsARM() bool {
-	return sys.IsARM32() || sys.IsARM64()
-}
-
-// IsARM32 reports whether sys uses a 32-bit ARM-based instruction set.
-func (sys System) IsARM32() bool {
-	return sys.Arch == "arm"
-}
-
-// IsARM64 reports whether sys uses a 64-bit ARM-based instruction set.
-func (sys System) IsARM64() bool {
-	return sys.Arch == "aarch64"
-}
-
-func osVendor(os string) string {
-	switch {
-	case isDarwin(os):
-		return "apple"
-	case os == "windows":
-		return "pc"
-	default:
-		return "unknown"
-	}
-}
-
-func isDarwin(os string) bool {
-	return os == "macos" || os == "ios"
 }
