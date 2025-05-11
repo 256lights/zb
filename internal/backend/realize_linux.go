@@ -125,15 +125,23 @@ func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
 	c.SysProcAttr.Chroot = chrootDir
 
 	if err := c.Run(); err != nil {
-		errLine := append([]byte(err.Error()), '\n')
-		invocation.logWriter.Write(errLine)
 		return builderFailure{err}
 	}
 
-	for _, outputPath := range invocation.outputPaths {
+	for outputName, outputPath := range invocation.outputPaths {
 		src := filepath.Join(chrootDir, string(outputPath))
 		dst := filepath.Join(invocation.realStoreDir, outputPath.Base())
 		if err := os.Rename(src, dst); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// If the output does not exist, ignore the error.
+				// The overall builder run will detect it and report it more appropriately to the user.
+				ref := zbstore.OutputReference{
+					DrvPath:    invocation.derivationPath,
+					OutputName: outputName,
+				}
+				log.Debugf(ctx, "Failed to move output to destination for %v: %v", ref, err)
+				continue
+			}
 			return err
 		}
 	}

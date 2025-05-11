@@ -780,6 +780,11 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		return nil
 	}
 	defer func() {
+		endFn, txError := sqlitex.ImmediateTransaction(conn)
+		if txError != nil {
+			log.Warnf(ctx, "For build %s: %v", drvPath, txError)
+			return
+		}
 		finalizeError := finalizeBuildResult(ctx, conn, b.server.logDir, &buildFinalResults{
 			buildID: b.id,
 			drvPath: drvPath,
@@ -787,6 +792,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 			endTime: time.Now(),
 			error:   err,
 		})
+		endFn(&finalizeError)
 		if finalizeError != nil {
 			log.Warnf(ctx, "For build %s: %v", drvPath, finalizeError)
 		}
@@ -1107,7 +1113,7 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 		log.Warnf(ctx, "For %s: %v", drvPath, err)
 	}
 	startedRun = true
-	err = f(ctx, &builderInvocation{
+	builderError := f(ctx, &builderInvocation{
 		derivation:     expandedDrv,
 		derivationPath: drvPath,
 		outputPaths:    outPaths,
@@ -1121,8 +1127,6 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 
 		lookup: b.lookup,
 		closure: func(path zbstore.Path, yield func(zbstore.Path) bool) error {
-			// This function is only called before writing any logs,
-			// so it's safe to use conn.
 			pe := pathAndEquivalenceClass{path: path}
 			return closurePaths(conn, pe, func(pe pathAndEquivalenceClass) bool {
 				return yield(pe.path)
@@ -1130,20 +1134,45 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 		},
 	})
 	builderEndTime := time.Now()
-	if err != nil && keepFailed && b.server.allowKeepFailed {
+
+	if builderError == nil {
+		// Verify that builder produced all outputs.
+		for outputName, outputPath := range outPaths {
+			if _, err := os.Lstat(b.server.realPath(outputPath)); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					builderError = builderFailure{fmt.Errorf("builder failed to produce output $%s", outputName)}
+				} else {
+					builderError = builderFailure{fmt.Errorf("output $%s: %v", outputName, err)}
+				}
+				break
+			}
+		}
+	}
+
+	if builderError != nil {
+		log.Debugf(ctx, "Builder for %s has failed: %v", drvPath, builderError)
 		var buf []byte
-		buf = append(buf, "Build failed. Build directory available at "...)
-		buf = append(buf, buildDir...)
+		buf = append(buf, "*** Build failed"...)
+		if isBuilderFailure(builderError) {
+			// Internal errors are appended to the log during [finalizeBuildResult].
+			buf = append(buf, ": "...)
+			buf = append(buf, builderError.Error()...)
+		}
 		buf = append(buf, "\n"...)
+		if keepFailed && b.server.allowKeepFailed {
+			buf = append(buf, "Build directory available at "...)
+			buf = append(buf, buildDir...)
+			buf = append(buf, "\n"...)
+		}
 		if _, err := logFile.Write(buf); err != nil {
 			log.Debugf(ctx, "While writing failed build directory info: %v", err)
 		}
 	}
+
 	if err := recordBuilderEnd(conn, buildResultID, builderEndTime); err != nil {
 		log.Warnf(ctx, "For %s: %v", drvPath, err)
 	}
-	if err != nil {
-		log.Debugf(ctx, "Builder for %s has failed: %v", drvPath, err)
+	if builderError != nil {
 		for outName, outPath := range outPaths {
 			if err := os.RemoveAll(string(outPath)); err != nil {
 				ref := zbstore.OutputReference{
@@ -1153,7 +1182,7 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 				log.Warnf(ctx, "Clean up %v from failed build: %v", ref, err)
 			}
 		}
-		return nil, fmt.Errorf("build %s: %w", drvPath, err)
+		return nil, fmt.Errorf("build %s: %w", drvPath, builderError)
 	}
 
 	log.Debugf(ctx, "Builder for %s has finished successfully", drvPath)
@@ -1180,8 +1209,6 @@ func runSubprocess(ctx context.Context, invocation *builderInvocation) error {
 	c.SysProcAttr = sysProcAttrForUser(invocation.user)
 
 	if err := c.Run(); err != nil {
-		errLine := append([]byte(err.Error()), '\n')
-		invocation.logWriter.Write(errLine)
 		return builderFailure{err}
 	}
 

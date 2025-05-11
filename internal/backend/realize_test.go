@@ -692,6 +692,130 @@ func TestRealizeFailure(t *testing.T) {
 			t.Errorf("unknown object %s left in store", name)
 		}
 	}
+
+	if gotLog, err := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvPath); err != nil {
+		t.Error(err)
+	} else if want := "exit status"; !bytes.Contains(gotLog, []byte(want)) {
+		t.Errorf("Log does not contain phrase %q. Full output:\n%s", want, gotLog)
+	}
+}
+
+func TestRealizeNoOutput(t *testing.T) {
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	dir := backendtest.NewStoreDirectory(t)
+
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExporter(exportBuffer)
+	const drvName = "hello.txt"
+	// Create a derivation that no-ops.
+	drvContent := &zbstore.Derivation{
+		Name:   drvName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		Outputs: map[string]*zbstore.DerivationOutputType{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	if runtime.GOOS == "windows" {
+		drvContent.Builder = powershellPath
+		drvContent.Args = []string{"-Command", "exit"}
+	} else {
+		drvContent.Builder = shPath
+		drvContent.Args = []string{"-c", "true"}
+	}
+	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(nil, exportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
+	})
+	if err != nil {
+		t.Fatal("build drv:", err)
+	}
+	got, err := backendtest.WaitForBuild(ctx, client, realizeResponse.BuildID)
+	if err != nil {
+		t.Fatal("build drv:", err)
+	}
+	want := &zbstorerpc.Build{
+		ID:     realizeResponse.BuildID,
+		Status: zbstorerpc.BuildFail,
+		Results: []*zbstorerpc.BuildResult{
+			{
+				DrvPath: drvPath,
+				Status:  zbstorerpc.BuildFail,
+				Outputs: []*zbstorerpc.RealizeOutput{
+					{
+						Name: zbstore.DefaultDerivationOutputName,
+					},
+				},
+			},
+		},
+	}
+	buildType := reflect.TypeFor[zbstorerpc.Build]()
+	diff := cmp.Diff(
+		want, got,
+		cmp.FilterPath(
+			func(p cmp.Path) bool {
+				if p.Index(-2).Type() != buildType {
+					return false
+				}
+				fieldName := p.Last().(cmp.StructField).Name()
+				return fieldName == "StartedAt" ||
+					fieldName == "EndedAt"
+			},
+			cmp.Ignore(),
+		),
+		buildResultOption,
+	)
+	if diff != "" {
+		t.Errorf("build (-want +got):\n%s", diff)
+	}
+	if !got.EndedAt.Valid {
+		t.Error("build.endedAt = null")
+	}
+	// Ensure that the build didn't leave files in the store.
+	storeListing, err := os.ReadDir(string(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ent := range storeListing {
+		name := ent.Name()
+		if name != drvPath.Base() {
+			t.Errorf("unknown object %s left in store", name)
+		}
+	}
+
+	if gotLog, err := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvPath); err != nil {
+		t.Error(err)
+	} else if want := "failed to produce output $out"; !bytes.Contains(gotLog, []byte(want)) {
+		t.Errorf("Log does not contain phrase %q. Full output:\n%s", want, gotLog)
+	}
 }
 
 func TestRealizeCores(t *testing.T) {
