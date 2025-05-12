@@ -19,6 +19,7 @@ import (
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
+	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -261,6 +262,42 @@ func TestImportFromDerivation(t *testing.T) {
 	const want = "Hello, World!"
 	if results[0] != want {
 		t.Errorf("result = %#v; want %#v", results[0], want)
+	}
+}
+
+func TestImportExitStore(t *testing.T) {
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	storeDir := backendtest.NewStoreDirectory(t)
+
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eval, err := NewEval(&Options{
+		Store:          newTestRPCStore(store),
+		StoreDirectory: storeDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := eval.Close(); err != nil {
+			t.Error("eval.Close:", err)
+		}
+	}()
+
+	secretPath := filepath.Join(t.TempDir(), "secret.lua")
+	if err := os.WriteFile(secretPath, []byte("return \"secret\"\n"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	fContent := `return import(` + lualex.Quote(secretPath) + `)`
+	expr := `local f = toFile("f.lua", ` + lualex.Quote(fContent) + `); local m = await(import(f)); assert(m == nil, string.format("%s is not nil", type(m)))`
+	if _, err := eval.Expression(ctx, expr); err != nil {
+		t.Fatal(err)
 	}
 }
 

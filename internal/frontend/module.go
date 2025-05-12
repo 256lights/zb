@@ -121,7 +121,7 @@ func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error)
 		filename = strings.NewReplacer(rewrites...).Replace(filename)
 	}
 
-	filename, err = absSourcePath(l, filename, filenameContext)
+	filename, err = absSourcePath(l, eval.storeDir, filename, filenameContext)
 	if err != nil {
 		l.PushNil()
 		l.PushString(err.Error())

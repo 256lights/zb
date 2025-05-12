@@ -67,7 +67,7 @@ func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int,
 		return 0, lua.NewTypeError(l, 1, "string or table")
 	}
 
-	p, err = absSourcePath(l, p, pcontext)
+	p, err = absSourcePath(l, eval.storeDir, p, pcontext)
 	if err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
@@ -327,8 +327,20 @@ func writeSingleFileNAR(w io.Writer, r io.Reader, sz int64) error {
 
 // absSourcePath takes a source path passed as an argument from Lua to Go
 // and resolves it relative to the calling function.
-func absSourcePath(l *lua.State, path string, context sets.Set[string]) (string, error) {
+func absSourcePath(l *lua.State, dir zbstore.Directory, path string, context sets.Set[string]) (string, error) {
+	// Lua guarantees that a call to a native function will never be a tail call,
+	// so we can always get information about the immediate caller.
+	debugInfo := l.Info(1)
+	if debugInfo == nil {
+		return "", fmt.Errorf("resolve path: no caller information available")
+	}
+	source, hasSource := debugInfo.Source.Filename()
+	sourceInStore := hasSource && pathInStore(source, dir)
+
 	if filepath.IsAbs(path) {
+		if sourceInStore && !pathInStore(path, dir) {
+			return "", fmt.Errorf("resolve path: cannot refer to paths outside store")
+		}
 		return path, nil
 	}
 	if strings.HasPrefix(path, "/") {
@@ -359,14 +371,7 @@ func absSourcePath(l *lua.State, path string, context sets.Set[string]) (string,
 		}
 	}
 
-	// Lua guarantees that a call to a native function will never be a tail call,
-	// so we can always get information about the immediate caller.
-	debugInfo := l.Info(1)
-	if debugInfo == nil {
-		return "", fmt.Errorf("resolve path: no caller information available")
-	}
-	source, ok := debugInfo.Source.Filename()
-	if !ok {
+	if !hasSource {
 		// Not loaded from a file. Use working directory.
 		//
 		// TODO(someday): This is intended for --expr evaluation,
@@ -376,10 +381,22 @@ func absSourcePath(l *lua.State, path string, context sets.Set[string]) (string,
 		if err != nil {
 			return "", fmt.Errorf("resolve path: %w", err)
 		}
+		if sourceInStore && !pathInStore(path, dir) {
+			return "", fmt.Errorf("resolve path: cannot refer to paths outside %s", dir)
+		}
 		return path, nil
 	}
 
-	return filepath.Join(filepath.Dir(source), filepath.FromSlash(path)), nil
+	path = filepath.Join(filepath.Dir(source), filepath.FromSlash(path))
+	if sourceInStore && !pathInStore(path, dir) {
+		return "", fmt.Errorf("resolve path: cannot refer to paths outside %s", dir)
+	}
+	return path, nil
+}
+
+func pathInStore(path string, dir zbstore.Directory) bool {
+	return strings.HasPrefix(path, string(dir)) &&
+		(len(path) <= len(dir) || path[len(dir)] == byte(filepath.Separator))
 }
 
 // checkStamp returns the store path of a previous import,

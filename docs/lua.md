@@ -263,6 +263,9 @@ with the following fields:
   then the file will be excluded from import into the store.
   The default behavior of `path` is equivalent to passing `filter = function() return true end`.
 
+When `path` is called from a Lua file inside the store directory,
+it cannot be called to access files outside the store directory.
+
 ### `derivation`
 
 `derivation` adds a [`.drv` file][Derivation Specification] to the store
@@ -389,6 +392,9 @@ but `import` is special in a few ways:
   will raise an error.
 - If `path` is a path constructed from a derivation,
   then zb will build the derivation before attempting to read it.
+
+When `import` is called from a Lua file inside the store directory,
+it cannot be called to access files outside the store directory.
 
 ### `await`
 
