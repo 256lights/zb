@@ -60,14 +60,30 @@ esac
 zbStorePath="$(zb build "$zbTargetURL")"
 cpToStore "$zbStorePath"
 
-install -m 755 "$projectDir/installer/install.sh" "$buildDir/install"
+case "$targetSystem" in
+  *-windows)
+    ;;
+  *)
+    install -m 755 "$projectDir/installer/install.sh" "$buildDir/install"
+    ;;
+esac
 
 # Set timestamp to given epoch.
 find "$buildDir" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" '{}' \;
 
 currentDir="$(pwd)"
-( cd "$buildTopDir" && \
-  tar -jcf "$currentDir/$archiveName.tar.bz2" \
-    --owner=root:0 \
-    --group=root:0 \
-    "$archiveName" )
+case "$targetSystem" in
+  *-windows)
+    rm -f "$currentDir/$archiveName.zip"
+    ( cd "$buildTopDir" && \
+      zip -rX "$currentDir/$archiveName.zip" \
+        "$archiveName" )
+    ;;
+  *)
+    ( cd "$buildTopDir" && \
+      tar -jcf "$currentDir/$archiveName.tar.bz2" \
+        --owner=root:0 \
+        --group=root:0 \
+        "$archiveName" )
+    ;;
+esac

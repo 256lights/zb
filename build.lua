@@ -118,6 +118,7 @@ function module.new(args)
   end
   return args.makeDerivation {
     pname = "zb";
+    version = "0.1.0-rc1";
     src = module.src;
     buildSystem = args.buildSystem;
 
