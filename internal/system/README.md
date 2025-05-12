@@ -3,7 +3,7 @@
 (The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
 "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this
 document are to be interpreted as described in [RFC 2119][].
-Syntax is defined in Augmented Backus-Naur Form as described in [RFC 5234][].)
+Syntax is defined in Augmented Backus-Naur Form as described in [RFC 5234][] and [RFC 7405][].)
 
 The `system` value of a derivation is used to specify a class of machines that can execute the derivation's builder.
 The format is intentionally compatible with [LLVM target triples][]
@@ -13,9 +13,9 @@ The syntax of a `system` value is:
 
 ```abnf
 system =  arch [subarch] ["-" vendor] "-" os [os_version] [ "-" env [env_version] ]
-system =/ arch [subarch] ["-" vendor] "-" %63.79.67.77.69.6E ; "cygwin", case sensitive.
+system =/ arch [subarch] ["-" vendor] "-" %s"cygwin"
                      ; Translates to os=windows, env=cygnus
-system =/ arch [subarch] ["-" vendor] "-" %6D.69.6E.67.77    ; "mingw", case sensitive.
+system =/ arch [subarch] ["-" vendor] "-" %s"mingw"
                      ; Translates to os=windows, env=gnu
 
 arch        = word
@@ -42,6 +42,7 @@ and the third component **MUST** be interpreted as the operating system.
 
 [RFC 2119]: https://datatracker.ietf.org/doc/html/rfc2119
 [RFC 5234]: https://datatracker.ietf.org/doc/html/rfc5234
+[RFC 7405]: https://datatracker.ietf.org/doc/html/rfc7405
 [LLVM target triples]: https://clang.llvm.org/docs/CrossCompilation.html#target-triple
 
 ## Operating Systems
