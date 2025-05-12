@@ -265,7 +265,8 @@ with the following fields:
 
 ### `derivation`
 
-`derivation` adds a `.drv` file to the store specifying a derivation that can be built.
+`derivation` adds a [`.drv` file][Derivation Specification] to the store
+specifying a derivation that can be built.
 `derivation` takes a table as its sole argument.
 All fields in the table are passed to the `builder` program as environment variables.
 The values can be strings, numbers, booleans, or lists of any of the previous types.
@@ -296,14 +297,13 @@ The following fields in the table passed to `derivation` are treated specially:
   then the builder's output,
   when serialized as a NAR file and hashed with the algorithm given by `outputHash`,
   must produce the same hash as `outputHash`.
-- `__network` (optional boolean): If `true`, then the derivation is given network access.
-  It is assumed that the derivation is still deterministic.
 
 The `derivation` function returns a derivation object.
 This object will have a copy of all the fields of the table passed into the `derivation` function that produced it,
 plus a few extra fields:
 
-- `drvPath`: a string containing the absolute path to the resulting `.drv` file in the store.
+- `drvPath`: a string containing the absolute path
+  to the resulting [`.drv` file][Derivation Specification] in the store.
 - `out`: a placeholder string that represents the absolute path to the derivation's output.
   Passing this string (or strings formed from it) into other calls to `derivation`
   will implicitly add a build dependency between the derivations.
@@ -312,6 +312,10 @@ plus a few extra fields:
 For convenience, using a derivation object in places that expect a string
 (e.g. concatenation or a call to `tostring`)
 will be treated the same as accessing the `out` field.
+
+The environment that the builder runs in is documented in the [Derivation Specification][].
+
+[Derivation Specification]: derivations.md
 
 ### `fetchurl`
 
