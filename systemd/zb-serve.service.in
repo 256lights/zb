@@ -8,7 +8,7 @@ Requires=zb-serve.socket
 
 [Service]
 Environment=ZB_BUILD_USERS_GROUP=zbld ZB_SERVE_FLAGS=
-ExecStart=@zb@ serve --systemd --sandbox-path=/bin/sh=@sh@ --build-users-group=${ZB_BUILD_USERS_GROUP} $ZB_SERVE_FLAGS
+ExecStart=@zb@ serve --systemd --sandbox-path=/bin/sh=@sh@ --implicit-system-dep=/bin/sh --build-users-group=${ZB_BUILD_USERS_GROUP} $ZB_SERVE_FLAGS
 KillMode=mixed
 
 [Install]

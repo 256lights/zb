@@ -10,6 +10,12 @@ import (
 	"slices"
 )
 
+// HasKey reports whether m[k] exists.
+func HasKey[M ~map[K]V, K comparable, V any](m M, k K) bool {
+	_, ok := m[k]
+	return ok
+}
+
 // SortedKeys returns a slice of the map's keys in sorted order.
 func SortedKeys[M ~map[K]V, K cmp.Ordered, V any](m M) []K {
 	keys := make([]K, 0, len(m))

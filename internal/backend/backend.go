@@ -57,7 +57,7 @@ type Options struct {
 	// SandboxPaths is a map of paths inside the sandbox
 	// to paths on the host machine.
 	// These paths will be made available to sandboxed builders.
-	SandboxPaths map[string]string
+	SandboxPaths map[string]SandboxPath
 
 	// CoresPerBuild is a hint from the user to builders
 	// on the number of concurrent jobs to perform.
@@ -76,6 +76,16 @@ type Options struct {
 	// BuildLogRetention is the length of time to retain build logs.
 	// If non-positive, then build logs will be not be automatically deleted.
 	BuildLogRetention time.Duration
+}
+
+// A SandboxPath is the set of options for SandboxPaths in [Options].
+type SandboxPath struct {
+	// Path is the path on the backend's filesystem to make available at the path.
+	// If empty, the SandboxPaths key is used.
+	Path string
+	// If AlwaysPresent is true, then the path will always be made available in the sandbox.
+	// The default is to only allow the path to be used if it is declared in __buildSystemDeps.
+	AlwaysPresent bool
 }
 
 // BuildUser is a descriptor for a Unix user.
@@ -112,7 +122,7 @@ type Server struct {
 	buildContext    func(context.Context, string) context.Context
 
 	sandbox      bool
-	sandboxPaths map[string]string
+	sandboxPaths map[string]SandboxPath
 
 	cancelBackground context.CancelFunc
 	background       sync.WaitGroup
@@ -145,7 +155,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		logDir:          opts.LogDirectory,
 		allowKeepFailed: opts.AllowKeepFailed,
 		sandbox:         !opts.DisableSandbox && CanSandbox(),
-		sandboxPaths:    opts.SandboxPaths,
+		sandboxPaths:    maps.Clone(opts.SandboxPaths),
 		coresPerBuild:   opts.CoresPerBuild,
 		users:           users,
 		activeBuilds:    make(map[uuid.UUID]context.CancelFunc),

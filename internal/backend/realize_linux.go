@@ -95,7 +95,7 @@ func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
 		builderGID: os.Getegid(),
 
 		network: invocation.derivation.Outputs[zbstore.DefaultDerivationOutputName].IsFixed() ||
-			invocation.derivation.Env["__network"] == "1",
+			invocation.derivation.Env[networkVar] == "1",
 		caFile: caFile,
 		// TODO(maybe): This seems high to me.
 		shmSize: "50%",

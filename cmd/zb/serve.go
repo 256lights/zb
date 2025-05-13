@@ -44,7 +44,7 @@ type serveOptions struct {
 	buildUsersGroup   string
 	logDir            string
 	sandbox           bool
-	sandboxPaths      map[string]string
+	sandboxPaths      map[string]backend.SandboxPath
 	allowKeepFailed   bool
 	coresPerBuild     int
 	buildLogRetention time.Duration
@@ -66,9 +66,8 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:          true,
 	}
 	opts := &serveOptions{
-		dbPath:       filepath.Join(defaultVarDir(), "db.sqlite"),
-		sandbox:      backend.SystemSupportsSandbox(),
-		sandboxPaths: make(map[string]string),
+		dbPath:  filepath.Join(defaultVarDir(), "db.sqlite"),
+		sandbox: backend.SystemSupportsSandbox(),
 	}
 	if osutil.IsRoot() {
 		opts.buildUsersGroup = backend.DefaultBuildUsersGroup
@@ -81,7 +80,10 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 	c.Flags().StringVar(&opts.logDir, "log-directory", filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "log", "zb"), "`dir`ectory to store builder logs in")
 	c.Flags().StringVar(&opts.buildUsersGroup, "build-users-group", opts.buildUsersGroup, "name of Unix `group` of users to run builds as")
 	c.Flags().BoolVar(&opts.sandbox, "sandbox", opts.sandbox, "run builders in a restricted environment")
-	c.Flags().Var(pathMapFlag(opts.sandboxPaths), "sandbox-path", "`path` to allow in sandbox (can be passed multiple times)")
+	sandboxPaths := make(map[string]string)
+	c.Flags().Var(pathMapFlag(sandboxPaths), "sandbox-path", "`path` to allow in sandbox (can be passed multiple times)")
+	implicitSystemDeps := new(stringSetFlag)
+	c.Flags().Var(implicitSystemDeps, "implicit-system-dep", "`path` to always mount in sandbox (can be passed multiple times)")
 	c.Flags().BoolVar(&opts.allowKeepFailed, "allow-keep-failed", true, "allow user to skip cleanup of failed builds")
 	c.Flags().IntVar(&opts.coresPerBuild, "cores-per-build", runtime.NumCPU(), "hint to builders for `number` of concurrent jobs to run")
 	c.Flags().DurationVar(&opts.buildLogRetention, "build-log-retention", 7*24*time.Hour, "`duration` before deleting finished build logs")
@@ -92,6 +94,7 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 	c.Flags().StringVar(&opts.staticDirectory, "dev-static", "", "`directory` to use for static assets")
 	c.Flag("dev-static").Hidden = true
 	c.RunE = func(cmd *cobra.Command, args []string) error {
+		opts.sandboxPaths = combineSandboxPathsAndImplicitDeps(sandboxPaths, implicitSystemDeps.set)
 		return runServe(cmd.Context(), g, opts)
 	}
 	return c
@@ -345,6 +348,19 @@ func buildUsersForGroup(ctx context.Context, name string) (gid int, buildUsers [
 		buildUsers = append(buildUsers, buildUser)
 	}
 	return gid, buildUsers, nil
+}
+
+func combineSandboxPathsAndImplicitDeps(sandboxPaths map[string]string, implicitDeps sets.Set[string]) map[string]backend.SandboxPath {
+	result := make(map[string]backend.SandboxPath)
+	for mappedPath, hostPath := range sandboxPaths {
+		result[mappedPath] = backend.SandboxPath{Path: hostPath}
+	}
+	for path := range implicitDeps {
+		opts := result[path]
+		opts.AlwaysPresent = true
+		result[path] = opts
+	}
+	return result
 }
 
 func listenUnix(path string) (*net.UnixListener, error) {

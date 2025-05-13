@@ -4,6 +4,7 @@
 package backend
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -40,6 +41,12 @@ import (
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 	"zombiezen.com/go/xcontext"
+)
+
+// Special environment variable names.
+const (
+	buildSystemDepsVar = "__buildSystemDeps"
+	networkVar         = "__network"
 )
 
 func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.Response, err error) {
@@ -377,7 +384,7 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 		if drv == nil {
 			return fmt.Errorf("realize %v: unknown derivation", curr)
 		}
-		if _, ok := drv.Outputs[curr.OutputName]; !ok {
+		if !xmaps.HasKey(drv.Outputs, curr.OutputName) {
 			return fmt.Errorf("realize %v: unknown output %q", curr, curr.OutputName)
 		}
 		drvHash := b.drvHashes[curr.DrvPath]
@@ -838,6 +845,15 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		return fmt.Errorf("build %s: a %s system is required, but host is a %v system",
 			drvPath, drv.System, system.Current())
 	}
+	buildSystemDeps := drv.Env[buildSystemDepsVar]
+	if hasPlaceholders(drv, buildSystemDeps) {
+		return fmt.Errorf("build %s: %s contains placeholders", drvPath, buildSystemDeps)
+	}
+	for dep := range strings.FieldsSeq(buildSystemDeps) {
+		if !xmaps.HasKey(b.server.sandboxPaths, dep) {
+			return fmt.Errorf("build %s: system dependency %s not allowed", drvPath, buildSystemDeps)
+		}
+	}
 	for _, input := range drv.InputSources.All() {
 		log.Debugf(ctx, "Waiting for lock on %s (input to %s)...", input, drvPath)
 		unlockInput, err := b.server.writing.lock(ctx, input)
@@ -1122,7 +1138,7 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 		buildDir:     buildDir,
 		logWriter:    logFile,
 		user:         buildUser,
-		sandboxPaths: b.server.sandboxPaths,
+		sandboxPaths: filterSandboxPaths(b.server.sandboxPaths, drv.Env[buildSystemDepsVar]),
 		cores:        b.server.coresPerBuild,
 
 		lookup: b.lookup,
@@ -1242,6 +1258,22 @@ func derivationInputRewrites(drv *zbstore.Derivation, realization func(ref zbsto
 		result[placeholder] = rpath
 	}
 	return result, nil
+}
+
+// hasPlaceholders reports whether s contains any placeholders
+// that would be substituted when evaluated for drv.
+func hasPlaceholders(drv *zbstore.Derivation, s string) bool {
+	for outputName := range drv.Outputs {
+		if strings.Contains(s, zbstore.HashPlaceholder(outputName)) {
+			return true
+		}
+	}
+	for ref := range drv.InputDerivationOutputs() {
+		if strings.Contains(s, zbstore.UnknownCAOutputPlaceholder(ref)) {
+			return true
+		}
+	}
+	return false
 }
 
 type replacer interface {
@@ -1716,6 +1748,27 @@ func canBuildLocally(drv *zbstore.Derivation) bool {
 	}
 	return host.Arch.Is64Bit() && (want.Arch.Is64Bit() || want.Arch.Is32Bit()) ||
 		host.Arch.Is32Bit() && want.Arch.Is32Bit()
+}
+
+// filterSandboxPaths computes the final mapping of paths to make available to the sandbox
+// based on the __buildSystemDeps value in the derivation.
+// If a path in depsList does not exist in sandboxPaths, it is ignored.
+func filterSandboxPaths(sandboxPaths map[string]SandboxPath, depsList string) map[string]string {
+	if len(sandboxPaths) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(sandboxPaths))
+	for path, opts := range sandboxPaths {
+		if opts.AlwaysPresent {
+			result[path] = cmp.Or(opts.Path, path)
+		}
+	}
+	for path := range strings.FieldsSeq(depsList) {
+		if opts, ok := sandboxPaths[path]; ok && !xmaps.HasKey(result, path) {
+			result[path] = cmp.Or(opts.Path, path)
+		}
+	}
+	return result
 }
 
 // tempPath generates a [zbstore.Path] that can be used as a temporary build path

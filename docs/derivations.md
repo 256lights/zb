@@ -168,6 +168,11 @@ On Windows systems, zb **SHOULD** pass the additional following environment vari
 | `TEMP`           | The absolute path to the temporary build directory. | `C:\Users\foo\AppData\Local\Temp\build123` |
 | `TMP`            | The absolute path to the temporary build directory. | `C:\Users\foo\AppData\Local\Temp\build123` |
 
+zb **MAY** use environment variables that start with two underscores (`__`)
+to control aspects of execution or signal special things about the target.
+Users **SHOULD NOT** use environment variables that start with two underscores
+for other purposes.
+
 ## Builder Success
 
 For zb to consider a builder's run successful,
@@ -189,6 +194,13 @@ zb **MUST** create an empty directory that is unique to the builder's run
 before starting the builder.
 That directory will be the builder's initial working directory
 and its absolute path will be used as the default value of `ZB_BUILD_TOP` as described above.
+
+A `.drv` file **MAY** include an environment variable called `__buildSystemDeps`.
+zb **SHALL** interpret such an environment variable as a space-separted list of files or directories
+that **SHALL** be available to the builder when it runs.
+If any files or directories named in `__buildSystemDeps` do not exist
+or zb's security policy does not permit access to the requested file,
+zb **MUST NOT** run the builder and **MUST** report the builder run as a failure.
 
 ## Network Access
 
