@@ -6,6 +6,7 @@ package backend
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -16,6 +17,27 @@ import (
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix/nar"
 )
+
+type exporterContextKey struct{}
+
+// A type that implements Exporter can receive a `nix-store --export` formatted stream.
+type Exporter interface {
+	Export(header jsonrpc.Header, r io.Reader) error
+}
+
+// WithExporter returns a copy of parent
+// in which the given exporter is used to send back export information.
+func WithExporter(parent context.Context, e Exporter) context.Context {
+	return context.WithValue(parent, exporterContextKey{}, e)
+}
+
+func exporterFromContext(ctx context.Context) Exporter {
+	e, _ := ctx.Value(exporterContextKey{}).(Exporter)
+	if e == nil {
+		e = stubExporter{}
+	}
+	return e
+}
 
 // Export exports the store objects according to the request
 // in `nix-store --export` format to dst.
@@ -188,4 +210,10 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 	}
 
 	return result, nil
+}
+
+type stubExporter struct{}
+
+func (stubExporter) Export(header jsonrpc.Header, r io.Reader) error {
+	return errors.New("no exporter in context")
 }
