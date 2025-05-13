@@ -2,6 +2,17 @@
 
 This document provides an overview of how the zb server operates.
 
+## Standard Installation
+
+1. Go to the [latest zb release](https://github.com/256lights/zb/releases/latest)
+   in your web browser.
+2. Download the binary archive asset for your platform.
+3. Extract the binary archive.
+4. On Unix-like systems, run the `install` script.
+   There is no installer for Windows yet.
+   ([#82](https://github.com/256lights/zb/issues/82) tracks adding an installer.)
+5. Once the installer finishes, you can delete the binary archive and the extracted directory.
+
 ## Architecture
 
 zb uses a client/server architecture for all builds.

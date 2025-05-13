@@ -18,14 +18,7 @@ see the early blog posts:
 - [zb: A Build System Prototype](https://www.zombiezen.com/blog/2024/06/zb-build-system-prototype/)
 - [zb: An Early-Stage Build System](https://www.zombiezen.com/blog/2024/09/zb-early-stage-build-system/)
 
-[Lua]: https://www.lua.org/
-[Nix]: https://nixos.org/
-[dolstra_purely_2006]: https://edolstra.github.io/pubs/phd-thesis.pdf
-[mokhov_build_2018]: https://doi.org/10.1145/3236774
-
-## Examples
-
-A [hello world example][] example:
+The [hello world example][]:
 
 ```lua
 hello = derivation {
@@ -37,20 +30,17 @@ hello = derivation {
 }
 ```
 
+[Lua]: https://www.lua.org/
+[Nix]: https://nixos.org/
+[dolstra_purely_2006]: https://edolstra.github.io/pubs/phd-thesis.pdf
 [hello world example]: demo/hello.lua
+[mokhov_build_2018]: https://doi.org/10.1145/3236774
 
-## Getting Started
+## Documentation
 
-**TODO([#100][]):** Binary releases and an introductory guide are coming soon.
-Until then, refer to the [contributing guide][] to build from source.
-
-[#100]: https://github.com/256lights/zb/issues/100
-[contributing guide]: CONTRIBUTING.md
-
-### Documentation
-
-- [Standard library repository](https://github.com/256lights/zb-stdlib)
+- [Getting started guide](docs/getting-started.md)
 - [Language reference](docs/lua.md)
+- [Standard library repository](https://github.com/256lights/zb-stdlib)
 - [Administrator's guide](docs/admin-guide.md)
 
 ## License
