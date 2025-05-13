@@ -129,12 +129,12 @@ When it finds `nil`, then it looks for `hello`
 inside a table with the same name as the currently running platform.
 
 At the end, `zb build` will print the path to the directory it created,
-something like `/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-hello`.
+something like `/opt/zb/store/2lvf1cavwkainjz32xzja04hfl5cimx6-hello`.
 As you might expect from the `installPhase` we used above,
 it will be inside the `bin` directory we created inside the output directory.
 
 ```console
-% /zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-hello/bin/hello
+% /opt/zb/store/2lvf1cavwkainjz32xzja04hfl5cimx6-hello/bin/hello
 Hello, World!
 ```
 
@@ -272,4 +272,3 @@ If you have questions or feedback, [open a discussion on GitHub](https://github.
 If you're interested in getting involved,
 see the [zb contribution guide](https://github.com/256lights/zb/blob/main/CONTRIBUTING.md)
 and/or the [standard library contribution guide](https://github.com/256lights/zb/blob/main/CONTRIBUTING.md).
-
