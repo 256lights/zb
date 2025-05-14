@@ -29,14 +29,25 @@ type HashModuloReader struct {
 // that reads from r and replaces old with new.
 // NewHashModuloReader panics if len(old) != len(new).
 func NewHashModuloReader(old, new string, r io.Reader) *HashModuloReader {
+	hmr := &HashModuloReader{}
+	hmr.Reset(old, new, r)
+	return hmr
+}
+
+// Reset discards the hmr's state
+// and makes it equivalent to the result of its original state from [NewHashModuloReader],
+// but reading from r and using the given replacement instead.
+// This permits reusing a [HashModuloReader] rather than allocating a new one.
+func (hmr *HashModuloReader) Reset(old, new string, r io.Reader) {
 	if len(old) != len(new) {
-		panic("NewHashModuloReader replacment string not the same size as search string")
+		panic("HashModuloReader replacment string not the same size as search string")
 	}
-	return &HashModuloReader{
-		old: old,
-		new: new,
-		r:   r,
-		buf: make([]byte, 0, len(old)),
+	*hmr = HashModuloReader{
+		old:     old,
+		new:     new,
+		r:       r,
+		offsets: hmr.offsets[:0],
+		buf:     make([]byte, 0, len(old)),
 	}
 }
 
@@ -44,6 +55,9 @@ func NewHashModuloReader(old, new string, r io.Reader) *HashModuloReader {
 // where the search string has occurred
 // in ascending order.
 func (hmr *HashModuloReader) Offsets() []int64 {
+	if len(hmr.offsets) == 0 {
+		return nil
+	}
 	return slices.Clone(hmr.offsets)
 }
 

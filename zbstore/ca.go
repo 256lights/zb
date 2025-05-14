@@ -6,10 +6,13 @@ package zbstore
 import (
 	"fmt"
 	"io"
+	"iter"
 	"strings"
 
 	"zb.256lights.llc/pkg/internal/detect"
+	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/nix"
+	"zombiezen.com/go/nix/nar"
 )
 
 // A ContentAddress is a content-addressibility assertion.
@@ -57,6 +60,20 @@ func ValidateContentAddress(ca nix.ContentAddress, refs References) error {
 	}
 }
 
+// SelfReferenceAnalysis holds additional information about self-references
+// computed by [SourceSHA256ContentAddress].
+type SelfReferenceAnalysis struct {
+	// Offsets is the set of byte offsets in the NAR serialization where self-reference digests occur.
+	Offsets []int64
+	// Paths is the set of paths in the NAR serialization that contain self-reference digests.
+	Paths sets.Sorted[string]
+}
+
+// HasSelfReferences reports whether the analysis is non-empty.
+func (analysis *SelfReferenceAnalysis) HasSelfReferences() bool {
+	return analysis != nil && (len(analysis.Offsets) > 0 || analysis.Paths.Len() > 0)
+}
+
 // SourceSHA256ContentAddress computes the content address of a "source" store object,
 // given its temporary path digest (as given by [Path.Digest])
 // and its NAR serialization.
@@ -65,20 +82,68 @@ func ValidateContentAddress(ca nix.ContentAddress, refs References) error {
 // digest may be the empty string.
 //
 // See [IsSourceContentAddress] for an explanation of "source" store objects.
-func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (ca nix.ContentAddress, digestOffsets []int64, err error) {
+func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (ca nix.ContentAddress, analysis *SelfReferenceAnalysis, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("compute source content address: %v", err)
+		}
+	}()
+
+	analysis = new(SelfReferenceAnalysis)
 	h := nix.NewHasher(nix.SHA256)
-	var hmr *detect.HashModuloReader
-	if digest != "" {
-		hmr = detect.NewHashModuloReader(digest, strings.Repeat("\x00", len(digest)), sourceNAR)
-		sourceNAR = hmr
+	if digest == "" {
+		// If there are no self-references, we only have to hash the NAR.
+		_, err = io.Copy(h, sourceNAR)
+		if err != nil {
+			return nix.ContentAddress{}, analysis, err
+		}
+		h.WriteString("|")
+		return nix.RecursiveFileContentAddress(h.SumHash()), analysis, nil
 	}
 
-	_, err = io.Copy(h, sourceNAR)
-	if hmr != nil {
-		digestOffsets = hmr.Offsets()
+	nr := nar.NewReader(sourceNAR)
+	nw := nar.NewWriter(h)
+	hmr := new(detect.HashModuloReader)
+	digestReplacement := strings.Repeat("\x00", len(digest))
+	for {
+		hdr, err := nr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nix.ContentAddress{}, analysis, err
+		}
+		if strings.Contains(hdr.Path, digest) {
+			return nix.ContentAddress{}, analysis, fmt.Errorf("path %s contains self-reference", hdr.Path)
+		}
+		if strings.Contains(hdr.LinkTarget, digest) {
+			analysis.Paths.Add(hdr.Path)
+			for i := range indexSeq(hdr.LinkTarget, digest) {
+				analysis.Offsets = append(analysis.Offsets, hdr.ContentOffset+int64(i))
+			}
+			hdr.LinkTarget = strings.ReplaceAll(hdr.LinkTarget, digest, digestReplacement)
+		}
+		if err := nw.WriteHeader(hdr); err != nil {
+			return nix.ContentAddress{}, analysis, err
+		}
+
+		if !hdr.Mode.IsRegular() {
+			continue
+		}
+		hmr.Reset(digest, digestReplacement, nr)
+		_, err = io.Copy(nw, hmr)
+		if offsets := hmr.Offsets(); len(offsets) > 0 {
+			analysis.Paths.Add(hdr.Path)
+			for _, off := range offsets {
+				analysis.Offsets = append(analysis.Offsets, hdr.ContentOffset+off)
+			}
+		}
+		if err != nil {
+			return nix.ContentAddress{}, analysis, err
+		}
 	}
-	if err != nil {
-		return nix.ContentAddress{}, digestOffsets, fmt.Errorf("compute source content address: %v", err)
+	if err := nw.Close(); err != nil {
+		return nix.ContentAddress{}, analysis, err
 	}
 
 	// This single pipe separator differentiates this content addressing algorithm
@@ -86,10 +151,10 @@ func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (ca nix.Cont
 	// I believe it to be more correct in avoiding potential hash collisions.
 	h.WriteString("|")
 
-	for _, off := range digestOffsets {
+	for _, off := range analysis.Offsets {
 		fmt.Fprintf(h, "|%d", off)
 	}
-	return nix.RecursiveFileContentAddress(h.SumHash()), digestOffsets, nil
+	return nix.RecursiveFileContentAddress(h.SumHash()), analysis, nil
 }
 
 // IsSourceContentAddress reports whether the given content address describes a "source" store object.
@@ -130,5 +195,20 @@ func (m contentAddressMethod) prefix() string {
 		return "r:"
 	default:
 		panic("unknown content address method")
+	}
+}
+
+func indexSeq(s, substr string) iter.Seq[int] {
+	return func(yield func(int) bool) {
+		for i := 0; ; {
+			j := strings.Index(s[i:], substr)
+			if j < 0 {
+				break
+			}
+			if !yield(i + j) {
+				break
+			}
+			i += j + len(substr)
+		}
 	}
 }

@@ -1526,13 +1526,13 @@ func scanFloatingOutput(ctx context.Context, path string, digest string, closure
 		<-done
 	}()
 
-	ca, digestOffsets, err := zbstore.SourceSHA256ContentAddress(digest, pr)
+	ca, analysis, err := zbstore.SourceSHA256ContentAddress(digest, pr)
 	if err != nil {
 		return nil, err
 	}
 
 	refs := zbstore.References{
-		Self: len(digestOffsets) > 0,
+		Self: analysis.HasSelfReferences(),
 	}
 	digestsFound := refFinder.Found()
 	for _, digest := range digestsFound.All() {

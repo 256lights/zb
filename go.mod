@@ -16,7 +16,7 @@ require (
 	golang.org/x/term v0.31.0
 	zombiezen.com/go/bass v0.0.0-20230823162859-0399f01327dd
 	zombiezen.com/go/log v1.1.0
-	zombiezen.com/go/nix v0.0.0-20240505035425-db1ac175083f
+	zombiezen.com/go/nix v0.0.0-20250514174927-d97ab08b45de
 	zombiezen.com/go/sqlite v1.4.0
 	zombiezen.com/go/xcontext v1.1.0
 )

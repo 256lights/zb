@@ -93,7 +93,9 @@ func runPackNARSelfRefs(dst io.WriteSeeker, path string) error {
 	c := make(chan caResult)
 	go func() {
 		var result caResult
-		result.ca, result.digestOffsets, result.err = zbstore.SourceSHA256ContentAddress(originalDigest, pr)
+		var analysis *zbstore.SelfReferenceAnalysis
+		result.ca, analysis, result.err = zbstore.SourceSHA256ContentAddress(originalDigest, pr)
+		result.digestOffsets = analysis.Offsets
 		c <- result
 	}()
 	err = nar.DumpPath(io.MultiWriter(pw, dst), path)

@@ -127,7 +127,7 @@ func ExportSourceNAR(exp *zbstore.Exporter, narBytes []byte, opts SourceExportOp
 	}
 	opts.References = trimRefs(narBytes, opts.References)
 
-	ca, offsets, err := zbstore.SourceSHA256ContentAddress(opts.TempDigest, bytes.NewReader(narBytes))
+	ca, analysis, err := zbstore.SourceSHA256ContentAddress(opts.TempDigest, bytes.NewReader(narBytes))
 	if err != nil {
 		return "", zbstore.ContentAddress{}, err
 	}
@@ -141,7 +141,7 @@ func ExportSourceNAR(exp *zbstore.Exporter, narBytes []byte, opts SourceExportOp
 	if opts.TempDigest != "" && len(opts.TempDigest) != len(newDigest) {
 		return p, ca, fmt.Errorf("export source %s: temporary digest %q is wrong size (expected %d)", p, opts.TempDigest, len(newDigest))
 	}
-	for _, off := range offsets {
+	for _, off := range analysis.Offsets {
 		copy(narBytes[off:int(off)+len(newDigest)], newDigest)
 	}
 

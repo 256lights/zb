@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/nix"
 )
 
@@ -18,8 +19,8 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 		digest    string
 		sourceNAR string
 
-		wantCleartext     string
-		wantDigestOffsets []int64
+		wantCleartext string
+		wantAnalysis  SelfReferenceAnalysis
 	}{
 		{
 			name:   "NoSelfReference",
@@ -84,7 +85,10 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 				"/zb/store/\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00-path.txt\n\x00\x00\x00\x00" +
 				"\x01\x00\x00\x00\x00\x00\x00\x00" +
 				")\x00\x00\x00\x00\x00\x00\x00||106",
-			wantDigestOffsets: []int64{106},
+			wantAnalysis: SelfReferenceAnalysis{
+				Offsets: []int64{106},
+				Paths:   *sets.NewSorted(""),
+			},
 		},
 		{
 			name:   "SelfReference2",
@@ -117,7 +121,46 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 				"/zb/store/\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00-path.txt\n\x00\x00\x00\x00" +
 				"\x01\x00\x00\x00\x00\x00\x00\x00" +
 				")\x00\x00\x00\x00\x00\x00\x00||106",
-			wantDigestOffsets: []int64{106},
+			wantAnalysis: SelfReferenceAnalysis{
+				Offsets: []int64{106},
+				Paths:   *sets.NewSorted(""),
+			},
+		},
+		{
+			name:   "SelfReferenceLink",
+			digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			sourceNAR: "\x0d\x00\x00\x00\x00\x00\x00\x00" +
+				"nix-archive-1\x00\x00\x00" +
+				"\x01\x00\x00\x00\x00\x00\x00\x00" +
+				"(\x00\x00\x00\x00\x00\x00\x00" +
+				"\x04\x00\x00\x00\x00\x00\x00\x00" +
+				"type\x00\x00\x00\x00" +
+				"\x07\x00\x00\x00\x00\x00\x00\x00" +
+				"symlink\x00" +
+				"\x06\x00\x00\x00\x00\x00\x00\x00" +
+				"target\x00\x00" +
+				"\x34\x00\x00\x00\x00\x00\x00\x00" +
+				"/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-path.txt\n\x00\x00\x00\x00" +
+				"\x01\x00\x00\x00\x00\x00\x00\x00" +
+				")\x00\x00\x00\x00\x00\x00\x00",
+			wantCleartext: "\x0d\x00\x00\x00\x00\x00\x00\x00" +
+				"nix-archive-1\x00\x00\x00" +
+				"\x01\x00\x00\x00\x00\x00\x00\x00" +
+				"(\x00\x00\x00\x00\x00\x00\x00" +
+				"\x04\x00\x00\x00\x00\x00\x00\x00" +
+				"type\x00\x00\x00\x00" +
+				"\x07\x00\x00\x00\x00\x00\x00\x00" +
+				"symlink\x00" +
+				"\x06\x00\x00\x00\x00\x00\x00\x00" +
+				"target\x00\x00" +
+				"\x34\x00\x00\x00\x00\x00\x00\x00" +
+				"/zb/store/\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00-path.txt\n\x00\x00\x00\x00" +
+				"\x01\x00\x00\x00\x00\x00\x00\x00" +
+				")\x00\x00\x00\x00\x00\x00\x00||106",
+			wantAnalysis: SelfReferenceAnalysis{
+				Offsets: []int64{106},
+				Paths:   *sets.NewSorted(""),
+			},
 		},
 		{
 			name: "SameContentAsSelfReference",
@@ -154,7 +197,7 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, gotDigestOffsets, err := SourceSHA256ContentAddress(test.digest, strings.NewReader(test.sourceNAR))
+			got, gotAnalysis, err := SourceSHA256ContentAddress(test.digest, strings.NewReader(test.sourceNAR))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -168,8 +211,13 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 				t.Errorf("content address hash = %v; want %v", got, want)
 			}
 
-			if diff := cmp.Diff(test.wantDigestOffsets, gotDigestOffsets, cmpopts.EquateEmpty()); diff != "" {
-				t.Errorf("digest offsets (-want +got):\n%s", diff)
+			diff := cmp.Diff(
+				&test.wantAnalysis, gotAnalysis,
+				cmpopts.EquateEmpty(),
+				transformSortedSet[string](),
+			)
+			if diff != "" {
+				t.Errorf("analysis (-want +got):\n%s", diff)
 			}
 		})
 	}

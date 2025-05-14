@@ -312,8 +312,8 @@ zombiezen.com/go/bass v0.0.0-20230823162859-0399f01327dd h1:6PFG7MUyoIVQs1nf8D8P
 zombiezen.com/go/bass v0.0.0-20230823162859-0399f01327dd/go.mod h1:QHwUcBo15TvSHjANRUkyOo2+jTeE0OS0UkqST4+Og9k=
 zombiezen.com/go/log v1.1.0 h1:AOtu8qHcBZ8n6rC8K56oImtkqSus0lqT+e7EWD9CWoI=
 zombiezen.com/go/log v1.1.0/go.mod h1:Eos1rXF8JpgK+h6NYITdTJslqFJJA3SaIJHMU75Sqfg=
-zombiezen.com/go/nix v0.0.0-20240505035425-db1ac175083f h1:hr19i9UtxvDUfPpP8zFKVnKztZvv4nZSP/972JHrovo=
-zombiezen.com/go/nix v0.0.0-20240505035425-db1ac175083f/go.mod h1:3/4h+nWUdD9F6De1g7zBvgn4RyryS+mnK5JiW2JHRe8=
+zombiezen.com/go/nix v0.0.0-20250514174927-d97ab08b45de h1:X37qVOQIIuiEfWf+P4bMpaVPKr9mdwmj2sj3dj7UY18=
+zombiezen.com/go/nix v0.0.0-20250514174927-d97ab08b45de/go.mod h1:3/4h+nWUdD9F6De1g7zBvgn4RyryS+mnK5JiW2JHRe8=
 zombiezen.com/go/sqlite v1.4.0 h1:N1s3RIljwtp4541Y8rM880qgGIgq3fTD2yks1xftnKU=
 zombiezen.com/go/sqlite v1.4.0/go.mod h1:0w9F1DN9IZj9AcLS9YDKMboubCACkwYCGkzoy3eG5ik=
 zombiezen.com/go/xcontext v1.1.0 h1:ajQQf4edDi0yOF2jZTf+q+VmrEX/hJZWvimgutXgee4=
