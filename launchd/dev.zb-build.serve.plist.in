@@ -12,6 +12,9 @@
     <array>
       <string>@zb@</string>
       <string>serve</string>
+      <string>--sandbox-path=/usr</string>
+      <string>--sandbox-path=/bin</string>
+      <string>--sandbox-path=/Library/Developer/CommandLineTools</string>
     </array>
     <key>StandardErrorPath</key>
     <string>/opt/zb/var/log/zb-serve.log</string>
