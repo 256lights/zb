@@ -466,6 +466,90 @@ func TestRealizeReferenceToDep(t *testing.T) {
 	}
 }
 
+func TestRealizeSelfReference(t *testing.T) {
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	dir := backendtest.NewStoreDirectory(t)
+
+	const inputContent = "Hello, World!\n"
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExporter(exportBuffer)
+	const wantOutputName = "self.txt"
+	drvContent := &zbstore.Derivation{
+		Name:   wantOutputName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		Outputs: map[string]*zbstore.DerivationOutputType{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	if runtime.GOOS == "windows" {
+		drvContent.Builder = powershellPath
+		drvContent.Args = []string{"-Command", "\"${env:out}`n\" | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"}
+	} else {
+		drvContent.Builder = shPath
+		drvContent.Args = []string{"-c", `echo "$out" > "$out"`}
+	}
+	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(nil, exportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
+	})
+	if err != nil {
+		t.Fatal("RPC error:", err)
+	}
+	if realizeResponse.BuildID == "" {
+		t.Fatal("no build ID returned")
+	}
+	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const fakeDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	contentModuloHash := new(bytes.Buffer)
+	if err := storetest.SingleFileNAR(contentModuloHash, []byte(dir.Join(fakeDigest+"-"+wantOutputName)+"\n")); err != nil {
+		t.Fatal(err)
+	}
+	ca, _, err := zbstore.SourceSHA256ContentAddress(fakeDigest, contentModuloHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOutputPath, err := zbstore.FixedCAOutputPath(dir, wantOutputName, ca, zbstore.References{Self: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOutputContent := dir.Join(wantOutputPath.Digest()+"-"+wantOutputName) + "\n"
+
+	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(wantOutputContent), got)
+}
+
 func TestRealizeFixed(t *testing.T) {
 	ctx, cancel := testcontext.New(t)
 	defer cancel()

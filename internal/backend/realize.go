@@ -1459,17 +1459,16 @@ func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Co
 	}
 
 	log.Debugf(ctx, "Moving %s to %s (self-references=%t)", realBuildPath, realFinalPath, scan.refs.Self)
+	err = finalizeFloatingOutput(finalPath.Dir(), realBuildPath, realFinalPath, scan.selfRefPaths.Values())
+	if err != nil {
+		return nil, fmt.Errorf("post-process %s: %v", buildPath, err)
+	}
 	if scan.refs.Self {
-		var err error
-		info.NARHash, err = finalizeFloatingOutput(finalPath.Dir(), realBuildPath, realFinalPath)
-		if err != nil {
+		h := nix.NewHasher(nix.SHA256)
+		if err := nar.DumpPath(h, realFinalPath); err != nil {
 			return nil, fmt.Errorf("post-process %s: %v", buildPath, err)
 		}
-	} else {
-		// If there are no self references, we can do a simple rename.
-		if err := os.Rename(realBuildPath, realFinalPath); err != nil {
-			return nil, fmt.Errorf("post-process %s: %v", buildPath, err)
-		}
+		info.NARHash = h.SumHash()
 	}
 
 	err = func() (err error) {
@@ -1490,10 +1489,11 @@ func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Co
 }
 
 type outputScanResults struct {
-	ca      zbstore.ContentAddress
-	narHash nix.Hash // only filled in if refs.Self is false
-	narSize int64
-	refs    zbstore.References
+	ca           zbstore.ContentAddress
+	narHash      nix.Hash // only filled in if refs.Self is false
+	narSize      int64
+	selfRefPaths sets.Sorted[string]
+	refs         zbstore.References
 }
 
 // scanFloatingOutput gathers information about a newly built filesystem object.
@@ -1549,9 +1549,10 @@ func scanFloatingOutput(ctx context.Context, path string, digest string, closure
 	log.Debugf(ctx, "Found references in %s (self=%t): %s", path, refs.Self, &refs.Others)
 
 	result := &outputScanResults{
-		ca:      ca,
-		narSize: int64(*wc),
-		refs:    refs,
+		ca:           ca,
+		narSize:      int64(*wc),
+		refs:         refs,
+		selfRefPaths: analysis.Paths,
 	}
 	if !refs.Self {
 		result.narHash = h.SumHash()
@@ -1564,60 +1565,103 @@ func scanFloatingOutput(ctx context.Context, path string, digest string, closure
 // The last path element of each path must be a valid store path name,
 // the object names must be identical.
 // dir is used purely for error messages.
-func finalizeFloatingOutput(dir zbstore.Directory, buildPath, finalPath string) (narHash nix.Hash, err error) {
-	// TODO(someday): Walk buildPath, renaming files as we go, construct the NAR manually,
-	// and rewrite files in place to avoid doubling disk space.
-
+func finalizeFloatingOutput(dir zbstore.Directory, buildPath, finalPath string, filesToRewrite iter.Seq[string]) error {
 	fakeBuildPath, err := dir.Object(filepath.Base(buildPath))
 	if err != nil {
-		return nix.Hash{}, fmt.Errorf("move %s to %s: %v", buildPath, finalPath, err)
+		return fmt.Errorf("move %s to %s: %v", buildPath, finalPath, err)
 	}
 	fakeFinalPath, err := dir.Object(filepath.Base(finalPath))
 	if err != nil {
-		return nix.Hash{}, fmt.Errorf("move %s to %s: %v", buildPath, finalPath, err)
+		return fmt.Errorf("move %s to %s: %v", buildPath, finalPath, err)
 	}
 	if fakeBuildPath.Name() != fakeFinalPath.Name() {
-		return nix.Hash{}, fmt.Errorf("move %s to %s: object names do not match", buildPath, finalPath)
-	}
-	h := nix.NewHasher(nix.SHA256)
-	if filepath.Clean(buildPath) == filepath.Clean(finalPath) {
-		// This case shouldn't occur in practice,
-		// but make an effort to avoid destroying data if we're renaming to the same location.
-		if err := nar.DumpPath(h, buildPath); err != nil {
-			return nix.Hash{}, fmt.Errorf("move %s to %s: %v", buildPath, finalPath, err)
-		}
-		return h.SumHash(), nil
+		return fmt.Errorf("move %s to %s: object names do not match", buildPath, finalPath)
 	}
 
-	pr, pw := io.Pipe()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		if err := nar.DumpPath(pw, buildPath); err != nil {
-			pw.CloseWithError(err)
-		} else {
-			pw.Close()
+	for name := range filesToRewrite {
+		err := replaceAllAtPath(
+			filepath.Join(buildPath, filepath.FromSlash(name)),
+			fakeBuildPath.Digest(),
+			fakeFinalPath.Digest(),
+		)
+		if err != nil {
+			return fmt.Errorf("move %s to %s: %v", buildPath, finalPath, err)
 		}
-	}()
-	defer func() {
-		pr.Close()
-		<-done
-	}()
-	hmr := detect.NewHashModuloReader(fakeBuildPath.Digest(), fakeFinalPath.Digest(), pr)
-	tempDestination := finalPath + ".tmp"
-	if err := extractNAR(tempDestination, io.TeeReader(hmr, h)); err != nil {
-		os.RemoveAll(tempDestination)
-		return nix.Hash{}, fmt.Errorf("move %s to %s: %v", buildPath, finalPath, err)
 	}
-	if err := os.RemoveAll(buildPath); err != nil {
-		os.RemoveAll(tempDestination)
-		return nix.Hash{}, fmt.Errorf("move %s to %s: %v", buildPath, finalPath, err)
+
+	return os.Rename(buildPath, finalPath)
+}
+
+// replaceAllAtPath rewrites all occurrences of string old with string new at the given path.
+// If path names a symlink and the symlink's target contains the old string,
+// then the symlink will be replaced with a new symlink
+// where all occurrences of the old string are replaced with the new string.
+// replaceAllAtPath returns an error if path is not a regular file or a symlink.
+func replaceAllAtPath(path string, old, new string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
 	}
-	if err := os.Rename(tempDestination, finalPath); err != nil {
-		os.RemoveAll(tempDestination)
-		return nix.Hash{}, fmt.Errorf("move %s to %s: %v", buildPath, finalPath, err)
+	switch info.Mode().Type() {
+	case 0:
+		f, err := os.OpenFile(path, os.O_RDWR, 0)
+		if err != nil {
+			return err
+		}
+		writeError := replaceAllInFile(f, old, new)
+		closeError := f.Close()
+		if writeError != nil {
+			return fmt.Errorf("rewrite %s: %v", path, writeError)
+		}
+		if closeError != nil {
+			return fmt.Errorf("rewrite %s: %v", path, closeError)
+		}
+	case os.ModeSymlink:
+		oldTarget, err := os.Readlink(path)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(oldTarget, old) {
+			// Nothing to do.
+			return nil
+		}
+		newTarget := strings.ReplaceAll(oldTarget, old, new)
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("replace symlink %s: %v", path, err)
+		}
+		if err := os.Symlink(oldTarget, newTarget); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("rewrite %s: unknown file type", path)
 	}
-	return h.SumHash(), nil
+	return nil
+}
+
+// replaceAllInFile rewrites all occurrences of string old with string new in the file f.
+// If len(old) != len(new), replaceAllInFile returns an error.
+func replaceAllInFile(f io.ReadWriteSeeker, old, new string) error {
+	if old == new {
+		return nil
+	}
+	if len(old) != len(new) {
+		return fmt.Errorf("cannot replace %q with %q: sizes differ", old, new)
+	}
+
+	hmr := detect.NewHashModuloReader(old, new, f)
+	if _, err := io.Copy(io.Discard, hmr); err != nil {
+		return err
+	}
+	newBytes := []byte(new)
+	for _, off := range hmr.Offsets() {
+		if _, err := f.Seek(off, io.SeekStart); err != nil {
+			return err
+		}
+		if _, err := f.Write(newBytes); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // recordRealizations calls [recordRealizations] and [recordBuildOutputs] in a transaction
