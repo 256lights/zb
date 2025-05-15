@@ -14,7 +14,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-func TestReadFileHeader(t *testing.T) {
+func TestRead(t *testing.T) {
 	type loadCommand struct {
 		cmd  LoadCmd
 		data []byte
@@ -396,7 +396,8 @@ func TestReadFileHeader(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			gotHeader, commands, err := ReadFileHeader(bytes.NewReader(data))
+			r := bytes.NewReader(data)
+			gotHeader, err := ReadFileHeader(r)
 			if err != nil {
 				t.Fatal("ReadFileHeader:", err)
 			}
@@ -406,6 +407,7 @@ func TestReadFileHeader(t *testing.T) {
 			}
 
 			var gotCommands []loadCommand
+			commands := gotHeader.NewCommandReader(r)
 			for i := 0; commands.Next(); i++ {
 				data, err := io.ReadAll(commands)
 				if err != nil {

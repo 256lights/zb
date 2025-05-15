@@ -65,7 +65,7 @@ type UniversalFileEntry struct {
 	Offset uint32
 	// Size is the size of the image in bytes.
 	Size      uint32
-	Alignment uint32
+	Alignment Alignment
 }
 
 // UnmarshalBinary unmarshals a universal file entry in Mach-O format.
@@ -80,6 +80,6 @@ func (ent *UniversalFileEntry) UnmarshalBinary(data []byte) error {
 	ent.CPUSubtype = binary.BigEndian.Uint32(data[4:])
 	ent.Offset = binary.BigEndian.Uint32(data[8:])
 	ent.Size = binary.BigEndian.Uint32(data[12:])
-	ent.Alignment = binary.BigEndian.Uint32(data[16:])
+	ent.Alignment = Alignment(binary.BigEndian.Uint32(data[16:]))
 	return nil
 }

@@ -1,6 +1,11 @@
 // Copyright 2025 The zb Authors
 // SPDX-License-Identifier: MIT
 
+// Package macho provides a parser for untrusted Mach object (Mach-O) files.
+//
+// See https://en.wikipedia.org/wiki/Mach-O
+// and https://github.com/apple/darwin-xnu/blob/main/EXTERNAL_HEADERS/mach-o/loader.h
+// for documentation on the format.
 package macho
 
 import (
@@ -31,22 +36,23 @@ type FileHeader struct {
 }
 
 // ReadFileHeader reads the header of a Mach-O single architecture file.
-// It also returns a [CommandReader],
-// which can be used to iterate over the load commands in the file.
-func ReadFileHeader(r io.Reader) (*FileHeader, *CommandReader, error) {
+// After a successful call to ReadFileHeader,
+// calling [*FileHeader.NewCommandReader] on the reader
+// allows iteration over the load commands in the file.
+func ReadFileHeader(r io.Reader) (*FileHeader, error) {
 	buf := make([]byte, maxImageHeaderSize)
 	if _, err := io.ReadFull(r, buf[:minImageHeaderSize]); err != nil {
-		return nil, nil, fmt.Errorf("parse mach-o header: %v", err)
+		return nil, fmt.Errorf("parse mach-o header: %v", err)
 	}
 	hdr := new(imageHeader)
 	hdrSize := imageHeaderSize(magicNumber(buf))
 	if hdrSize > minImageHeaderSize {
 		if _, err := io.ReadFull(r, buf[minImageHeaderSize:hdrSize]); err != nil {
-			return nil, nil, fmt.Errorf("parse mach-o header: %v", err)
+			return nil, fmt.Errorf("parse mach-o header: %v", err)
 		}
 	}
 	if err := hdr.UnmarshalBinary(buf[:hdrSize]); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	result := &FileHeader{
 		Type:                  hdr.fileType,
@@ -59,7 +65,7 @@ func ReadFileHeader(r io.Reader) (*FileHeader, *CommandReader, error) {
 	case hdr.magic.isBigEndian():
 		result.ByteOrder = binary.BigEndian
 	default:
-		return nil, nil, fmt.Errorf("parse mach-o header: unknown address width")
+		return nil, fmt.Errorf("parse mach-o header: unknown address width")
 	}
 	switch {
 	case hdr.magic.is32Bit():
@@ -67,10 +73,9 @@ func ReadFileHeader(r io.Reader) (*FileHeader, *CommandReader, error) {
 	case hdr.magic.is64Bit():
 		result.AddressWidth = 64
 	default:
-		return nil, nil, fmt.Errorf("parse mach-o header: unknown address width")
+		return nil, fmt.Errorf("parse mach-o header: unknown address width")
 	}
-	commandReader := newCommandReader(r, hdr.loadCommandCount, hdr.loadCommandSize, hdr.magic.byteOrder())
-	return result, commandReader, nil
+	return result, nil
 }
 
 // LoadCommandsOffset returns the offset
@@ -133,4 +138,22 @@ func (hdr *imageHeader) UnmarshalBinary(data []byte) error {
 	hdr.loadCommandSize = byteOrder.Uint32(data[20:])
 	hdr.flags = byteOrder.Uint32(data[24:])
 	return nil
+}
+
+// Alignment is an alignment value.
+// Its raw value is the exponent of two.
+type Alignment uint32
+
+// Bytes returns the number of bytes that align represents.
+func (align Alignment) Bytes() (_ uint64, ok bool) {
+	if align >= 64 {
+		return 1 << 63, false
+	}
+	return 1 << align, true
+}
+
+// String returns a string in the format "2^X",
+// where X is the decimal representation of align.
+func (align Alignment) String() string {
+	return fmt.Sprintf("2^%d", uint32(align))
 }

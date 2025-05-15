@@ -6,6 +6,7 @@
 package macho
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -39,9 +40,196 @@ const (
 	LoadCmdBuildVersion   LoadCmd = 0x32       // LC_BUILD_VERSION
 )
 
+// VirtualMemoryProtection is a set of bitflags used to indicate permissions on a [SegmentCommand].
+type VirtualMemoryProtection uint32
+
+// Virtual memory permissions.
+const (
+	VirtualMemoryReadPermission    VirtualMemoryProtection = 0x1
+	VirtualMemoryWritePermission   VirtualMemoryProtection = 0x2
+	VirtualMemoryExecutePermission VirtualMemoryProtection = 0x4
+)
+
+// SegmentCommand is the structure for [LoadCmdSegment] and [LoadCmdSegment64].
+type SegmentCommand struct {
+	Command              LoadCmd
+	RawName              [16]byte
+	VirtualMemoryAddress uint64
+	VirtualMemorySize    uint64
+	FileOffset           uint64
+	FileSize             uint64
+	MaxProtection        VirtualMemoryProtection
+	InitProtection       VirtualMemoryProtection
+	Flags                uint32
+
+	Sections []Section
+}
+
+// Name returns the segment's name as a string.
+func (cmd *SegmentCommand) Name() string {
+	return nameToString(cmd.RawName[:])
+}
+
+// UnmarshalMachO unmarshals the load command in data into cmd.
+func (cmd *SegmentCommand) UnmarshalMachO(byteOrder binary.ByteOrder, data []byte) error {
+	var err error
+	cmd.Command, err = unmarshalLoadCommand(byteOrder, data)
+	if err != nil {
+		return err
+	}
+	switch cmd.Command {
+	case LoadCmdSegment:
+		const fixedSize = 56
+		if len(data) < fixedSize {
+			return fmt.Errorf("unmarshal %v: too short", cmd.Command)
+		}
+		copy(cmd.RawName[:], data[8:])
+		cmd.VirtualMemoryAddress = uint64(byteOrder.Uint32(data[24:]))
+		cmd.VirtualMemorySize = uint64(byteOrder.Uint32(data[28:]))
+		cmd.FileOffset = uint64(byteOrder.Uint32(data[32:]))
+		cmd.FileSize = uint64(byteOrder.Uint32(data[36:]))
+		cmd.MaxProtection = VirtualMemoryProtection(byteOrder.Uint32(data[40:]))
+		cmd.InitProtection = VirtualMemoryProtection(byteOrder.Uint32(data[44:]))
+		sectionCount := byteOrder.Uint32(data[48:])
+		cmd.Flags = byteOrder.Uint32(data[52:])
+
+		const sectionSize = 68
+		if want := fixedSize + int64(sectionCount)*sectionSize; int64(len(data)) != want {
+			return fmt.Errorf("unmarshal %v: size (%d) incorrect for section count (%d)",
+				cmd.Command, len(data), want)
+		}
+		if sectionCount == 0 {
+			cmd.Sections = nil
+		} else {
+			cmd.Sections = make([]Section, 0, sectionCount)
+			for start := fixedSize; start+sectionSize <= len(data); start += sectionSize {
+				n := len(cmd.Sections)
+				cmd.Sections = cmd.Sections[:n+1]
+				currSection := &cmd.Sections[n]
+
+				copy(currSection.RawName[:], data[start:])
+				copy(currSection.RawSegmentName[:], data[start+16:])
+				currSection.Address = uint64(byteOrder.Uint32(data[start+32:]))
+				currSection.Size = uint64(byteOrder.Uint32(data[start+36:]))
+				currSection.Offset = byteOrder.Uint32(data[start+40:])
+				currSection.Alignment = Alignment(byteOrder.Uint32(data[start+44:]))
+				currSection.RelocationOffset = byteOrder.Uint32(data[start+48:])
+				currSection.RelocationCount = byteOrder.Uint32(data[start+52:])
+				currSection.Flags = byteOrder.Uint32(data[start+56:])
+			}
+		}
+	case LoadCmdSegment64:
+		const fixedSize = 72
+		if len(data) < fixedSize {
+			return fmt.Errorf("unmarshal %v: too short", cmd.Command)
+		}
+		copy(cmd.RawName[:], data[8:])
+		cmd.VirtualMemoryAddress = byteOrder.Uint64(data[24:])
+		cmd.VirtualMemorySize = byteOrder.Uint64(data[32:])
+		cmd.FileOffset = byteOrder.Uint64(data[40:])
+		cmd.FileSize = byteOrder.Uint64(data[48:])
+		cmd.MaxProtection = VirtualMemoryProtection(byteOrder.Uint32(data[56:]))
+		cmd.InitProtection = VirtualMemoryProtection(byteOrder.Uint32(data[60:]))
+		sectionCount := byteOrder.Uint32(data[64:])
+		cmd.Flags = byteOrder.Uint32(data[68:])
+
+		const sectionSize = 80
+		if want := fixedSize + int64(sectionCount)*sectionSize; int64(len(data)) != want {
+			return fmt.Errorf("unmarshal %v: size (%d) incorrect for section count (%d)",
+				cmd.Command, len(data), want)
+		}
+		if sectionCount == 0 {
+			cmd.Sections = nil
+		} else {
+			cmd.Sections = make([]Section, 0, sectionCount)
+			for start := fixedSize; start+sectionSize <= len(data); start += sectionSize {
+				n := len(cmd.Sections)
+				cmd.Sections = cmd.Sections[:n+1]
+				currSection := &cmd.Sections[n]
+
+				copy(currSection.RawName[:], data[start:])
+				copy(currSection.RawSegmentName[:], data[start+16:])
+				currSection.Address = byteOrder.Uint64(data[start+32:])
+				currSection.Size = byteOrder.Uint64(data[start+40:])
+				currSection.Offset = byteOrder.Uint32(data[start+48:])
+				currSection.Alignment = Alignment(byteOrder.Uint32(data[start+52:]))
+				currSection.RelocationOffset = byteOrder.Uint32(data[start+56:])
+				currSection.RelocationCount = byteOrder.Uint32(data[start+60:])
+				currSection.Flags = byteOrder.Uint32(data[start+64:])
+			}
+		}
+	default:
+		return fmt.Errorf("unmarshal mach-o load command: unexpected %v", cmd.Command)
+	}
+	return nil
+}
+
+// Section represents an instruction within a [SegmentCommand]
+// to load a contiguous chunk of the file into virtual memory.
+type Section struct {
+	RawName        [16]byte
+	RawSegmentName [16]byte
+	// Address is the memory address of this section.
+	Address uint64
+	// Size is the size in bytes of this section.
+	Size uint64
+	// Offset is the file offset of this section.
+	Offset uint32
+	// Alignment is the section's alignment.
+	Alignment Alignment
+	// RelocationOffset is the file offset of relocation entries.
+	RelocationOffset uint32
+	// RelocationCount is the number of relocation entries.
+	RelocationCount uint32
+	// Flags holds the section type and attributes.
+	Flags uint32
+}
+
+// Name returns the section's name as a string.
+func (s *Section) Name() string {
+	return nameToString(s.RawName[:])
+}
+
+// SegmentName returns the name of the segment that contains the section as a string.
+func (s *Section) SegmentName() string {
+	return nameToString(s.RawSegmentName[:])
+}
+
+// LinkeditDataCommand is the structure for
+// [LoadCmdCodeSignature], [LoadCmdFunctionStarts], and [LoadCmdDataInCode].
+type LinkeditDataCommand struct {
+	Command LoadCmd
+	// DataOffset is the offset in bytes of the data's start
+	// relative to the start of the __LINKEDIT segment.
+	DataOffset uint32
+	// DataSize is the size in bytes of data in the __LINKEDIT segment.
+	DataSize uint32
+}
+
+// UnmarshalMachO unmarshals the load command in data into cmd.
+func (cmd *LinkeditDataCommand) UnmarshalMachO(byteOrder binary.ByteOrder, data []byte) error {
+	var err error
+	cmd.Command, err = unmarshalLoadCommand(byteOrder, data)
+	if err != nil {
+		return err
+	}
+	if cmd.Command != LoadCmdCodeSignature &&
+		cmd.Command != LoadCmdFunctionStarts &&
+		cmd.Command != LoadCmdDataInCode {
+		return fmt.Errorf("unmarshal mach-o load command: unexpected %v", cmd.Command)
+	}
+	const wantSize = 16
+	if len(data) != wantSize {
+		return fmt.Errorf("unmarshal %v: wrong size (got %d; want %d)", cmd.Command, len(data), wantSize)
+	}
+	cmd.DataOffset = byteOrder.Uint32(data[8:])
+	cmd.DataSize = byteOrder.Uint32(data[12:])
+	return nil
+}
+
 // A CommandReader reads Mach-O load commands from a stream.
 // CommandReaders do not buffer their reads
-// and will not read past the allocated
+// and will not read past the load command region defined by the [FileHeader].
 type CommandReader struct {
 	r                 io.Reader
 	remainingCommands uint32
@@ -54,18 +242,23 @@ type CommandReader struct {
 	err                error
 }
 
-func newCommandReader(r io.Reader, n uint32, size uint32, byteOrder binary.ByteOrder) *CommandReader {
-	if n == 0 && size != 0 {
+// NewCommandReader returns a [CommandReader] that reads from r.
+// r should read from the part of the Mach-O file directly after the header,
+// as in the state of a reader after calling [ReadFileHeader].
+func (hdr *FileHeader) NewCommandReader(r io.Reader) *CommandReader {
+	if hdr.LoadCommandCount == 0 && hdr.LoadCommandRegionSize != 0 {
 		return &CommandReader{err: errCommandTrailingData}
 	}
-	if n > 0 && int64(size) < int64(n)*loadCommandFixedSize {
-		return &CommandReader{err: fmt.Errorf("read mach-o load command: declared size (%d) too small for number of commands (%d)", size, n)}
+	if hdr.LoadCommandCount > 0 && int64(hdr.LoadCommandRegionSize) < int64(hdr.LoadCommandCount)*loadCommandFixedSize {
+		err := fmt.Errorf("read mach-o load command: declared size (%d) too small for number of commands (%d)",
+			hdr.LoadCommandRegionSize, hdr.LoadCommandCount)
+		return &CommandReader{err: err}
 	}
 	return &CommandReader{
 		r:                 r,
-		remainingCommands: n,
-		remainingBytes:    size,
-		byteOrder:         byteOrder,
+		remainingCommands: hdr.LoadCommandCount,
+		remainingBytes:    hdr.LoadCommandRegionSize,
+		byteOrder:         hdr.ByteOrder,
 
 		// Special sentinel value for first read.
 		nbuf: loadCommandFixedSize + 1,
@@ -241,6 +434,26 @@ var (
 	errCommandSizeTooLarge = errors.New("read mach-o load command: command array larger than declared size")
 	errCommandTrailingData = errors.New("read mach-o load command: command array smaller than declared size")
 )
+
+func unmarshalLoadCommand(byteOrder binary.ByteOrder, data []byte) (LoadCmd, error) {
+	if len(data) < 8 {
+		return 0, fmt.Errorf("unmarshal mach-o load command: short buffer")
+	}
+	cmd := LoadCmd(byteOrder.Uint32(data))
+	size := byteOrder.Uint32(data[4:])
+	if int64(size) != int64(len(data)) {
+		return cmd, fmt.Errorf("unmarshal %v: size (%d) does not match buffer (%d)", cmd, size, len(data))
+	}
+	return cmd, nil
+}
+
+func nameToString(name []byte) string {
+	i := bytes.IndexByte(name, 0)
+	if i < 0 {
+		return string(name)
+	}
+	return string(name[:i])
+}
 
 func decreaseCounter(count uint32, n int) uint32 {
 	switch {
