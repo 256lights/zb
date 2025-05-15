@@ -1,7 +1,7 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-//go:generate stringer -type=ComparisonOperator -linecomment -output=lua_string.go
+//go:generate go tool stringer -type=ComparisonOperator -linecomment -output=lua_string.go
 
 package lua
 

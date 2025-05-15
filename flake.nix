@@ -25,7 +25,6 @@
               inherit buildGoModule;
             })
             go
-            pkgs.gotools  # stringer, etc.
             (pkgs.gopls.override {
               inherit buildGoModule;
             })

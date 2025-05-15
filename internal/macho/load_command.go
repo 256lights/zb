@@ -1,7 +1,7 @@
 // Copyright 2025 The zb Authors
 // SPDX-License-Identifier: MIT
 
-//go:generate stringer -type=LoadCmd -linecomment -output=load_command_string.go
+//go:generate go tool stringer -type=LoadCmd -linecomment -output=load_command_string.go
 
 package macho
 

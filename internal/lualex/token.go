@@ -1,7 +1,7 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-//go:generate stringer -type=TokenKind -linecomment
+//go:generate go tool stringer -type=TokenKind -linecomment
 
 package lualex
 

@@ -2,7 +2,7 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-//go:generate stringer -type=OpCode,OpMode -linecomment -output=instruction_string.go
+//go:generate go tool stringer -type=OpCode,OpMode -linecomment -output=instruction_string.go
 
 package luacode
 
