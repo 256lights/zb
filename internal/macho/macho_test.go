@@ -6,6 +6,7 @@ package macho
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,9 +34,11 @@ var x86_64FileHeader = FileHeader{
 
 func TestReadFileHeader(t *testing.T) {
 	tests := []struct {
-		name     string
-		dataFile string
-		want     FileHeader
+		name        string
+		dataFile    string
+		startOffset int64
+		imageSize   int
+		want        FileHeader
 	}{
 		{
 			name:     "AArch64",
@@ -43,15 +46,29 @@ func TestReadFileHeader(t *testing.T) {
 			want:     aarch64FileHeader,
 		},
 		{
+			name:        "UniversalAArch64",
+			dataFile:    "macho-program-universal",
+			startOffset: 16384,
+			imageSize:   16824,
+			want:        aarch64FileHeader,
+		},
+		{
 			name:     "X86_64",
 			dataFile: "macho-program-x86_64-apple-macos",
 			want:     x86_64FileHeader,
+		},
+		{
+			name:        "UniversalX86_64",
+			dataFile:    "macho-program-universal",
+			startOffset: 4096,
+			imageSize:   4248,
+			want:        x86_64FileHeader,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			data, err := os.ReadFile(filepath.Join("testdata", test.dataFile))
+			data, err := openTestFile(test.dataFile, test.startOffset, test.imageSize)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -67,4 +84,21 @@ func TestReadFileHeader(t *testing.T) {
 			}
 		})
 	}
+}
+
+func openTestFile(name string, startOffset int64, size int) ([]byte, error) {
+	path := filepath.Join("testdata", name)
+	if size == 0 {
+		return os.ReadFile(path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data := make([]byte, size)
+	if _, err := f.ReadAt(data, startOffset); err != nil {
+		return nil, fmt.Errorf("read %s: %v", path, err)
+	}
+	return data, nil
 }

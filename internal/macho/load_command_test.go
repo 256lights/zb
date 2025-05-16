@@ -7,8 +7,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -360,9 +358,11 @@ var x86_64LoadCommands = []loadCommand{
 
 func TestCommandReader(t *testing.T) {
 	tests := []struct {
-		name     string
-		dataFile string
-		want     []loadCommand
+		name        string
+		dataFile    string
+		startOffset int64
+		imageSize   int
+		want        []loadCommand
 	}{
 		{
 			name:     "AArch64",
@@ -370,15 +370,29 @@ func TestCommandReader(t *testing.T) {
 			want:     aarch64LoadCommands,
 		},
 		{
+			name:        "UniversalAArch64",
+			dataFile:    "macho-program-universal",
+			startOffset: 16384,
+			imageSize:   16824,
+			want:        aarch64LoadCommands,
+		},
+		{
 			name:     "X86_64",
 			dataFile: "macho-program-x86_64-apple-macos",
 			want:     x86_64LoadCommands,
+		},
+		{
+			name:        "UniversalX86_64",
+			dataFile:    "macho-program-universal",
+			startOffset: 4096,
+			imageSize:   4248,
+			want:        x86_64LoadCommands,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			data, err := os.ReadFile(filepath.Join("testdata", test.dataFile))
+			data, err := openTestFile(test.dataFile, test.startOffset, test.imageSize)
 			if err != nil {
 				t.Fatal(err)
 			}
