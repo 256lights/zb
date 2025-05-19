@@ -73,56 +73,51 @@ func ParseDerivation(dir Directory, name string, data []byte) (*Derivation, erro
 	return drv, nil
 }
 
-// Export marshals the derivation in ATerm format
+// Export marshals the derivation to a NAR containing ATerm format
 // and computes the derivation's store metadata using the given hashing algorithm.
 //
 // At the moment, the only supported algorithm is [nix.SHA256].
-func (drv *Derivation) Export(hashType nix.HashType) (info *NARInfo, narBytes, drvBytes []byte, err error) {
+func (drv *Derivation) Export(hashType nix.HashType) ([]byte, *ExportTrailer, error) {
 	if drv.Name == "" {
-		return nil, nil, nil, fmt.Errorf("export derivation: missing name")
+		return nil, nil, fmt.Errorf("export derivation: missing name")
 	}
 	if drv.Dir == "" {
-		return nil, nil, nil, fmt.Errorf("export derivation %s: missing store directory", drv.Name)
+		return nil, nil, fmt.Errorf("export derivation %s: missing store directory", drv.Name)
 	}
 
-	drvBytes, err = drv.MarshalText()
+	drvBytes, err := drv.MarshalText()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	narBuffer := new(bytes.Buffer)
 	narHasher := nix.NewHasher(hashType)
 	nw := nar.NewWriter(io.MultiWriter(narHasher, narBuffer))
 	if err := nw.WriteHeader(&nar.Header{Size: int64(len(drvBytes))}); err != nil {
-		return nil, nil, drvBytes, fmt.Errorf("export derivation %s: %v", drv.Name, err)
+		return nil, nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
 	}
-	fileStart := nw.Offset()
 	if _, err := nw.Write(drvBytes); err != nil {
-		return nil, nil, drvBytes, fmt.Errorf("export derivation %s: %v", drv.Name, err)
+		return nil, nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
 	}
 	if err := nw.Close(); err != nil {
-		return nil, nil, drvBytes, fmt.Errorf("export derivation %s: %v", drv.Name, err)
+		return nil, nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
 	}
-	narBytes = narBuffer.Bytes()
-	// Point drvBytes to narBytes's backing array.
-	// The bytes will be the same, and then we can GC drvBytes quickly.
-	drvBytes = narBytes[fileStart : int(fileStart)+len(drvBytes)]
 
 	caHasher := nix.NewHasher(hashType)
 	caHasher.Write(drvBytes)
-	info = &NARInfo{
-		References:  drv.References().Others,
-		CA:          nix.TextContentAddress(caHasher.SumHash()),
-		NARHash:     narHasher.SumHash(),
-		NARSize:     int64(len(narBytes)),
-		Compression: nix.NoCompression,
+	trailer := &ExportTrailer{
+		ContentAddress: nix.TextContentAddress(caHasher.SumHash()),
+		References:     drv.References().Others,
 	}
-	info.StorePath, err = FixedCAOutputPath(
+	trailer.StorePath, err = FixedCAOutputPath(
 		drv.Dir,
 		drv.Name+DerivationExt,
-		info.CA,
+		trailer.ContentAddress,
 		drv.References(),
 	)
-	return info, narBytes, drvBytes, err
+	if err != nil {
+		return nil, nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
+	}
+	return narBuffer.Bytes(), trailer, nil
 }
 
 // Clone returns a deep copy of drv.
@@ -167,6 +162,7 @@ func (drv *Derivation) InputDerivationOutputs() iter.Seq[OutputReference] {
 }
 
 // References returns the set of other store paths that the derivation references.
+// Derivations will never have a self-reference.
 func (drv *Derivation) References() References {
 	refs := References{}
 	refs.Others.Grow(drv.InputSources.Len() + len(drv.InputDerivations))
@@ -206,8 +202,7 @@ func derivationOutputPath(store Directory, drvName, outputName string, t *Deriva
 	}
 }
 
-// MarshalText converts the derivation to ATerm format
-// by calling [Derivation.Marshal] with the default options.
+// MarshalText converts the derivation to ATerm format.
 func (drv *Derivation) MarshalText() ([]byte, error) {
 	if drv.Name == "" {
 		return nil, fmt.Errorf("marshal derivation: missing name")

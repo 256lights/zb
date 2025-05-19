@@ -1,7 +1,7 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-package zbstore
+package remotestore
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"zb.256lights.llc/pkg/sets"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
 )
 
@@ -24,7 +25,7 @@ type NARInfo struct {
 	// StorePath is the absolute path of this store object
 	// (e.g. "/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1").
 	// Nix requires this field to be set.
-	StorePath Path
+	StorePath zbstore.Path
 	// URL is the path to download to the (possibly compressed) .nar file,
 	// relative to the .narinfo file's directory.
 	// Nix requires this field to be set.
@@ -47,10 +48,10 @@ type NARInfo struct {
 	// Nix requires this field to be set.
 	NARSize int64
 	// References is the set of other store objects that this store object references.
-	References sets.Sorted[Path]
+	References sets.Sorted[zbstore.Path]
 	// Deriver is the name of the store object that is the store derivation
 	// of this store object.
-	Deriver Path
+	Deriver zbstore.Path
 	// System is a deprecated field.
 	//
 	// Deprecated: Ignore this field.
@@ -58,7 +59,7 @@ type NARInfo struct {
 	// Sig is a set of signatures for this object.
 	Sig []*nix.Signature
 	// CA is an optional content-addressability assertion.
-	CA ContentAddress
+	CA zbstore.ContentAddress
 }
 
 // Clone returns a deep copy of an info struct.
@@ -71,7 +72,7 @@ func (info *NARInfo) Clone() *NARInfo {
 }
 
 // Directory returns the store directory of the store object.
-func (info *NARInfo) StoreDirectory() Directory {
+func (info *NARInfo) StoreDirectory() zbstore.Directory {
 	return info.StorePath.Dir()
 }
 
@@ -98,7 +99,7 @@ func (info *NARInfo) validateForFingerprint() error {
 	if info.StorePath == "" {
 		return fmt.Errorf("store path empty")
 	}
-	if _, err := ParsePath(string(info.StorePath)); err != nil {
+	if _, err := zbstore.ParsePath(string(info.StorePath)); err != nil {
 		return fmt.Errorf("store path: %v", err)
 	}
 	if info.NARHash.IsZero() {
@@ -235,7 +236,7 @@ func (info *NARInfo) UnmarshalText(src []byte) (err error) {
 				return fmt.Errorf("line %d: empty StorePath", lineno)
 			}
 			var err error
-			info.StorePath, err = ParsePath(string(value))
+			info.StorePath, err = zbstore.ParsePath(string(value))
 			if err != nil {
 				return fmt.Errorf("line %d: %v", lineno, err)
 			}

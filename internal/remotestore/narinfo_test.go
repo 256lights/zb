@@ -1,14 +1,16 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-package zbstore
+package remotestore
 
 import (
+	stdcmp "cmp"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"zb.256lights.llc/pkg/sets"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
 )
 
@@ -34,7 +36,7 @@ func TestNARInfoMarshalText(t *testing.T) {
 				FileSize:    50088,
 				NARHash:     mustParseHash(t, "sha256:0yzhigwjl6bws649vcs2asa4lbs8hg93hyix187gc7s7a74w5h80"),
 				NARSize:     226488,
-				References: *sets.NewSorted[Path](
+				References: *sets.NewSorted[zbstore.Path](
 					"/nix/store/3n58xw4373jp0ljirf06d8077j15pc4j-glibc-2.37-8",
 					"/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
 				),
@@ -124,7 +126,7 @@ func makeNARInfoUnmarshalTests(tb testing.TB) []narInfoUnmarshalTest {
 				FileSize:    50088,
 				NARHash:     mustParseHash(tb, "sha256:0yzhigwjl6bws649vcs2asa4lbs8hg93hyix187gc7s7a74w5h80"),
 				NARSize:     226488,
-				References: *sets.NewSorted[Path](
+				References: *sets.NewSorted[zbstore.Path](
 					"/nix/store/3n58xw4373jp0ljirf06d8077j15pc4j-glibc-2.37-8",
 					"/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
 				),
@@ -217,7 +219,7 @@ func TestNARInfoUnmarshalText(t *testing.T) {
 			if err != nil {
 				t.Fatal("UnmarshalText(...):", err)
 			}
-			if diff := cmp.Diff(test.want, got, transformSortedSet[Path](), cmp.Comparer(compareSignatures)); diff != "" {
+			if diff := cmp.Diff(test.want, got, transformSortedSet[zbstore.Path](), cmp.Comparer(compareSignatures)); diff != "" {
 				t.Errorf("after re-marshaling (-want +got):\n%s", diff)
 			}
 		})
@@ -251,7 +253,7 @@ func FuzzNARInfo(f *testing.F) {
 			cmp.Transformer("String", func(h nix.Hash) string {
 				return h.String()
 			}),
-			transformSortedSet[Path](),
+			transformSortedSet[zbstore.Path](),
 		}
 		if diff := cmp.Diff(info, got, opts); diff != "" {
 			t.Errorf("after re-marshaling (-want +got):\n%s", diff)
@@ -268,7 +270,7 @@ func TestNARInfoClone(t *testing.T) {
 		FileSize:    50088,
 		NARHash:     mustParseHash(t, "sha256:0yzhigwjl6bws649vcs2asa4lbs8hg93hyix187gc7s7a74w5h80"),
 		NARSize:     226488,
-		References: *sets.NewSorted[Path](
+		References: *sets.NewSorted[zbstore.Path](
 			"/nix/store/3n58xw4373jp0ljirf06d8077j15pc4j-glibc-2.37-8",
 			"/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
 		),
@@ -286,7 +288,7 @@ func TestNARInfoClone(t *testing.T) {
 		FileSize:    50088,
 		NARHash:     mustParseHash(t, "sha256:0yzhigwjl6bws649vcs2asa4lbs8hg93hyix187gc7s7a74w5h80"),
 		NARSize:     226488,
-		References: *sets.NewSorted[Path](
+		References: *sets.NewSorted[zbstore.Path](
 			"/nix/store/3n58xw4373jp0ljirf06d8077j15pc4j-glibc-2.37-8",
 			"/nix/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1",
 		),
@@ -301,7 +303,7 @@ func TestNARInfoClone(t *testing.T) {
 	}
 	opts := cmp.Options{
 		cmp.Comparer(compareSignatures),
-		transformSortedSet[Path](),
+		transformSortedSet[zbstore.Path](),
 		cmpopts.EquateEmpty(),
 	}
 	if diff := cmp.Diff(want, original, opts); diff != "" {
@@ -333,7 +335,7 @@ func mustParseHash(tb testing.TB, s string) nix.Hash {
 	return h
 }
 
-func mustParseContentAddress(tb testing.TB, s string) ContentAddress {
+func mustParseContentAddress(tb testing.TB, s string) zbstore.ContentAddress {
 	tb.Helper()
 	ca, err := nix.ParseContentAddress(s)
 	if err != nil {
@@ -349,4 +351,14 @@ func mustParseSignature(tb testing.TB, s string) *nix.Signature {
 		tb.Fatal(err)
 	}
 	return sig
+}
+
+func transformSortedSet[E stdcmp.Ordered]() cmp.Option {
+	return cmp.Transformer("transformSortedSet", func(s sets.Sorted[E]) []E {
+		list := make([]E, s.Len())
+		for i := range list {
+			list[i] = s.At(i)
+		}
+		return list
+	})
 }
