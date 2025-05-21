@@ -13,7 +13,8 @@ import (
 	"io"
 )
 
-const loadCommandFixedSize = 8
+// LoadCommandMinSize is the minimum size (in bytes) of a Mach-O load command.
+const LoadCommandMinSize = 8
 
 // LoadCmd is an enumeration of load command types.
 type LoadCmd uint32
@@ -79,19 +80,19 @@ func (cmd *SegmentCommand) UnmarshalMachO(byteOrder binary.ByteOrder, data []byt
 	}
 	switch cmd.Command {
 	case LoadCmdSegment:
-		const fixedSize = 56
+		const fixedSize = LoadCommandMinSize + 48
 		if len(data) < fixedSize {
 			return fmt.Errorf("unmarshal %v: too short", cmd.Command)
 		}
-		copy(cmd.RawName[:], data[8:])
-		cmd.VirtualMemoryAddress = uint64(byteOrder.Uint32(data[24:]))
-		cmd.VirtualMemorySize = uint64(byteOrder.Uint32(data[28:]))
-		cmd.FileOffset = uint64(byteOrder.Uint32(data[32:]))
-		cmd.FileSize = uint64(byteOrder.Uint32(data[36:]))
-		cmd.MaxProtection = VirtualMemoryProtection(byteOrder.Uint32(data[40:]))
-		cmd.InitProtection = VirtualMemoryProtection(byteOrder.Uint32(data[44:]))
-		sectionCount := byteOrder.Uint32(data[48:])
-		cmd.Flags = byteOrder.Uint32(data[52:])
+		copy(cmd.RawName[:], data[LoadCommandMinSize:])
+		cmd.VirtualMemoryAddress = uint64(byteOrder.Uint32(data[LoadCommandMinSize+16:]))
+		cmd.VirtualMemorySize = uint64(byteOrder.Uint32(data[LoadCommandMinSize+20:]))
+		cmd.FileOffset = uint64(byteOrder.Uint32(data[LoadCommandMinSize+24:]))
+		cmd.FileSize = uint64(byteOrder.Uint32(data[LoadCommandMinSize+28:]))
+		cmd.MaxProtection = VirtualMemoryProtection(byteOrder.Uint32(data[LoadCommandMinSize+32:]))
+		cmd.InitProtection = VirtualMemoryProtection(byteOrder.Uint32(data[LoadCommandMinSize+36:]))
+		sectionCount := byteOrder.Uint32(data[LoadCommandMinSize+40:])
+		cmd.Flags = byteOrder.Uint32(data[LoadCommandMinSize+44:])
 
 		const sectionSize = 68
 		if want := fixedSize + int64(sectionCount)*sectionSize; int64(len(data)) != want {
@@ -119,19 +120,19 @@ func (cmd *SegmentCommand) UnmarshalMachO(byteOrder binary.ByteOrder, data []byt
 			}
 		}
 	case LoadCmdSegment64:
-		const fixedSize = 72
+		const fixedSize = LoadCommandMinSize + 64
 		if len(data) < fixedSize {
 			return fmt.Errorf("unmarshal %v: too short", cmd.Command)
 		}
-		copy(cmd.RawName[:], data[8:])
-		cmd.VirtualMemoryAddress = byteOrder.Uint64(data[24:])
-		cmd.VirtualMemorySize = byteOrder.Uint64(data[32:])
-		cmd.FileOffset = byteOrder.Uint64(data[40:])
-		cmd.FileSize = byteOrder.Uint64(data[48:])
-		cmd.MaxProtection = VirtualMemoryProtection(byteOrder.Uint32(data[56:]))
-		cmd.InitProtection = VirtualMemoryProtection(byteOrder.Uint32(data[60:]))
-		sectionCount := byteOrder.Uint32(data[64:])
-		cmd.Flags = byteOrder.Uint32(data[68:])
+		copy(cmd.RawName[:], data[LoadCommandMinSize:])
+		cmd.VirtualMemoryAddress = byteOrder.Uint64(data[LoadCommandMinSize+16:])
+		cmd.VirtualMemorySize = byteOrder.Uint64(data[LoadCommandMinSize+24:])
+		cmd.FileOffset = byteOrder.Uint64(data[LoadCommandMinSize+32:])
+		cmd.FileSize = byteOrder.Uint64(data[LoadCommandMinSize+40:])
+		cmd.MaxProtection = VirtualMemoryProtection(byteOrder.Uint32(data[LoadCommandMinSize+48:]))
+		cmd.InitProtection = VirtualMemoryProtection(byteOrder.Uint32(data[LoadCommandMinSize+52:]))
+		sectionCount := byteOrder.Uint32(data[LoadCommandMinSize+56:])
+		cmd.Flags = byteOrder.Uint32(data[LoadCommandMinSize+60:])
 
 		const sectionSize = 80
 		if want := fixedSize + int64(sectionCount)*sectionSize; int64(len(data)) != want {
@@ -218,12 +219,12 @@ func (cmd *LinkeditDataCommand) UnmarshalMachO(byteOrder binary.ByteOrder, data 
 		cmd.Command != LoadCmdDataInCode {
 		return fmt.Errorf("unmarshal mach-o load command: unexpected %v", cmd.Command)
 	}
-	const wantSize = 16
+	const wantSize = LoadCommandMinSize + 8
 	if len(data) != wantSize {
 		return fmt.Errorf("unmarshal %v: wrong size (got %d; want %d)", cmd.Command, len(data), wantSize)
 	}
-	cmd.DataOffset = byteOrder.Uint32(data[8:])
-	cmd.DataSize = byteOrder.Uint32(data[12:])
+	cmd.DataOffset = byteOrder.Uint32(data[LoadCommandMinSize:])
+	cmd.DataSize = byteOrder.Uint32(data[LoadCommandMinSize+4:])
 	return nil
 }
 
@@ -236,7 +237,7 @@ type CommandReader struct {
 	remainingBytes    uint32
 	byteOrder         binary.ByteOrder
 
-	buf                [loadCommandFixedSize]byte
+	buf                [LoadCommandMinSize]byte
 	nbuf               uint8
 	currRemainingBytes uint32
 	err                error
@@ -249,7 +250,7 @@ func (hdr *FileHeader) NewCommandReader(r io.Reader) *CommandReader {
 	if hdr.LoadCommandCount == 0 && hdr.LoadCommandRegionSize != 0 {
 		return &CommandReader{err: errCommandTrailingData}
 	}
-	if hdr.LoadCommandCount > 0 && int64(hdr.LoadCommandRegionSize) < int64(hdr.LoadCommandCount)*loadCommandFixedSize {
+	if hdr.LoadCommandCount > 0 && int64(hdr.LoadCommandRegionSize) < int64(hdr.LoadCommandCount)*LoadCommandMinSize {
 		err := fmt.Errorf("read mach-o load command: declared size (%d) too small for number of commands (%d)",
 			hdr.LoadCommandRegionSize, hdr.LoadCommandCount)
 		return &CommandReader{err: err}
@@ -261,7 +262,7 @@ func (hdr *FileHeader) NewCommandReader(r io.Reader) *CommandReader {
 		byteOrder:         hdr.ByteOrder,
 
 		// Special sentinel value for first read.
-		nbuf: loadCommandFixedSize + 1,
+		nbuf: LoadCommandMinSize + 1,
 	}
 }
 
@@ -284,8 +285,8 @@ func (r *CommandReader) Err() error {
 // except that if it was [io.EOF], [*CommandReader.Err] will return nil.
 func (r *CommandReader) Next() bool {
 	// Read command size if the caller did not.
-	for r.nbuf < loadCommandFixedSize && r.err == nil {
-		r.fillInfo(loadCommandFixedSize)
+	for r.nbuf < LoadCommandMinSize && r.err == nil {
+		r.fillInfo(LoadCommandMinSize)
 	}
 	if r.err != nil {
 		r.clearInfo()
@@ -314,7 +315,7 @@ func (r *CommandReader) Next() bool {
 	}
 
 	// Are there enough bytes for another load command?
-	if r.remainingBytes < loadCommandFixedSize {
+	if r.remainingBytes < LoadCommandMinSize {
 		r.err = errCommandSizeTooLarge
 		r.clearInfo()
 		return false
@@ -327,8 +328,8 @@ func (r *CommandReader) Next() bool {
 
 // Read reads up to the next len(p) bytes of the current load command into p.
 // It returns the number of bytes read (0 <= n <= len(p)) and any error encountered.
-// The first 8 bytes of a load command are always the its type and size.
-// After reading the first 8 bytes,
+// The first [LoadCommandMinSize] bytes of a load command are always the its type and size.
+// After reading the first [LoadCommandMinSize] bytes,
 // use [*CommandReader.Command] and [*CommandReader.Size] to parse these values.
 //
 // Read does not introduce any buffering:
@@ -367,13 +368,13 @@ func (r *CommandReader) fillInfo(maxRead int) []byte {
 
 	if size, ok := r.size(); ok {
 		// Buffer filled. Validate size.
-		if size < 8 {
+		if size < LoadCommandMinSize {
 			r.currRemainingBytes = 0
 			if r.err == nil {
 				r.err = errCommandSizeTooSmall
 			}
 		} else {
-			r.currRemainingBytes = size - 8
+			r.currRemainingBytes = size - LoadCommandMinSize
 			if r.currRemainingBytes > r.remainingBytes && r.err == nil {
 				r.err = errCommandSizeTooLarge
 			}
@@ -407,26 +408,26 @@ func (r *CommandReader) read(p []byte) int {
 // if it has been read.
 // ok will be true if and only if at least 4 bytes of the current command have been read.
 func (r *CommandReader) Command() (_ LoadCmd, ok bool) {
-	if r.nbuf < 4 || r.nbuf > loadCommandFixedSize {
+	if r.nbuf < 4 || r.nbuf > LoadCommandMinSize {
 		return 0, false
 	}
 	return LoadCmd(r.byteOrder.Uint32(r.buf[:])), true
 }
 
 // Size returns the total size of the current command in bytes.
-// ok is false if the first 8 bytes of the command haven't been read yet
+// ok is false if the first [LoadCommandMinSize] bytes of the command haven't been read yet
 // or the size is invalid.
-// Size will never return a value less than 8 (the fixed base size of a command).
+// Size will never return a value less than [LoadCommandMinSize].
 func (r *CommandReader) Size() (_ uint32, ok bool) {
 	size, ok := r.size()
-	if !ok || size < loadCommandFixedSize {
-		return loadCommandFixedSize, false
+	if !ok || size < LoadCommandMinSize {
+		return LoadCommandMinSize, false
 	}
 	return size, r.currRemainingBytes <= r.remainingBytes
 }
 
 func (r *CommandReader) size() (_ uint32, ok bool) {
-	return r.byteOrder.Uint32(r.buf[4:]), r.nbuf == loadCommandFixedSize
+	return r.byteOrder.Uint32(r.buf[4:]), r.nbuf == LoadCommandMinSize
 }
 
 var (
@@ -436,7 +437,7 @@ var (
 )
 
 func unmarshalLoadCommand(byteOrder binary.ByteOrder, data []byte) (LoadCmd, error) {
-	if len(data) < 8 {
+	if len(data) < LoadCommandMinSize {
 		return 0, fmt.Errorf("unmarshal mach-o load command: short buffer")
 	}
 	cmd := LoadCmd(byteOrder.Uint32(data))
