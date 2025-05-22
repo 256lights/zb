@@ -1,7 +1,7 @@
 // Copyright 2025 The zb Authors
 // SPDX-License-Identifier: MIT
 
-//go:generate go tool stringer -type=CodeSignMagic -linecomment -output=code_signature_string.go
+//go:generate go tool stringer -type=CodeSignatureMagic,SuperBlobSlot,HashType -linecomment -output=code_signature_string.go
 
 package macho
 
