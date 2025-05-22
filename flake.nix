@@ -4,13 +4,24 @@
 {
   inputs = {
     nixpkgs.url = "nixpkgs";
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "flake-utils";
   };
 
-  outputs = { nixpkgs, flake-utils, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      nixpkgs,
+      nixpkgs-unstable,
+      flake-utils,
+      ...
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = import nixpkgs {
+          inherit system;
+        };
+        pkgs-unstable = import nixpkgs-unstable {
           inherit system;
         };
 
@@ -35,6 +46,93 @@
 
           hardeningDisable = [ "fortify" ];
         };
+
+        packages.default = buildGoModule {
+          pname = "zb";
+          version = "0.1.0";
+
+          preBuild = ''
+            HOME=$PWD
+            go generate ./internal/ui
+          '';
+
+          ldflags = [
+            "-s -w"
+          ];
+
+          GOFLAGS = [
+            "-v"
+          ];
+
+          nativeBuildInputs = [
+            pkgs.nodejs_22
+            pkgs-unstable.tailwindcss_4
+          ];
+
+          src = ./.;
+
+          vendorHash = "sha256-1YGUmGGOF4MbL2ucUX0zPe8VS6kaG5ewSSlo+eBsFQk=";
+        };
+
       }
-    );
+    )
+    // {
+      nixosModules.default =
+        { pkgs, ... }:
+        let
+          buildGroup = "zbld";
+          buildGid = 256000;
+          firstBuildUid = 256001;
+          userCount = 32;
+          userNames = map (i: "${buildGroup}${toString i}") (pkgs.lib.range 1 userCount);
+          userConfigs = builtins.listToAttrs (
+            map (i: {
+              name = "${buildGroup}${toString i}";
+              value = {
+                description = "zb build user ${toString i}";
+                uid = firstBuildUid + (i - 1);
+                group = buildGroup;
+                isSystemUser = true;
+              };
+            }) (pkgs.lib.range 1 userCount)
+          );
+        in
+        {
+          users.users = userConfigs;
+          users.groups.${buildGroup} = {
+            gid = buildGid;
+            members = userNames;
+          };
+          systemd.sockets.zb-serve = {
+            description = "zb Store Server Socket";
+            before = [ "multi-user.target" ];
+            unitConfig = {
+              RequiresMountsFor = [ "/opt/zb" ];
+              ConditionPathIsReadWrite = "/opt/zb/var/zb";
+            };
+            listenStreams = [ "/opt/zb/var/zb/server.sock" ];
+            wantedBy = [ "sockets.target" ];
+          };
+          systemd.services.zb-serve = {
+            description = "zb Store Server";
+            requires = [ "zb-serve.socket" ];
+            unitConfig = {
+              RequiresMountsFor = [
+                "/opt/zb/store"
+                "/opt/zb/var"
+                "/opt/zb/var/zb"
+              ];
+              ConditionPathIsReadWrite = "/opt/zb/var/zb";
+            };
+            environment = {
+              ZB_BUILD_USERS_GROUP = buildGroup;
+              ZB_SERVE_FLAGS = "";
+            };
+            serviceConfig = {
+              # TODO: Point to derivation
+              ExecStart = "/opt/zb/store/drp6dpilg3myng650cbn3zlqd7axari0-zb-0.1.0-rc1/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --build-users-group=zbld $ZB_SERVE_FLAGS";
+            };
+          };
+        };
+    };
 }
