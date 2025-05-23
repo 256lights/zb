@@ -3,18 +3,16 @@
 
 {
   inputs = {
-    nixpkgs.url = "nixpkgs";
-    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "flake-utils";
 
     dream2nix.url = "github:nix-community/dream2nix";
-    dream2nix.inputs.nixpkgs.follows = "nixpkgs-unstable";
+    dream2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
     {
       nixpkgs,
-      nixpkgs-unstable,
       flake-utils,
       dream2nix,
       ...
@@ -23,9 +21,6 @@
       system:
       let
         pkgs = import nixpkgs {
-          inherit system;
-        };
-        pkgs-unstable = import nixpkgs-unstable {
           inherit system;
         };
 
@@ -70,17 +65,11 @@
           version = "0.1.0";
 
           preBuild = ''
-            HOME=$PWD
             cp -r ${nodeOutputs}/lib/node_modules/zb-node/public ./internal/ui/public
           '';
 
           ldflags = [
             "-s -w"
-          ];
-
-          nativeBuildInputs = [
-            nodejs
-            pkgs-unstable.tailwindcss_4
           ];
 
           src = ./.;
