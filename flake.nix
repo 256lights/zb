@@ -6,6 +6,9 @@
     nixpkgs.url = "nixpkgs";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "flake-utils";
+
+    dream2nix.url = "github:nix-community/dream2nix";
+    dream2nix.inputs.nixpkgs.follows = "nixpkgs-unstable";
   };
 
   outputs =
@@ -13,6 +16,7 @@
       nixpkgs,
       nixpkgs-unstable,
       flake-utils,
+      dream2nix,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -27,6 +31,20 @@
 
         go = pkgs.go_1_24;
         buildGoModule = pkgs.buildGo124Module;
+
+        nodejs = pkgs.nodejs_22;
+
+        nodeOutputs = dream2nix.lib.evalModules {
+          packageSets.nixpkgs = nixpkgs.legacyPackages.${system};
+          modules = [
+            ./node.nix
+            {
+              paths.projectRoot = ./.;
+              paths.projectRootFile = "flake.nix";
+              paths.package = ./.;
+            }
+          ];
+        };
       in
       {
         devShells.default = pkgs.mkShellNoCC {
@@ -41,7 +59,7 @@
             })
 
             # JavaScript tooling.
-            pkgs.nodejs_22
+            nodejs
           ];
 
           hardeningDisable = [ "fortify" ];
@@ -53,19 +71,15 @@
 
           preBuild = ''
             HOME=$PWD
-            go generate ./internal/ui
+            cp -r ${nodeOutputs}/lib/node_modules/zb-node/public ./internal/ui/public
           '';
 
           ldflags = [
             "-s -w"
           ];
 
-          GOFLAGS = [
-            "-v"
-          ];
-
           nativeBuildInputs = [
-            pkgs.nodejs_22
+            nodejs
             pkgs-unstable.tailwindcss_4
           ];
 
