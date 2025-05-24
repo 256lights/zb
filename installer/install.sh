@@ -287,12 +287,15 @@ if [[ "$install_units" -eq 1 ]]; then
   run_as_target_user ln -sf "$zb_systemd/zb-serve.socket" "$systemd_install_dir/zb-serve.socket"
   log "Installing ${systemd_install_dir}/zb-serve.service..."
   run_as_target_user ln -sf "$zb_systemd/zb-serve.service" "$systemd_install_dir/zb-serve.service"
-  if [[ "$build_users_group" != zbld ]]; then
+  if [[ "$build_users_group" != zbld || "$single_user" -eq 1 ]]; then
     run_as_target_user mkdir -p "$systemd_install_dir/zb-serve.service.d"
     {
       echo '# File managed by the zb installer.'
       echo "[Service]"
       echo "Environment=ZB_BUILD_USERS_GROUP=$build_users_group"
+      if [[ "$single_user" -eq 1 ]]; then
+        echo "Environment=ZB_SERVE_FLAGS=--sandbox=0"
+      fi
     } | run_as_target_user tee "$systemd_install_dir/zb-serve.service.d/00-installer.conf" > /dev/null
   else
     run_as_target_user rm -f "$systemd_install_dir/zb-serve.service.d/00-installer.conf"
