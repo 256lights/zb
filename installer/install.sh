@@ -23,17 +23,25 @@ export ZB_STORE_DIR="/opt/zb/store"
 
 isMacOS=0
 isLinux=0
+isNixOS=0
 case "$(uname -s)" in
   Darwin)
     isMacOS=1
     ;;
   Linux)
     isLinux=1
+	if [[ -f '/etc/NIXOS' ]]; then
+		isNixOS=1
+	fi
     ;;
 esac
 
+
 installer_dir="$( to_abs "$( dirname -- "${BASH_SOURCE[0]}" )" )"
 bin_dir=/usr/local/bin
+if [[ "$isNixOS" -eq 1 ]]; then
+	bin_dir=/opt/zb/bin
+fi
 bin_dir_explicit=0
 single_user=0
 install_units="$isLinux"
@@ -140,6 +148,10 @@ fi
 if [[ $single_user -eq 1 ]]; then
   build_users_group=''
 fi
+# Only install units if single-user and NixOS
+if [[ $isNixOS -eq 1 && $single_user -eq 0 ]]; then
+  install_units=0
+fi
 
 zb_object="$( cd "$installer_dir/store" > /dev/null && echo *-zb-* )"
 if [[ "$zb_object" = '*-zb-*' ]]; then
@@ -206,10 +218,11 @@ if [[ -z "$bin_dir" ]]; then
   fi
 else
   log "Adding symlinks to ${bin_dir}..."
+  run_as_target_user mkdir -p "$bin_dir"
   run_as_target_user ln -sf "$zb" "$bin_dir/zb"
 fi
 
-if [[ -n "$build_users_group" ]]; then
+if [[ -n "$build_users_group" && "$isNixOS" -eq 0 ]]; then
   if [[ "$isLinux" -eq 1 ]]; then
     if getent group "$build_users_group" > /dev/null; then
       log "Reusing existing group $build_users_group"
@@ -335,3 +348,7 @@ if [[ "$install_launchdaemon" -eq 1 ]]; then
 fi
 
 log "Installation complete."
+
+if [[ "$isNixOS" -eq 1 ]]; then
+	log "Remember to add the NixOS module to your config."
+fi
