@@ -6,6 +6,21 @@ package xio
 
 import "io"
 
+// A WriteCounter counts the number of bytes written to it.
+type WriteCounter int64
+
+// Write increments wc by len(p).
+func (wc *WriteCounter) Write(p []byte) (n int, err error) {
+	*wc += WriteCounter(len(p))
+	return len(p), nil
+}
+
+// WriteString increments wc by len(s).
+func (wc *WriteCounter) WriteString(s string) (n int, err error) {
+	*wc += WriteCounter(len(s))
+	return len(s), nil
+}
+
 type onceCloser struct {
 	c      io.Closer
 	err    error

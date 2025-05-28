@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 
+	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -286,7 +287,7 @@ func (s *Server) Register(ctx context.Context, info *ObjectInfo) error {
 
 	pr, pw := io.Pipe()
 	done := make(chan struct{})
-	wc := new(writeCounter)
+	wc := new(xio.WriteCounter)
 	hasher := nix.NewHasher(info.NARHash.Type())
 	go func() {
 		err := nar.DumpPath(io.MultiWriter(wc, hasher, pw), realPath)

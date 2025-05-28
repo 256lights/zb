@@ -29,6 +29,7 @@ import (
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/storepath"
 	"zb.256lights.llc/pkg/internal/system"
+	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/internal/xslices"
@@ -1372,7 +1373,7 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn,
 	log.Debugf(ctx, "Verifying fixed output %s...", outputPath)
 
 	realOutputPath := b.server.realPath(outputPath)
-	wc := new(writeCounter)
+	wc := new(xio.WriteCounter)
 	h := nix.NewHasher(nix.SHA256)
 	pr, pw := io.Pipe()
 	done := make(chan struct{})
@@ -1502,7 +1503,7 @@ type outputScanResults struct {
 // which form the superset of all non-self-references that the scan can detect.
 func scanFloatingOutput(ctx context.Context, path string, digest string, closure *sets.Sorted[zbstore.Path]) (*outputScanResults, error) {
 	log.Debugf(ctx, "Scanning for references in %s. Possible: %s", path, closure)
-	wc := new(writeCounter)
+	wc := new(xio.WriteCounter)
 	h := nix.NewHasher(nix.SHA256)
 	refFinder := detect.NewRefFinder(func(yield func(string) bool) {
 		for _, input := range closure.All() {
@@ -1902,16 +1903,4 @@ func (bf builderFailure) Unwrap() error { return bf.err }
 
 func isBuilderFailure(err error) bool {
 	return errors.As(err, new(builderFailure))
-}
-
-type writeCounter int64
-
-func (wc *writeCounter) Write(p []byte) (n int, err error) {
-	*wc += writeCounter(len(p))
-	return len(p), nil
-}
-
-func (wc *writeCounter) WriteString(s string) (n int, err error) {
-	*wc += writeCounter(len(s))
-	return len(s), nil
 }
