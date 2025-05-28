@@ -4,6 +4,7 @@
 package zbstore
 
 import (
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -17,19 +18,19 @@ import (
 )
 
 func TestSourceSHA256ContentAddress(t *testing.T) {
-	machoSelfReferenceNAR, err := os.ReadFile(filepath.Join("testdata", "macho-selfref-aarch64.nar"))
+	machoSelfReferenceNAR, err := readFileString(filepath.Join("testdata", "macho-selfref-aarch64.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	machoZeroedNAR, err := os.ReadFile(filepath.Join("testdata", "macho-zeroed-aarch64.nar"))
+	machoZeroedNAR, err := readFileString(filepath.Join("testdata", "macho-zeroed-aarch64.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	machoUniversalSelfReferenceNAR, err := os.ReadFile(filepath.Join("testdata", "macho-selfref-universal.nar"))
+	machoUniversalSelfReferenceNAR, err := readFileString(filepath.Join("testdata", "macho-selfref-universal.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	machoUniversalZeroedNAR, err := os.ReadFile(filepath.Join("testdata", "macho-zeroed-universal.nar"))
+	machoUniversalZeroedNAR, err := readFileString(filepath.Join("testdata", "macho-zeroed-universal.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,8 +235,8 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 		{
 			name:          "MachOSingleArchitectureSelfReference",
 			digest:        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			sourceNAR:     string(machoSelfReferenceNAR),
-			wantCleartext: string(machoZeroedNAR) + string("||16386"),
+			sourceNAR:     machoSelfReferenceNAR,
+			wantCleartext: machoZeroedNAR + "||16386",
 			wantAnalysis: SelfReferenceAnalysis{
 				Rewrites: []Rewriter{
 					&MachOSignatureRewrite{
@@ -259,8 +260,8 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 		{
 			name:          "MachOMultiArchitectureSelfReference",
 			digest:        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			sourceNAR:     string(machoUniversalSelfReferenceNAR),
-			wantCleartext: string(machoUniversalZeroedNAR) + string("||8193|49154"),
+			sourceNAR:     machoUniversalSelfReferenceNAR,
+			wantCleartext: machoUniversalZeroedNAR + string("||8193|49154"),
 			wantAnalysis: SelfReferenceAnalysis{
 				Rewrites: []Rewriter{
 					SelfReferenceOffset(8193),
@@ -310,4 +311,18 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 			}
 		})
 	}
+}
+
+func readFileString(name string) (string, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	sb := new(strings.Builder)
+	if info, err := f.Stat(); err == nil {
+		sb.Grow(int(info.Size()))
+	}
+	_, err = io.Copy(sb, f)
+	return sb.String(), err
 }

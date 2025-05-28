@@ -96,7 +96,7 @@ func Rewrite(f io.ReadWriteSeeker, baseOffset int64, newDigest string, rewriters
 			}
 		} else {
 			var err error
-			b, err := rewriters[0].Rewrite(newDigest, io.LimitReader(f, writeOffset-readOffset))
+			b, err = rewriters[0].Rewrite(newDigest, io.LimitReader(f, writeOffset-readOffset))
 			if err != nil {
 				return fmt.Errorf("rewrite hash: %v", err)
 			}
