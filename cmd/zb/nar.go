@@ -68,11 +68,11 @@ func newPackNARCommand() *cobra.Command {
 	return c
 }
 
-func runPackNARSelfRefs(dst io.WriteSeeker, path string) error {
+func runPackNARSelfRefs(dst io.ReadWriteSeeker, path string) error {
 	type caResult struct {
-		ca            zbstore.ContentAddress
-		digestOffsets []int64
-		err           error
+		ca       zbstore.ContentAddress
+		analysis *zbstore.SelfReferenceAnalysis
+		err      error
 	}
 
 	// Interpret path as a store path, using the parent directory as the store directory.
@@ -93,9 +93,7 @@ func runPackNARSelfRefs(dst io.WriteSeeker, path string) error {
 	c := make(chan caResult)
 	go func() {
 		var result caResult
-		var analysis *zbstore.SelfReferenceAnalysis
-		result.ca, analysis, result.err = zbstore.SourceSHA256ContentAddress(originalDigest, pr)
-		result.digestOffsets = analysis.Offsets
+		result.ca, result.analysis, result.err = zbstore.SourceSHA256ContentAddress(originalDigest, pr)
 		c <- result
 	}()
 	err = nar.DumpPath(io.MultiWriter(pw, dst), path)
@@ -110,7 +108,7 @@ func runPackNARSelfRefs(dst io.WriteSeeker, path string) error {
 
 	// Compute the final store path.
 	finalStorePath, err := zbstore.FixedCAOutputPath(storePath.Dir(), storePath.Name(), result.ca, zbstore.References{
-		Self: len(result.digestOffsets) > 0,
+		Self: result.analysis.HasSelfReferences(),
 	})
 	if err != nil {
 		return err
@@ -118,14 +116,8 @@ func runPackNARSelfRefs(dst io.WriteSeeker, path string) error {
 
 	// If the digest differs, rewrite each occurrence.
 	if finalDigest := finalStorePath.Digest(); finalDigest != originalDigest {
-		finalDigestBytes := []byte(finalDigest)
-		for _, offset := range result.digestOffsets {
-			if _, err := dst.Seek(offset, io.SeekStart); err != nil {
-				return err
-			}
-			if _, err := dst.Write(finalDigestBytes); err != nil {
-				return err
-			}
+		if err := zbstore.Rewrite(dst, 0, finalDigest, result.analysis.Rewrites); err != nil {
+			return err
 		}
 	}
 

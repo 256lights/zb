@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 
+	"zb.256lights.llc/pkg/internal/bytewriter"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
@@ -141,8 +142,8 @@ func ExportSourceNAR(exp *zbstore.Exporter, narBytes []byte, opts SourceExportOp
 	if opts.TempDigest != "" && len(opts.TempDigest) != len(newDigest) {
 		return p, ca, fmt.Errorf("export source %s: temporary digest %q is wrong size (expected %d)", p, opts.TempDigest, len(newDigest))
 	}
-	for _, off := range analysis.Offsets {
-		copy(narBytes[off:int(off)+len(newDigest)], newDigest)
+	if err := zbstore.Rewrite(bytewriter.New(narBytes), 0, newDigest, analysis.Rewrites); err != nil {
+		return p, ca, fmt.Errorf("export source %s: %v", p, err)
 	}
 
 	if _, err := exp.Write(narBytes); err != nil {

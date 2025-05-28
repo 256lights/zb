@@ -39,3 +39,22 @@ func (oc *onceCloser) Close() error {
 	}
 	return oc.err
 }
+
+type emptyReader struct{}
+
+// Null returns a reader that reads no bytes.
+func Null() io.Reader {
+	return emptyReader{}
+}
+
+func (emptyReader) Read(p []byte) (int, error) {
+	return 0, io.EOF
+}
+
+func (emptyReader) ReadByte() (byte, error) {
+	return 0, io.EOF
+}
+
+func (emptyReader) WriteTo(w io.Writer) (int64, error) {
+	return 0, nil
+}

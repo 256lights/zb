@@ -25,6 +25,7 @@ import (
 	"unique"
 
 	"github.com/google/uuid"
+	"zb.256lights.llc/pkg/internal/bytewriter"
 	"zb.256lights.llc/pkg/internal/detect"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/storepath"
@@ -1460,7 +1461,7 @@ func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Co
 	}
 
 	log.Debugf(ctx, "Moving %s to %s (self-references=%t)", realBuildPath, realFinalPath, scan.refs.Self)
-	err = finalizeFloatingOutput(finalPath.Dir(), realBuildPath, realFinalPath, scan.selfRefPaths.Values())
+	err = finalizeFloatingOutput(finalPath.Dir(), realBuildPath, realFinalPath, scan.analysis)
 	if err != nil {
 		return nil, fmt.Errorf("post-process %s: %v", buildPath, err)
 	}
@@ -1490,11 +1491,11 @@ func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Co
 }
 
 type outputScanResults struct {
-	ca           zbstore.ContentAddress
-	narHash      nix.Hash // only filled in if refs.Self is false
-	narSize      int64
-	selfRefPaths sets.Sorted[string]
-	refs         zbstore.References
+	ca       zbstore.ContentAddress
+	narHash  nix.Hash // only filled in if refs.Self is false
+	narSize  int64
+	analysis *zbstore.SelfReferenceAnalysis
+	refs     zbstore.References
 }
 
 // scanFloatingOutput gathers information about a newly built filesystem object.
@@ -1550,10 +1551,10 @@ func scanFloatingOutput(ctx context.Context, path string, digest string, closure
 	log.Debugf(ctx, "Found references in %s (self=%t): %s", path, refs.Self, &refs.Others)
 
 	result := &outputScanResults{
-		ca:           ca,
-		narSize:      int64(*wc),
-		refs:         refs,
-		selfRefPaths: analysis.Paths,
+		ca:       ca,
+		narSize:  int64(*wc),
+		refs:     refs,
+		analysis: analysis,
 	}
 	if !refs.Self {
 		result.narHash = h.SumHash()
@@ -1566,7 +1567,7 @@ func scanFloatingOutput(ctx context.Context, path string, digest string, closure
 // The last path element of each path must be a valid store path name,
 // the object names must be identical.
 // dir is used purely for error messages.
-func finalizeFloatingOutput(dir zbstore.Directory, buildPath, finalPath string, filesToRewrite iter.Seq[string]) error {
+func finalizeFloatingOutput(dir zbstore.Directory, buildPath, finalPath string, analysis *zbstore.SelfReferenceAnalysis) error {
 	fakeBuildPath, err := dir.Object(filepath.Base(buildPath))
 	if err != nil {
 		return fmt.Errorf("move %s to %s: %v", buildPath, finalPath, err)
@@ -1579,11 +1580,13 @@ func finalizeFloatingOutput(dir zbstore.Directory, buildPath, finalPath string, 
 		return fmt.Errorf("move %s to %s: object names do not match", buildPath, finalPath)
 	}
 
-	for name := range filesToRewrite {
-		err := replaceAllAtPath(
-			filepath.Join(buildPath, filepath.FromSlash(name)),
-			fakeBuildPath.Digest(),
+	for i := range analysis.Paths {
+		hdr := &analysis.Paths[i]
+		err := rewriteAtPath(
+			filepath.Join(buildPath, filepath.FromSlash(hdr.Path)),
+			hdr.ContentOffset,
 			fakeFinalPath.Digest(),
+			analysis.RewritesInRange(hdr.ContentOffset, hdr.ContentOffset+hdr.Size),
 		)
 		if err != nil {
 			return fmt.Errorf("move %s to %s: %v", buildPath, finalPath, err)
@@ -1593,12 +1596,7 @@ func finalizeFloatingOutput(dir zbstore.Directory, buildPath, finalPath string, 
 	return os.Rename(buildPath, finalPath)
 }
 
-// replaceAllAtPath rewrites all occurrences of string old with string new at the given path.
-// If path names a symlink and the symlink's target contains the old string,
-// then the symlink will be replaced with a new symlink
-// where all occurrences of the old string are replaced with the new string.
-// replaceAllAtPath returns an error if path is not a regular file or a symlink.
-func replaceAllAtPath(path string, old, new string) error {
+func rewriteAtPath(path string, baseOffset int64, newDigest string, rewriters []zbstore.Rewriter) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
@@ -1609,7 +1607,7 @@ func replaceAllAtPath(path string, old, new string) error {
 		if err != nil {
 			return err
 		}
-		writeError := replaceAllInFile(f, old, new)
+		writeError := zbstore.Rewrite(f, baseOffset, newDigest, rewriters)
 		closeError := f.Close()
 		if writeError != nil {
 			return fmt.Errorf("rewrite %s: %v", path, writeError)
@@ -1622,11 +1620,19 @@ func replaceAllAtPath(path string, old, new string) error {
 		if err != nil {
 			return err
 		}
-		if !strings.Contains(oldTarget, old) {
+		buf := bytewriter.New([]byte(oldTarget))
+		if err := zbstore.Rewrite(buf, baseOffset, newDigest, rewriters); err != nil {
+			return err
+		}
+		sb := new(strings.Builder)
+		sb.Grow(int(buf.Size()))
+		buf.Seek(0, io.SeekStart)
+		buf.WriteTo(sb)
+		newTarget := sb.String()
+		if newTarget == oldTarget {
 			// Nothing to do.
 			return nil
 		}
-		newTarget := strings.ReplaceAll(oldTarget, old, new)
 		if err := os.Remove(path); err != nil {
 			return fmt.Errorf("replace symlink %s: %v", path, err)
 		}
@@ -1635,32 +1641,6 @@ func replaceAllAtPath(path string, old, new string) error {
 		}
 	default:
 		return fmt.Errorf("rewrite %s: unknown file type", path)
-	}
-	return nil
-}
-
-// replaceAllInFile rewrites all occurrences of string old with string new in the file f.
-// If len(old) != len(new), replaceAllInFile returns an error.
-func replaceAllInFile(f io.ReadWriteSeeker, old, new string) error {
-	if old == new {
-		return nil
-	}
-	if len(old) != len(new) {
-		return fmt.Errorf("cannot replace %q with %q: sizes differ", old, new)
-	}
-
-	hmr := detect.NewHashModuloReader(old, new, f)
-	if _, err := io.Copy(io.Discard, hmr); err != nil {
-		return err
-	}
-	newBytes := []byte(new)
-	for _, off := range hmr.Offsets() {
-		if _, err := f.Seek(off, io.SeekStart); err != nil {
-			return err
-		}
-		if _, err := f.Write(newBytes); err != nil {
-			return err
-		}
 	}
 	return nil
 }
