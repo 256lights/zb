@@ -117,6 +117,10 @@ func (cmd *SegmentCommand) UnmarshalMachO(byteOrder binary.ByteOrder, data []byt
 				currSection.RelocationOffset = byteOrder.Uint32(data[start+48:])
 				currSection.RelocationCount = byteOrder.Uint32(data[start+52:])
 				currSection.Flags = byteOrder.Uint32(data[start+56:])
+
+				if _, ok := currSection.Alignment.Bytes(); !ok {
+					return fmt.Errorf("unmarshal %v: alignment of section[%d] too large", cmd.Command, n)
+				}
 			}
 		}
 	case LoadCmdSegment64:
@@ -157,6 +161,10 @@ func (cmd *SegmentCommand) UnmarshalMachO(byteOrder binary.ByteOrder, data []byt
 				currSection.RelocationOffset = byteOrder.Uint32(data[start+56:])
 				currSection.RelocationCount = byteOrder.Uint32(data[start+60:])
 				currSection.Flags = byteOrder.Uint32(data[start+64:])
+
+				if _, ok := currSection.Alignment.Bytes(); !ok {
+					return fmt.Errorf("unmarshal %v: alignment of section[%d] too large", cmd.Command, n)
+				}
 			}
 		}
 	default:

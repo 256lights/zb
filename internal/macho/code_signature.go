@@ -318,6 +318,9 @@ func (cd *CodeDirectory) UnmarshalBinary(data []byte) error {
 	}
 	cd.Platform = data[38]
 	cd.PageSize = Alignment(data[39])
+	if _, ok := cd.PageSize.Bytes(); !ok {
+		return fmt.Errorf("unmarshal mach-o code directory: page size (%v) too large", cd.PageSize)
+	}
 	if !isZero(data[40:44]) {
 		return fmt.Errorf("unmarshal mach-o code directory: reserved spare2 not zero")
 	}

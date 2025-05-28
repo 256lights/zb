@@ -81,5 +81,8 @@ func (ent *UniversalFileEntry) UnmarshalBinary(data []byte) error {
 	ent.Offset = binary.BigEndian.Uint32(data[8:])
 	ent.Size = binary.BigEndian.Uint32(data[12:])
 	ent.Alignment = Alignment(binary.BigEndian.Uint32(data[16:]))
+	if _, ok := ent.Alignment.Bytes(); !ok {
+		return fmt.Errorf("parse universal mach-o entry: alignment too large")
+	}
 	return nil
 }
