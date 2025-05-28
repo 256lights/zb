@@ -836,6 +836,9 @@ func createBuilderLog(dir string, buildID uuid.UUID, drvPath zbstore.Path) (*os.
 // appendToBuilderLog writes data to the end of the builder log file.
 func appendToBuilderLog(dir string, buildID uuid.UUID, drvPath zbstore.Path, data []byte) error {
 	path := builderLogPath(dir, buildID, drvPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+		return fmt.Errorf("create log for %s in build %s: %v", drvPath.Base(), buildID, err)
+	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
 		return err
