@@ -13,6 +13,7 @@ import (
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix/nar"
@@ -190,22 +191,14 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 		}
 
 		// Topologically sort new closure.
-		for ; sortEnd < len(result); sortEnd++ {
-			sorted := result[:sortEnd]
-			unsorted := result[sortEnd:]
-			i := slices.IndexFunc(unsorted, func(t *zbstore.ExportTrailer) bool {
-				for ref := range t.References.Values() {
-					if ref != t.StorePath && !hasPath(sorted, ref) {
-						return false
-					}
-				}
-				return true
-			})
-			if i == -1 {
-				return nil, fmt.Errorf("closure of %s missing referenced objects", path)
-			}
-			// Move object to front of unsorted slice.
-			unsorted[0], unsorted[i] = unsorted[i], unsorted[0]
+		err = sortByReferences(
+			result[sortEnd:],
+			func(t *zbstore.ExportTrailer) zbstore.Path { return t.StorePath },
+			func(t *zbstore.ExportTrailer) sets.Sorted[zbstore.Path] { return t.References },
+			false,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("closure of %s missing referenced objects", path)
 		}
 	}
 

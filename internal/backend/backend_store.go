@@ -380,6 +380,39 @@ func closurePaths(conn *sqlite.Conn, pe pathAndEquivalenceClass, yield func(path
 	return nil
 }
 
+// sortByReferences sorts the slice into dependency order.
+func sortByReferences[T any](slice []T, pathFunc func(T) zbstore.Path, refsFunc func(T) sets.Sorted[zbstore.Path], ignoreUnknown bool) error {
+	sortStatus := make(map[zbstore.Path]bool, len(slice))
+	for _, v := range slice {
+		sortStatus[pathFunc(v)] = false
+	}
+
+	for sortEnd := range slice {
+		unsorted := slice[sortEnd:]
+		i := slices.IndexFunc(unsorted, func(v T) bool {
+			p := pathFunc(v)
+			r := refsFunc(v)
+			for ref := range r.Values() {
+				if ref == p {
+					continue
+				}
+				if isSorted, known := sortStatus[ref]; !isSorted && (known || ignoreUnknown) {
+					return false
+				}
+			}
+			return true
+		})
+		if i == -1 {
+			return errors.New("impossible dependency sort")
+		}
+
+		// Move object to front of unsorted slice.
+		unsorted[0], unsorted[i] = unsorted[i], unsorted[0]
+		sortStatus[pathFunc(unsorted[0])] = true
+	}
+	return nil
+}
+
 // objectExists checks for the existence of a store object in the store database.
 func objectExists(conn *sqlite.Conn, path zbstore.Path) (bool, error) {
 	var exists bool

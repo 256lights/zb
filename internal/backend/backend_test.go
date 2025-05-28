@@ -196,9 +196,23 @@ func TestDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	const fakeDigest = "a"
+	storeObject4Content := string(storePath2) + "\n" + string(dir) + fakeDigest + "-self.txt\n"
+	storePath4, _, err := storetest.ExportSourceFile(exporter, []byte(storeObject4Content), storetest.SourceExportOptions{
+		Name:      "self.txt",
+		Directory: dir,
+		References: zbstore.References{
+			Self:   true,
+			Others: *sets.NewSorted(storePath2),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := exporter.Close(); err != nil {
 		t.Fatal(err)
 	}
+	allObjects := sets.New(storePath1, storePath2, storePath3, storePath4)
 
 	tests := []struct {
 		name      string
@@ -210,28 +224,39 @@ func TestDelete(t *testing.T) {
 		{
 			name:  "DeleteNothing",
 			paths: sets.New[zbstore.Path](),
-			want:  sets.New(storePath1, storePath2, storePath3),
+			want:  allObjects,
 		},
 		{
 			name:  "DeleteRecursiveNothing",
 			paths: sets.New[zbstore.Path](),
-			want:  sets.New(storePath1, storePath2, storePath3),
+			want:  allObjects,
 		},
 		{
 			name:  "DeleteNoReverseDeps",
 			paths: sets.New(storePath3),
-			want:  sets.New(storePath1, storePath2),
+			want:  sets.New(storePath1, storePath2, storePath4),
 		},
 		{
 			name:      "DeleteRecursiveNoReverseDeps",
 			recursive: true,
 			paths:     sets.New(storePath3),
-			want:      sets.New(storePath1, storePath2),
+			want:      sets.New(storePath1, storePath2, storePath4),
+		},
+		{
+			name:  "DeleteSelfDep",
+			paths: sets.New(storePath4),
+			want:  sets.New(storePath1, storePath2, storePath3),
+		},
+		{
+			name:      "DeleteRecursiveSelfDep",
+			recursive: true,
+			paths:     sets.New(storePath4),
+			want:      sets.New(storePath1, storePath2, storePath3),
 		},
 		{
 			name:  "DeleteWithReverseDeps",
 			paths: sets.New(storePath2),
-			want:  sets.New(storePath1, storePath2, storePath3),
+			want:  allObjects,
 			error: true,
 		},
 		{
@@ -243,7 +268,7 @@ func TestDelete(t *testing.T) {
 		{
 			name:  "DeleteWithChainOfReverseDeps",
 			paths: sets.New(storePath1),
-			want:  sets.New(storePath1, storePath2, storePath3),
+			want:  allObjects,
 			error: true,
 		},
 		{
@@ -324,6 +349,23 @@ func TestDelete(t *testing.T) {
 			}
 			if diff := cmp.Diff(test.want, got); diff != "" {
 				t.Errorf("files after delete (-want +got):\n%s", diff)
+			}
+
+			// Ensure that store has the expected object info.
+			for path := range allObjects.All() {
+				var resp zbstorerpc.InfoResponse
+				err := jsonrpc.Do(ctx, client, zbstorerpc.InfoMethod, &resp, &zbstorerpc.InfoRequest{
+					Path: path,
+				})
+				if err != nil {
+					t.Errorf("%s(%q): %v", zbstorerpc.InfoMethod, path, err)
+					continue
+				}
+				if resp.Info != nil && !test.want.Has(path) {
+					t.Errorf("store database still has information for %s", path)
+				} else if resp.Info == nil && test.want.Has(path) {
+					t.Errorf("store database no longer has information for %s", path)
+				}
 			}
 		})
 	}

@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"iter"
 	"maps"
 	"os"
 	"path/filepath"
@@ -658,7 +657,7 @@ func (s *Server) delete(ctx context.Context, paths sets.Set[zbstore.Path], recur
 		}
 	}
 
-	var allPaths iter.Seq[zbstore.Path]
+	var allPaths []zbstore.Path
 	var unlocks []func()
 	defer func() {
 		for _, u := range unlocks {
@@ -706,9 +705,6 @@ func (s *Server) delete(ctx context.Context, paths sets.Set[zbstore.Path], recur
 		reverseDeps := make(sets.Set[zbstore.Path])
 		err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "delete/reverse_deps.sql", &sqlitex.ExecOptions{
 			ResultFunc: func(stmt *sqlite.Stmt) error {
-				if !recursive {
-					return fmt.Errorf("store objects have references")
-				}
 				path, err := zbstore.ParsePath(stmt.GetText("path"))
 				if err != nil {
 					return err
@@ -723,6 +719,9 @@ func (s *Server) delete(ctx context.Context, paths sets.Set[zbstore.Path], recur
 
 		if reverseDeps.Len() > 0 {
 			log.Debugf(ctx, "Found more dependencies to delete: %v", reverseDeps)
+			if !recursive {
+				return fmt.Errorf("store objects have references")
+			}
 			for path := range paths.All() {
 				insertStmt.SetText(":path", string(path))
 				if _, err := insertStmt.Step(); err != nil {
@@ -733,22 +732,62 @@ func (s *Server) delete(ctx context.Context, paths sets.Set[zbstore.Path], recur
 				}
 			}
 		}
+		if err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "delete/drop_target_table.sql", nil); err != nil {
+			return err
+		}
 
-		allPaths = xiter.Chain(paths.All(), reverseDeps.All())
-		unlocks = make([]func(), 0, paths.Len()+reverseDeps.Len())
-		for path := range allPaths {
+		// Reverse topological sort.
+		allPaths = make([]zbstore.Path, 0, paths.Len()+reverseDeps.Len())
+		allPaths = slices.AppendSeq(allPaths, xiter.Chain(paths.All(), reverseDeps.All()))
+		references := make(map[zbstore.Path]sets.Sorted[zbstore.Path], len(allPaths))
+		err = sortByReferences(
+			allPaths,
+			func(p zbstore.Path) zbstore.Path { return p },
+			func(p zbstore.Path) sets.Sorted[zbstore.Path] { return references[p] },
+			true,
+		)
+		if err != nil {
+			return err
+		}
+		slices.Reverse(allPaths)
+
+		// Delete the files in reverse dependency order.
+		deleteStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "delete/delete.sql")
+		if err != nil {
+			return err
+		}
+		defer deleteStmt.Finalize()
+		deleteSelfRefStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "delete/delete_self_ref.sql")
+		if err != nil {
+			return err
+		}
+		defer deleteSelfRefStmt.Finalize()
+		for _, path := range allPaths {
+			deleteSelfRefStmt.SetText(":path", string(path))
+			if _, err := deleteSelfRefStmt.Step(); err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			}
+			if err := deleteSelfRefStmt.Reset(); err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			}
+
+			deleteStmt.SetText(":path", string(path))
+			if _, err := deleteStmt.Step(); err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			}
+			if err := deleteStmt.Reset(); err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			}
+		}
+
+		// Acquire write locks on the paths we're about to delete before committing the transaction.
+		unlocks = make([]func(), 0, len(allPaths))
+		for _, path := range allPaths {
 			unlock, err := s.writing.lock(ctx, path)
 			if err != nil {
 				return err
 			}
 			unlocks = append(unlocks, unlock)
-		}
-
-		if err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "delete/delete.sql", nil); err != nil {
-			return err
-		}
-		if err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "delete/drop_target_table.sql", nil); err != nil {
-			return err
 		}
 
 		// We end the transaction before removing the files
@@ -762,7 +801,8 @@ func (s *Server) delete(ctx context.Context, paths sets.Set[zbstore.Path], recur
 	}
 
 	ok := true
-	for path := range allPaths {
+	for _, path := range allPaths {
+		log.Debugf(ctx, "Deleting store object %s...", path)
 		if err := os.RemoveAll(s.realPath(path)); err != nil {
 			log.Errorf(ctx, "Failed to delete %s: %v", path, err)
 			ok = false

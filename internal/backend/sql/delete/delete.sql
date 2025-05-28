@@ -1,2 +1,6 @@
 delete from "objects"
-where "id" in "paths_to_delete";
+where "id" = (
+  select "paths"."id"
+  from "paths"
+  where "paths"."path" = :path
+);
