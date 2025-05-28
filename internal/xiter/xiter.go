@@ -9,6 +9,19 @@ import (
 	"iter"
 )
 
+// Chain returns an [iter.Seq] that is the logical concatenation of the provided iterators.
+func Chain[T any](iterators ...iter.Seq[T]) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for _, it := range iterators {
+			for v := range it {
+				if !yield(v) {
+					return
+				}
+			}
+		}
+	}
+}
+
 // Chain2 returns an [iter.Seq2] that is the logical concatenation of the provided iterators.
 func Chain2[K, V any](iterators ...iter.Seq2[K, V]) iter.Seq2[K, V] {
 	return func(yield func(K, V) bool) {

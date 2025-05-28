@@ -22,6 +22,7 @@ import (
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 )
@@ -52,6 +53,7 @@ func newStoreObjectCommand(g *globalConfig) *cobra.Command {
 		newStoreObjectInfoCommand(g),
 		newStoreObjectImportCommand(g),
 		newStoreObjectExportCommand(g),
+		newStoreObjectDeleteCommand(g),
 		newStoreObjectRegisterCommand(g),
 	)
 	return c
@@ -454,6 +456,65 @@ func (rec *exportPathRecorder) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	if rec.wrapped != nil {
 		rec.wrapped.ReceiveNAR(trailer)
 	}
+}
+
+type storeObjectDeleteOptions struct {
+	paths     []zbstore.Path
+	recursive bool
+	dbPath    string
+}
+
+func newStoreObjectDeleteCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:                   "delete [options] PATH [...]",
+		Short:                 "delete one or more store objects",
+		Aliases:               []string{"rm"},
+		DisableFlagsInUseLine: true,
+		Args:                  cobra.MinimumNArgs(1),
+		SilenceErrors:         true,
+		SilenceUsage:          true,
+		Hidden:                true,
+	}
+	opts := &storeObjectDeleteOptions{
+		dbPath: filepath.Join(defaultVarDir(), "db.sqlite"),
+	}
+	c.Flags().StringVar(&opts.dbPath, "db", opts.dbPath, "`path` to store database file")
+	c.Flags().BoolVarP(&opts.recursive, "recursive", "r", false, "delete objects that depend on the paths")
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		opts.paths = make([]zbstore.Path, 0, len(args))
+		for _, arg := range args {
+			arg, err := filepath.Abs(arg)
+			if err != nil {
+				return err
+			}
+			path, err := zbstore.ParsePath(arg)
+			if err != nil {
+				return err
+			}
+			opts.paths = append(opts.paths, path)
+		}
+		return runStoreObjectDelete(cmd.Context(), g, opts)
+	}
+	return c
+}
+
+func runStoreObjectDelete(ctx context.Context, g *globalConfig, opts *storeObjectDeleteOptions) error {
+	backendServer := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
+		DatabasePoolSize:  1,
+		DisableSandbox:    true,
+		BuildLogRetention: -1,
+	})
+	defer backendServer.Close()
+
+	f := backendServer.Delete
+	if opts.recursive {
+		f = backendServer.DeleteIncludingReferences
+	}
+	if err := f(ctx, sets.New(opts.paths...)); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type storeObjectRegisterOptions struct {

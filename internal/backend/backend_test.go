@@ -167,6 +167,168 @@ func TestImport(t *testing.T) {
 	})
 }
 
+func TestDelete(t *testing.T) {
+	dir := zbstore.DefaultDirectory()
+	const fileContent = "Hello, World!\n"
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExporter(exportBuffer)
+	storePath1, _, err := storetest.ExportFlatFile(exporter, dir, "hello.txt", []byte(fileContent), nix.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storePath2, _, err := storetest.ExportSourceFile(exporter, []byte(storePath1), storetest.SourceExportOptions{
+		Name:      "ref.txt",
+		Directory: dir,
+		References: zbstore.References{
+			Others: *sets.NewSorted(storePath1),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	storePath3, _, err := storetest.ExportSourceFile(exporter, []byte(storePath2), storetest.SourceExportOptions{
+		Name:      "chain.txt",
+		Directory: dir,
+		References: zbstore.References{
+			Others: *sets.NewSorted(storePath2),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		paths     sets.Set[zbstore.Path]
+		recursive bool
+		want      sets.Set[zbstore.Path]
+		error     bool
+	}{
+		{
+			name:  "DeleteNothing",
+			paths: sets.New[zbstore.Path](),
+			want:  sets.New(storePath1, storePath2, storePath3),
+		},
+		{
+			name:  "DeleteRecursiveNothing",
+			paths: sets.New[zbstore.Path](),
+			want:  sets.New(storePath1, storePath2, storePath3),
+		},
+		{
+			name:  "DeleteNoReverseDeps",
+			paths: sets.New(storePath3),
+			want:  sets.New(storePath1, storePath2),
+		},
+		{
+			name:      "DeleteRecursiveNoReverseDeps",
+			recursive: true,
+			paths:     sets.New(storePath3),
+			want:      sets.New(storePath1, storePath2),
+		},
+		{
+			name:  "DeleteWithReverseDeps",
+			paths: sets.New(storePath2),
+			want:  sets.New(storePath1, storePath2, storePath3),
+			error: true,
+		},
+		{
+			name:      "DeleteRecursiveWithReverseDeps",
+			paths:     sets.New(storePath2),
+			recursive: true,
+			want:      sets.New(storePath1),
+		},
+		{
+			name:  "DeleteWithChainOfReverseDeps",
+			paths: sets.New(storePath1),
+			want:  sets.New(storePath1, storePath2, storePath3),
+			error: true,
+		},
+		{
+			name:      "DeleteRecursiveWithChainOfReverseDeps",
+			paths:     sets.New(storePath1),
+			recursive: true,
+			want:      sets.New[zbstore.Path](),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := testcontext.New(t)
+			defer cancel()
+
+			realStoreDir := t.TempDir()
+			server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+				TempDir: t.TempDir(),
+				Options: Options{
+					RealStoreDirectory: realStoreDir,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			codec, releaseCodec, err := storeCodec(ctx, client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = codec.Export(nil, bytes.NewReader(exportBuffer.Bytes()))
+			releaseCodec()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Call exists method.
+			// Exports don't send a response, so this introduces a sync point.
+			var exists bool
+			err = jsonrpc.Do(ctx, client, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
+				Path: string(storePath2),
+			})
+			if err != nil {
+				t.Error(err)
+			}
+			if !exists {
+				t.Errorf("store reports exists=false for %s", storePath2)
+			}
+
+			// Perform delete.
+			f := server.Delete
+			if test.recursive {
+				f = server.DeleteIncludingReferences
+			}
+			if err := f(ctx, test.paths); err != nil {
+				t.Log("delete error:", err)
+				if !test.error {
+					t.Fail()
+				}
+			} else if test.error {
+				t.Error("delete did not return an error")
+			}
+
+			// Compare files in store with what we expect.
+			storeListing, err := os.ReadDir(realStoreDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := make(sets.Set[zbstore.Path])
+			for _, ent := range storeListing {
+				name := ent.Name()
+				path, err := dir.Object(name)
+				if err != nil {
+					t.Errorf("Unexpected file %s in store (%v)", name, err)
+				} else {
+					got.Add(path)
+				}
+			}
+			if diff := cmp.Diff(test.want, got); diff != "" {
+				t.Errorf("files after delete (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // wantObjectInfo builds the expected [*zbstore.ObjectInfo]
 // for the given data, content address, and references.
 // It uses got.NARHash to determine the hashing algorithm to check against.

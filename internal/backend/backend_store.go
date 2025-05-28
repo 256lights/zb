@@ -920,6 +920,7 @@ func prepareConn(conn *sqlite.Conn) error {
 
 //go:embed sql/*.sql
 //go:embed sql/build/*.sql
+//go:embed sql/delete/*.sql
 //go:embed sql/schema/*.sql
 var rawSQLFiles embed.FS
 

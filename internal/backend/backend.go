@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"maps"
 	"os"
 	"path/filepath"
@@ -20,7 +21,9 @@ import (
 
 	"github.com/google/uuid"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/sqlite"
@@ -619,6 +622,156 @@ func (s *Server) RecentBuildIDs(ctx context.Context, limit int) ([]string, error
 		return nil, fmt.Errorf("list recent builds: %v", err)
 	}
 	return result, nil
+}
+
+// Delete deletes the set of store paths.
+// Delete will return an error if any of the named paths do not exist
+// or there are store objects beyond those named that refer to the named store objects.
+func (s *Server) Delete(ctx context.Context, paths sets.Set[zbstore.Path]) error {
+	return s.delete(ctx, paths, false)
+}
+
+// DeleteIncludingReferences is the same as [*Server.Delete],
+// but if the store objects have other store objects referring to them,
+// then they will be deleted as well.
+func (s *Server) DeleteIncludingReferences(ctx context.Context, paths sets.Set[zbstore.Path]) error {
+	return s.delete(ctx, paths, true)
+}
+
+func (s *Server) delete(ctx context.Context, paths sets.Set[zbstore.Path], recursive bool) (err error) {
+	if paths.Len() == 0 {
+		return nil
+	}
+	defer func() {
+		if err != nil {
+			if path, singleError := xiter.Single(paths.All()); singleError == nil {
+				err = fmt.Errorf("delete %s: %v", path, err)
+			} else {
+				err = fmt.Errorf("delete store paths: %v", err)
+			}
+		}
+	}()
+
+	for path := range paths.All() {
+		if path.Dir() != s.dir {
+			return fmt.Errorf("%s not in %s", path, s.dir)
+		}
+	}
+
+	var allPaths iter.Seq[zbstore.Path]
+	var unlocks []func()
+	defer func() {
+		for _, u := range unlocks {
+			u()
+		}
+		unlocks = nil
+	}()
+	err = func() (err error) {
+		conn, err := s.db.Get(ctx)
+		if err != nil {
+			return err
+		}
+		defer s.db.Put(conn)
+
+		endFn, err := sqlitex.ImmediateTransaction(conn)
+		if err != nil {
+			return err
+		}
+		defer endFn(&err)
+		if err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "delete/create_target_table.sql", nil); err != nil {
+			return err
+		}
+
+		insertStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "delete/insert_target.sql")
+		if err != nil {
+			return err
+		}
+		defer insertStmt.Finalize()
+		for path := range paths.All() {
+			if exists, err := objectExists(conn, path); err != nil {
+				return err
+			} else if !exists {
+				return fmt.Errorf("%s: %w", path, errObjectNotExist)
+			}
+
+			insertStmt.SetText(":path", string(path))
+			if _, err := insertStmt.Step(); err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			}
+			if err := insertStmt.Reset(); err != nil {
+				return fmt.Errorf("%s: %v", path, err)
+			}
+		}
+
+		reverseDeps := make(sets.Set[zbstore.Path])
+		err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "delete/reverse_deps.sql", &sqlitex.ExecOptions{
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				if !recursive {
+					return fmt.Errorf("store objects have references")
+				}
+				path, err := zbstore.ParsePath(stmt.GetText("path"))
+				if err != nil {
+					return err
+				}
+				reverseDeps.Add(path)
+				return nil
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+		if reverseDeps.Len() > 0 {
+			log.Debugf(ctx, "Found more dependencies to delete: %v", reverseDeps)
+			for path := range paths.All() {
+				insertStmt.SetText(":path", string(path))
+				if _, err := insertStmt.Step(); err != nil {
+					return fmt.Errorf("%s: %v", path, err)
+				}
+				if err := insertStmt.Reset(); err != nil {
+					return fmt.Errorf("%s: %v", path, err)
+				}
+			}
+		}
+
+		allPaths = xiter.Chain(paths.All(), reverseDeps.All())
+		unlocks = make([]func(), 0, paths.Len()+reverseDeps.Len())
+		for path := range allPaths {
+			unlock, err := s.writing.lock(ctx, path)
+			if err != nil {
+				return err
+			}
+			unlocks = append(unlocks, unlock)
+		}
+
+		if err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "delete/delete.sql", nil); err != nil {
+			return err
+		}
+		if err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "delete/drop_target_table.sql", nil); err != nil {
+			return err
+		}
+
+		// We end the transaction before removing the files
+		// to avoid blocking other work
+		// but also because we don't want a partial failure in removing files
+		// to abort the transaction.
+		return nil
+	}()
+	if err != nil {
+		return err
+	}
+
+	ok := true
+	for path := range allPaths {
+		if err := os.RemoveAll(s.realPath(path)); err != nil {
+			log.Errorf(ctx, "Failed to delete %s: %v", path, err)
+			ok = false
+		}
+	}
+	if !ok {
+		return fmt.Errorf("one or more store paths could not be deleted")
+	}
+	return nil
 }
 
 func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
