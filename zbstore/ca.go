@@ -210,6 +210,8 @@ func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (ca nix.Cont
 // The new rewrites are appended to the rewrites slice
 // and filterFileForContentAddress returns the extended slice.
 func filterFileForContentAddress(dst io.Writer, rewrites []Rewriter, baseOffset int64, src io.Reader, digest string) ([]Rewriter, error) {
+	ctx := context.TODO()
+
 	buf := make([]byte, 1024)
 	n, err := io.ReadAtLeast(src, buf, macho.MagicNumberSize)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
@@ -234,7 +236,7 @@ func filterFileForContentAddress(dst io.Writer, rewrites []Rewriter, baseOffset 
 			// toRewrite errors are bounds checks, so if this bombs, then abort loudly.
 			return rewrites, fmt.Errorf("parse mach-o binary: internal error: %v", err)
 		}
-
+		log.Debugf(ctx, "Mach-O signature rewrite at NAR bytes [%#x, %#x)", rw.HashOffset, rw.HashOffset+int64(rw.HashSize()))
 		offsets := hmr.Offsets()
 		rewrites = slices.Grow(rewrites, len(offsets)+1)
 		i := 0
@@ -274,11 +276,14 @@ type referenceReader interface {
 }
 
 func zeroOutUniversalMachOCodeSignatures(dst io.Writer, locations []Rewriter, baseOffset int64, src referenceReader) ([]Rewriter, error) {
+	ctx := context.TODO()
+
 	// Read index.
 	wc := new(xio.WriteCounter)
 	sink := io.MultiWriter(wc, dst)
 	entries, err := macho.ReadUniversalHeader(io.TeeReader(src, sink))
 	if err != nil {
+		log.Debugf(ctx, "Potential universal Mach-O failed to parse: %v", err)
 		_, err := io.Copy(sink, src)
 		return locations, err
 	}
@@ -321,6 +326,7 @@ func zeroOutUniversalMachOCodeSignatures(dst io.Writer, locations []Rewriter, ba
 				// toRewrite errors are bounds checks, so if this bombs, then abort loudly.
 				return locations, fmt.Errorf("parse mach-o binary: internal error: %v", err)
 			}
+			log.Debugf(ctx, "Mach-O signature rewrite for %v at NAR bytes [%#x, %#x)", entries[0].CPU, rw.HashOffset, rw.HashOffset+int64(rw.HashSize()))
 			locations = append(locations, rw)
 		}
 		entries = entries[1:]
@@ -356,21 +362,29 @@ func (l *referenceLimitedReader) Read(p []byte) (n int, err error) {
 // and return a non-nil [*rewritableCodeDirectory].
 // zeroOutMachOCodeSignature will only return an error if there is an I/O error.
 func zeroOutMachOCodeSignature(dst io.Writer, src referenceReader) (codeLimit int64, cd *rewritableCodeDirectory, err error) {
+	ctx := context.TODO()
+
 	initialOffsetsLength := len(src.Offsets())
 	counter := new(xio.WriteCounter)
 	tr := io.TeeReader(src, io.MultiWriter(counter, dst))
 	header, err := macho.ReadFileHeader(tr)
 	if err != nil {
+		log.Debugf(ctx, "Potential Mach-O file failed to parse: %v", err)
 		_, err := io.Copy(dst, src)
 		return 0, nil, err
 	}
 	textSegment, signatureCommand, err := scanMachOCommands(header.ByteOrder, header.NewCommandReader(tr))
-	if err != nil || int64(signatureCommand.DataOffset) < int64(*counter) {
+	if err == nil && int64(signatureCommand.DataOffset) < int64(*counter) {
+		err = fmt.Errorf("signature offset (%d) is before segments (%d)", signatureCommand.DataOffset, int64(*counter))
+	}
+	if err != nil {
+		log.Debugf(ctx, "Potential Mach-O file failed to parse: %v", err)
 		_, err := io.Copy(dst, src)
 		return 0, nil, err
 	}
 
 	// Copy all data until the beginning of the signature region.
+	// We do this to detect self-references.
 	if _, err := io.CopyN(dst, src, int64(signatureCommand.DataOffset)-int64(*counter)); err != nil {
 		return 0, nil, err
 	}
@@ -378,6 +392,7 @@ func zeroOutMachOCodeSignature(dst io.Writer, src referenceReader) (codeLimit in
 	// If we don't have any self-references before the signature,
 	// then we don't have to rewrite anything.
 	if len(src.Offsets()) <= initialOffsetsLength {
+		log.Debugf(ctx, "Mach-O file did not contain self-references. No rewriting.")
 		_, err := io.Copy(dst, src)
 		return 0, nil, err
 	}
@@ -388,7 +403,11 @@ func zeroOutMachOCodeSignature(dst io.Writer, src referenceReader) (codeLimit in
 	if len(signatureBytes) >= 4 {
 		magic = macho.CodeSignatureMagic(binary.BigEndian.Uint32(signatureBytes))
 	}
-	if blobReadError != nil || magic != macho.CodeSignatureMagicEmbeddedSignature {
+	if blobReadError == nil && magic != macho.CodeSignatureMagicEmbeddedSignature {
+		blobReadError = fmt.Errorf("super blob type = %v", magic)
+	}
+	if blobReadError != nil {
+		log.Debugf(ctx, "Potential Mach-O file failed to parse: %v", blobReadError)
 		if _, err := dst.Write(signatureBytes); err != nil {
 			return 0, nil, err
 		}
@@ -401,16 +420,12 @@ func zeroOutMachOCodeSignature(dst io.Writer, src referenceReader) (codeLimit in
 	// Parse superblob and check whether it matches the expected format.
 	// TODO(maybe): Validate __TEXT segment fields.
 	cd, err = findRewritableCodeDirectory(signatureBytes)
-	validSignature := false
 	_ = textSegment
+	if err == nil && cd.CodeLimit != uint64(signatureCommand.DataOffset) {
+		err = fmt.Errorf("codeLimit (%#x) != code signature offset (%#x)", cd.CodeLimit, signatureCommand.DataOffset)
+	}
 	if err != nil {
 		log.Debugf(context.TODO(), "Process Mach-O code signature: %v", err)
-	} else if cd.CodeLimit != uint64(signatureCommand.DataOffset) {
-		log.Debugf(context.TODO(), "Process Mach-O code signature: codeLimit (%#x) != code signature offset (%#x)", cd.CodeLimit, signatureCommand.DataOffset)
-	} else {
-		validSignature = true
-	}
-	if !validSignature {
 		if _, err := dst.Write(signatureBytes); err != nil {
 			return 0, nil, err
 		}
@@ -421,6 +436,7 @@ func zeroOutMachOCodeSignature(dst io.Writer, src referenceReader) (codeLimit in
 	}
 
 	// Perform zeroing.
+	log.Debugf(ctx, "Found Mach-O %v executable with self-references and code signature", header.CPUType)
 	clear(signatureBytes[cd.hashSlotsStart:cd.hashSlotsEnd])
 	if _, err := dst.Write(signatureBytes); err != nil {
 		return int64(signatureCommand.DataOffset), cd, err
