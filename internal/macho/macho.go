@@ -29,6 +29,8 @@ const (
 type FileHeader struct {
 	ByteOrder    binary.ByteOrder
 	AddressWidth int
+	CPUType      CPUType
+	CPUSubtype   uint32
 	Type         Type
 
 	LoadCommandCount      uint32
@@ -55,6 +57,8 @@ func ReadFileHeader(r io.Reader) (*FileHeader, error) {
 		return nil, err
 	}
 	result := &FileHeader{
+		CPUType:               hdr.cpu,
+		CPUSubtype:            hdr.cpuSubtype,
 		Type:                  hdr.fileType,
 		LoadCommandCount:      hdr.loadCommandCount,
 		LoadCommandRegionSize: hdr.loadCommandSize,
@@ -102,7 +106,7 @@ const (
 
 type imageHeader struct {
 	magic            magicNumber
-	cpu              uint32
+	cpu              CPUType
 	cpuSubtype       uint32
 	fileType         Type
 	loadCommandCount uint32
@@ -131,7 +135,7 @@ func (hdr *imageHeader) UnmarshalBinary(data []byte) error {
 	} else if len(data) > want {
 		return fmt.Errorf("parse mach-o header: trailing data")
 	}
-	hdr.cpu = byteOrder.Uint32(data[4:])
+	hdr.cpu = CPUType(byteOrder.Uint32(data[4:]))
 	hdr.cpuSubtype = byteOrder.Uint32(data[8:])
 	hdr.fileType = Type(byteOrder.Uint32(data[12:]))
 	hdr.loadCommandCount = byteOrder.Uint32(data[16:])

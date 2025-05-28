@@ -17,6 +17,7 @@ import (
 var aarch64FileHeader = FileHeader{
 	ByteOrder:    binary.LittleEndian,
 	AddressWidth: 64,
+	CPUType:      CPUTypeARM64,
 	Type:         TypeExec,
 
 	LoadCommandCount:      15,
@@ -26,6 +27,8 @@ var aarch64FileHeader = FileHeader{
 var x86_64FileHeader = FileHeader{
 	ByteOrder:    binary.LittleEndian,
 	AddressWidth: 64,
+	CPUType:      CPUTypeX86_64,
+	CPUSubtype:   0x00000003,
 	Type:         TypeExec,
 
 	LoadCommandCount:      14,

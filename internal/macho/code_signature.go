@@ -30,7 +30,8 @@ const (
 	CodeSignatureMagicBlobWrapper          CodeSignatureMagic = 0xfade0b01
 )
 
-const blobMinSize = 8
+// CodeSignatureBlobMinSize is the minimum size in bytes of a serialized [CodeSignatureBlob].
+const CodeSignatureBlobMinSize = 8
 
 // A CodeSignatureBlob represents a single record in a Mach-O code signature.
 type CodeSignatureBlob struct {
@@ -41,11 +42,11 @@ type CodeSignatureBlob struct {
 // AppendBinary marshals blob as a Mach-O code signature blob
 // and appends the result to dst.
 func (blob CodeSignatureBlob) AppendBinary(dst []byte) ([]byte, error) {
-	if len(blob.Data) > math.MaxUint32-blobMinSize {
+	if len(blob.Data) > math.MaxUint32-CodeSignatureBlobMinSize {
 		return dst, fmt.Errorf("marshal mach-o code signature blob: data too large (%d bytes)", len(blob.Data))
 	}
 	dst = binary.BigEndian.AppendUint32(dst, uint32(blob.Magic))
-	dst = binary.BigEndian.AppendUint32(dst, uint32(len(blob.Data)+blobMinSize))
+	dst = binary.BigEndian.AppendUint32(dst, uint32(len(blob.Data)+CodeSignatureBlobMinSize))
 	dst = append(dst, blob.Data...)
 	return dst, nil
 }
@@ -71,7 +72,7 @@ func (blob *CodeSignatureBlob) UnmarshalBinary(data []byte) error {
 }
 
 func parseBlob(data []byte) (CodeSignatureBlob, error) {
-	if len(data) < blobMinSize {
+	if len(data) < CodeSignatureBlobMinSize {
 		return CodeSignatureBlob{}, errors.New("short buffer")
 	}
 	size := binary.BigEndian.Uint32(data[4:])
@@ -80,7 +81,7 @@ func parseBlob(data []byte) (CodeSignatureBlob, error) {
 	}
 	return CodeSignatureBlob{
 		Magic: CodeSignatureMagic(binary.BigEndian.Uint32(data)),
-		Data:  data[blobMinSize:],
+		Data:  data[CodeSignatureBlobMinSize:],
 	}, nil
 }
 
@@ -120,12 +121,12 @@ func (blob *SuperBlob) UnmarshalBinary(data []byte) error {
 	// and fill the region from the end of the blob indices to the end of the data.
 	blobRegions := make([][2]int, 0, count)
 	for _, index := range blobIndexSeq(data[indexStart:indexEnd]) {
-		if int64(index.offset) < indexEnd || int64(index.offset)+blobMinSize > int64(len(data)) {
+		if int64(index.offset) < indexEnd || int64(index.offset)+CodeSignatureBlobMinSize > int64(len(data)) {
 			return fmt.Errorf("unmarshal mach-o code signature super blob: blob offset %d out of bounds", index.offset)
 		}
 		size := binary.BigEndian.Uint32(data[index.offset+4:])
 		endOffset := int64(index.offset) + int64(size)
-		if size < blobMinSize || endOffset > int64(len(data)) {
+		if size < CodeSignatureBlobMinSize || endOffset > int64(len(data)) {
 			return fmt.Errorf("unmarshal mach-o code signature super blob: blob at offset %d has invalid size", index.offset)
 		}
 
@@ -288,6 +289,16 @@ func (cd *CodeDirectory) HashSlots() iter.Seq2[int, []byte] {
 			}
 		}
 	}
+}
+
+// HashSlotCount returns the number of hash slots present in cd.HashData
+// based on cd.HashType.
+func (cd *CodeDirectory) HashSlotCount() int {
+	size, ok := cd.HashType.Size()
+	if !ok {
+		return 0
+	}
+	return len(cd.HashData) / size
 }
 
 // UnmarshalBinary parses a Mach-O code signature blob as a [CodeDirectory].
