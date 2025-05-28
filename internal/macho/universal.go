@@ -58,7 +58,7 @@ const universalFileEntrySize = 20
 
 // UniversalFileEntry is a single record from a Mach-O multi-architecture file.
 type UniversalFileEntry struct {
-	CPU        uint32
+	CPU        CPUType
 	CPUSubtype uint32
 	// Offset is the offset in bytes from the beginning of the Mach-O file
 	// that this image starts at.
@@ -76,7 +76,7 @@ func (ent *UniversalFileEntry) UnmarshalBinary(data []byte) error {
 	if len(data) > universalFileEntrySize {
 		return fmt.Errorf("parse universal mach-o entry: trailing data")
 	}
-	ent.CPU = binary.BigEndian.Uint32(data)
+	ent.CPU = CPUType(binary.BigEndian.Uint32(data))
 	ent.CPUSubtype = binary.BigEndian.Uint32(data[4:])
 	ent.Offset = binary.BigEndian.Uint32(data[8:])
 	ent.Size = binary.BigEndian.Uint32(data[12:])
