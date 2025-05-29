@@ -27,7 +27,6 @@ import (
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
-	"zombiezen.com/go/nix"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 	"zombiezen.com/go/sqlite/sqlitex"
@@ -422,7 +421,7 @@ func prepareCache(conn *sqlite.Conn) error {
 			if args[0].Type() == sqlite.TypeNull {
 				return sqlite.Value{}, nil
 			}
-			p, err := nix.ParseStorePath(args[0].Text())
+			p, err := zbstore.ParsePath(args[0].Text())
 			if err != nil {
 				// A non-store path has no name. Return null.
 				return sqlite.Value{}, nil
