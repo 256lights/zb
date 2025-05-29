@@ -9,6 +9,7 @@
 
   outputs =
     {
+      self,
       nixpkgs,
       flake-utils,
       ...
@@ -41,6 +42,21 @@
 
           hardeningDisable = [ "fortify" ];
         };
+
+        packages.default = pkgs.stdenv.mkDerivation {
+          name = "zb";
+          version = "0.1.0";
+
+          src = pkgs.fetchurl {
+            url = "https://github.com/256lights/zb/releases/download/v0.1.0-rc1/zb-v0.1.0-rc1-x86_64-unknown-linux.tar.bz2";
+            sha256 = "sha256-u+H2+LWS2Rm82LT+Gk/PhhKrOw4kEy7t3tqrSttpQR8=";
+          };
+
+          installPhase = ''
+            mkdir -p $out
+            tar -xf $src -C $out --strip-components=1
+          '';
+        };
       }
     )
     // {
@@ -51,6 +67,9 @@
           config,
           ...
         }:
+        let
+          zb = self.packages.${pkgs.system}.default;
+        in
         {
           options.zb = {
             buildGroup = lib.mkOption {
@@ -92,12 +111,12 @@
                   group = config.zb.buildGroup;
                   isSystemUser = true;
                 };
-              }) (pkgs.lib.range 1 config.zb.userCount)
+              }) (lib.range 1 config.zb.userCount)
             );
 
             users.groups.${config.zb.buildGroup} = {
               gid = config.zb.buildGid;
-              members = map (i: "${config.zb.buildGroup}${toString i}") (pkgs.lib.range 1 config.zb.userCount);
+              members = map (i: "${config.zb.buildGroup}${toString i}") (lib.range 1 config.zb.userCount);
             };
 
             systemd.sockets.zb-serve = {
@@ -126,6 +145,7 @@
                 ZB_SERVE_FLAGS = "";
               };
               serviceConfig = {
+                ExecStartPre = "${zb}/install";
                 ExecStart = "/opt/zb/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --build-users-group=${config.zb.buildGroup} $ZB_SERVE_FLAGS";
                 KillMode = "mixed";
               };

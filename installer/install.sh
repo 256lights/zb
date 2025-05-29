@@ -57,6 +57,7 @@ if [[ "$isMacOS" -eq 1 ]]; then
 fi
 first_build_uid=256001
 build_user_count=32
+force_install=0
 usage() {
   log "usage: $0 [options]"
   log
@@ -71,6 +72,7 @@ usage() {
   log "    --launchd                   install launchd daemon (default to yes on macOS)"
   log "    --no-launchd                do not install launchd daemon"
   log "    --installer-dir DIR         install resources from the given directory (default $installer_dir)"
+  log "    --force                     rerun installer even if zb version is already installed"
 }
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -117,6 +119,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-launchd)
       install_launchdaemon=0
+      shift
+      ;;
+    --force)
+      force_install=1
       shift
       ;;
     --)
@@ -185,6 +191,11 @@ else
     log "Ctrl-C to stop the install process if this is not what you meant to do."
     sleep 5
   fi
+fi
+
+if [[ -d "$ZB_STORE_DIR/$zb_object" && "$force_install" -eq 0 ]]; then
+	log 'zb version already exists.'
+	exit
 fi
 
 log "Creating ${ZB_STORE_DIR}..."
