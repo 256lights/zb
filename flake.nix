@@ -9,7 +9,6 @@
 
   outputs =
     {
-      self,
       nixpkgs,
       flake-utils,
       ...
@@ -46,64 +45,90 @@
     )
     // {
       nixosModules.default =
-        { pkgs, ... }:
-        let
-          zb = self.packages.${pkgs.system}.default;
-
-          buildGroup = "zbld";
-          buildGid = 256000;
-          firstBuildUid = 256001;
-          userCount = 32;
-          userNames = map (i: "${buildGroup}${toString i}") (pkgs.lib.range 1 userCount);
-          userConfigs = builtins.listToAttrs (
-            map (i: {
-              name = "${buildGroup}${toString i}";
-              value = {
-                description = "zb build user ${toString i}";
-                uid = firstBuildUid + (i - 1);
-                group = buildGroup;
-                isSystemUser = true;
-              };
-            }) (pkgs.lib.range 1 userCount)
-          );
-        in
         {
-          environment.variables.PATH = "/opt/zb/bin";
-
-          users.users = userConfigs;
-          users.groups.${buildGroup} = {
-            gid = buildGid;
-            members = userNames;
+          pkgs,
+          lib,
+          config,
+          ...
+        }:
+        {
+          options.zb = {
+            buildGroup = lib.mkOption {
+              type = lib.types.str;
+              default = "zbld";
+              description = "Group Name for the build users";
+            };
+            buildGid = lib.mkOption {
+              type = lib.types.int;
+              default = 256000;
+              description = "Group ID for the build users";
+            };
+            firstBuildUid = lib.mkOption {
+              type = lib.types.int;
+              default = 256001;
+              description = "First user ID for the build users, will increment for each";
+            };
+            userCount = lib.mkOption {
+              type = lib.types.int;
+              default = 32;
+              description = "Number of build users to create";
+            };
+            binPath = lib.mkOption {
+              type = lib.types.str;
+              default = "/opt/zb/bin";
+              description = "Path to install the zb binary";
+            };
           };
 
-          systemd.sockets.zb-serve = {
-            description = "zb Store Server Socket";
-            before = [ "multi-user.target" ];
-            unitConfig = {
-              RequiresMountsFor = [ "/opt/zb" ];
-              ConditionPathIsReadWrite = "/opt/zb/var/zb";
+          config = {
+            environment.variables.PATH = config.zb.binPath;
+
+            users.users = builtins.listToAttrs (
+              map (i: {
+                name = "${config.zb.buildGroup}${toString i}";
+                value = {
+                  description = "zb build user ${toString i}";
+                  uid = config.zb.firstBuildUid + (i - 1);
+                  group = config.zb.buildGroup;
+                  isSystemUser = true;
+                };
+              }) (pkgs.lib.range 1 config.zb.userCount)
+            );
+
+            users.groups.${config.zb.buildGroup} = {
+              gid = config.zb.buildGid;
+              members = map (i: "${config.zb.buildGroup}${toString i}") (pkgs.lib.range 1 config.zb.userCount);
             };
-            listenStreams = [ "/opt/zb/var/zb/server.sock" ];
-            wantedBy = [ "sockets.target" ];
-          };
-          systemd.services.zb-serve = {
-            description = "zb Store Server";
-            requires = [ "zb-serve.socket" ];
-            unitConfig = {
-              RequiresMountsFor = [
-                "/opt/zb/store"
-                "/opt/zb/var"
-                "/opt/zb/var/zb"
-              ];
-              ConditionPathIsReadWrite = "/opt/zb/var/zb";
+
+            systemd.sockets.zb-serve = {
+              description = "zb Store Server Socket";
+              before = [ "multi-user.target" ];
+              unitConfig = {
+                RequiresMountsFor = [ "/opt/zb" ];
+                ConditionPathIsReadWrite = "/opt/zb/var/zb";
+              };
+              listenStreams = [ "/opt/zb/var/zb/server.sock" ];
+              wantedBy = [ "sockets.target" ];
             };
-            environment = {
-              ZB_BUILD_USERS_GROUP = buildGroup;
-              ZB_SERVE_FLAGS = "";
-            };
-            serviceConfig = {
-              ExecStart = "/opt/zb/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --build-users-group=${buildGroup} $ZB_SERVE_FLAGS";
-              KillMode = "mixed";
+            systemd.services.zb-serve = {
+              description = "zb Store Server";
+              requires = [ "zb-serve.socket" ];
+              unitConfig = {
+                RequiresMountsFor = [
+                  "/opt/zb/store"
+                  "/opt/zb/var"
+                  "/opt/zb/var/zb"
+                ];
+                ConditionPathIsReadWrite = "/opt/zb/var/zb";
+              };
+              environment = {
+                ZB_BUILD_USERS_GROUP = config.zb.buildGroup;
+                ZB_SERVE_FLAGS = "";
+              };
+              serviceConfig = {
+                ExecStart = "/opt/zb/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --build-users-group=${config.zb.buildGroup} $ZB_SERVE_FLAGS";
+                KillMode = "mixed";
+              };
             };
           };
         };
