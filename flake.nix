@@ -119,9 +119,19 @@
               members = map (i: "${config.zb.buildGroup}${toString i}") (lib.range 1 config.zb.userCount);
             };
 
+            systemd.services.zb-install = {
+              description = "zb Install";
+              serviceConfig = {
+                Type = "oneshot";
+                ExecStart = "${zb}/install";
+              };
+            };
+
             systemd.sockets.zb-serve = {
               description = "zb Store Server Socket";
               before = [ "multi-user.target" ];
+              requires = [ "zb-install.service" ];
+              after = [ "zb-install.service" ];
               unitConfig = {
                 RequiresMountsFor = [ "/opt/zb" ];
                 ConditionPathIsReadWrite = "/opt/zb/var/zb";
@@ -129,6 +139,7 @@
               listenStreams = [ "/opt/zb/var/zb/server.sock" ];
               wantedBy = [ "sockets.target" ];
             };
+
             systemd.services.zb-serve = {
               description = "zb Store Server";
               requires = [ "zb-serve.socket" ];
@@ -145,7 +156,6 @@
                 ZB_SERVE_FLAGS = "";
               };
               serviceConfig = {
-                ExecStartPre = "${zb}/install";
                 ExecStart = "/opt/zb/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --build-users-group=${config.zb.buildGroup} $ZB_SERVE_FLAGS";
                 KillMode = "mixed";
               };
