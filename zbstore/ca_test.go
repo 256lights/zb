@@ -34,6 +34,10 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	machoNoRefsNAR, err := readFileString(filepath.Join("testdata", "macho-norefs-aarch64.nar"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name      string
@@ -282,6 +286,12 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 					},
 				},
 			},
+		},
+		{
+			name:          "MachOSingleArchitectureNoReferences",
+			digest:        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			sourceNAR:     machoNoRefsNAR,
+			wantCleartext: machoNoRefsNAR + "|",
 		},
 	}
 
