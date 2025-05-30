@@ -188,7 +188,9 @@ func verifyContentAddress(path zbstore.Path, narContent io.Reader, refs *sets.So
 			digest = path.Digest()
 		}
 		var err error
-		computed, _, err = zbstore.SourceSHA256ContentAddress(digest, narContent)
+		computed, _, err = zbstore.SourceSHA256ContentAddress(narContent, &zbstore.ContentAddressOptions{
+			Digest: digest,
+		})
 		if err != nil {
 			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)
 		}

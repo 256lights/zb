@@ -1528,7 +1528,9 @@ func scanFloatingOutput(ctx context.Context, path string, digest string, closure
 		<-done
 	}()
 
-	ca, analysis, err := zbstore.SourceSHA256ContentAddress(digest, pr)
+	ca, analysis, err := zbstore.SourceSHA256ContentAddress(pr, &zbstore.ContentAddressOptions{
+		Digest: digest,
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -297,7 +297,9 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, gotAnalysis, err := SourceSHA256ContentAddress(test.digest, strings.NewReader(test.sourceNAR))
+			got, gotAnalysis, err := SourceSHA256ContentAddress(strings.NewReader(test.sourceNAR), &ContentAddressOptions{
+				Digest: test.digest,
+			})
 			if err != nil {
 				t.Fatal(err)
 			}

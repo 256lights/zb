@@ -452,7 +452,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 			t.Fatal(err)
 		}
 		narData := buf.Bytes()
-		ca, _, err := zbstore.SourceSHA256ContentAddress("", bytes.NewReader(narData))
+		ca, _, err := zbstore.SourceSHA256ContentAddress(bytes.NewReader(narData), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -537,7 +537,9 @@ func TestRealizeSelfReference(t *testing.T) {
 	if err := storetest.SingleFileNAR(contentModuloHash, []byte(dir.Join(fakeDigest+"-"+wantOutputName)+"\n")); err != nil {
 		t.Fatal(err)
 	}
-	ca, _, err := zbstore.SourceSHA256ContentAddress(fakeDigest, contentModuloHash)
+	ca, _, err := zbstore.SourceSHA256ContentAddress(contentModuloHash, &zbstore.ContentAddressOptions{
+		Digest: fakeDigest,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1136,7 +1138,7 @@ func singleFileOutputPath(dir zbstore.Directory, name string, data []byte, refs 
 	if err := storetest.SingleFileNAR(wantOutputNAR, []byte(data)); err != nil {
 		return "", err
 	}
-	ca, _, err := zbstore.SourceSHA256ContentAddress("", bytes.NewReader(wantOutputNAR.Bytes()))
+	ca, _, err := zbstore.SourceSHA256ContentAddress(bytes.NewReader(wantOutputNAR.Bytes()), nil)
 	if err != nil {
 		return "", err
 	}

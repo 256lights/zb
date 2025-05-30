@@ -109,15 +109,19 @@ func (analysis *SelfReferenceAnalysis) RewritesInRange(start, end int64) []Rewri
 	return rewrites[:lastRewrite]
 }
 
-// SourceSHA256ContentAddress computes the content address of a "source" store object,
-// given its temporary path digest (as given by [Path.Digest])
-// and its NAR serialization.
-// The digest is used to detect self-references:
-// if the store object is known to not contain self-references,
-// digest may be the empty string.
-//
+// ContentAddressOptions holds optional parameters for [SourceSHA256ContentAddress].
+type ContentAddressOptions struct {
+	// Digest is the temporary path digest (as given by [Path.Digest])
+	// Digest is used to detect self-references.
+	// If the store object is known to not contain self-references,
+	// Digest may be the empty string.
+	Digest string
+}
+
+// SourceSHA256ContentAddress computes the content address of a "source" store object
+// from its NAR serialization.
 // See [IsSourceContentAddress] for an explanation of "source" store objects.
-func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (ca nix.ContentAddress, analysis *SelfReferenceAnalysis, err error) {
+func SourceSHA256ContentAddress(sourceNAR io.Reader, opts *ContentAddressOptions) (ca nix.ContentAddress, analysis *SelfReferenceAnalysis, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("compute source content address: %v", err)
@@ -126,7 +130,7 @@ func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (ca nix.Cont
 
 	analysis = new(SelfReferenceAnalysis)
 	h := nix.NewHasher(nix.SHA256)
-	if digest == "" {
+	if opts == nil || opts.Digest == "" {
 		// If there are no self-references, we only have to hash the NAR.
 		_, err = io.Copy(h, sourceNAR)
 		if err != nil {
@@ -138,7 +142,7 @@ func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (ca nix.Cont
 
 	nr := nar.NewReader(sourceNAR)
 	nw := nar.NewWriter(h)
-	digestReplacement := strings.Repeat("\x00", len(digest))
+	digestReplacement := strings.Repeat("\x00", len(opts.Digest))
 	for {
 		hdr, err := nr.Next()
 		if err == io.EOF {
@@ -147,17 +151,17 @@ func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (ca nix.Cont
 		if err != nil {
 			return nix.ContentAddress{}, analysis, err
 		}
-		if strings.Contains(hdr.Path, digest) {
+		if strings.Contains(hdr.Path, opts.Digest) {
 			return nix.ContentAddress{}, analysis, fmt.Errorf("path %s contains self-reference", hdr.Path)
 		}
-		if strings.Contains(hdr.LinkTarget, digest) {
+		if strings.Contains(hdr.LinkTarget, opts.Digest) {
 			hdrClone := *hdr
 			hdrClone.LinkTarget = ""
 			analysis.Paths = append(analysis.Paths, hdrClone)
-			for i := range indexSeq(hdr.LinkTarget, digest) {
+			for i := range indexSeq(hdr.LinkTarget, opts.Digest) {
 				analysis.Rewrites = append(analysis.Rewrites, SelfReferenceOffset(hdr.ContentOffset+int64(i)))
 			}
-			hdr.LinkTarget = strings.ReplaceAll(hdr.LinkTarget, digest, digestReplacement)
+			hdr.LinkTarget = strings.ReplaceAll(hdr.LinkTarget, opts.Digest, digestReplacement)
 		}
 		if err := nw.WriteHeader(hdr); err != nil {
 			return nix.ContentAddress{}, analysis, err
@@ -167,7 +171,7 @@ func SourceSHA256ContentAddress(digest string, sourceNAR io.Reader) (ca nix.Cont
 			continue
 		}
 		initialRewritesLength := len(analysis.Rewrites)
-		analysis.Rewrites, err = filterFileForContentAddress(nw, analysis.Rewrites, hdr.ContentOffset, nr, digest)
+		analysis.Rewrites, err = filterFileForContentAddress(nw, analysis.Rewrites, hdr.ContentOffset, nr, opts.Digest)
 		if len(analysis.Rewrites) > initialRewritesLength {
 			analysis.Paths = append(analysis.Paths, *hdr)
 		}

@@ -128,7 +128,9 @@ func ExportSourceNAR(exp *zbstore.Exporter, narBytes []byte, opts SourceExportOp
 	}
 	opts.References = trimRefs(narBytes, opts.References)
 
-	ca, analysis, err := zbstore.SourceSHA256ContentAddress(opts.TempDigest, bytes.NewReader(narBytes))
+	ca, analysis, err := zbstore.SourceSHA256ContentAddress(bytes.NewReader(narBytes), &zbstore.ContentAddressOptions{
+		Digest: opts.TempDigest,
+	})
 	if err != nil {
 		return "", zbstore.ContentAddress{}, err
 	}
