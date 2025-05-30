@@ -325,6 +325,47 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 	}
 }
 
+func BenchmarkSourceSHA256ContentAddress(b *testing.B) {
+	machoUniversalSelfReferenceNAR, err := readFileString(filepath.Join("testdata", "macho-selfref-universal.nar"))
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.Run("NoDigest", func(b *testing.B) {
+		b.SetBytes(int64(len(machoUniversalSelfReferenceNAR)))
+		for b.Loop() {
+			_, _, err := SourceSHA256ContentAddress(strings.NewReader(machoUniversalSelfReferenceNAR), &ContentAddressOptions{})
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("SelfReferences", func(b *testing.B) {
+		b.SetBytes(int64(len(machoUniversalSelfReferenceNAR)))
+		for b.Loop() {
+			_, _, err := SourceSHA256ContentAddress(strings.NewReader(machoUniversalSelfReferenceNAR), &ContentAddressOptions{
+				Digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("NoSelfReferences", func(b *testing.B) {
+		b.SetBytes(int64(len(machoUniversalSelfReferenceNAR)))
+		for b.Loop() {
+			_, _, err := SourceSHA256ContentAddress(strings.NewReader(machoUniversalSelfReferenceNAR), &ContentAddressOptions{
+				Digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
 func readFileString(name string) (string, error) {
 	f, err := os.Open(name)
 	if err != nil {
