@@ -85,4 +85,27 @@ func TestWrite(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("Multiple", func(t *testing.T) {
+		const init = "aaabbbcccddd"
+		b := New([]byte(init))
+		const offset = 3
+		if got, err := b.Seek(offset, io.SeekStart); got != offset || err != nil {
+			t.Errorf("b.Seek(%d, io.SeekStart) = %d, %v; want %d, <nil>", offset, got, err, offset)
+		}
+		if n, err := b.Write([]byte("XXX")); n != 3 || err != nil {
+			t.Errorf("b.Write(\"XXX\") = %d, %v; want 3, <nil>", n, err)
+		}
+		if n, err := b.Write([]byte("YYY")); n != 3 || err != nil {
+			t.Errorf("b.Write(\"YYY\") = %d, %v; want 3, <nil>", n, err)
+		}
+
+		const want = "aaaXXXYYYddd"
+		if got, err := b.Seek(0, io.SeekStart); got != 0 || err != nil {
+			t.Errorf("b.Seek(0, io.SeekStart) = %d, %v; want 0, <nil>", got, err)
+		}
+		if err := iotest.TestReader(b, []byte(want)); err != nil {
+			t.Error("iotest.TestReader(...)", err)
+		}
+	})
 }

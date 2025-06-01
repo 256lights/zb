@@ -79,6 +79,7 @@ func (b *Buffer) Write(p []byte) (n int, err error) {
 	default:
 		copy(b.s[b.i:], p)
 	}
+	b.i += int64(len(p))
 	return len(p), nil
 }
 
