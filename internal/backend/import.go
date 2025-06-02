@@ -35,8 +35,9 @@ type NARReceiver struct {
 	tmpFileCreator bytebuffer.Creator
 	tmpFile        bytebuffer.ReadWriteSeekCloser
 
-	hasher nix.Hasher
-	size   int64
+	hasher       nix.Hasher
+	size         int64
+	caCreateTemp bytebuffer.Creator
 }
 
 // NewNARReceiver returns a new [NARReceiver] that is attached to the server.
@@ -102,7 +103,7 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		log.Warnf(ctx, "Rejecting %s (not in %s)", trailer.StorePath, r.dir)
 		return
 	}
-	ca, err := verifyContentAddress(trailer.StorePath, io.LimitReader(r.tmpFile, r.size), &trailer.References, trailer.ContentAddress)
+	ca, err := verifyContentAddress(r.ctx, trailer.StorePath, io.LimitReader(r.tmpFile, r.size), &trailer.References, trailer.ContentAddress, r.caCreateTemp)
 	if err != nil {
 		log.Warnf(ctx, "%v", err)
 		return
@@ -178,7 +179,7 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 // verifyContentAddress validates that the content matches the given content address.
 // If the content address is the zero value,
 // then the content address is computed as a "source" store object.
-func verifyContentAddress(path zbstore.Path, narContent io.Reader, refs *sets.Sorted[zbstore.Path], ca nix.ContentAddress) (nix.ContentAddress, error) {
+func verifyContentAddress(ctx context.Context, path zbstore.Path, narContent io.Reader, refs *sets.Sorted[zbstore.Path], ca nix.ContentAddress, createTemp bytebuffer.Creator) (nix.ContentAddress, error) {
 	storeRefs := zbstore.MakeReferences(path, refs)
 	if !ca.IsZero() {
 		if err := zbstore.ValidateContentAddress(ca, storeRefs); err != nil {
@@ -195,7 +196,9 @@ func verifyContentAddress(path zbstore.Path, narContent io.Reader, refs *sets.So
 		}
 		var err error
 		computed, _, err = zbstore.SourceSHA256ContentAddress(narContent, &zbstore.ContentAddressOptions{
-			Digest: digest,
+			Digest:     digest,
+			CreateTemp: createTemp,
+			Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
 		})
 		if err != nil {
 			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)

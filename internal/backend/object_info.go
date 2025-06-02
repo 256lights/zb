@@ -294,7 +294,7 @@ func (s *Server) Register(ctx context.Context, info *ObjectInfo) error {
 		pw.CloseWithError(err)
 		close(done)
 	}()
-	_, err = verifyContentAddress(info.StorePath, pr, &info.References, info.CA)
+	_, err = verifyContentAddress(ctx, info.StorePath, pr, &info.References, info.CA, s.caCreateTemp)
 	pr.Close()
 	<-done
 	if err != nil {

@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/google/uuid"
 )
 
 // LoadCommandMinSize is the minimum size (in bytes) of a Mach-O load command.
@@ -233,6 +235,28 @@ func (cmd *LinkeditDataCommand) UnmarshalMachO(byteOrder binary.ByteOrder, data 
 	}
 	cmd.DataOffset = byteOrder.Uint32(data[LoadCommandMinSize:])
 	cmd.DataSize = byteOrder.Uint32(data[LoadCommandMinSize+4:])
+	return nil
+}
+
+// UUIDCommand is the structure for [LoadCmdUUID].
+type UUIDCommand struct {
+	UUID uuid.UUID
+}
+
+// UnmarshalMachO unmarshals the UUID command in data into cmd.
+func (cmd *UUIDCommand) UnmarshalMachO(byteOrder binary.ByteOrder, data []byte) error {
+	c, err := unmarshalLoadCommand(byteOrder, data)
+	if err != nil {
+		return err
+	}
+	if c != LoadCmdUUID {
+		return fmt.Errorf("unmarshal mach-o UUID command: command = %v (want %v)", c, LoadCmdUUID)
+	}
+	const wantSize = LoadCommandMinSize + len(cmd.UUID)
+	if len(data) != wantSize {
+		return fmt.Errorf("unmarshal mach-o UUID command: wrong size (got %d; want %d)", len(data), wantSize)
+	}
+	copy(cmd.UUID[:], data[LoadCommandMinSize:])
 	return nil
 }
 

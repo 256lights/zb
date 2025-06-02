@@ -243,6 +243,12 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 			wantCleartext: machoZeroedNAR + "||16386",
 			wantAnalysis: SelfReferenceAnalysis{
 				Rewrites: []Rewriter{
+					SelfReferenceOffset(16386),
+					&MachOUUIDRewrite{
+						ImageStart: 128,
+						UUIDStart:  1352,
+						CodeEnd:    49552,
+					},
 					&MachOSignatureRewrite{
 						ImageStart: 128,
 						CodeEnd:    49552,
@@ -250,7 +256,6 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 						PageSize:   1 << 12,
 						HashOffset: 49682,
 					},
-					SelfReferenceOffset(16386),
 				},
 				Paths: []nar.Header{
 					{
@@ -269,6 +274,12 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 			wantAnalysis: SelfReferenceAnalysis{
 				Rewrites: []Rewriter{
 					SelfReferenceOffset(8193),
+					SelfReferenceOffset(49154),
+					&MachOUUIDRewrite{
+						ImageStart: 32896,
+						UUIDStart:  34120,
+						CodeEnd:    82320,
+					},
 					&MachOSignatureRewrite{
 						ImageStart: 32896,
 						CodeEnd:    82320,
@@ -276,7 +287,6 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 						PageSize:   1 << 12,
 						HashOffset: 82450,
 					},
-					SelfReferenceOffset(49154),
 				},
 				Paths: []nar.Header{
 					{
@@ -297,29 +307,39 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, gotAnalysis, err := SourceSHA256ContentAddress(strings.NewReader(test.sourceNAR), &ContentAddressOptions{
+			cleartextBuffer := new(strings.Builder)
+			gotAnalysis, err := filterNARForContentAddress(cleartextBuffer, strings.NewReader(test.sourceNAR), &ContentAddressOptions{
 				Digest: test.digest,
 			})
 			if err != nil {
-				t.Fatal(err)
-			}
-			if !got.IsRecursiveFile() {
-				t.Errorf("content address = %v; want recursive file", got)
+				t.Error("filterNARForContentAddress:", err)
+			} else {
+				gotCleartext := cleartextBuffer.String()
+				if diff := cmp.Diff(test.wantCleartext, gotCleartext); diff != "" {
+					t.Errorf("clear text (-want +got):\n%s", diff)
+				}
+				if diff := cmp.Diff(&test.wantAnalysis, gotAnalysis, cmpopts.EquateEmpty()); diff != "" {
+					t.Errorf("filterNARForContentAddress analysis (-want +got):\n%s", diff)
+				}
 			}
 
-			h := nix.NewHasher(nix.SHA256)
-			h.WriteString(test.wantCleartext)
-			if got, want := got.Hash(), h.SumHash(); !got.Equal(want) {
-				t.Errorf("content address hash = %v; want %v", got, want)
-			}
-
-			diff := cmp.Diff(
-				&test.wantAnalysis, gotAnalysis,
-				cmpopts.EquateEmpty(),
-				transformSortedSet[string](),
-			)
-			if diff != "" {
-				t.Errorf("analysis (-want +got):\n%s", diff)
+			gotContentAddress, gotAnalysis, err := SourceSHA256ContentAddress(strings.NewReader(test.sourceNAR), &ContentAddressOptions{
+				Digest: test.digest,
+			})
+			if err != nil {
+				t.Error("SourceSHA256ContentAddress:", err)
+			} else {
+				if !gotContentAddress.IsRecursiveFile() {
+					t.Errorf("content address = %v; want recursive file", gotContentAddress)
+				}
+				h := nix.NewHasher(nix.SHA256)
+				h.WriteString(test.wantCleartext)
+				if got, want := gotContentAddress.Hash(), h.SumHash(); !got.Equal(want) {
+					t.Errorf("content address hash = %v; want %v", got, want)
+				}
+				if diff := cmp.Diff(&test.wantAnalysis, gotAnalysis, cmpopts.EquateEmpty()); diff != "" {
+					t.Errorf("SourceSHA256ContentAddress analysis (-want +got):\n%s", diff)
+				}
 			}
 		})
 	}

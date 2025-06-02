@@ -39,6 +39,8 @@ import (
 	"zombiezen.com/go/log/zstdlog"
 )
 
+const contentAddressTempFilePattern = "zb-ca-*"
+
 type serveOptions struct {
 	dbPath            string
 	buildDir          string
@@ -192,14 +194,15 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 
 	log.Infof(ctx, "Listening on %s", g.storeSocket)
 	backendServer := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
-		BuildDirectory:    opts.buildDir,
-		LogDirectory:      opts.logDir,
-		SandboxPaths:      opts.sandboxPaths,
-		DisableSandbox:    !opts.sandbox,
-		BuildUsers:        buildUsers,
-		AllowKeepFailed:   opts.allowKeepFailed,
-		CoresPerBuild:     opts.coresPerBuild,
-		BuildLogRetention: opts.buildLogRetention,
+		BuildDirectory:              opts.buildDir,
+		LogDirectory:                opts.logDir,
+		ContentAddressBufferCreator: bytebuffer.TempFileCreator{Pattern: contentAddressTempFilePattern},
+		SandboxPaths:                opts.sandboxPaths,
+		DisableSandbox:              !opts.sandbox,
+		BuildUsers:                  buildUsers,
+		AllowKeepFailed:             opts.allowKeepFailed,
+		CoresPerBuild:               opts.coresPerBuild,
+		BuildLogRetention:           opts.buildLogRetention,
 	})
 	defer func() {
 		if err := backendServer.Close(); err != nil {

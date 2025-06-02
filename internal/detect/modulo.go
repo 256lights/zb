@@ -6,6 +6,7 @@ package detect
 import (
 	"bytes"
 	"io"
+	"iter"
 	"slices"
 )
 
@@ -51,14 +52,24 @@ func (hmr *HashModuloReader) Reset(old, new string, r io.Reader) {
 	}
 }
 
-// Offsets returns a list of the offsets in the reader
+// Offsets returns an iterator of the offsets in the reader
 // where the search string has occurred
 // in ascending order.
-func (hmr *HashModuloReader) Offsets() []int64 {
-	if len(hmr.offsets) == 0 {
-		return nil
+// start specifies the number of offsets to skip.
+func (hmr *HashModuloReader) Offsets(start int) iter.Seq[int64] {
+	// This is similar to slices.Values(hmr.offsets),
+	// but we want to re-evaluate hmr.offsets on every call to the iterator.
+	return func(yield func(int64) bool) {
+		if start < len(hmr.offsets) {
+			slices.Values(hmr.offsets[start:])(yield)
+		}
 	}
-	return slices.Clone(hmr.offsets)
+}
+
+// ReferenceCount returns the number of occurrence of the search string
+// that the reader has encountered thus far.
+func (hmr *HashModuloReader) ReferenceCount() int {
+	return len(hmr.offsets)
 }
 
 // Read implements [io.Reader].

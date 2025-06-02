@@ -6,7 +6,6 @@ package zbstore
 import (
 	"bytes"
 	"cmp"
-	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -14,10 +13,10 @@ import (
 	"slices"
 	"strings"
 
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/detect"
 	"zb.256lights.llc/pkg/internal/macho"
 	"zb.256lights.llc/pkg/internal/xio"
-	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 )
@@ -70,9 +69,8 @@ func ValidateContentAddress(ca nix.ContentAddress, refs References) error {
 // SelfReferenceAnalysis holds additional information about self-references
 // computed by [SourceSHA256ContentAddress].
 type SelfReferenceAnalysis struct {
-	// Rewrites is the set of rewrites for the NAR serialization
+	// Rewrites is the sequence of rewrites for the NAR serialization
 	// required to account for self-reference digests.
-	// They should be in ascending order of ReadOffset.
 	Rewrites []Rewriter
 	// Paths is the set of paths in the NAR serialization that contain self-reference digests.
 	// They should be in ascending order of ContentOffset.
@@ -96,17 +94,43 @@ func (analysis *SelfReferenceAnalysis) Path(name string) *nar.Header {
 }
 
 // RewritesInRange returns a slice of analysis.Rewrites
-// whose ReadOffset values are in the range [start, end).
-// If analysis.Rewrites is not in ascending order of ReadOffset,
-// then RewritesInRange may not return correct results.
+// whose WriteOffset values are in the range [start, end).
 func (analysis *SelfReferenceAnalysis) RewritesInRange(start, end int64) []Rewriter {
-	if end < start {
+	if end < start || analysis == nil {
 		return nil
 	}
-	firstRewrite, _ := slices.BinarySearchFunc(analysis.Rewrites, start, compareReadOffset)
-	rewrites := analysis.Rewrites[firstRewrite:]
-	lastRewrite, _ := slices.BinarySearchFunc(rewrites, end, compareReadOffset)
-	return rewrites[:lastRewrite]
+
+	// Usually the rewrites for a range are in a contiguous range.
+	// Try that first.
+	inRange := func(r Rewriter) bool {
+		off := r.WriteOffset()
+		return start <= off && off < end
+	}
+	i := slices.IndexFunc(analysis.Rewrites, inRange)
+	if i < 0 {
+		return nil
+	}
+	slice := analysis.Rewrites[i:]
+	n := slices.IndexFunc(slice, func(r Rewriter) bool { return !inRange(r) })
+	var remaining []Rewriter
+	if n >= 0 {
+		slice = slice[:n]
+		remaining = slice[n+1:]
+	}
+	slice = slices.Clip(slice)
+
+	// Check if there are more rewrites after the first not-in-range.
+	// Since we clipped the slice, this will automatically allocate.
+	if j := slices.IndexFunc(remaining, inRange); j >= 0 {
+		slice = append(slice, remaining[j])
+		for _, r := range remaining[j+1:] {
+			if inRange(r) {
+				slice = append(slice, r)
+			}
+		}
+	}
+
+	return slice
 }
 
 // ContentAddressOptions holds optional parameters for [SourceSHA256ContentAddress].
@@ -116,32 +140,49 @@ type ContentAddressOptions struct {
 	// If the store object is known to not contain self-references,
 	// Digest may be the empty string.
 	Digest string
+	// CreateTemp is called to create temporary storage
+	// for parts of a store object that require multi-pass analysis.
+	// If CreateTemp is nil, multi-pass analyses are performed in-memory.
+	// This is generally not recommended, as the files can be large.
+	CreateTemp bytebuffer.Creator
+	// If Log is not nil, it is called to provide additional diagnostics about the analysis process.
+	// The messages passed in are human-readable and should not be parsed by applications.
+	Log func(string)
 }
 
 // SourceSHA256ContentAddress computes the content address of a "source" store object
 // from its NAR serialization.
 // See [IsSourceContentAddress] for an explanation of "source" store objects.
-func SourceSHA256ContentAddress(sourceNAR io.Reader, opts *ContentAddressOptions) (ca nix.ContentAddress, analysis *SelfReferenceAnalysis, err error) {
-	defer func() {
-		if err != nil {
-			err = fmt.Errorf("compute source content address: %v", err)
-		}
-	}()
-
-	analysis = new(SelfReferenceAnalysis)
+func SourceSHA256ContentAddress(sourceNAR io.Reader, opts *ContentAddressOptions) (nix.ContentAddress, *SelfReferenceAnalysis, error) {
 	h := nix.NewHasher(nix.SHA256)
+	analysis, err := filterNARForContentAddress(h, sourceNAR, opts)
+	if err != nil {
+		return nix.ContentAddress{}, nil, fmt.Errorf("compute source content address: %v", err)
+	}
+	ca := nix.RecursiveFileContentAddress(h.SumHash())
+	return ca, analysis, nil
+}
+
+// filterNARForContentAddress rewrites a NAR for computing the content address of a source store object.
+func filterNARForContentAddress(dst io.Writer, sourceNAR io.Reader, opts *ContentAddressOptions) (analysis *SelfReferenceAnalysis, err error) {
 	if opts == nil || opts.Digest == "" {
 		// If there are no self-references, we only have to hash the NAR.
-		_, err = io.Copy(h, sourceNAR)
-		if err != nil {
-			return nix.ContentAddress{}, analysis, err
+		if _, err := io.Copy(dst, sourceNAR); err != nil {
+			return nil, err
 		}
-		h.WriteString("|")
-		return nix.RecursiveFileContentAddress(h.SumHash()), analysis, nil
+		if _, err := io.WriteString(dst, "|"); err != nil {
+			return nil, err
+		}
+		return new(SelfReferenceAnalysis), nil
 	}
 
+	caa := &contentAddressAnalyzer{ContentAddressOptions: *opts}
+	if caa.CreateTemp == nil {
+		caa.CreateTemp = bytebuffer.BufferCreator{}
+	}
+	var paths []nar.Header
 	nr := nar.NewReader(sourceNAR)
-	nw := nar.NewWriter(h)
+	nw := nar.NewWriter(dst)
 	digestReplacement := strings.Repeat("\x00", len(opts.Digest))
 	for {
 		hdr, err := nr.Next()
@@ -149,47 +190,49 @@ func SourceSHA256ContentAddress(sourceNAR io.Reader, opts *ContentAddressOptions
 			break
 		}
 		if err != nil {
-			return nix.ContentAddress{}, analysis, err
+			return nil, err
 		}
 		if strings.Contains(hdr.Path, opts.Digest) {
-			return nix.ContentAddress{}, analysis, fmt.Errorf("path %s contains self-reference", hdr.Path)
+			return nil, fmt.Errorf("path %s contains self-reference", hdr.Path)
 		}
 		if strings.Contains(hdr.LinkTarget, opts.Digest) {
 			hdrClone := *hdr
 			hdrClone.LinkTarget = ""
-			analysis.Paths = append(analysis.Paths, hdrClone)
+			paths = append(paths, hdrClone)
 			for i := range indexSeq(hdr.LinkTarget, opts.Digest) {
-				analysis.Rewrites = append(analysis.Rewrites, SelfReferenceOffset(hdr.ContentOffset+int64(i)))
+				caa.rewrites = append(caa.rewrites, SelfReferenceOffset(hdr.ContentOffset+int64(i)))
 			}
 			hdr.LinkTarget = strings.ReplaceAll(hdr.LinkTarget, opts.Digest, digestReplacement)
 		}
 		if err := nw.WriteHeader(hdr); err != nil {
-			return nix.ContentAddress{}, analysis, err
+			return nil, err
 		}
 
 		if !hdr.Mode.IsRegular() {
 			continue
 		}
-		initialRewritesLength := len(analysis.Rewrites)
-		analysis.Rewrites, err = filterFileForContentAddress(nw, analysis.Rewrites, hdr.ContentOffset, nr, opts.Digest)
-		if len(analysis.Rewrites) > initialRewritesLength {
-			analysis.Paths = append(analysis.Paths, *hdr)
+		initialRewritesLength := len(caa.rewrites)
+		err = caa.filter(nw, hdr.ContentOffset, nr, hdr.Size)
+		if len(caa.rewrites) > initialRewritesLength {
+			paths = append(paths, *hdr)
 		}
 		if err != nil {
-			return nix.ContentAddress{}, analysis, err
+			return nil, err
 		}
 	}
 	if err := nw.Close(); err != nil {
-		return nix.ContentAddress{}, analysis, err
+		return nil, err
 	}
 
 	// This single pipe separator differentiates this content addressing algorithm
 	// from Nix's implementation as of Nix commit 2ed075ffc0f4e22f6bc6c083ef7c84e77c687605.
 	// I believe it to be more correct in avoiding potential hash collisions.
-	h.WriteString("|")
+	if _, err := io.WriteString(dst, "|"); err != nil {
+		return nil, err
+	}
 
 	var buf []byte
-	for _, r := range analysis.Rewrites {
+	for _, r := range caa.rewrites {
 		selfRef, ok := r.(SelfReference)
 		if !ok {
 			continue
@@ -198,98 +241,69 @@ func SourceSHA256ContentAddress(sourceNAR io.Reader, opts *ContentAddressOptions
 		buf = append(buf[:0], '|')
 		buf, err = selfRef.AppendReferenceText(buf)
 		if err != nil {
-			return nix.ContentAddress{}, analysis, err
+			return nil, err
 		}
 		if text := buf[1:]; bytes.ContainsAny(text, "|") {
-			return nix.ContentAddress{}, analysis, fmt.Errorf("self-reference serialization %q contains '|'", text)
+			return nil, fmt.Errorf("self-reference serialization %q contains '|'", text)
 		}
-		h.Write(buf)
+		dst.Write(buf)
 	}
-	return nix.RecursiveFileContentAddress(h.SumHash()), analysis, nil
+	return &SelfReferenceAnalysis{
+		Paths:    paths,
+		Rewrites: caa.rewrites,
+	}, nil
 }
 
-// filterFileForContentAddress finds all the rewrites in the store object file
+type contentAddressAnalyzer struct {
+	ContentAddressOptions
+
+	// fileStart is the offset in bytes of the start of the file
+	// relative to the beginning of the NAR file.
+	fileStart int64
+	// rewrites is the result slice.
+	rewrites []Rewriter
+}
+
+// filter finds all the rewrites in the store object file
 // and writes a version of the file to dst
 // where all the rewritten sections are replaced with zero bytes.
-// The new rewrites are appended to the rewrites slice
-// and filterFileForContentAddress returns the extended slice.
-func filterFileForContentAddress(dst io.Writer, rewrites []Rewriter, baseOffset int64, src io.Reader, digest string) ([]Rewriter, error) {
-	ctx := context.TODO()
+// The new rewrites are appended to the caa.rewrites slice.
+func (caa *contentAddressAnalyzer) filter(dst io.Writer, fileOffset int64, src io.Reader, srcSize int64) error {
+	caa.fileStart = fileOffset
 
 	buf := make([]byte, 1024)
 	n, err := io.ReadAtLeast(src, buf, macho.MagicNumberSize)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return rewrites, err
+		return err
 	}
 	buf = buf[:n]
-	digestReplacement := strings.Repeat("\x00", len(digest))
-	hmr := detect.NewHashModuloReader(digest, digestReplacement, io.MultiReader(bytes.NewReader(buf), src))
+	digestReplacement := strings.Repeat("\x00", len(caa.Digest))
+	hmr := detect.NewHashModuloReader(caa.Digest, digestReplacement, io.MultiReader(bytes.NewReader(buf), src))
 
 	switch {
 	case macho.IsSingleArchitecture(buf):
-		codeLimit, cd, err := zeroOutMachOCodeSignature(dst, hmr)
-		if err != nil {
-			return rewrites, err
-		}
-		if cd == nil {
-			rewrites = appendOffsetLocations(rewrites, baseOffset, hmr.Offsets())
-			return rewrites, nil
-		}
-		rw, err := cd.toRewrite(baseOffset, baseOffset+codeLimit)
-		if err != nil {
-			// toRewrite errors are bounds checks, so if this bombs, then abort loudly.
-			return rewrites, fmt.Errorf("parse mach-o binary: internal error: %v", err)
-		}
-		log.Debugf(ctx, "Mach-O signature rewrite at NAR bytes [%#x, %#x)", rw.HashOffset, rw.HashOffset+int64(rw.HashSize()))
-		offsets := hmr.Offsets()
-		rewrites = slices.Grow(rewrites, len(offsets)+1)
-		i := 0
-		for ; i < len(offsets) && baseOffset+offsets[i] < rw.ReadOffset(); i++ {
-			rewrites = append(rewrites, SelfReferenceOffset(baseOffset+offsets[i]))
-		}
-		rewrites = append(rewrites, rw)
-		rewrites = appendOffsetLocations(rewrites, baseOffset, offsets[i:])
-		return rewrites, nil
-
+		return caa.zeroOutMachOCodeSignature(dst, 0, hmr, srcSize)
 	case macho.IsUniversal(buf):
-		var err error
-		initialLocationsLength := len(rewrites)
-		rewrites, err = zeroOutUniversalMachOCodeSignatures(dst, rewrites, baseOffset, hmr)
-		rewrites = appendOffsetLocations(rewrites, baseOffset, hmr.Offsets())
-		slices.SortFunc(rewrites[initialLocationsLength:], compareReadOffsets)
-		return rewrites, err
-
+		return caa.zeroOutUniversalMachOCodeSignatures(dst, hmr, srcSize)
 	default:
-		_, err := io.Copy(dst, hmr)
-		return appendOffsetLocations(rewrites, baseOffset, hmr.Offsets()), err
+		return caa.copyWithSelfReferences(dst, hmr, srcSize)
 	}
-}
-
-func appendOffsetLocations(dst []Rewriter, base int64, offsets []int64) []Rewriter {
-	for _, off := range offsets {
-		dst = append(dst, SelfReferenceOffset(base+off))
-	}
-	return dst
 }
 
 const maxMachOBufferSize = 4 * 1024 * 1024
 
-type referenceReader interface {
-	io.Reader
-	Offsets() []int64
-}
-
-func zeroOutUniversalMachOCodeSignatures(dst io.Writer, locations []Rewriter, baseOffset int64, src referenceReader) ([]Rewriter, error) {
-	ctx := context.TODO()
+func (caa *contentAddressAnalyzer) zeroOutUniversalMachOCodeSignatures(dst io.Writer, src *detect.HashModuloReader, srcSize int64) error {
+	initialReferenceCount := src.ReferenceCount()
 
 	// Read index.
 	wc := new(xio.WriteCounter)
 	sink := io.MultiWriter(wc, dst)
 	entries, err := macho.ReadUniversalHeader(io.TeeReader(src, sink))
+	caa.addNewSelfReferences(src, initialReferenceCount)
 	if err != nil {
-		log.Debugf(ctx, "Potential universal Mach-O failed to parse: %v", err)
+		caa.log("Potential universal Mach-O failed to parse: %v", err)
 		_, err := io.Copy(sink, src)
-		return locations, err
+		return err
 	}
 
 	// We want to rewrite as we go,
@@ -299,7 +313,7 @@ func zeroOutUniversalMachOCodeSignatures(dst io.Writer, locations []Rewriter, ba
 		return cmp.Compare(ent1.Offset, ent2.Offset)
 	})
 
-	for len(entries) > 0 {
+	for len(entries) > 0 && int64(entries[0].Offset)+int64(entries[0].Size) <= srcSize {
 		gap := int64(entries[0].Offset) - int64(*wc)
 		if gap < 0 {
 			// Skip any images that we've already advanced past.
@@ -308,149 +322,181 @@ func zeroOutUniversalMachOCodeSignatures(dst io.Writer, locations []Rewriter, ba
 		}
 		if gap > 0 {
 			// Copy the gap bytes through verbatim.
-			if _, err := io.CopyN(sink, src, gap); err != nil {
-				if err == io.EOF {
+			if err := caa.copyWithSelfReferences(sink, src, gap); err != nil {
+				if err == io.EOF || err == io.ErrUnexpectedEOF {
 					err = nil
 				}
-				return locations, err
+				return err
 			}
 		}
 
-		imageStart := baseOffset + int64(*wc)
-		codeLimit, cd, err := zeroOutMachOCodeSignature(sink, &referenceLimitedReader{
-			referenceReader: src,
-			N:               int64(entries[0].Size),
-		})
+		err := caa.zeroOutMachOCodeSignature(sink, int64(*wc), src, int64(entries[0].Size))
 		if err != nil {
-			return locations, err
-		}
-		if cd != nil {
-			rw, err := cd.toRewrite(imageStart, imageStart+codeLimit)
-			if err != nil {
-				// toRewrite errors are bounds checks, so if this bombs, then abort loudly.
-				return locations, fmt.Errorf("parse mach-o binary: internal error: %v", err)
-			}
-			log.Debugf(ctx, "Mach-O signature rewrite for %v at NAR bytes [%#x, %#x)", entries[0].CPU, rw.HashOffset, rw.HashOffset+int64(rw.HashSize()))
-			locations = append(locations, rw)
+			return err
 		}
 		entries = entries[1:]
 	}
 
-	// Copy any trailing bytes.
-	_, err = io.Copy(sink, src)
-	return locations, err
+	return caa.copyWithSelfReferences(sink, src, srcSize-int64(*wc))
 }
 
-type referenceLimitedReader struct {
-	referenceReader
-	N int64
-}
+const uuidSize = 16
 
-func (l *referenceLimitedReader) Read(p []byte) (n int, err error) {
-	if l.N <= 0 {
-		return 0, io.EOF
-	}
-	if int64(len(p)) > l.N {
-		p = p[0:l.N]
-	}
-	n, err = l.referenceReader.Read(p)
-	l.N -= int64(n)
-	return
-}
-
-// zeroOutMachOCodeSignature copies the data from src to dst.
+// zeroOutMachOCodeSignature copies the data from src to dst,
+// appending [SelfReferenceOffset] values to caa.rewrites as it goes.
 // If and only if src can be parsed as a single-architecture Mach-O file
 // containing self-references
-// with an ad hoc code signature,
+// with an ad hoc code signature
+// and at most one LC_UUID command,
 // then zeroOutMachOCodeSignature will zero out the code signature's hash slots
-// and return a non-nil [*rewritableCodeDirectory].
+// (and LC_UUID command, if present).
+// and append a [*MachOSignatureRewrite] and possibly a [*MachOUUIDRewrite] to caa.rewrites.
 // zeroOutMachOCodeSignature will only return an error if there is an I/O error.
-func zeroOutMachOCodeSignature(dst io.Writer, src referenceReader) (codeLimit int64, cd *rewritableCodeDirectory, err error) {
-	ctx := context.TODO()
-
-	initialOffsetsLength := len(src.Offsets())
+//
+// srcStart is the offset of the first byte that zeroOutMachOCodeSignature is processing
+// relative to the beginning of the NAR file archive member.
+func (caa *contentAddressAnalyzer) zeroOutMachOCodeSignature(dst io.Writer, srcStart int64, src *detect.HashModuloReader, srcSize int64) error {
+	// Read Mach-O header.
+	initialReferenceCount := src.ReferenceCount()
+	limitedSource := io.LimitReader(src, srcSize)
 	counter := new(xio.WriteCounter)
-	tr := io.TeeReader(src, io.MultiWriter(counter, dst))
-	header, err := macho.ReadFileHeader(tr)
+	header, err := macho.ReadFileHeader(io.TeeReader(limitedSource, io.MultiWriter(counter, dst)))
+	headerEnd := int64(*counter)
 	if err != nil {
-		log.Debugf(ctx, "Potential Mach-O file failed to parse: %v", err)
-		_, err := io.Copy(dst, src)
-		return 0, nil, err
+		caa.log("Potential Mach-O file failed to parse: %v", err)
+		caa.addNewSelfReferences(src, initialReferenceCount)
+		return caa.copyWithSelfReferences(dst, src, srcSize-headerEnd)
 	}
-	textSegment, signatureCommand, err := scanMachOCommands(header.ByteOrder, header.NewCommandReader(tr))
-	if err == nil && int64(signatureCommand.DataOffset) < int64(*counter) {
-		err = fmt.Errorf("signature offset (%d) is before segments (%d)", signatureCommand.DataOffset, int64(*counter))
-	}
+
+	// From here on out, we need buffering.
+	// The LC_UUID command may need to be zeroed, so we need to do two passes.
+	tempFile, err := caa.CreateTemp.CreateBuffer(srcSize - headerEnd)
 	if err != nil {
-		log.Debugf(ctx, "Potential Mach-O file failed to parse: %v", err)
-		_, err := io.Copy(dst, src)
-		return 0, nil, err
+		return fmt.Errorf("parse mach-o file: create temporary file: %v", err)
+	}
+	defer func() {
+		if closeError := tempFile.Close(); closeError != nil {
+			caa.log("Closing temporary file: %v", closeError)
+		}
+	}()
+	abandonRewrite := func(bufferEnd int64) error {
+		caa.addNewSelfReferences(src, initialReferenceCount)
+		if _, err := tempFile.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("seek in content address temporary file: %v", err)
+		}
+		_, err = io.CopyN(dst, tempFile, bufferEnd-headerEnd)
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return caa.copyWithSelfReferences(dst, src, srcSize-bufferEnd)
+	}
+
+	// Scan the command region for a potential code signature.
+	commandReader := header.NewCommandReader(io.TeeReader(limitedSource, io.MultiWriter(counter, tempFile)))
+	textSegment, signatureCommand, uuidOffset, scanError := scanMachOCommands(header.ByteOrder, commandReader)
+	commandEnd := int64(*counter)
+	var codeEnd int64
+	if scanError == nil {
+		codeEnd = int64(signatureCommand.DataOffset)
+		switch {
+		case codeEnd < commandEnd:
+			scanError = fmt.Errorf("signature offset (%d) is before segments (%d)", codeEnd, commandEnd)
+		case codeEnd > srcSize-macho.CodeSignatureBlobMinSize:
+			scanError = fmt.Errorf("signature offset (%d) extends beyond file (%d)", codeEnd, srcSize)
+		}
+	}
+	if scanError != nil {
+		caa.log("Potential Mach-O file failed to parse: %v", scanError)
+		return abandonRewrite(commandEnd)
 	}
 
 	// Copy all data until the beginning of the signature region.
-	// We do this to detect self-references.
-	if _, err := io.CopyN(dst, src, int64(signatureCommand.DataOffset)-int64(*counter)); err != nil {
-		return 0, nil, err
-	}
-
 	// If we don't have any self-references before the signature,
 	// then we don't have to rewrite anything.
-	if len(src.Offsets()) <= initialOffsetsLength {
-		log.Debugf(ctx, "Mach-O file did not contain self-references. No rewriting.")
-		_, err := io.Copy(dst, src)
-		return 0, nil, err
+	if _, err := io.CopyN(tempFile, src, codeEnd-commandEnd); err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		caa.addNewSelfReferences(src, initialReferenceCount)
+		return err
+	}
+	if src.ReferenceCount() == initialReferenceCount {
+		caa.log("Mach-O file did not contain self-references. No rewriting.")
+		return abandonRewrite(int64(signatureCommand.DataOffset))
 	}
 
 	// Read signature blob.
-	signatureBytes, blobReadError := readCodeSignatureBlob(src)
-	var magic macho.CodeSignatureMagic
-	if len(signatureBytes) >= 4 {
-		magic = macho.CodeSignatureMagic(binary.BigEndian.Uint32(signatureBytes))
-	}
-	if blobReadError == nil && magic != macho.CodeSignatureMagicEmbeddedSignature {
-		blobReadError = fmt.Errorf("super blob type = %v", magic)
-	}
-	if blobReadError != nil {
-		log.Debugf(ctx, "Potential Mach-O file failed to parse: %v", blobReadError)
-		if _, err := dst.Write(signatureBytes); err != nil {
-			return 0, nil, err
-		}
-		if _, err := io.Copy(dst, src); err != nil {
-			return 0, nil, err
-		}
-		return 0, nil, nil
+	signatureRewrite, signatureEnd, signatureReadError := readCodeSignature(
+		caa.fileStart+srcStart,
+		signatureCommand.DataOffset,
+		io.LimitReader(io.TeeReader(src, tempFile), srcSize-codeEnd),
+		textSegment,
+	)
+	if signatureReadError != nil {
+		caa.log("Potential Mach-O file failed to parse: code signature: %v", signatureReadError)
+		return abandonRewrite(signatureEnd)
 	}
 
-	// Parse superblob and check whether it matches the expected format.
-	// TODO(maybe): Validate __TEXT segment fields.
-	cd, err = findRewritableCodeDirectory(signatureBytes)
-	_ = textSegment
-	if err == nil && cd.CodeLimit != uint64(signatureCommand.DataOffset) {
-		err = fmt.Errorf("codeLimit (%#x) != code signature offset (%#x)", cd.CodeLimit, signatureCommand.DataOffset)
+	// Record rewrites and zero out bytes.
+	hashSize := signatureRewrite.HashSize()
+	caa.log("Mach-O signature rewrite for %v at NAR bytes [%#x, %#x)", header.CPUType, signatureRewrite.HashOffset, signatureRewrite.HashOffset+int64(hashSize))
+	caa.addNewSelfReferences(src, initialReferenceCount)
+	if uuidOffset != 0 {
+		caa.rewrites = append(caa.rewrites, &MachOUUIDRewrite{
+			ImageStart: signatureRewrite.ImageStart,
+			CodeEnd:    signatureRewrite.CodeEnd,
+			UUIDStart:  caa.fileStart + srcStart + headerEnd + uuidOffset,
+		})
 	}
+	caa.rewrites = append(caa.rewrites, signatureRewrite)
+	if uuidOffset != 0 {
+		if err := clearAt(tempFile, uuidOffset, uuidSize); err != nil {
+			return fmt.Errorf("zero out mach-o UUID in temporary file: %v", err)
+		}
+	}
+	if err := clearAt(tempFile, signatureRewrite.HashOffset-(caa.fileStart+srcStart+headerEnd), hashSize); err != nil {
+		return fmt.Errorf("zero out mach-o code signature in temporary file: %v", err)
+	}
+
+	// Copy bytes from tempFile (and any remaining from src) to dst.
+	if _, err := tempFile.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seek in content address temporary file: %v", err)
+	}
+	if _, err := io.CopyN(dst, tempFile, signatureEnd-headerEnd); err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return err
+	}
+	if err := caa.copyWithSelfReferences(dst, src, srcSize-signatureEnd); err != nil {
+		return err
+	}
+	return nil
+}
+
+func readCodeSignature(imageStart int64, signatureStart uint32, src io.Reader, textSegment *macho.SegmentCommand) (signatureRewrite *MachOSignatureRewrite, signatureEnd int64, err error) {
+	signatureBytes, err := readCodeSignatureBlob(src)
+	signatureEnd = int64(signatureStart) + int64(len(signatureBytes))
 	if err != nil {
-		log.Debugf(context.TODO(), "Process Mach-O code signature: %v", err)
-		if _, err := dst.Write(signatureBytes); err != nil {
-			return 0, nil, err
-		}
-		if _, err := io.Copy(dst, src); err != nil {
-			return 0, nil, err
-		}
-		return 0, nil, nil
+		return nil, signatureEnd, err
 	}
-
-	// Perform zeroing.
-	log.Debugf(ctx, "Found Mach-O %v executable with self-references and code signature", header.CPUType)
-	clear(signatureBytes[cd.hashSlotsStart:cd.hashSlotsEnd])
-	if _, err := dst.Write(signatureBytes); err != nil {
-		return int64(signatureCommand.DataOffset), cd, err
+	magic := macho.CodeSignatureMagic(binary.BigEndian.Uint32(signatureBytes))
+	if magic != macho.CodeSignatureMagicEmbeddedSignature {
+		return nil, signatureEnd, fmt.Errorf("code signature super blob type = %v", magic)
 	}
-
-	// Copy trailing bytes, if any.
-	if _, err := io.Copy(dst, src); err != nil {
-		return int64(signatureCommand.DataOffset), cd, err
+	cd, err := findRewritableCodeDirectory(signatureBytes)
+	if err != nil {
+		return nil, signatureEnd, err
 	}
-	return int64(signatureCommand.DataOffset), cd, nil
+	if cd.CodeLimit != uint64(signatureStart) {
+		return nil, signatureEnd, fmt.Errorf("codeLimit (%#x) != code signature offset (%#x)", cd.CodeLimit, signatureStart)
+	}
+	// TODO(maybe): Validate __TEXT segment fields.
+	signatureRewrite, err = cd.toRewrite(imageStart)
+	if err != nil {
+		return nil, signatureEnd, err
+	}
+	return signatureRewrite, signatureEnd, nil
 }
 
 // readCodeSignatureBlob reads the bytes of a serialized [macho.CodeSignatureBlob] from an [io.Reader].
@@ -478,76 +524,112 @@ func readCodeSignatureBlob(src io.Reader) ([]byte, error) {
 }
 
 // scanMachOCommands searches the load commands necessary for code signing.
-// If there is not exactly one __TEXT segment
-// and one LC_CODE_SIGNATURE command,
+// If there is not exactly one __TEXT segment,
+// exactly one LC_CODE_SIGNATURE command,
+// and at most one LC_UUID command,
 // then scanMachOCommands returns an error.
-func scanMachOCommands(byteOrder binary.ByteOrder, commands *macho.CommandReader) (*macho.SegmentCommand, *macho.LinkeditDataCommand, error) {
+// If there is exactly one LC_UUID command, then uuidOffset will be a non-zero value
+// with the offset in bytes from the start of the commands
+// where the UUID bytes are stored.
+func scanMachOCommands(byteOrder binary.ByteOrder, commands *macho.CommandReader) (textSegment *macho.SegmentCommand, signatureCommand *macho.LinkeditDataCommand, uuidOffset int64, err error) {
 	const textSegmentName = "__TEXT"
 	buf := make([]byte, macho.LoadCommandMinSize)
-	var textSegment *macho.SegmentCommand
-	var signatureCommand *macho.LinkeditDataCommand
+	pos := int64(0)
 	for commands.Next() {
 		buf = buf[:macho.LoadCommandMinSize]
 		if _, err := io.ReadFull(commands, buf); err != nil {
-			return nil, nil, err
+			return nil, nil, 0, err
 		}
 		c, ok := commands.Command()
 		if !ok {
-			return nil, nil, fmt.Errorf("internal error: missing command despite already reading bytes")
+			return nil, nil, 0, fmt.Errorf("internal error: missing command despite already reading bytes")
 		}
 		size, ok := commands.Size()
 		if !ok {
-			return nil, nil, fmt.Errorf("invalid command size")
+			return nil, nil, 0, fmt.Errorf("invalid command size")
 		}
 
 		switch c {
 		case macho.LoadCmdSegment, macho.LoadCmdSegment64:
 			if size > maxMachOBufferSize {
-				return nil, nil, fmt.Errorf("%v command too large", c)
+				return nil, nil, 0, fmt.Errorf("%v command too large", c)
 			}
 			buf = slices.Grow(buf, int(size-macho.LoadCommandMinSize))
 			buf = buf[:size]
 			if _, err := io.ReadFull(commands, buf[macho.LoadCommandMinSize:]); err != nil {
-				return nil, nil, err
+				return nil, nil, 0, err
 			}
 			newSegment := new(macho.SegmentCommand)
 			if err := newSegment.UnmarshalMachO(byteOrder, buf); err != nil {
-				return nil, nil, err
+				return nil, nil, 0, err
 			}
 			if newSegment.Name() == textSegmentName {
 				if textSegment != nil {
-					return nil, nil, fmt.Errorf("multiple " + textSegmentName + " sections")
+					return nil, nil, 0, fmt.Errorf("multiple " + textSegmentName + " sections")
 				}
 				textSegment = newSegment
 			}
 		case macho.LoadCmdCodeSignature:
 			if signatureCommand != nil {
-				return nil, nil, fmt.Errorf("multiple %v commands", c)
+				return nil, nil, 0, fmt.Errorf("multiple %v commands", c)
 			}
 			if size > maxMachOBufferSize {
-				return nil, nil, fmt.Errorf("command too large")
+				return nil, nil, 0, fmt.Errorf("command too large")
 			}
 			buf = slices.Grow(buf, int(size-macho.LoadCommandMinSize))
 			buf = buf[:size]
 			if _, err := io.ReadFull(commands, buf[macho.LoadCommandMinSize:]); err != nil {
-				return nil, nil, err
+				return nil, nil, 0, err
 			}
 			signatureCommand = new(macho.LinkeditDataCommand)
 			if err := signatureCommand.UnmarshalMachO(byteOrder, buf); err != nil {
-				return nil, nil, err
+				return nil, nil, 0, err
 			}
+		case macho.LoadCmdUUID:
+			if uuidOffset != 0 {
+				return nil, nil, 0, fmt.Errorf("multiple %v commands", c)
+			}
+			if want := uint32(macho.LoadCommandMinSize + uuidSize); size != want {
+				return nil, nil, 0, fmt.Errorf("wrong size for %v command (got %d, expected %d)", c, size, want)
+			}
+			uuidOffset = pos + 8
 		}
+
+		pos += int64(size)
 	}
 	if err := commands.Err(); err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 	if textSegment == nil {
-		return nil, nil, fmt.Errorf("missing " + textSegmentName + " segment")
+		return nil, nil, 0, fmt.Errorf("missing " + textSegmentName + " segment")
 	}
 	if signatureCommand == nil {
-		return nil, nil, fmt.Errorf("missing %v command", macho.LoadCmdCodeSignature)
+		return nil, nil, 0, fmt.Errorf("missing %v command", macho.LoadCmdCodeSignature)
 	}
-	return textSegment, signatureCommand, nil
+	return textSegment, signatureCommand, uuidOffset, nil
+}
+
+func (caa *contentAddressAnalyzer) copyWithSelfReferences(dst io.Writer, src *detect.HashModuloReader, n int64) error {
+	initialCount := src.ReferenceCount()
+	_, err := io.CopyN(dst, src, n)
+	if err == io.EOF {
+		err = io.ErrUnexpectedEOF
+	}
+	caa.addNewSelfReferences(src, initialCount)
+	return err
+}
+
+func (caa *contentAddressAnalyzer) addNewSelfReferences(src *detect.HashModuloReader, lastCount int) {
+	caa.rewrites = slices.Grow(caa.rewrites, src.ReferenceCount()-lastCount)
+	for off := range src.Offsets(lastCount) {
+		caa.rewrites = append(caa.rewrites, SelfReferenceOffset(caa.fileStart+off))
+	}
+}
+
+func (caa *contentAddressAnalyzer) log(format string, args ...any) {
+	if caa != nil && caa.Log != nil {
+		caa.Log(fmt.Sprintf(format, args...))
+	}
 }
 
 // IsSourceContentAddress reports whether the given content address describes a "source" store object.
@@ -589,6 +671,14 @@ func (m contentAddressMethod) prefix() string {
 	default:
 		panic("unknown content address method")
 	}
+}
+
+func clearAt(w io.WriteSeeker, off int64, n int) error {
+	if _, err := w.Seek(off, io.SeekStart); err != nil {
+		return err
+	}
+	_, err := xio.WriteZero(w, int64(n))
+	return err
 }
 
 func indexSeq(s, substr string) iter.Seq[int] {

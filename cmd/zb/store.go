@@ -18,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xio"
@@ -553,9 +554,10 @@ func runStoreObjectRegister(ctx context.Context, g *globalConfig, opts *storeObj
 	}
 
 	backendServer := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
-		DatabasePoolSize:  1,
-		DisableSandbox:    true,
-		BuildLogRetention: -1,
+		DatabasePoolSize:            1,
+		DisableSandbox:              true,
+		BuildLogRetention:           -1,
+		ContentAddressBufferCreator: bytebuffer.TempFileCreator{Pattern: contentAddressTempFilePattern},
 	})
 	defer backendServer.Close()
 

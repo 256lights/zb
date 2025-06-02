@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -45,6 +46,9 @@ type Options struct {
 	// LogDirectory is where builder logs will be stored.
 	// If empty, defaults to a directory called "log" in the same directory as the database.
 	LogDirectory string
+	// ContentAddressBufferCreator is used to create buffers for content addressing analysis.
+	// If nil, then in-memory byte slices are used with reasonable limits.
+	ContentAddressBufferCreator bytebuffer.Creator
 
 	// DatabasePoolSize is the maximum permitted number of concurrent connections to the database.
 	// If less than 1, a reasonable default is used.
@@ -119,6 +123,7 @@ type Server struct {
 	realDir         string
 	buildDir        string
 	logDir          string
+	caCreateTemp    bytebuffer.Creator
 	db              *sqlitemigration.Pool
 	allowKeepFailed bool
 	buildContext    func(context.Context, string) context.Context
@@ -155,6 +160,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		realDir:         opts.RealStoreDirectory,
 		buildDir:        opts.BuildDirectory,
 		logDir:          opts.LogDirectory,
+		caCreateTemp:    opts.ContentAddressBufferCreator,
 		allowKeepFailed: opts.AllowKeepFailed,
 		sandbox:         !opts.DisableSandbox && CanSandbox(),
 		sandboxPaths:    maps.Clone(opts.SandboxPaths),
@@ -192,6 +198,9 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	}
 	if srv.logDir == "" {
 		srv.logDir = filepath.Join(filepath.Dir(dbPath), "log")
+	}
+	if srv.caCreateTemp == nil {
+		srv.caCreateTemp = bytebuffer.BufferCreator{}
 	}
 	if srv.buildContext == nil {
 		srv.buildContext = func(_ context.Context, _ string) context.Context {

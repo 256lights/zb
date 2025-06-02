@@ -1391,7 +1391,7 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn,
 		<-done
 	}()
 
-	if _, err := verifyContentAddress(outputPath, pr, nil, ca); err != nil {
+	if _, err := verifyContentAddress(ctx, outputPath, pr, nil, ca, b.server.caCreateTemp); err != nil {
 		return nil, err
 	}
 
@@ -1421,7 +1421,7 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn,
 func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Conn, buildPath zbstore.Path, inputs *sets.Sorted[zbstore.Path]) (*ObjectInfo, error) {
 	log.Debugf(ctx, "Processing floating output %s...", buildPath)
 	realBuildPath := b.server.realPath(buildPath)
-	scan, err := scanFloatingOutput(ctx, realBuildPath, buildPath.Digest(), inputs)
+	scan, err := scanFloatingOutput(ctx, realBuildPath, buildPath.Digest(), inputs, b.server.caCreateTemp)
 	if err != nil {
 		return nil, fmt.Errorf("post-process %s: %v", buildPath, err)
 	}
@@ -1502,7 +1502,7 @@ type outputScanResults struct {
 // The digest is used to detect self references.
 // closure is the transitive closure of store objects the derivation depends on,
 // which form the superset of all non-self-references that the scan can detect.
-func scanFloatingOutput(ctx context.Context, path string, digest string, closure *sets.Sorted[zbstore.Path]) (*outputScanResults, error) {
+func scanFloatingOutput(ctx context.Context, path string, digest string, closure *sets.Sorted[zbstore.Path], createTemp bytebuffer.Creator) (*outputScanResults, error) {
 	log.Debugf(ctx, "Scanning for references in %s. Possible: %s", path, closure)
 	wc := new(xio.WriteCounter)
 	h := nix.NewHasher(nix.SHA256)
@@ -1529,7 +1529,9 @@ func scanFloatingOutput(ctx context.Context, path string, digest string, closure
 	}()
 
 	ca, analysis, err := zbstore.SourceSHA256ContentAddress(pr, &zbstore.ContentAddressOptions{
-		Digest: digest,
+		Digest:     digest,
+		CreateTemp: createTemp,
+		Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
 	})
 	if err != nil {
 		return nil, err

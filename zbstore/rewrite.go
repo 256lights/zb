@@ -4,15 +4,15 @@
 package zbstore
 
 import (
-	"cmp"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
-	"slices"
 	"strconv"
 
 	"zb.256lights.llc/pkg/internal/macho"
+	"zb.256lights.llc/pkg/internal/uuid8"
 	"zb.256lights.llc/pkg/internal/xio"
 	"zombiezen.com/go/nix"
 )
@@ -22,31 +22,20 @@ import (
 type Rewriter interface {
 	// Rewrite returns the bytes to replace in the store object
 	// starting at WriteOffset.
-	// context is a reader over the rewritten bytes
-	// starting at ReadOffset and ending at WriteOffset.
+	// context is a reader over the bytes in the store object in ReadRange.
 	Rewrite(newDigest string, context io.Reader) ([]byte, error)
 	// WriteOffset returns the offset from the beginning of the NAR file
 	// of the first byte that needs to be rewritten.
 	WriteOffset() int64
-	// ReadOffset returns the offset from the beginning of the NAR file
+	// ReadRange returns the offset from the beginning of the NAR file
 	// of the first byte that needs to be read
+	// to the last byte (exclusive) that needs to be read
 	// to compute the rewrite.
-	// If no additional context is required,
-	// ReadOffset shall return the same offset as WriteOffset.
-	// A Rewriter's ReadOffset must be less than or equal to its WriteOffset.
-	ReadOffset() int64
-}
-
-func compareReadOffset(r Rewriter, offset int64) int {
-	return cmp.Compare(r.ReadOffset(), offset)
-}
-
-func compareReadOffsets(loc1, loc2 Rewriter) int {
-	return cmp.Compare(loc1.ReadOffset(), loc2.ReadOffset())
-}
-
-func compareWriteOffsets(loc1, loc2 Rewriter) int {
-	return cmp.Compare(loc1.WriteOffset(), loc2.WriteOffset())
+	// If no context is required to compute the rewrite,
+	// ReadOffset shall return the same value as WriteOffset for both start and end.
+	// If ReadRange overlaps with WriteOffset,
+	// the content of the bytes at WriteOffset are not defined and should be ignored.
+	ReadRange() (start, end int64)
 }
 
 // SelfReference is a [Rewriter] that represents a self-reference.
@@ -62,6 +51,7 @@ type SelfReference interface {
 // Rewrite applies rewriters to f.
 // newDigest is the string to replace self-references with.
 // The length of newDigest must be the same as the length of the digest passed to [SourceSHA256ContentAddress].
+// Rewrites are performed in the same order as they are present in the slice.
 //
 // f is treated like it starts at baseOffset bytes from the beginning of a NAR serialization.
 // This can be used to apply a subset of rewrites from [SourceSHA256ContentAddress]
@@ -73,43 +63,44 @@ func Rewrite(f io.ReadWriteSeeker, baseOffset int64, newDigest string, rewriters
 	if baseOffset < 0 {
 		return fmt.Errorf("rewrite hash: negative base offset (%d)", baseOffset)
 	}
-	if !slices.IsSortedFunc(rewriters, compareWriteOffsets) {
-		rewriters = slices.Clone(rewriters)
-		slices.SortStableFunc(rewriters, compareWriteOffsets)
-	}
 
 	for len(rewriters) > 0 {
-		readOffset := rewriters[0].ReadOffset()
-		if readOffset < baseOffset {
-			return fmt.Errorf("rewrite hash: rewrite offset (%d) < base offset (%d)", readOffset, baseOffset)
+		readStart, readEnd := rewriters[0].ReadRange()
+		if readStart < baseOffset {
+			return fmt.Errorf("rewrite hash: rewrite read start (%d) < base offset (%d)", readStart, baseOffset)
 		}
-		if _, err := f.Seek(readOffset-baseOffset, io.SeekStart); err != nil {
-			return fmt.Errorf("rewrite hash: %v", err)
+		if readEnd < readStart {
+			return fmt.Errorf("rewrite hash: rewrite read start (%d) > rewrite read end (%d)", readStart, readEnd)
 		}
 		writeOffset := rewriters[0].WriteOffset()
+		if writeOffset < baseOffset {
+			return fmt.Errorf("rewrite hash: rewrite offset (%d) < base offset (%d)", writeOffset, baseOffset)
+		}
 		var b []byte
-		if readOffset == writeOffset {
+		if readStart == readEnd {
 			var err error
 			b, err = rewriters[0].Rewrite(newDigest, xio.Null())
 			if err != nil {
 				return fmt.Errorf("rewrite hash: %v", err)
 			}
 		} else {
-			var err error
-			b, err = rewriters[0].Rewrite(newDigest, io.LimitReader(f, writeOffset-readOffset))
-			if err != nil {
+			if _, err := f.Seek(readStart-baseOffset, io.SeekStart); err != nil {
 				return fmt.Errorf("rewrite hash: %v", err)
 			}
-			if len(rewriters) >= 2 && rewriters[1].WriteOffset() < writeOffset+int64(len(b)) {
-				return fmt.Errorf("rewrite hash: internal error: overlapping rewrite")
-			}
-			if _, err := f.Seek(writeOffset-baseOffset, io.SeekStart); err != nil {
+			var err error
+			b, err = rewriters[0].Rewrite(newDigest, io.LimitReader(f, readEnd-readStart))
+			if err != nil {
 				return fmt.Errorf("rewrite hash: %v", err)
 			}
 		}
 
-		if _, err := f.Write(b); err != nil {
-			return fmt.Errorf("rewrite hash: %v", err)
+		if len(b) > 0 {
+			if _, err := f.Seek(writeOffset-baseOffset, io.SeekStart); err != nil {
+				return fmt.Errorf("rewrite hash: %v", err)
+			}
+			if _, err := f.Write(b); err != nil {
+				return fmt.Errorf("rewrite hash: %v", err)
+			}
 		}
 		rewriters = rewriters[1:]
 	}
@@ -122,9 +113,9 @@ func Rewrite(f io.ReadWriteSeeker, baseOffset int64, newDigest string, rewriters
 // It is stored as an offset in bytes relative to the beginning of the NAR file.
 type SelfReferenceOffset int64
 
-// ReadOffset returns the offset as an int64.
-func (offset SelfReferenceOffset) ReadOffset() int64 {
-	return int64(offset)
+// ReadRange returns (int64(offset), int64(offset)).
+func (offset SelfReferenceOffset) ReadRange() (start, end int64) {
+	return int64(offset), int64(offset)
 }
 
 // WriteOffset returns the offset as an int64.
@@ -144,6 +135,65 @@ func (offset SelfReferenceOffset) AppendReferenceText(dst []byte) ([]byte, error
 		return dst, fmt.Errorf("append self-reference: offset is negative")
 	}
 	return strconv.AppendInt(dst, int64(offset), 10), nil
+}
+
+// MachOUUIDRewrite is a [Rewriter]
+// that replaces the LC_UUID command value
+// with one based on the hash of the data from ImageStart to CodeEnd.
+type MachOUUIDRewrite struct {
+	// ImageStart is the offset in bytes that the Mach-O file starts
+	// relative to the beginning of the NAR file.
+	ImageStart int64
+	// UUIDStart is the offset in bytes that the Mach-O UUID starts
+	// relative to the beginning of the NAR file.
+	UUIDStart int64
+	// CodeEnd is the offset in bytes to the first byte of the code signature section
+	// relative to the beginning of the NAR file.
+	// CodeEnd is also the end of the image signature range.
+	CodeEnd int64
+}
+
+// ReadRange returns (rewrite.ImageStart, rewrite.CodeEnd).
+func (rewrite *MachOUUIDRewrite) ReadRange() (start, end int64) {
+	return rewrite.ImageStart, rewrite.CodeEnd
+}
+
+// WriteOffset returns rewrite.UUIDStart.
+func (rewrite *MachOUUIDRewrite) WriteOffset() int64 {
+	return rewrite.UUIDStart
+}
+
+// Rewrite is equivalent to rewrite.Sign(nil, context).
+func (rewrite *MachOUUIDRewrite) Rewrite(newDigest string, context io.Reader) ([]byte, error) {
+	h := sha256.New()
+	if _, err := io.CopyN(h, context, rewrite.UUIDStart-rewrite.ImageStart); err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, fmt.Errorf("compute mach-o UUID: %v", err)
+	}
+
+	// Hash the existing UUID as null bytes
+	// but skip the existing data.
+	const uuidSize = 16
+	var buf [uuidSize]byte
+	h.Write(buf[:])
+	if _, err := io.ReadFull(context, buf[:]); err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, fmt.Errorf("compute mach-o UUID: %v", err)
+	}
+
+	if _, err := io.CopyN(h, context, rewrite.CodeEnd-(rewrite.UUIDStart+uuidSize)); err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, fmt.Errorf("compute mach-o UUID: %v", err)
+	}
+
+	u := uuid8.FromBytes(h.Sum(nil))
+	return u[:], nil
 }
 
 // MachOSignatureRewrite is a [Rewriter]
@@ -171,9 +221,9 @@ type MachOSignatureRewrite struct {
 	HashOffset int64
 }
 
-// ReadOffset returns rewrite.ImageStart.
-func (rewrite *MachOSignatureRewrite) ReadOffset() int64 {
-	return rewrite.ImageStart
+// ReadRange returns (rewrite.ImageStart, rewrite.CodeEnd).
+func (rewrite *MachOSignatureRewrite) ReadRange() (start, end int64) {
+	return rewrite.ImageStart, rewrite.CodeEnd
 }
 
 // WriteOffset returns rewrite.HashOffset.
@@ -320,13 +370,11 @@ func findRewritableCodeDirectory(signatureBytes []byte) (*rewritableCodeDirector
 	return result, nil
 }
 
-func (cd *rewritableCodeDirectory) toRewrite(imageStart int64, codeEnd int64) (*MachOSignatureRewrite, error) {
+func (cd *rewritableCodeDirectory) toRewrite(imageStart int64) (*MachOSignatureRewrite, error) {
 	if imageStart < 0 {
 		return nil, fmt.Errorf("negative image start")
 	}
-	if codeEnd < imageStart {
-		return nil, fmt.Errorf("code end before image start")
-	}
+	codeEnd := imageStart + int64(cd.CodeLimit)
 	rewrite := &MachOSignatureRewrite{
 		ImageStart: imageStart,
 		CodeEnd:    codeEnd,

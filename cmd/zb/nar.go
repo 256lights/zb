@@ -5,6 +5,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +13,9 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/zbstore"
+	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix/nar"
 )
 
@@ -55,7 +58,7 @@ func newPackNARCommand() *cobra.Command {
 		}
 		var err1 error
 		if *selfRefs {
-			err1 = runPackNARSelfRefs(outputFile, args[0])
+			err1 = runPackNARSelfRefs(cmd.Context(), outputFile, args[0])
 		} else {
 			err1 = nar.DumpPath(outputFile, args[0])
 		}
@@ -68,7 +71,7 @@ func newPackNARCommand() *cobra.Command {
 	return c
 }
 
-func runPackNARSelfRefs(dst io.ReadWriteSeeker, path string) error {
+func runPackNARSelfRefs(ctx context.Context, dst io.ReadWriteSeeker, path string) error {
 	type caResult struct {
 		ca       zbstore.ContentAddress
 		analysis *zbstore.SelfReferenceAnalysis
@@ -94,7 +97,9 @@ func runPackNARSelfRefs(dst io.ReadWriteSeeker, path string) error {
 	go func() {
 		var result caResult
 		result.ca, result.analysis, result.err = zbstore.SourceSHA256ContentAddress(pr, &zbstore.ContentAddressOptions{
-			Digest: originalDigest,
+			Digest:     originalDigest,
+			CreateTemp: bytebuffer.TempFileCreator{Pattern: contentAddressTempFilePattern},
+			Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
 		})
 		c <- result
 	}()

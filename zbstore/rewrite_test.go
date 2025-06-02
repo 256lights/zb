@@ -22,11 +22,19 @@ func TestRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	machoRewrittenNAR, err := readFileString(filepath.Join("testdata", "macho-rewritten-aarch64.nar"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	machoUniversalSelfReferenceNAR, err := readFileString(filepath.Join("testdata", "macho-selfref-universal.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	machoUniversalZeroedNAR, err := readFileString(filepath.Join("testdata", "macho-zeroed-universal.nar"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	machoUniversalRewrittenNAR, err := readFileString(filepath.Join("testdata", "macho-rewritten-universal.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,10 +82,11 @@ func TestRewrite(t *testing.T) {
 				")\x00\x00\x00\x00\x00\x00\x00",
 		},
 		{
-			name:      "MachOSingleArchitectureSelfReference",
+			name:      "MachOSingleArchitectureSelfReferenceSignatureOnly",
 			newDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			sourceNAR: machoZeroedNAR,
+			sourceNAR: machoZeroedNAR[:1352] + machoSelfReferenceNAR[1352:1368] + machoZeroedNAR[1368:],
 			rewrites: []Rewriter{
+				SelfReferenceOffset(16386),
 				&MachOSignatureRewrite{
 					ImageStart: 128,
 					CodeEnd:    49552,
@@ -85,16 +94,37 @@ func TestRewrite(t *testing.T) {
 					PageSize:   1 << 12,
 					HashOffset: 49682,
 				},
-				SelfReferenceOffset(16386),
 			},
 			want: machoSelfReferenceNAR,
 		},
 		{
-			name:      "MachOMultiArchitectureSelfReference",
+			name:      "MachOSingleArchitectureSelfReference",
 			newDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			sourceNAR: machoUniversalZeroedNAR,
+			sourceNAR: machoZeroedNAR,
+			rewrites: []Rewriter{
+				SelfReferenceOffset(16386),
+				&MachOUUIDRewrite{
+					ImageStart: 128,
+					UUIDStart:  1352,
+					CodeEnd:    49552,
+				},
+				&MachOSignatureRewrite{
+					ImageStart: 128,
+					CodeEnd:    49552,
+					HashType:   nix.SHA256,
+					PageSize:   1 << 12,
+					HashOffset: 49682,
+				},
+			},
+			want: machoRewrittenNAR,
+		},
+		{
+			name:      "MachOMultiArchitectureSelfReferenceSignatureOnly",
+			newDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			sourceNAR: machoUniversalZeroedNAR[:34120] + machoUniversalSelfReferenceNAR[34120:34136] + machoUniversalZeroedNAR[34136:],
 			rewrites: []Rewriter{
 				SelfReferenceOffset(8193),
+				SelfReferenceOffset(49154),
 				&MachOSignatureRewrite{
 					ImageStart: 32896,
 					CodeEnd:    82320,
@@ -102,9 +132,30 @@ func TestRewrite(t *testing.T) {
 					PageSize:   1 << 12,
 					HashOffset: 82450,
 				},
-				SelfReferenceOffset(49154),
 			},
 			want: machoUniversalSelfReferenceNAR,
+		},
+		{
+			name:      "MachOMultiArchitectureSelfReference",
+			newDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			sourceNAR: machoUniversalZeroedNAR,
+			rewrites: []Rewriter{
+				SelfReferenceOffset(8193),
+				SelfReferenceOffset(49154),
+				&MachOUUIDRewrite{
+					ImageStart: 32896,
+					UUIDStart:  34120,
+					CodeEnd:    82320,
+				},
+				&MachOSignatureRewrite{
+					ImageStart: 32896,
+					CodeEnd:    82320,
+					HashType:   nix.SHA256,
+					PageSize:   1 << 12,
+					HashOffset: 82450,
+				},
+			},
+			want: machoUniversalRewrittenNAR,
 		},
 	}
 
