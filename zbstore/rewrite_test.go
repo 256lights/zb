@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"zb.256lights.llc/pkg/internal/bytewriter"
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zombiezen.com/go/nix"
 )
 
@@ -110,7 +110,7 @@ func TestRewrite(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			f := bytewriter.New([]byte(test.sourceNAR))
+			f := bytebuffer.New([]byte(test.sourceNAR))
 			if err := Rewrite(f, 0, test.newDigest, test.rewrites); err != nil {
 				t.Error("Rewrite:", err)
 			}

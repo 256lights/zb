@@ -23,6 +23,7 @@ import (
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/osutil"
@@ -221,7 +222,9 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 			openConnsMu.Unlock()
 
 			grp.Go(func() error {
-				recv := backendServer.NewNARReceiver(grpCtx)
+				recv := backendServer.NewNARReceiver(grpCtx, bytebuffer.TempFileCreator{
+					Pattern: "zb-serve-receive-*.nar",
+				})
 				defer recv.Cleanup(grpCtx)
 
 				codec := zbstorerpc.NewCodec(nopCloser{conn}, &zbstorerpc.CodecOptions{

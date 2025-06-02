@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -52,6 +53,9 @@ type Options struct {
 	// HTTPClient is used for making web requests.
 	// If nil, [http.DefaultClient] will be used.
 	HTTPClient *http.Client
+	// DownloadBufferCreator is used to create buffers for unbounded downloads.
+	// If nil, then in-memory byte slices are used with reasonable limits.
+	DownloadBufferCreator bytebuffer.Creator
 }
 
 // Store is the set of store operations that [Eval] needs.
@@ -71,11 +75,12 @@ type Store interface {
 }
 
 type Eval struct {
-	store      Store
-	storeDir   zbstore.Directory
-	cachePool  *sqlitemigration.Pool
-	lookupEnv  func(ctx context.Context, key string) (string, bool)
-	httpClient *http.Client
+	store        Store
+	storeDir     zbstore.Directory
+	cachePool    *sqlitemigration.Pool
+	lookupEnv    func(ctx context.Context, key string) (string, bool)
+	httpClient   *http.Client
+	downloadTemp bytebuffer.Creator
 
 	baseImportContext context.Context
 	cancelImports     context.CancelFunc
@@ -93,10 +98,11 @@ type Eval struct {
 
 func NewEval(opts *Options) (_ *Eval, err error) {
 	eval := &Eval{
-		store:      opts.Store,
-		storeDir:   opts.StoreDirectory,
-		lookupEnv:  opts.LookupEnv,
-		httpClient: opts.HTTPClient,
+		store:        opts.Store,
+		storeDir:     opts.StoreDirectory,
+		lookupEnv:    opts.LookupEnv,
+		httpClient:   opts.HTTPClient,
+		downloadTemp: opts.DownloadBufferCreator,
 	}
 	if eval.lookupEnv == nil {
 		eval.lookupEnv = func(ctx context.Context, key string) (string, bool) {
@@ -105,6 +111,9 @@ func NewEval(opts *Options) (_ *Eval, err error) {
 	}
 	if eval.httpClient == nil {
 		eval.httpClient = http.DefaultClient
+	}
+	if eval.downloadTemp == nil {
+		eval.downloadTemp = bytebuffer.BufferCreator{}
 	}
 
 	var schema sqlitemigration.Schema

@@ -25,7 +25,7 @@ import (
 	"unique"
 
 	"github.com/google/uuid"
-	"zb.256lights.llc/pkg/internal/bytewriter"
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/detect"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/storepath"
@@ -1622,7 +1622,7 @@ func rewriteAtPath(path string, baseOffset int64, newDigest string, rewriters []
 		if err != nil {
 			return err
 		}
-		buf := bytewriter.New([]byte(oldTarget))
+		buf := bytebuffer.New([]byte(oldTarget))
 		if err := zbstore.Rewrite(buf, baseOffset, newDigest, rewriters); err != nil {
 			return err
 		}

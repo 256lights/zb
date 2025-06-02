@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/luac"
@@ -125,6 +126,9 @@ func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client) (
 				return "", false
 			}
 			return os.LookupEnv(key)
+		},
+		DownloadBufferCreator: bytebuffer.TempFileCreator{
+			Pattern: "zb-download-*",
 		},
 	})
 }

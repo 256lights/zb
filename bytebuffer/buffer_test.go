@@ -1,7 +1,7 @@
 // Copyright 2025 The zb Authors
 // SPDX-License-Identifier: MIT
 
-package bytewriter
+package bytebuffer
 
 import (
 	"io"

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -108,7 +109,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 	serverConn, clientConn := net.Pipe()
 
 	serveCtx, stopServe := context.WithCancel(context.WithoutCancel(ctx))
-	serverReceiver := srv.NewNARReceiver(serveCtx)
+	serverReceiver := srv.NewNARReceiver(serveCtx, bytebuffer.BufferCreator{})
 	serverCodec := zbstorerpc.NewCodec(serverConn, &zbstorerpc.CodecOptions{
 		NARReceiver: serverReceiver,
 	})

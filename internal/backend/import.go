@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -30,7 +31,9 @@ type NARReceiver struct {
 	realDir string
 	dbPool  *sqlitemigration.Pool
 	writing *mutexMap[zbstore.Path]
-	tmpFile *os.File
+
+	tmpFileCreator bytebuffer.Creator
+	tmpFile        bytebuffer.ReadWriteSeekCloser
 
 	hasher nix.Hasher
 	size   int64
@@ -38,24 +41,29 @@ type NARReceiver struct {
 
 // NewNARReceiver returns a new [NARReceiver] that is attached to the server.
 // Callers are responsible for calling [NARReceiver.Cleanup] after the receiver is no longer in use.
-func (s *Server) NewNARReceiver(ctx context.Context) *NARReceiver {
+func (s *Server) NewNARReceiver(ctx context.Context, bufCreator bytebuffer.Creator) *NARReceiver {
+	// nils are easier to catch at this point on the stack than later.
 	if ctx == nil {
-		// Easier to catch at this point on the stack than later.
 		panic("nil context passed to NewNARReceiver")
 	}
+	if bufCreator == nil {
+		panic("nil bytebuffer.Creator passed to NewNARReceiver")
+	}
+
 	return &NARReceiver{
-		ctx:     ctx,
-		dir:     s.dir,
-		realDir: s.realDir,
-		dbPool:  s.db,
-		writing: &s.writing,
-		hasher:  *nix.NewHasher(nix.SHA256),
+		ctx:            ctx,
+		dir:            s.dir,
+		realDir:        s.realDir,
+		dbPool:         s.db,
+		writing:        &s.writing,
+		tmpFileCreator: bufCreator,
+		hasher:         *nix.NewHasher(nix.SHA256),
 	}
 }
 
 func (r *NARReceiver) Write(p []byte) (n int, err error) {
 	if r.tmpFile == nil {
-		r.tmpFile, err = os.CreateTemp("", "zb-serve-receive-*.nar")
+		r.tmpFile, err = r.tmpFileCreator.CreateBuffer(-1)
 		if err != nil {
 			return 0, err
 		}
@@ -78,10 +86,8 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		return
 	}
 	defer func() {
-		if err := r.tmpFile.Truncate(0); err != nil {
+		if err := truncateIfPossible(r.tmpFile, 0); err != nil {
 			log.Warnf(ctx, "Unable to truncate store temp file: %v", err)
-			r.Cleanup(ctx)
-			return
 		}
 		if _, err := r.tmpFile.Seek(0, io.SeekStart); err != nil {
 			log.Errorf(ctx, "Unable to seek in store temp file: %v", err)
@@ -96,7 +102,7 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		log.Warnf(ctx, "Rejecting %s (not in %s)", trailer.StorePath, r.dir)
 		return
 	}
-	ca, err := verifyContentAddress(trailer.StorePath, r.tmpFile, &trailer.References, trailer.ContentAddress)
+	ca, err := verifyContentAddress(trailer.StorePath, io.LimitReader(r.tmpFile, r.size), &trailer.References, trailer.ContentAddress)
 	if err != nil {
 		log.Warnf(ctx, "%v", err)
 		return
@@ -123,7 +129,7 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	}
 
 	log.Debugf(ctx, "Extracting %s.nar to %s...", trailer.StorePath, realPath)
-	if err := extractNAR(realPath, r.tmpFile); err != nil {
+	if err := extractNAR(realPath, io.LimitReader(r.tmpFile, r.size)); err != nil {
 		log.Warnf(ctx, "Import of %s failed: %v", trailer.StorePath, err)
 		if err := os.RemoveAll(realPath); err != nil {
 			log.Errorf(ctx, "Failed to clean up partial import of %s: %v", trailer.StorePath, err)
@@ -294,12 +300,18 @@ func (r *NARReceiver) Cleanup(ctx context.Context) {
 	if r.tmpFile == nil {
 		return
 	}
-	name := r.tmpFile.Name()
-	r.tmpFile.Close()
-	r.tmpFile = nil
-	if err := os.Remove(name); err != nil {
-		log.Warnf(ctx, "Unable to remove store temp file: %v", err)
+	if err := r.tmpFile.Close(); err != nil {
+		log.Warnf(ctx, "Unable to close store temp file: %v", err)
 	}
+	r.tmpFile = nil
+}
+
+func truncateIfPossible(f io.ReadWriteSeeker, size int64) error {
+	t, ok := f.(interface{ Truncate(size int64) error })
+	if !ok {
+		return nil
+	}
+	return t.Truncate(size)
 }
 
 // freeze calls [osutil.Freeze]

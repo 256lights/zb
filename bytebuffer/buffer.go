@@ -1,11 +1,13 @@
 // Copyright 2025 The zb Authors
 // SPDX-License-Identifier: MIT
 
-// Package bytewriter provides a buffer type that implements [io.ReadWriteSeeker].
-package bytewriter
+// Package bytebuffer provides a buffer type that implements [io.ReadWriteSeeker].
+// It also provides an interface for creating byte buffers.
+package bytebuffer
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"math"
 )
@@ -14,18 +16,19 @@ import (
 // and [io.ByteScanner] interfaces by reading from or writing to a byte slice.
 // The zero value for Buffer operates like a Buffer of an empty slice.
 type Buffer struct {
-	s []byte
-	i int64
+	s     []byte
+	i     int64
+	limit int
 }
 
 // New returns a new [Buffer] reading from and writing to b.
 func New(p []byte) *Buffer {
-	return &Buffer{s: p}
+	return &Buffer{s: p, limit: math.MaxInt}
 }
 
 // Reset resets the [Buffer] to be reading from and writing to b.
 func (b *Buffer) Reset(p []byte) {
-	*b = Buffer{s: p}
+	*b = Buffer{s: p, limit: math.MaxInt}
 }
 
 // Size returns the length of the underlying byte slice.
@@ -56,7 +59,7 @@ func (b *Buffer) ReadByte() (byte, error) {
 // UnreadByte complements [*Buffer.ReadByte] in implementing the [io.ByteScanner] interface.
 func (b *Buffer) UnreadByte() error {
 	if b.i <= 0 {
-		return errors.New("bytewriter.Buffer.UnreadByte: at beginning of slice")
+		return errors.New("bytebuffer.Buffer.UnreadByte: at beginning of slice")
 	}
 	b.i--
 	return nil
@@ -69,9 +72,15 @@ func (b *Buffer) UnreadByte() error {
 // If the offset is larger than the length of the underlying byte slice,
 // then the intervening bytes are zero-filled.
 func (b *Buffer) Write(p []byte) (n int, err error) {
+	if b.i > int64(b.limit-len(p)) {
+		err = errTooLarge
+		if b.i >= int64(b.limit) {
+			return 0, err
+		}
+		p = p[:b.limit-int(b.i)]
+	}
+
 	switch {
-	case b.i > int64(math.MaxInt-len(p)):
-		return 0, errors.New("bytewriter.Buffer.Write: too large")
 	case b.i > int64(len(b.s)):
 		b.s = append(append(b.s, make([]byte, int(b.i)-len(b.s))...), p...)
 	case b.i+int64(len(p)) >= int64(len(b.s)):
@@ -80,7 +89,7 @@ func (b *Buffer) Write(p []byte) (n int, err error) {
 		copy(b.s[b.i:], p)
 	}
 	b.i += int64(len(p))
-	return len(p), nil
+	return len(p), err
 }
 
 // Seek implements the [io.Seeker] interface.
@@ -94,10 +103,10 @@ func (b *Buffer) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekEnd:
 		abs = int64(len(b.s)) + offset
 	default:
-		return 0, errors.New("bytewriter.Buffer.Seek: invalid whence")
+		return 0, errors.New("bytebuffer.Buffer.Seek: invalid whence")
 	}
 	if abs < 0 {
-		return 0, errors.New("bytewriter.Buffer.Seek: negative position")
+		return 0, errors.New("bytebuffer.Buffer.Seek: negative position")
 	}
 	b.i = abs
 	return abs, nil
@@ -111,7 +120,7 @@ func (b *Buffer) WriteTo(w io.Writer) (n int64, err error) {
 	p := b.s[b.i:]
 	m, err := w.Write(p)
 	if m > len(p) {
-		panic("bytewriter.Buffer.WriteTo: invalid Write count")
+		panic("bytebuffer.Buffer.WriteTo: invalid Write count")
 	}
 	b.i += int64(m)
 	n = int64(m)
@@ -120,3 +129,58 @@ func (b *Buffer) WriteTo(w io.Writer) (n int64, err error) {
 	}
 	return
 }
+
+// Truncate changes the size of the buffer.
+// It does not change the I/O offset.
+func (b *Buffer) Truncate(size int64) error {
+	switch {
+	case size > int64(b.limit):
+		return errTooLarge
+	case size < 0:
+		return fmt.Errorf("bytebuffer.Buffer.Truncate: negative size")
+	case int(size) < len(b.s):
+		b.s = b.s[:size]
+	case int(size) > len(b.s):
+		newSlice := make([]byte, size)
+		copy(newSlice, b.s)
+		b.s = newSlice
+	}
+	return nil
+}
+
+const defaultLimit = 1024 * 1024 * 1024 // 1 GiB
+
+// BufferCreator is a [Creator] that returns buffers backed by memory.
+type BufferCreator struct {
+	// Limit specifies an maximum limit on size of buffers.
+	// If Limit is zero, then a reasonable default limit is used.
+	// If Limit is negative, then no limit is applied.
+	Limit int
+}
+
+// CreateBuffer returns an in-memory buffer of the given size.
+func (c BufferCreator) CreateBuffer(size int64) (ReadWriteSeekCloser, error) {
+	limit := c.Limit
+	switch {
+	case limit == 0:
+		limit = defaultLimit
+	case limit < 0:
+		limit = math.MaxInt
+	}
+	if limit > 0 && size > int64(limit) {
+		return nil, fmt.Errorf("create buffer: %d bytes exceeds limit", size)
+	}
+	b := New(make([]byte, max(size, 0)))
+	b.limit = limit
+	return closeBuffer{b}, nil
+}
+
+type closeBuffer struct {
+	*Buffer
+}
+
+func (cb closeBuffer) Close() error {
+	return nil
+}
+
+var errTooLarge = errors.New("in-memory buffer too large")

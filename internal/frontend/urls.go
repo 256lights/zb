@@ -11,7 +11,6 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
-	"os"
 	slashpath "path"
 	"path/filepath"
 	"runtime"
@@ -208,17 +207,13 @@ func (eval *Eval) importURL(ctx context.Context, u *url.URL) (zbstore.Path, erro
 	}
 
 	// Otherwise, download to a temporary file and then ingest.
-	f, err := os.CreateTemp("", "zb-download-*")
+	f, err := eval.downloadTemp.CreateBuffer(-1)
 	if err != nil {
 		return "", fmt.Errorf("download %v: %v", u, err)
 	}
 	defer func() {
-		fname := f.Name()
 		if err := f.Close(); err != nil {
-			log.Debugf(ctx, "Closing temp file %s: %v", fname, err)
-		}
-		if err := os.Remove(fname); err != nil {
-			log.Warnf(ctx, "Removing temp file: %v", err)
+			log.Debugf(ctx, "Closing temp file: %v", err)
 		}
 	}()
 	size, err := io.Copy(f, resp.Body)
