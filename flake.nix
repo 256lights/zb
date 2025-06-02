@@ -47,6 +47,8 @@
           name = "zb";
           version = "0.1.0";
 
+          dontPatchShebangs = true;
+
           src = pkgs.fetchurl {
             url = "https://github.com/256lights/zb/releases/download/v0.1.0-rc1/zb-v0.1.0-rc1-x86_64-unknown-linux.tar.bz2";
             sha256 = "sha256-u+H2+LWS2Rm82LT+Gk/PhhKrOw4kEy7t3tqrSttpQR8=";
@@ -123,7 +125,7 @@
               description = "zb Install";
               serviceConfig = {
                 Type = "oneshot";
-                ExecStart = "${zb}/install";
+                ExecStart = "${pkgs.bash}/bin/bash ${zb}/install";
               };
             };
 
