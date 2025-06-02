@@ -114,8 +114,8 @@ func (analysis *SelfReferenceAnalysis) RewritesInRange(start, end int64) []Rewri
 	n := slices.IndexFunc(slice, func(r Rewriter) bool { return !inRange(r) })
 	var remaining []Rewriter
 	if n >= 0 {
-		slice = slice[:n]
 		remaining = slice[n+1:]
+		slice = slice[:n]
 	}
 	slice = slices.Clip(slice)
 
