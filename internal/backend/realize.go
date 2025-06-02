@@ -1640,7 +1640,7 @@ func rewriteAtPath(path string, baseOffset int64, newDigest string, rewriters []
 		if err := os.Remove(path); err != nil {
 			return fmt.Errorf("replace symlink %s: %v", path, err)
 		}
-		if err := os.Symlink(oldTarget, newTarget); err != nil {
+		if err := os.Symlink(newTarget, path); err != nil {
 			return err
 		}
 	default:
