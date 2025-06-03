@@ -3,7 +3,8 @@
 This introductory guide will help you run your first build with zb
 and explain the basic concepts you will need to use zb.
 zb is a build system that manages your dependencies
-so that you can be confident that a build that works on one machine works on any machine.
+so that you can be confident that a build that works on one machine
+works on any machine with the same operating system and CPU architecture.
 
 ## Prerequisites
 
@@ -13,7 +14,7 @@ This guide assumes:
   (For example, Terminal.app on macOS, Command Prompt or PowerShell on Windows, etc.)
 - Knowledge of at least one programming language.
   We will be building a C program in this tutorial,
-  but you do not need to know C or have any specific developer tools installed.
+  but you do not need to know C or have any specific version of developer tools installed.
   Installing tools automatically is a key feature of zb!
 - zb uses the [Lua programming language](https://www.lua.org/) to configure builds.
   Learning Lua is helpful for using zb.
@@ -21,12 +22,10 @@ This guide assumes:
   with some standard libraries omitted to limit the complexity of builds.
   As such, any learning resources for Lua will be applicable to zb.
 
-For now, the standard library only supports `x86_64-unknown-linux`,
-so the rest of this guide can only be run on `x86_64-unknown-linux`.
-Support is planned for
-`x86_64-pc-windows-msvc` ([256lights/zb-stdlib#1](https://github.com/256lights/zb-stdlib/issues/1)),
-`aarch64-apple-darwin` ([256lights/zb-stdlib#6](https://github.com/256lights/zb-stdlib/issues/6)),
-and `aarch64-unknown-linux` ([256lights/zb-stdlib#24](https://github.com/256lights/zb-stdlib/issues/24)).
+The standard library currently supports:
+
+- `x86_64-unknown-linux`
+- `aarch64-apple-macos`
 
 ## Installation
 
@@ -40,6 +39,9 @@ To install zb:
    There is no installer for Windows yet.
    ([#82](https://github.com/256lights/zb/issues/82) tracks adding an installer.)
 5. Once the installer finishes, you can delete the binary archive and the extracted directory.
+
+On `aarch64-apple-macos`, the zb standard library requires additional setup.
+See the [standard library README](https://github.com/256lights/zb-stdlib/blob/main/README.md) for details.
 
 ## Tutorial
 
@@ -71,6 +73,7 @@ in the same directory as `hello.c`:
 -- zb.lua
 
 -- Download the standard library.
+-- TODO(now): URL+hash out of date.
 local zb = fetchArchive {
   url = "https://github.com/256lights/zb-stdlib/archive/dfa8e871d0f24507ad00ddca8d68292ba5c0a494.zip";
   hash = "sha256:755e2c36a25e960c31a0867cc8594744fb2d2ef3006ed47ae3259776eb1f4fad";
@@ -89,10 +92,7 @@ local src = path {
 }
 
 -- Create our build target.
-local supportedSystems = {
-  "x86_64-unknown-linux",
-}
-for _, system in ipairs(supportedSystems) do
+for _, system in ipairs(stdenv.systems) do
   _G[system] = {
     hello = stdenv.makeDerivation {
       pname = "hello";
@@ -126,7 +126,7 @@ names a variable to build.
 In this case, we're building `hello`.
 `zb build` will automatically look for a global called `hello` defined inside `zb.lua`.
 When it finds `nil`, then it looks for `hello`
-inside a table with the same name as the currently running platform.
+inside a table with the same name as the currently running platform (e.g. `x86-unknown-linux`).
 
 At the end, `zb build` will print the path to the directory it created,
 something like `/opt/zb/store/2lvf1cavwkainjz32xzja04hfl5cimx6-hello`.
@@ -145,6 +145,7 @@ In the next few sections, we'll explain the `zb.lua` script in more detail.
 The first section downloads [the standard library][] from GitHub:
 
 ```lua
+-- TODO(now): URL+hash out of date.
 local zb = fetchArchive {
   url = "https://github.com/256lights/zb-stdlib/archive/dfa8e871d0f24507ad00ddca8d68292ba5c0a494.zip";
   hash = "sha256:755e2c36a25e960c31a0867cc8594744fb2d2ef3006ed47ae3259776eb1f4fad";
@@ -231,10 +232,7 @@ Finally, for each system that the standard library supports,
 we create a table with the `hello` derivation:
 
 ```lua
-local supportedSystems = {
-  "x86_64-unknown-linux",
-}
-for _, system in ipairs(supportedSystems) do
+for _, system in ipairs(stdenv.systems) do
   _G[system] = {
     hello = stdenv.makeDerivation {
       pname = "hello";
@@ -249,6 +247,9 @@ for _, system in ipairs(supportedSystems) do
   }
 end
 ```
+
+`stdenv.systems` is a table containing the platforms that the standrd library supports
+(e.g. `"x86_64-unknown-linux"`).
 
 `stdenv.makeDerivation` is a function that returns a derivation.
 It provides GCC and a minimal set of standard Unix tools.
