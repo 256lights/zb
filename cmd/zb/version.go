@@ -92,8 +92,8 @@ func runVersion(ctx context.Context) error {
 		if err != nil {
 			log.Errorf(ctx, "ver: %v", err)
 		} else {
-			output = bytes.TrimRight(output, "\n\r")
-			fmt.Printf("OS: %s\n", output)
+			output = bytes.Trim(output, "\n\r")
+			fmt.Printf("OS:           %s\n", output)
 		}
 	}
 
