@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/handlers v1.5.2
 	github.com/spf13/cobra v1.8.0
-	github.com/spf13/pflag v1.0.5
+	github.com/spf13/pflag v1.0.7-0.20250601092742-8a6c85f2ae48
 	github.com/tailscale/hujson v0.0.0-20250226034555-ec1d1c113d33
 	go4.org v0.0.0-20230225012048-214862532bf5
 	golang.org/x/sync v0.14.0

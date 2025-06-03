@@ -132,7 +132,7 @@ function module.new(args)
     busybox = busybox;
 
     preBuild = [[export GOCACHE="$ZB_BUILD_TOP/cache"]];
-    buildPhase = [[go build -trimpath -ldflags="-s -w" zb.256lights.llc/pkg/cmd/zb]];
+    buildPhase = [[go build -trimpath -ldflags="-s -w -X main.zbVersion=$version" zb.256lights.llc/pkg/cmd/zb]];
     installPhase = [=[
 mkdir -p "$out/bin"
 name="zb$(go env GOEXE)"
@@ -157,6 +157,7 @@ end
 
 local supportedBuildSystems <const> = {
   "x86_64-unknown-linux",
+  "aarch64-apple-macos",
 }
 
 local supportedTargetSystems <const> = {

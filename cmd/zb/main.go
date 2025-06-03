@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -71,10 +72,15 @@ func main() {
 		g.storeSocket = filepath.Join(defaultVarDir(), "server.sock")
 	}
 
+	ignoreSIGPIPE()
+	ctx, cancel := signal.NotifyContext(context.Background(), interruptSignals...)
+
 	rootCommand.PersistentFlags().StringVar(&g.cacheDB, "cache", g.cacheDB, "`path` to cache database")
 	rootCommand.PersistentFlags().Var((*storeDirectoryFlag)(&g.storeDir), "store", "path to store `dir`ectory")
 	rootCommand.PersistentFlags().StringVar(&g.storeSocket, "store-socket", g.storeSocket, "`path` to store server socket")
 	showDebug := rootCommand.PersistentFlags().Bool("debug", false, "show debugging output")
+	versionCobraFlag := rootCommand.PersistentFlags().VarPF(versionFlag{ctx}, "version", "", "show version information")
+	versionCobraFlag.NoOptDefVal = "true"
 
 	rootCommand.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		initLogging(*showDebug)
@@ -91,12 +97,14 @@ func main() {
 		newNARCommand(),
 		newServeCommand(g),
 		newStoreCommand(g),
+		newVersionCommand(g),
 		luacCommand,
 	)
 
-	ignoreSIGPIPE()
-	ctx, cancel := signal.NotifyContext(context.Background(), interruptSignals...)
 	err = rootCommand.ExecuteContext(ctx)
+	if errors.Is(err, errShowVersion) {
+		err = runVersion(ctx)
+	}
 	cancel()
 	if err != nil {
 		initLogging(*showDebug)
