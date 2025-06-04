@@ -150,10 +150,7 @@ func (eval *Eval) URLs(ctx context.Context, urls []string) ([]any, error) {
 	// Perform lookups on each import.
 	result := make([]any, len(urls))
 	sys := system.Current()
-	sysTriple := sys.Arch.String() + "-" + sys.Vendor.String() + "-" + sys.OS.String()
-	if !sys.Env.IsUnknown() && !(sys.Env == "msvc" && sys.OS.IsWindows()) {
-		sysTriple += "-" + sys.Env.String()
-	}
+	sysTriple := SystemTriple(sys)
 	l.PushClosure(0, messageHandler)
 	for i, u := range parsedURLs {
 		l.RawIndex(tableStackIndex, int64(i+1))
@@ -458,6 +455,15 @@ func splitKeyPath(s string) iter.Seq[string] {
 			}
 		}
 	}
+}
+
+// SystemTriple returns the key used to find a system-specific object for a URL.
+func SystemTriple(sys system.System) string {
+	result := sys.Arch.String() + "-" + sys.Vendor.String() + "-" + sys.OS.String()
+	if !sys.Env.IsUnknown() && !(sys.Env == "msvc" && sys.OS.IsWindows()) {
+		result += "-" + sys.Env.String()
+	}
+	return result
 }
 
 // inferDownloadName converts baseName into a store-object-appropriate name.

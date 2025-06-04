@@ -12,6 +12,7 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
+	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/system"
 	"zombiezen.com/go/log"
 )
@@ -43,7 +44,7 @@ func runVersion(ctx context.Context) error {
 	}
 
 	currSystem := system.Current()
-	fmt.Printf("%s\nSystem:       %v\nCPUs:         %d\n", firstLine, currSystem, runtime.NumCPU())
+	fmt.Printf("%s\nSystem:       %v\nCPUs:         %d\n", firstLine, frontend.SystemTriple(currSystem), runtime.NumCPU())
 
 	switch {
 	case currSystem.OS.IsLinux():
