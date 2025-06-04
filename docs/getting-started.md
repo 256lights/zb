@@ -270,4 +270,4 @@ zb is still in early development.
 If you have questions or feedback, [open a discussion on GitHub](https://github.com/256lights/zb/discussions).
 If you're interested in getting involved,
 see the [zb contribution guide](https://github.com/256lights/zb/blob/main/CONTRIBUTING.md)
-and/or the [standard library contribution guide](https://github.com/256lights/zb/blob/main/CONTRIBUTING.md).
+and/or the [standard library contribution guide](https://github.com/256lights/zb-stdlib/blob/main/CONTRIBUTING.md).
