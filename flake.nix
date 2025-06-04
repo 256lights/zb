@@ -56,7 +56,7 @@
 
           installPhase = ''
             mkdir -p $out
-            tar -xf $src -C $out --strip-components=1
+            cp -a --reflink=auto . $out
           '';
         };
       }
