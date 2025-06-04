@@ -23,25 +23,17 @@ export ZB_STORE_DIR="/opt/zb/store"
 
 isMacOS=0
 isLinux=0
-isNixOS=0
 case "$(uname -s)" in
   Darwin)
     isMacOS=1
     ;;
   Linux)
     isLinux=1
-	if [[ -f '/etc/NIXOS' ]]; then
-		isNixOS=1
-	fi
     ;;
 esac
 
-
 installer_dir="$( to_abs "$( dirname -- "${BASH_SOURCE[0]}" )" )"
 bin_dir=/usr/local/bin
-if [[ "$isNixOS" -eq 1 ]]; then
-	bin_dir=/opt/zb/bin
-fi
 bin_dir_explicit=0
 single_user=0
 install_units="$isLinux"
@@ -72,7 +64,6 @@ usage() {
   log "    --launchd                   install launchd daemon (default to yes on macOS)"
   log "    --no-launchd                do not install launchd daemon"
   log "    --installer-dir DIR         install resources from the given directory (default $installer_dir)"
-  log "    --force                     rerun installer even if zb version is already installed"
 }
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -121,10 +112,6 @@ while [[ $# -gt 0 ]]; do
       install_launchdaemon=0
       shift
       ;;
-    --force)
-      force_install=1
-      shift
-      ;;
     --)
       shift
       break
@@ -153,10 +140,6 @@ fi
 # Clear build group if --single-user is given.
 if [[ $single_user -eq 1 ]]; then
   build_users_group=''
-fi
-# Only install units if single-user and NixOS
-if [[ $isNixOS -eq 1 && $single_user -eq 0 ]]; then
-  install_units=0
 fi
 
 zb_object="$( cd "$installer_dir/store" > /dev/null && echo *-zb-* )"
@@ -193,11 +176,6 @@ else
   fi
 fi
 
-if [[ -d "$ZB_STORE_DIR/$zb_object" && "$force_install" -eq 0 ]]; then
-	log 'zb version already exists.'
-	exit
-fi
-
 log "Creating ${ZB_STORE_DIR}..."
 run_as_target_user mkdir -p "$ZB_STORE_DIR"
 run_as_target_user chmod 1775 "$ZB_STORE_DIR"
@@ -229,11 +207,10 @@ if [[ -z "$bin_dir" ]]; then
   fi
 else
   log "Adding symlinks to ${bin_dir}..."
-  run_as_target_user mkdir -p "$bin_dir"
   run_as_target_user ln -sf "$zb" "$bin_dir/zb"
 fi
 
-if [[ -n "$build_users_group" && "$isNixOS" -eq 0 ]]; then
+if [[ -n "$build_users_group" ]]; then
   if [[ "$isLinux" -eq 1 ]]; then
     if getent group "$build_users_group" > /dev/null; then
       log "Reusing existing group $build_users_group"
@@ -359,7 +336,3 @@ if [[ "$install_launchdaemon" -eq 1 ]]; then
 fi
 
 log "Installation complete."
-
-if [[ "$isNixOS" -eq 1 ]]; then
-	log "Remember to add the NixOS module to your config."
-fi
