@@ -70,7 +70,7 @@ while [[ $# -gt 0 ]]; do
       installer_dir="$( to_abs "$2" )"
       shift 2
       ;;
-    --bin-dir)
+    --bin)
       bin_dir="$( to_abs "$2" )"
       bin_dir_explicit=1
       shift 2
