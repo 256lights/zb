@@ -49,12 +49,11 @@ if [[ "$isMacOS" -eq 1 ]]; then
 fi
 first_build_uid=256001
 build_user_count=32
-force_install=0
 usage() {
   log "usage: $0 [options]"
   log
   log "    --single-user               install without root privileges"
-  log "    --bin DIR                   create symlinks to binaries in the given directory (default $bin_dir)"
+  log "    --bin-dir DIR               create symlinks to binaries in the given directory (default $bin_dir)"
   log "    --build-users-group NAME    use the given Unix group for running builds, creating if necessary (default $build_users_group)"
   log "    --build-gid GID             group ID of Unix group to use if creating (default $build_gid)"
   log "    --build-users N             create N build users if creating build group (default $build_user_count)"
@@ -72,7 +71,11 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --bin-dir)
-      bin_dir="$( to_abs "$2" )"
+      if [[ -z "$2" ]]; then
+        bin_dir=""
+      else
+        bin_dir="$( to_abs "$2" )"
+      fi
       bin_dir_explicit=1
       shift 2
       ;;
