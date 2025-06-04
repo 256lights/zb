@@ -43,7 +43,7 @@
           hardeningDisable = [ "fortify" ];
         };
 
-        packages.default = pkgs.stdenv.mkDerivation {
+        packages.installer = pkgs.stdenv.mkDerivation {
           name = "zb";
           version = "0.1.0-rc1";
 
