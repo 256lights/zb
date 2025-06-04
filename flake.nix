@@ -5,6 +5,9 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "flake-utils";
+
+    dream2nix.url = "github:nix-community/dream2nix";
+    dream2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -12,6 +15,7 @@
       self,
       nixpkgs,
       flake-utils,
+      dream2nix,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -21,8 +25,23 @@
           inherit system;
         };
 
+        version = "0.1.0-rc1";
+
         go = pkgs.go_1_24;
         buildGoModule = pkgs.buildGo124Module;
+
+        nodeOutputs = dream2nix.lib.evalModules {
+          packageSets.nixpkgs = nixpkgs.legacyPackages.${system};
+          modules = [
+            ./node.nix
+            {
+              version = version;
+              paths.projectRoot = ./.;
+              paths.projectRootFile = "flake.nix";
+              paths.package = ./.;
+            }
+          ];
+        };
       in
       {
         devShells.default = pkgs.mkShellNoCC {
@@ -43,9 +62,26 @@
           hardeningDisable = [ "fortify" ];
         };
 
+        packages.default = buildGoModule {
+          pname = "zb";
+          version = version;
+
+          preBuild = ''
+            cp -r ${nodeOutputs}/lib/node_modules/zb-node/public ./internal/ui/public
+          '';
+
+          ldflags = [
+            "-s -w"
+          ];
+
+          src = ./.;
+
+          vendorHash = "sha256-1YGUmGGOF4MbL2ucUX0zPe8VS6kaG5ewSSlo+eBsFQk=";
+        };
+
         packages.installer = pkgs.stdenv.mkDerivation {
-          name = "zb";
-          version = "0.1.0-rc1";
+          name = "zb-installer";
+          version = version;
 
           dontPatchShebangs = true;
 
@@ -71,6 +107,7 @@
         }:
         let
           zb = self.packages.${pkgs.system}.default;
+          zbInstaller = self.packages.${pkgs.system}.installer;
         in
         {
           options.zb = {
@@ -94,15 +131,10 @@
               default = 32;
               description = "Number of build users to create";
             };
-            binPath = lib.mkOption {
-              type = lib.types.str;
-              default = "/opt/zb/bin";
-              description = "Path to install the zb binary";
-            };
           };
 
           config = {
-            environment.variables.PATH = config.zb.binPath;
+            environment.systemPackages = [ zb ];
 
             users.users = builtins.listToAttrs (
               map (i: {
@@ -123,9 +155,14 @@
 
             systemd.services.zb-install = {
               description = "zb Install";
+              path = [ pkgs.bash ];
+              script = ''
+                if [[ ! -d /opt/zb/store ]]; then
+                  bash ${zbInstaller}/install --bin-dir "" --build-users-group "" --no-systemd
+                fi
+              '';
               serviceConfig = {
                 Type = "oneshot";
-                ExecStart = "${pkgs.bash}/bin/bash ${zb}/install";
               };
             };
 
@@ -154,7 +191,7 @@
                 ConditionPathIsReadWrite = "/opt/zb/var/zb";
               };
               serviceConfig = {
-                ExecStart = "/opt/zb/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --build-users-group=${config.zb.buildGroup}";
+                ExecStart = "${zb}/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --build-users-group=${config.zb.buildGroup}";
                 KillMode = "mixed";
               };
             };
