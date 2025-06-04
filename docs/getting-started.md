@@ -73,10 +73,9 @@ in the same directory as `hello.c`:
 -- zb.lua
 
 -- Download the standard library.
--- TODO(now): URL+hash out of date.
-local zb = fetchArchive {
-  url = "https://github.com/256lights/zb-stdlib/archive/dfa8e871d0f24507ad00ddca8d68292ba5c0a494.zip";
-  hash = "sha256:755e2c36a25e960c31a0867cc8594744fb2d2ef3006ed47ae3259776eb1f4fad";
+local zb <const> = fetchArchive {
+  url = "https://github.com/256lights/zb-stdlib/releases/download/v0.1.0/zb-stdlib-v0.1.0.tar.gz";
+  hash = "sha256:dd040fe8baad8255e4ca44b7249cddfc24b5980f707a29c3b3e2b47f5193ea48";
 }
 
 -- Import modules from the standard library.
@@ -145,10 +144,9 @@ In the next few sections, we'll explain the `zb.lua` script in more detail.
 The first section downloads [the standard library][] from GitHub:
 
 ```lua
--- TODO(now): URL+hash out of date.
-local zb = fetchArchive {
-  url = "https://github.com/256lights/zb-stdlib/archive/dfa8e871d0f24507ad00ddca8d68292ba5c0a494.zip";
-  hash = "sha256:755e2c36a25e960c31a0867cc8594744fb2d2ef3006ed47ae3259776eb1f4fad";
+local zb <const> = fetchArchive {
+  url = "https://github.com/256lights/zb-stdlib/releases/download/v0.1.0/zb-stdlib-v0.1.0.tar.gz";
+  hash = "sha256:dd040fe8baad8255e4ca44b7249cddfc24b5980f707a29c3b3e2b47f5193ea48";
 }
 ```
 
@@ -248,7 +246,7 @@ for _, system in ipairs(stdenv.systems) do
 end
 ```
 
-`stdenv.systems` is a table containing the platforms that the standrd library supports
+`stdenv.systems` is a table containing the platforms that the standard library supports
 (e.g. `"x86_64-unknown-linux"`).
 
 `stdenv.makeDerivation` is a function that returns a derivation.
