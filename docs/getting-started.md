@@ -35,10 +35,13 @@ To install zb:
    in your web browser.
 2. Download the binary archive asset for your platform.
 3. Extract the binary archive.
-4. On Unix-like systems, run the `install` script.
+4. On macOS, you may need to run `xattr -r -d com.apple.quarantine ${DIR?}`
+   where `${DIR?}` is the extracted directory
+   to have the installer not be blocked by Gatekeeper.
+5. On Unix-like systems, run the `install` script.
    There is no installer for Windows yet.
    ([#82](https://github.com/256lights/zb/issues/82) tracks adding an installer.)
-5. Once the installer finishes, you can delete the binary archive and the extracted directory.
+6. Once the installer finishes, you can delete the binary archive and the extracted directory.
 
 On `aarch64-apple-macos`, the zb standard library requires additional setup.
 See the [standard library README](https://github.com/256lights/zb-stdlib/blob/main/README.md) for details.
