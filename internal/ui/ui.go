@@ -13,7 +13,8 @@ import (
 	"sync"
 )
 
-//go:embed templates templates/_*.html public
+//go:embed templates templates/_*.html
+//go:embed public/index.js public/index.css
 var files embed.FS
 
 var templateFiles = sub("templates")

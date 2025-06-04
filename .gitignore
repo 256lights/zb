@@ -4,5 +4,6 @@
 /cmd/zb/zb.exe
 node_modules/
 /internal/ui/build/
-/internal/ui/public/
 .env
+*.js.map
+*.css.map

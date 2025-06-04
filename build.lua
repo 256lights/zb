@@ -37,7 +37,6 @@ function getters.src()
     name = "zb-source";
     filter = function(name)
       local base = strings.baseNameOf(name)
-      -- TODO(256lights/zb-stdlib#21): name ~= "internal/ui/public"
       return (allowSubtree(name, "bytebuffer") or
             allowSubtree(name, "cmd") or
             allowSubtree(name, "internal") or
@@ -54,7 +53,9 @@ function getters.src()
           base ~= ".vscode" and
           base ~= "node_modules" and
           base ~= ".git" and
-          base ~= ".env"
+          base ~= ".env" and
+          not base:find("%.js%.map$") and
+          not base:find("%.css%.map$")
     end;
   }
 end

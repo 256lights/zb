@@ -20,8 +20,13 @@ To build zb without an existing zb installation, you will need:
 After that, the build process is:
 
 ```shell
-go generate zb.256lights.llc/internal/ui &&
 go build zb.256lights.llc/cmd/zb
+```
+
+If you change the code inside `internal/ui`:
+
+```shell
+go generate zb.256lights.llc/internal/ui
 ```
 
 If you are running on Windows, you must be running Windows 10 or later,
