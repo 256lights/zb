@@ -182,7 +182,7 @@ func extractTar(dst string, src io.Reader, stripFirstComponent bool) error {
 
 	// Peek at first file header.
 	r := tar.NewReader(src)
-	hdr, err := r.Next()
+	hdr, err := nextSupportedTarHeader(r)
 	if err != nil {
 		if err == io.EOF {
 			if stripFirstComponent {
@@ -207,7 +207,7 @@ func extractTar(dst string, src io.Reader, stripFirstComponent bool) error {
 				return err
 			}
 			var err error
-			hdr, err = r.Next()
+			hdr, err = nextSupportedTarHeader(r)
 			if err != nil {
 				if err == io.EOF {
 					err = nil
@@ -250,7 +250,7 @@ func extractTar(dst string, src io.Reader, stripFirstComponent bool) error {
 			return err
 		}
 
-		hdr, err = r.Next()
+		hdr, err = nextSupportedTarHeader(r)
 		if err == io.EOF {
 			break
 		}
@@ -260,6 +260,23 @@ func extractTar(dst string, src io.Reader, stripFirstComponent bool) error {
 	}
 
 	return nil
+}
+
+func nextSupportedTarHeader(r *tar.Reader) (*tar.Header, error) {
+	for {
+		hdr, err := r.Next()
+		if err != nil {
+			return nil, err
+		}
+		switch hdr.Typeflag {
+		case tar.TypeXGlobalHeader:
+			// Ignore.
+		case tar.TypeReg, tar.TypeRegA, tar.TypeSymlink, tar.TypeDir:
+			return hdr, nil
+		default:
+			return hdr, fmt.Errorf("unsupported tar entry type %q", hdr.Typeflag)
+		}
+	}
 }
 
 func extractTarFile(root *os.Root, dst string, r *tar.Reader, hdr *tar.Header) error {

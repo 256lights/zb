@@ -58,6 +58,32 @@ func TestExtractTar(t *testing.T) {
 			},
 		},
 		{
+			name: "SingleFilePAX",
+			entries: []tarEntry{
+				{
+					header: tar.Header{
+						Typeflag:   tar.TypeXGlobalHeader,
+						Name:       "pax_global_header",
+						PAXRecords: map[string]string{"comment": "ohai"},
+					},
+				},
+				{
+					header: tar.Header{
+						Name: "foo.txt",
+						Size: int64(len("Hello, World!\n")),
+					},
+					data: []byte("Hello, World!\n"),
+				},
+			},
+			dst: "foo",
+			want: fstest.MapFS{
+				"foo/foo.txt": {Data: []byte("Hello, World!\n")},
+			},
+			wantStripped: fstest.MapFS{
+				"foo": {Data: []byte("Hello, World!\n")},
+			},
+		},
+		{
 			name: "MultipleFiles",
 			entries: []tarEntry{
 				{
@@ -84,6 +110,56 @@ func TestExtractTar(t *testing.T) {
 		{
 			name: "Directory",
 			entries: []tarEntry{
+				{
+					header: tar.Header{Name: "a/"},
+				},
+				{
+					header: tar.Header{
+						Name: "a/b.txt",
+						Size: int64(len("Hello, World!\n")),
+					},
+					data: []byte("Hello, World!\n"),
+				},
+				{
+					header: tar.Header{
+						Name: "a/c.txt",
+						Size: int64(len("again?\n")),
+					},
+					data: []byte("again?\n"),
+				},
+				{
+					header: tar.Header{Name: "a/d/"},
+				},
+				{
+					header: tar.Header{
+						Name: "a/d/e.txt",
+						Size: int64(len("eeeee")),
+					},
+					data: []byte("eeeee"),
+				},
+			},
+			dst: "foo",
+			want: fstest.MapFS{
+				"foo/a/b.txt":   {Data: []byte("Hello, World!\n")},
+				"foo/a/c.txt":   {Data: []byte("again?\n")},
+				"foo/a/d/e.txt": {Data: []byte("eeeee")},
+			},
+			wantStripped: fstest.MapFS{
+				"foo/b.txt":   {Data: []byte("Hello, World!\n")},
+				"foo/c.txt":   {Data: []byte("again?\n")},
+				"foo/d/e.txt": {Data: []byte("eeeee")},
+			},
+		},
+		{
+			name: "DirectoryWithPAXGlobalHeader",
+			entries: []tarEntry{
+				{
+					header: tar.Header{
+						Typeflag:   tar.TypeXGlobalHeader,
+						Name:       "pax_global_header",
+						PAXRecords: map[string]string{"comment": "ohai"},
+					},
+				},
 				{
 					header: tar.Header{Name: "a/"},
 				},
