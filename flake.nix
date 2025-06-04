@@ -45,7 +45,7 @@
 
         packages.default = pkgs.stdenv.mkDerivation {
           name = "zb";
-          version = "0.1.0";
+          version = "0.1.0-rc1";
 
           dontPatchShebangs = true;
 
