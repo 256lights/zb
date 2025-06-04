@@ -153,12 +153,8 @@
                 ];
                 ConditionPathIsReadWrite = "/opt/zb/var/zb";
               };
-              environment = {
-                ZB_BUILD_USERS_GROUP = config.zb.buildGroup;
-                ZB_SERVE_FLAGS = "";
-              };
               serviceConfig = {
-                ExecStart = "/opt/zb/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --build-users-group=${config.zb.buildGroup} $ZB_SERVE_FLAGS";
+                ExecStart = "/opt/zb/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --build-users-group=${config.zb.buildGroup}";
                 KillMode = "mixed";
               };
             };
