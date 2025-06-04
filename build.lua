@@ -4,14 +4,13 @@
 -- This is the zb build script that builds zb. :)
 
 local stdlib <const> = fetchArchive {
-  url = "https://github.com/256lights/zb-stdlib/archive/839b839dc8194f34bf0741e01429168cbb75614c.zip";
-  hash = "sha256:9b22a7000fdbef1093f7fd3a3cc16802cfc7f53575bd8e4887cc79be2252ce97";
-  name = "zb-stdlib-839b839dc.zip";
+  url = "https://github.com/256lights/zb-stdlib/releases/download/v0.1.0/zb-stdlib-v0.1.0.tar.gz";
+  hash = "sha256:dd040fe8baad8255e4ca44b7249cddfc24b5980f707a29c3b3e2b47f5193ea48";
 }
 
+local go <const> = import(stdlib.."/packages/go/go.lua")
 local seeds <const> = import(stdlib.."/bootstrap/seeds.lua")
 local strings <const> = import(stdlib.."/strings.lua")
-local systems <const> = import(stdlib.."/systems.lua")
 local tables <const> = import(stdlib.."/tables.lua")
 
 local module <const> = {}
@@ -39,7 +38,8 @@ function getters.src()
     filter = function(name)
       local base = strings.baseNameOf(name)
       -- TODO(256lights/zb-stdlib#21): name ~= "internal/ui/public"
-      return (allowSubtree(name, "cmd") or
+      return (allowSubtree(name, "bytebuffer") or
+            allowSubtree(name, "cmd") or
             allowSubtree(name, "internal") or
             allowSubtree(name, "sets") or
             allowSubtree(name, "zbstore") or
@@ -68,31 +68,7 @@ end
 ---}
 ---@return derivation
 function module.new(args)
-  local targetSystem = systems.parse(args.targetSystem or args.buildSystem)
-  if not targetSystem then
-    error(string.format("invalid target system %q", args.targetSystem or args.buildSystem))
-  end
-  local GOOS, GOARCH
-  if targetSystem.isLinux then
-    GOOS = "linux"
-  elseif targetSystem.isMacOS then
-    GOOS = "darwin"
-  elseif targetSystem.isWindows then
-    GOOS = "windows"
-  else
-    error(string.format("unsupported OS for %q", tostring(targetSystem)))
-  end
-  if targetSystem.isX86 and targetSystem.is64Bit then
-    GOARCH = "amd64"
-  elseif targetSystem.isX86 and targetSystem.is32Bit then
-    GOARCH = "386"
-  elseif targetSystem.isARM and targetSystem.is64Bit then
-    GOARCH = "arm64"
-  elseif targetSystem.isARM and targetSystem.is32Bit then
-    GOARCH = "arm"
-  else
-    error(string.format("unsupported architecture for %q", tostring(targetSystem)))
-  end
+  local goEnv = go.envForSystem(args.targetSystem or args.buildSystem)
 
   local modules = (args.makeDerivationNoCC or args.makeDerivation) {
     pname = "zb-go-modules";
@@ -118,12 +94,12 @@ function module.new(args)
   end
   return args.makeDerivation {
     pname = "zb";
-    version = "0.1.0-rc1";
+    version = "0.1.0-rc2";
     src = module.src;
     buildSystem = args.buildSystem;
 
-    GOOS = GOOS;
-    GOARCH = GOARCH;
+    GOOS = goEnv.GOOS;
+    GOARCH = goEnv.GOARCH;
     GOMODCACHE = modules;
     PATH = strings.makeBinPath {
       args.go,
@@ -170,7 +146,6 @@ for _, buildSystem in ipairs(supportedBuildSystems) do
   local modTable = {}
   local function new(buildSystem, targetSystem)
     return function()
-      local go <const> = import(stdlib.."/packages/go/go.lua")
       local stdenv <const> = import(stdlib.."/stdenv/stdenv.lua")
 
       return module.new {
