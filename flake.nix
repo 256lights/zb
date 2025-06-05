@@ -138,7 +138,7 @@
                 ConditionPathExists = "!/opt/zb/store";
               };
               path = [ pkgs.bash ];
-              script = "bash ${zbInstaller}/install --bin-dir '' --build-users-group '' --no-systemd";
+              script = "bash ${zbInstaller}/install --bin '' --build-users-group '' --no-systemd";
               serviceConfig = {
                 Type = "oneshot";
               };
