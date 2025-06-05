@@ -53,7 +53,7 @@ usage() {
   log "usage: $0 [options]"
   log
   log "    --single-user               install without root privileges"
-  log "    --bin-dir DIR               create symlinks to binaries in the given directory (default $bin_dir)"
+  log "    --bin DIR                   create symlinks to binaries in the given directory (default $bin_dir)"
   log "    --build-users-group NAME    use the given Unix group for running builds, creating if necessary (default $build_users_group)"
   log "    --build-gid GID             group ID of Unix group to use if creating (default $build_gid)"
   log "    --build-users N             create N build users if creating build group (default $build_user_count)"
@@ -70,12 +70,8 @@ while [[ $# -gt 0 ]]; do
       installer_dir="$( to_abs "$2" )"
       shift 2
       ;;
-    --bin-dir)
-      if [[ -z "$2" ]]; then
-        bin_dir=""
-      else
-        bin_dir="$( to_abs "$2" )"
-      fi
+    --bin)
+      bin_dir="$( to_abs "$2" )"
       bin_dir_explicit=1
       shift 2
       ;;
