@@ -55,7 +55,7 @@
 
           src = ./.;
 
-          vendorHash = "sha256-1YGUmGGOF4MbL2ucUX0zPe8VS6kaG5ewSSlo+eBsFQk=";
+          vendorHash = "sha256-B1DROm8KMfKPupJ7d75Oh8QcJae3UyWwVm8EhnNMayA=";
         };
 
         packages.installer = pkgs.stdenv.mkDerivation {
