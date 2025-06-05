@@ -147,11 +147,8 @@
             systemd.sockets.zb-serve = {
               description = "zb Store Server Socket";
               before = [ "multi-user.target" ];
-              requires = [ "zb-install.service" ];
-              after = [ "zb-install.service" ];
               unitConfig = {
                 RequiresMountsFor = [ "/opt/zb" ];
-                ConditionPathIsReadWrite = "/opt/zb/var/zb";
               };
               listenStreams = [ "/opt/zb/var/zb/server.sock" ];
               wantedBy = [ "sockets.target" ];
@@ -159,7 +156,11 @@
 
             systemd.services.zb-serve = {
               description = "zb Store Server";
-              requires = [ "zb-serve.socket" ];
+              requires = [
+                "zb-serve.socket"
+                "zb-install.service"
+              ];
+              after = [ "zb-install.service" ];
               unitConfig = {
                 RequiresMountsFor = [
                   "/opt/zb/store"
@@ -168,9 +169,8 @@
                 ];
                 ConditionPathIsReadWrite = "/opt/zb/var/zb";
               };
-              path = [ zb ];
-              script = "zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --implicit-system-dep=/bin/sh --build-users-group=${config.zb.buildGroup}";
               serviceConfig = {
+                ExecStart = "${zb}/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --implicit-system-dep=/bin/sh --build-users-group=${config.zb.buildGroup}";
                 KillMode = "mixed";
               };
             };
