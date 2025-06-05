@@ -5,9 +5,6 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "flake-utils";
-
-    dream2nix.url = "github:nix-community/dream2nix";
-    dream2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -15,7 +12,6 @@
       self,
       nixpkgs,
       flake-utils,
-      dream2nix,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -25,23 +21,10 @@
           inherit system;
         };
 
-        version = "0.1.0-rc1";
+        version = "0.1.0-rc2";
 
         go = pkgs.go_1_24;
         buildGoModule = pkgs.buildGo124Module;
-
-        nodeOutputs = dream2nix.lib.evalModules {
-          packageSets.nixpkgs = nixpkgs.legacyPackages.${system};
-          modules = [
-            ./node.nix
-            {
-              version = version;
-              paths.projectRoot = ./.;
-              paths.projectRootFile = "flake.nix";
-              paths.package = ./.;
-            }
-          ];
-        };
       in
       {
         devShells.default = pkgs.mkShellNoCC {
@@ -66,12 +49,8 @@
           pname = "zb";
           version = version;
 
-          preBuild = ''
-            cp -r ${nodeOutputs}/lib/node_modules/zb-node/public ./internal/ui/public
-          '';
-
           ldflags = [
-            "-s -w"
+            "-s -w -X main.zbVersion=${version}"
           ];
 
           src = ./.;
@@ -83,11 +62,11 @@
           name = "zb-installer";
           version = version;
 
-          dontPatchShebangs = true;
+          dontFixup = true;
 
           src = pkgs.fetchurl {
-            url = "https://github.com/256lights/zb/releases/download/v0.1.0-rc1/zb-v0.1.0-rc1-x86_64-unknown-linux.tar.bz2";
-            sha256 = "sha256-u+H2+LWS2Rm82LT+Gk/PhhKrOw4kEy7t3tqrSttpQR8=";
+            url = "https://github.com/256lights/zb/releases/download/v0.1.0-rc2/zb-v0.1.0-rc2-x86_64-unknown-linux.tar.bz2";
+            sha256 = "sha256-wFvYWrPc7t3dzX7vRdXuhBLWJ5ehV2n8A/CxOWhXln0=";
           };
 
           installPhase = ''
