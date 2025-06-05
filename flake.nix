@@ -155,12 +155,11 @@
 
             systemd.services.zb-install = {
               description = "zb Install";
+              unitConfig = {
+                ConditionPathExists = "!/opt/zb/store";
+              };
               path = [ pkgs.bash ];
-              script = ''
-                if [[ ! -d /opt/zb/store ]]; then
-                  bash ${zbInstaller}/install --bin-dir "" --build-users-group "" --no-systemd
-                fi
-              '';
+              script = "bash ${zbInstaller}/install --bin-dir '' --build-users-group '' --no-systemd";
               serviceConfig = {
                 Type = "oneshot";
               };
@@ -190,8 +189,9 @@
                 ];
                 ConditionPathIsReadWrite = "/opt/zb/var/zb";
               };
+              path = [ zb ];
+              script = "zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --implicit-system-dep=/bin/sh --build-users-group=${config.zb.buildGroup}";
               serviceConfig = {
-                ExecStart = "${zb}/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --build-users-group=${config.zb.buildGroup}";
                 KillMode = "mixed";
               };
             };
