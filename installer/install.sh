@@ -11,7 +11,11 @@ log() {
   echo "$@" >&2
 }
 to_abs() {
-  cd -- "$1" &> /dev/null && pwd
+  if [[ -z "$1" ]]; then
+    echo ""
+  else
+    cd -- "$1" &> /dev/null && pwd
+  fi
 }
 
 if [[ "${ZB_STORE_DIR:-/opt/zb/store}" != /opt/zb/store ]]; then
