@@ -323,7 +323,7 @@ func (eval *Eval) storePathFunction(ctx context.Context, l *lua.State) (int, err
 	return 1, nil
 }
 
-func (eval *Eval) newState() (*lua.State, error) {
+func (eval *Eval) NewState() (*lua.State, error) {
 	l := new(lua.State)
 	if err := eval.initState(l); err != nil {
 		return nil, err
@@ -459,7 +459,7 @@ func (eval *Eval) Close() error {
 
 // Expression evaluates a single Lua expression and returns the result.
 func (eval *Eval) Expression(ctx context.Context, expr string) (any, error) {
-	l, err := eval.newState()
+	l, err := eval.NewState()
 	if err != nil {
 		return nil, err
 	}
@@ -475,10 +475,45 @@ func (eval *Eval) Expression(ctx context.Context, expr string) (any, error) {
 	return luaToGo(ctx, l)
 }
 
+// EvalInState evaluates a Lua expression in the provided state
+// and maintains the state between calls.
+func (eval *Eval) EvalInState(ctx context.Context, l *lua.State, expr string) ([]any, error) {
+	oldTop := l.Top()
+
+	l.PushPureFunction(0, messageHandler)
+	msgHandlerIdx := l.Top()
+
+	if err := loadExpression(l, expr); err != nil {
+		l.SetTop(oldTop)
+		return nil, err
+	}
+
+	if err := l.PCall(ctx, 0, lua.MultipleReturns, msgHandlerIdx); err != nil {
+		l.SetTop(oldTop)
+		return nil, err
+	}
+
+	nresults := l.Top() - msgHandlerIdx
+	results := make([]any, 0, nresults)
+
+	for i := 0; i < nresults; i++ {
+		l.PushValue(msgHandlerIdx + 1 + i)
+		val, err := luaToGo(ctx, l)
+		if err != nil {
+			l.SetTop(oldTop)
+			return nil, err
+		}
+		results = append(results, val)
+		l.Pop(1)
+	}
+
+	l.SetTop(oldTop)
+	return results, nil
+}
+
 func luaToGo(ctx context.Context, l *lua.State) (any, error) {
 	for {
-		// Resolve modules, if any.
-		for {
+			for {
 			mod := testModule(l, -1)
 			if mod == nil {
 				break
@@ -505,14 +540,12 @@ func luaToGo(ctx context.Context, l *lua.State) (any, error) {
 			s, _ := l.ToString(-1)
 			return s, nil
 		case lua.TypeTable:
-			// Check first if table is an array.
 			if arr, err := luaTableToGoSlice(ctx, l); err == nil {
 				return arr, nil
 			} else if err != errNotASequence {
 				return nil, err
 			}
 
-			// Otherwise it's an object.
 			m := make(map[string]any)
 			l.PushNil()
 			for l.Next(-2) {
