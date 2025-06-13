@@ -194,7 +194,7 @@ for i in $( cd "$installer_dir/store" > /dev/null && echo * ); do
     run_as_target_user rm -rf "$temp_dst"
   fi
   run_as_target_user cp -RPp "$installer_dir/store/$i" "$temp_dst"
-  run_as_target_user find "$temp_dst" -exec touch -m -h -d @0 '{}' \;
+  run_as_target_user find "$temp_dst" -exec touch -m -h -d '1970-01-01T00:00:00Z' '{}' \;
   run_as_target_user chmod -R a-w "$temp_dst"
   run_as_target_user mv "$temp_dst" "$dst"
 done
