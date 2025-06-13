@@ -95,7 +95,7 @@ func (eval *Eval) URLs(ctx context.Context, urls []string) ([]any, error) {
 	}
 
 	// Start imports. These will run concurrently.
-	l, err := eval.newState()
+	l, err := eval.NewState()
 	if err != nil {
 		return nil, err
 	}

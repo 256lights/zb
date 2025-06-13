@@ -15,17 +15,20 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/chzyer/readline"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/luac"
 	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
+	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -94,6 +97,7 @@ func main() {
 		newBuildCommand(g),
 		newDerivationCommand(g),
 		newEvalCommand(g),
+		newReplCommand(g),
 		newNARCommand(),
 		newServeCommand(g),
 		newStoreCommand(g),
@@ -198,6 +202,137 @@ func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 	}
 
 	return nil
+}
+
+func newReplCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:                   "repl [options]",
+		Short:                 "start an interactive Lua REPL",
+		Long:                  "Start an interactive Lua REPL (Read-Eval-Print Loop) for zb.\n\nIn the REPL, you can evaluate Lua expressions and use build() to build derivations.",
+		DisableFlagsInUseLine: true,
+		Args:                  cobra.NoArgs,
+		SilenceErrors:         true,
+		SilenceUsage:          true,
+	}
+	opts := new(evalOptions)
+	c.Flags().BoolVarP(&opts.keepFailed, "keep-failed", "k", false, "keep temporary directories of failed builds")
+	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		return runRepl(cmd.Context(), g, opts)
+	}
+	return c
+}
+
+func runRepl(ctx context.Context, g *globalConfig, opts *evalOptions) error {
+   storeClient, waitStoreClient := g.storeClient(nil)
+   defer func() {
+   	storeClient.Close()
+   	waitStoreClient()
+   }()
+
+   eval, err := opts.newEval(g, storeClient)
+   if err != nil {
+   	return err
+   }
+   defer eval.Close()
+
+   l, err := eval.NewState()
+   if err != nil {
+   	return err
+   }
+   defer l.Close()
+
+   l.PushClosure(0, func(ctx context.Context, l *lua.State) (int, error) {
+   	if l.Top() != 1 {
+   		return 0, errors.New("build() requires exactly one argument")
+   	}
+
+   	if l.Type(1) != lua.TypeUserdata {
+   		return 0, errors.New("build() argument must be a derivation")
+   	}
+
+   	ptr, _ := l.ToUserdata(1)
+    if ptr == nil {
+		return 0, errors.New("build() argument must be a derivation")
+   	}
+
+   	drv, ok := ptr.(*frontend.Derivation)
+   	if !ok {
+   		return 0, errors.New("build() argument must be a derivation")
+   	}
+
+   	fmt.Printf("Building %s...\n", drv.Path)
+   	realizeResponse := new(zbstorerpc.RealizeResponse)
+   	err := jsonrpc.Do(ctx, storeClient, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+   		DrvPaths:   []zbstore.Path{drv.Path},
+   		KeepFailed: opts.keepFailed,
+   	})
+   	if err != nil {
+   		return 0, err
+   	}
+
+   	build, _, buildError := waitForBuild(ctx, storeClient, realizeResponse.BuildID)
+   	if buildError != nil {
+   		return 0, buildError
+   	}
+
+   	if build != nil {
+   		result, err := build.ResultForPath(drv.Path)
+   		if err == nil && len(result.Outputs) > 0 {
+   			fmt.Printf("Build complete: %s\n", string(result.Outputs[0].Path.X))
+   			// Push result path onto stack
+   			l.PushString(string(result.Outputs[0].Path.X))
+   			return 1, nil
+   		}
+   	}
+
+   	l.PushNil()
+   	return 1, nil
+   })
+   l.SetGlobal(ctx, "build")
+
+   fmt.Println("zb Lua REPL")
+   fmt.Println("Type Ctrl-D to quit.")
+   fmt.Println()
+
+   rl, err := readline.New("zb:1> ")
+   if err != nil {
+   	return err
+   }
+   defer rl.Close()
+
+   lineNum := 1
+
+   for {
+   	rl.SetPrompt(fmt.Sprintf("zb:%d> ", lineNum))
+   	line, err := rl.Readline()
+   	if err != nil { // io.EOF on Ctrl-D
+   		fmt.Println()
+   		return nil
+   	}
+
+   	if strings.TrimSpace(line) == "" {
+   		continue
+   	}
+
+   	results, err := eval.EvalInState(ctx, l, line)
+   	if err != nil {
+   		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+   		continue
+   	}
+
+   	for i, result := range results {
+   		if i > 0 {
+   			fmt.Print("\t")
+   		}
+   		fmt.Print(result)
+   	}
+   	if len(results) > 0 {
+   		fmt.Println()
+   	}
+
+   	lineNum++
+   }
 }
 
 type buildOptions struct {
