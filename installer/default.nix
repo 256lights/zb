@@ -7,17 +7,17 @@
 }:
 
 let
-  version = "0.1.0-rc2";
+  version = "0.1.0";
 
   fetchurlArgs = {
     "x86_64-linux" = {
       url = "https://github.com/256lights/zb/releases/download/v${version}/zb-v${version}-x86_64-unknown-linux.tar.bz2";
-      hash = "sha256:c05bd85ab3dceeddddcd7eef45d5ee8412d62797a15769fc03f0b1396857967d";
+      hash = "sha256:b9a5167bdd192041573f79476e5d576714bdeb535fd8b51c0aae0419da641165";
     };
 
     "aarch64-darwin" = {
       url = "https://github.com/256lights/zb/releases/download/v${version}/zb-v${version}-aarch64-apple-macos.tar.bz2";
-      hash = "sha256:7a351d46c4302adacb52e9880d0009183d91e04716aab1e66af1eba60b8d09e4";
+      hash = "sha256:b22135691b404c04d53b3890f8fa9e69be2a282c43818fd9d46f89e7deb58354";
     };
   };
 in
