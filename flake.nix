@@ -65,7 +65,7 @@
           # but lower than lib.mkDefault (1000).
           mkDefault = lib.mkOverride 1400;
 
-          selfPackages = self.packages.${pkgs.hostSystem.system};
+          selfPackages = self.packages.${pkgs.system};
         in
         {
           imports = [ ./module.nix ];

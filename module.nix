@@ -97,7 +97,7 @@ in
         ConditionPathIsReadWrite = "/opt/zb/var/zb";
       };
       serviceConfig = {
-        ExecStart = "${zb}/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --implicit-system-dep=/bin/sh --build-users-group=${cfg.buildGroup}";
+        ExecStart = "${cfg.package}/bin/zb serve --systemd --sandbox-path=/bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/sh --implicit-system-dep=/bin/sh --build-users-group=${cfg.buildGroup}";
         KillMode = "mixed";
       };
     };
