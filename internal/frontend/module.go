@@ -5,7 +5,6 @@ package frontend
 
 import (
 	"context"
-	"fmt"
 	"iter"
 	"slices"
 	"strings"
@@ -13,9 +12,6 @@ import (
 
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/luacode"
-	"zb.256lights.llc/pkg/internal/zbstorerpc"
-	"zb.256lights.llc/pkg/sets"
-	"zb.256lights.llc/pkg/zbstore"
 )
 
 const moduleTypeName = "module"
@@ -74,54 +70,7 @@ func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error)
 	}
 	filenameContext := l.StringContext(1)
 
-	// TODO(someday): If we have dependencies and we're using a non-local store,
-	// export the store object and read it.
-	toRealize := make(sets.Set[zbstore.OutputReference])
-	placeholders := make(map[string]zbstore.OutputReference)
-	for dep := range filenameContext {
-		c, err := parseContextString(dep)
-		if err != nil {
-			l.PushNil()
-			l.PushString(fmt.Sprintf("internal error: %v", err))
-			return 2, nil
-		}
-		if c.outputReference.IsZero() {
-			continue
-		}
-		placeholder := zbstore.UnknownCAOutputPlaceholder(c.outputReference)
-		if !strings.Contains(filename, placeholder) {
-			continue
-		}
-		toRealize.Add(c.outputReference)
-		placeholders[placeholder] = c.outputReference
-	}
-	if toRealize.Len() > 0 {
-		results, err := eval.store.Realize(ctx, toRealize)
-		if err != nil {
-			l.PushNil()
-			l.PushString(err.Error())
-			return 2, nil
-		}
-
-		var rewrites []string
-		for placeholder, outputReference := range placeholders {
-			outputPath, err := zbstorerpc.FindRealizeOutput(slices.Values(results), outputReference)
-			if err != nil {
-				l.PushNil()
-				l.PushString(err.Error())
-				return 2, nil
-			}
-			if !outputPath.Valid || outputPath.X == "" {
-				l.PushNil()
-				l.PushString(fmt.Sprintf("realize %v: build failed", outputReference))
-				return 2, nil
-			}
-			rewrites = append(rewrites, placeholder, string(outputPath.X))
-		}
-		filename = strings.NewReplacer(rewrites...).Replace(filename)
-	}
-
-	filename, err = absSourcePath(l, eval.storeDir, filename, filenameContext)
+	filename, err = absSourcePathWithDeps(l, eval, ctx, filename, filenameContext)
 	if err != nil {
 		l.PushNil()
 		l.PushString(err.Error())

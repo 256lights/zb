@@ -184,6 +184,7 @@ func (eval *Eval) initZygote() error {
 		"import":     eval.importFunction,
 		"toFile":     eval.toFileFunction,
 		"path":       eval.pathFunction,
+		"readFile":   eval.readFileFunction,
 		"storePath":  eval.storePathFunction,
 	}
 	if err := lua.SetPureFunctions(ctx, l, 0, extraBaseFunctions); err != nil {

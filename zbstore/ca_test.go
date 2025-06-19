@@ -4,37 +4,36 @@
 package zbstore
 
 import (
-	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"zb.256lights.llc/pkg/internal/osutil"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 )
 
 func TestSourceSHA256ContentAddress(t *testing.T) {
-	machoSelfReferenceNAR, err := readFileString(filepath.Join("testdata", "macho-selfref-aarch64.nar"))
+	machoSelfReferenceNAR, err := osutil.ReadFileString(filepath.Join("testdata", "macho-selfref-aarch64.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	machoZeroedNAR, err := readFileString(filepath.Join("testdata", "macho-zeroed-aarch64.nar"))
+	machoZeroedNAR, err := osutil.ReadFileString(filepath.Join("testdata", "macho-zeroed-aarch64.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	machoUniversalSelfReferenceNAR, err := readFileString(filepath.Join("testdata", "macho-selfref-universal.nar"))
+	machoUniversalSelfReferenceNAR, err := osutil.ReadFileString(filepath.Join("testdata", "macho-selfref-universal.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	machoUniversalZeroedNAR, err := readFileString(filepath.Join("testdata", "macho-zeroed-universal.nar"))
+	machoUniversalZeroedNAR, err := osutil.ReadFileString(filepath.Join("testdata", "macho-zeroed-universal.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	machoNoRefsNAR, err := readFileString(filepath.Join("testdata", "macho-norefs-aarch64.nar"))
+	machoNoRefsNAR, err := osutil.ReadFileString(filepath.Join("testdata", "macho-norefs-aarch64.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +345,7 @@ func TestSourceSHA256ContentAddress(t *testing.T) {
 }
 
 func BenchmarkSourceSHA256ContentAddress(b *testing.B) {
-	machoUniversalSelfReferenceNAR, err := readFileString(filepath.Join("testdata", "macho-selfref-universal.nar"))
+	machoUniversalSelfReferenceNAR, err := osutil.ReadFileString(filepath.Join("testdata", "macho-selfref-universal.nar"))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -384,18 +383,4 @@ func BenchmarkSourceSHA256ContentAddress(b *testing.B) {
 			}
 		}
 	})
-}
-
-func readFileString(name string) (string, error) {
-	f, err := os.Open(name)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	sb := new(strings.Builder)
-	if info, err := f.Stat(); err == nil {
-		sb.Grow(int(info.Size()))
-	}
-	_, err = io.Copy(sb, f)
-	return sb.String(), err
 }

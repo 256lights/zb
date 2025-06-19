@@ -7,10 +7,12 @@ package osutil
 import (
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -203,4 +205,19 @@ func MkdirAllInRoot(root *os.Root, path string, perm os.FileMode) error {
 // Generally this requires root privileges to run.
 func UnmountAndRemoveAll(path string) error {
 	return removeAll(path)
+}
+
+// ReadFileString reads the entire content of name into a string.
+func ReadFileString(name string) (string, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	sb := new(strings.Builder)
+	if info, err := f.Stat(); err == nil {
+		sb.Grow(int(info.Size()))
+	}
+	_, err = io.Copy(sb, f)
+	return sb.String(), err
 }

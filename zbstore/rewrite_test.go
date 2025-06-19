@@ -10,31 +10,32 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"zb.256lights.llc/pkg/bytebuffer"
+	"zb.256lights.llc/pkg/internal/osutil"
 	"zombiezen.com/go/nix"
 )
 
 func TestRewrite(t *testing.T) {
-	machoSelfReferenceNAR, err := readFileString(filepath.Join("testdata", "macho-selfref-aarch64.nar"))
+	machoSelfReferenceNAR, err := osutil.ReadFileString(filepath.Join("testdata", "macho-selfref-aarch64.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	machoZeroedNAR, err := readFileString(filepath.Join("testdata", "macho-zeroed-aarch64.nar"))
+	machoZeroedNAR, err := osutil.ReadFileString(filepath.Join("testdata", "macho-zeroed-aarch64.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	machoRewrittenNAR, err := readFileString(filepath.Join("testdata", "macho-rewritten-aarch64.nar"))
+	machoRewrittenNAR, err := osutil.ReadFileString(filepath.Join("testdata", "macho-rewritten-aarch64.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	machoUniversalSelfReferenceNAR, err := readFileString(filepath.Join("testdata", "macho-selfref-universal.nar"))
+	machoUniversalSelfReferenceNAR, err := osutil.ReadFileString(filepath.Join("testdata", "macho-selfref-universal.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	machoUniversalZeroedNAR, err := readFileString(filepath.Join("testdata", "macho-zeroed-universal.nar"))
+	machoUniversalZeroedNAR, err := osutil.ReadFileString(filepath.Join("testdata", "macho-zeroed-universal.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	machoUniversalRewrittenNAR, err := readFileString(filepath.Join("testdata", "macho-rewritten-universal.nar"))
+	machoUniversalRewrittenNAR, err := osutil.ReadFileString(filepath.Join("testdata", "macho-rewritten-universal.nar"))
 	if err != nil {
 		t.Fatal(err)
 	}
