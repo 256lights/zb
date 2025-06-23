@@ -11,10 +11,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
 	"zb.256lights.llc/pkg/internal/lua"
+	"zb.256lights.llc/pkg/internal/osutil"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -246,6 +249,27 @@ func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int,
 	return 1, nil
 }
 
+func (eval *Eval) readFileFunction(ctx context.Context, l *lua.State) (int, error) {
+	path, err := lua.CheckString(l, 1)
+	if err != nil {
+		return 0, err
+	}
+	pcontext := l.StringContext(1)
+
+	absPath, err := absSourcePathWithDeps(ctx, l, eval, path, pcontext)
+	if err != nil {
+		return 0, fmt.Errorf("readFile: %v", err)
+	}
+
+	content, err := osutil.ReadFileString(absPath)
+	if err != nil {
+		return 0, fmt.Errorf("readFile: reading file: %v", err)
+	}
+
+	l.PushString(content)
+	return 1, nil
+}
+
 func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error) {
 	name, err := lua.CheckString(l, 1)
 	if err != nil {
@@ -392,6 +416,52 @@ func absSourcePath(l *lua.State, dir zbstore.Directory, path string, context set
 		return "", fmt.Errorf("resolve path: cannot refer to paths outside %s", dir)
 	}
 	return path, nil
+}
+
+// absSourcePathWithDeps takes a source path passed as an argument from Lua to Go
+// and resolves it relative to the calling function, taking into account
+// any dependencies the string may have.
+func absSourcePathWithDeps(ctx context.Context, l *lua.State, eval *Eval, filename string, filenameContext sets.Set[string]) (path string, err error) {
+	// TODO(someday): If we have dependencies and we're using a non-local store,
+	// export the store object and read it.
+	toRealize := make(sets.Set[zbstore.OutputReference])
+	placeholders := make(map[string]zbstore.OutputReference)
+	for dep := range filenameContext {
+		c, err := parseContextString(dep)
+		if err != nil {
+			return "", fmt.Errorf("internal error: %w", err)
+		}
+		if c.outputReference.IsZero() {
+			continue
+		}
+		placeholder := zbstore.UnknownCAOutputPlaceholder(c.outputReference)
+		if !strings.Contains(filename, placeholder) {
+			continue
+		}
+		toRealize.Add(c.outputReference)
+		placeholders[placeholder] = c.outputReference
+	}
+	if toRealize.Len() > 0 {
+		results, err := eval.store.Realize(ctx, toRealize)
+		if err != nil {
+			return "", err
+		}
+
+		var rewrites []string
+		for placeholder, outputReference := range placeholders {
+			outputPath, err := zbstorerpc.FindRealizeOutput(slices.Values(results), outputReference)
+			if err != nil {
+				return "", err
+			}
+			if !outputPath.Valid || outputPath.X == "" {
+				return "", fmt.Errorf("realize %v: build failed", outputReference)
+			}
+			rewrites = append(rewrites, placeholder, string(outputPath.X))
+		}
+		filename = strings.NewReplacer(rewrites...).Replace(filename)
+	}
+
+	return absSourcePath(l, eval.storeDir, filename, filenameContext)
 }
 
 func pathInStore(path string, dir zbstore.Directory) bool {

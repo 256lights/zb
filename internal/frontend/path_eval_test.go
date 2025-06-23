@@ -457,6 +457,50 @@ func TestPath(t *testing.T) {
 	})
 }
 
+func TestReadFile(t *testing.T) {
+	wantContent, err := os.ReadFile(filepath.Join("testdata", "hello.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	storeDir := backendtest.NewStoreDirectory(t)
+
+	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	testStore := newTestRPCStore(store)
+	eval, err := NewEval(&Options{
+		Store:          testStore,
+		StoreDirectory: storeDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := eval.Close(); err != nil {
+			t.Error("eval.Close:", err)
+		}
+	}()
+
+	got, err := eval.Expression(ctx, `readFile("testdata/hello.txt")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotString, ok := got.(string)
+	if !ok {
+		t.Fatalf("expression result is %T; want string", got)
+	}
+
+	if !bytes.Equal([]byte(gotString), wantContent) {
+		t.Errorf("gotString = %q; want %q", gotString, wantContent)
+	}
+}
+
 // compareDirectoryToTestdata compares dir to the directory at testdata/dir.
 // If dir does not contain exactly the files named in wantFiles,
 // then compareDirectoryToTestdata logs a failure to tb.
