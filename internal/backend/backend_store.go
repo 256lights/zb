@@ -282,22 +282,31 @@ func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *ObjectInfo, err error) {
 		return nil, fmt.Errorf("path info for %s: %w", path, errObjectNotExist)
 	}
 
-	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "references.sql", &sqlitex.ExecOptions{
+	info.References, err = listReferences(conn, path)
+	if err != nil {
+		return nil, fmt.Errorf("path info for %s: %v", path, err)
+	}
+
+	return info, nil
+}
+
+func listReferences(conn *sqlite.Conn, path zbstore.Path) (sets.Sorted[zbstore.Path], error) {
+	var references sets.Sorted[zbstore.Path]
+	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "references.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{":path": string(path)},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			ref, err := zbstore.ParsePath(stmt.GetText("path"))
 			if err != nil {
 				return err
 			}
-			info.References.Add(ref)
+			references.Add(ref)
 			return nil
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("path info for %s: references: %v", path, err)
+		return sets.Sorted[zbstore.Path]{}, fmt.Errorf("references for %s: %v", path, err)
 	}
-
-	return info, nil
+	return references, nil
 }
 
 var errObjectNotExist = errors.New("object not in store")

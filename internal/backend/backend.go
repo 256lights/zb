@@ -731,15 +731,6 @@ func (s *Server) delete(ctx context.Context, paths sets.Set[zbstore.Path], recur
 			if !recursive {
 				return fmt.Errorf("store objects have references")
 			}
-			for path := range paths.All() {
-				insertStmt.SetText(":path", string(path))
-				if _, err := insertStmt.Step(); err != nil {
-					return fmt.Errorf("%s: %v", path, err)
-				}
-				if err := insertStmt.Reset(); err != nil {
-					return fmt.Errorf("%s: %v", path, err)
-				}
-			}
 		}
 		if err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "delete/drop_target_table.sql", nil); err != nil {
 			return err
@@ -749,6 +740,13 @@ func (s *Server) delete(ctx context.Context, paths sets.Set[zbstore.Path], recur
 		allPaths = make([]zbstore.Path, 0, paths.Len()+reverseDeps.Len())
 		allPaths = slices.AppendSeq(allPaths, xiter.Chain(paths.All(), reverseDeps.All()))
 		references := make(map[zbstore.Path]sets.Sorted[zbstore.Path], len(allPaths))
+		for _, path := range allPaths {
+			var err error
+			references[path], err = listReferences(conn, path)
+			if err != nil {
+				return err
+			}
+		}
 		err = sortByReferences(
 			allPaths,
 			func(p zbstore.Path) zbstore.Path { return p },
