@@ -405,7 +405,7 @@ func sortByReferences[T any](slice []T, pathFunc func(T) zbstore.Path, refsFunc 
 				if ref == p {
 					continue
 				}
-				if isSorted, known := sortStatus[ref]; !isSorted && (known || ignoreUnknown) {
+				if isSorted, known := sortStatus[ref]; !isSorted && (known || !ignoreUnknown) {
 					return false
 				}
 			}

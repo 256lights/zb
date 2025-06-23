@@ -167,9 +167,6 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 		})
 	}
 	for _, path := range paths {
-		sortEnd := len(result)
-
-		// Gather closure.
 		var infoError error
 		err := closurePaths(conn, pathAndEquivalenceClass{path: path}, func(pe pathAndEquivalenceClass) bool {
 			if hasPath(result, pe.path) {
@@ -189,17 +186,17 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 		if err != nil {
 			return nil, err
 		}
+	}
 
-		// Topologically sort new closure.
-		err = sortByReferences(
-			result[sortEnd:],
-			func(t *zbstore.ExportTrailer) zbstore.Path { return t.StorePath },
-			func(t *zbstore.ExportTrailer) sets.Sorted[zbstore.Path] { return t.References },
-			false,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("closure of %s missing referenced objects", path)
-		}
+	// Topologically sort new closure.
+	err = sortByReferences(
+		result,
+		func(t *zbstore.ExportTrailer) zbstore.Path { return t.StorePath },
+		func(t *zbstore.ExportTrailer) sets.Sorted[zbstore.Path] { return t.References },
+		false,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("closure of %s missing referenced objects", paths)
 	}
 
 	return result, nil
