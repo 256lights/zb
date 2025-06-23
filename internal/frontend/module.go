@@ -70,7 +70,7 @@ func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error)
 	}
 	filenameContext := l.StringContext(1)
 
-	filename, err = absSourcePathWithDeps(l, eval, ctx, filename, filenameContext)
+	filename, err = absSourcePathWithDeps(ctx, l, eval, filename, filenameContext)
 	if err != nil {
 		l.PushNil()
 		l.PushString(err.Error())

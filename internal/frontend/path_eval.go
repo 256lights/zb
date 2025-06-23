@@ -256,7 +256,7 @@ func (eval *Eval) readFileFunction(ctx context.Context, l *lua.State) (int, erro
 	}
 	pcontext := l.StringContext(1)
 
-	absPath, err := absSourcePathWithDeps(l, eval, ctx, path, pcontext)
+	absPath, err := absSourcePathWithDeps(ctx, l, eval, path, pcontext)
 	if err != nil {
 		return 0, fmt.Errorf("readFile: %v", err)
 	}
@@ -418,10 +418,10 @@ func absSourcePath(l *lua.State, dir zbstore.Directory, path string, context set
 	return path, nil
 }
 
-// absSourcePath takes a source path passed as an argument from Lua to Go
+// absSourcePathWithDeps takes a source path passed as an argument from Lua to Go
 // and resolves it relative to the calling function, taking into account
 // any dependencies the string may have.
-func absSourcePathWithDeps(l *lua.State, eval *Eval, ctx context.Context, filename string, filenameContext sets.Set[string]) (path string, err error) {
+func absSourcePathWithDeps(ctx context.Context, l *lua.State, eval *Eval, filename string, filenameContext sets.Set[string]) (path string, err error) {
 	// TODO(someday): If we have dependencies and we're using a non-local store,
 	// export the store object and read it.
 	toRealize := make(sets.Set[zbstore.OutputReference])
