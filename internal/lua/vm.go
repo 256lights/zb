@@ -692,12 +692,11 @@ func (l *State) exec(ctx context.Context) (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.callArithmeticMetamethod(
-				ctx,
-				prevOperator.TagMethod(),
-				*ra,
-				integerValue(luacode.SignedArg(i.ArgB())),
-			)
+			var arg1, arg2 value = *ra, integerValue(luacode.SignedArg(i.ArgB()))
+			if i.K() {
+				arg1, arg2 = arg2, arg1
+			}
+			result, err := l.callArithmeticMetamethod(ctx, prevOperator.TagMethod(), arg1, arg2)
 			if err != nil {
 				return err
 			}
@@ -725,12 +724,11 @@ func (l *State) exec(ctx context.Context) (err error) {
 			if err != nil {
 				return err
 			}
-			result, err := l.callArithmeticMetamethod(
-				ctx,
-				prevOperator.TagMethod(),
-				*ra,
-				importConstant(kb),
-			)
+			arg1, arg2 := *ra, importConstant(kb)
+			if i.K() {
+				arg1, arg2 = arg2, arg1
+			}
+			result, err := l.callArithmeticMetamethod(ctx, prevOperator.TagMethod(), arg1, arg2)
 			if err != nil {
 				return err
 			}

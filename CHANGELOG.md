@@ -18,7 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `zb store object delete` is no longer flaky
-  ([#135](https://github.com/256lights/zb/issues/135))
+  ([#135](https://github.com/256lights/zb/issues/135)).
+- Lua operator metamethods now receive their arguments in the correct order
+  when one of the operands is a constant
+  ([#152](https://github.com/256lights/zb/issues/152)).
 
 ## [0.1.0][] - 2025-06-15
 

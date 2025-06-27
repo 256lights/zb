@@ -785,4 +785,157 @@ func TestVM(t *testing.T) {
 			t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, wantResult)
 		}
 	})
+
+	t.Run("FlippedAddImmediateMetamethod", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		// Set a metatable for nil which treats the nil like 0 when adding.
+		state.PushNil()
+		var isNil [2]bool
+		NewPureLib(state, map[string]Function{
+			luacode.TagMethodAdd.String(): func(ctx context.Context, l *State) (int, error) {
+				for i := range 2 {
+					isNil[i] = l.IsNil(1 + i)
+					if isNil[i] {
+						l.PushInteger(0)
+						l.Replace(1 + i)
+					}
+				}
+				if err := l.Arithmetic(ctx, luacode.Add); err != nil {
+					return 0, err
+				}
+				return 1, nil
+			},
+		})
+		if err := state.SetMetatable(-2); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `return 1 + nil`
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(ctx, 0, 1); err != nil {
+			t.Fatal(err)
+		}
+
+		if isNil[0] || !isNil[1] {
+			t.Errorf("when calling __add, (x == nil), (y == nil) = %t, %t; want false, true", isNil[0], isNil[1])
+		}
+
+		const wantResult = 1
+		if got, want := state.Type(-1), TypeNumber; got != want {
+			t.Fatalf("state.Type(-1) = %v; want %v", got, want)
+		} else if got, ok := state.ToInteger(-1); got != wantResult || !ok {
+			t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, wantResult)
+		}
+	})
+
+	t.Run("FlippedBOrImmediateMetamethod", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		// Set a metatable for nil which treats the nil like 0 when adding.
+		state.PushNil()
+		var isNil [2]bool
+		NewPureLib(state, map[string]Function{
+			luacode.TagMethodBOr.String(): func(ctx context.Context, l *State) (int, error) {
+				for i := range 2 {
+					isNil[i] = l.IsNil(1 + i)
+					if isNil[i] {
+						l.PushInteger(0)
+						l.Replace(1 + i)
+					}
+				}
+				if err := l.Arithmetic(ctx, luacode.BitwiseOr); err != nil {
+					return 0, err
+				}
+				return 1, nil
+			},
+		})
+		if err := state.SetMetatable(-2); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `return 1 | nil`
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(ctx, 0, 1); err != nil {
+			t.Fatal(err)
+		}
+
+		if isNil[0] || !isNil[1] {
+			t.Errorf("when calling __bor, (x == nil), (y == nil) = %t, %t; want false, true", isNil[0], isNil[1])
+		}
+
+		const wantResult = 1
+		if got, want := state.Type(-1), TypeNumber; got != want {
+			t.Fatalf("state.Type(-1) = %v; want %v", got, want)
+		} else if got, ok := state.ToInteger(-1); got != wantResult || !ok {
+			t.Errorf("state.ToInteger(-1) = %d, %t; want %d, true", got, ok, wantResult)
+		}
+	})
+
+	t.Run("FlippedAddConstantMetamethod", func(t *testing.T) {
+		ctx := context.Background()
+		state := new(State)
+		defer func() {
+			if err := state.Close(); err != nil {
+				t.Error("Close:", err)
+			}
+		}()
+
+		// Set a metatable for nil which treats the nil like 0 when adding.
+		state.PushNil()
+		var isNil [2]bool
+		NewPureLib(state, map[string]Function{
+			luacode.TagMethodAdd.String(): func(ctx context.Context, l *State) (int, error) {
+				for i := range 2 {
+					isNil[i] = l.IsNil(1 + i)
+					if isNil[i] {
+						l.PushInteger(0)
+						l.Replace(1 + i)
+					}
+				}
+				if err := l.Arithmetic(ctx, luacode.Add); err != nil {
+					return 0, err
+				}
+				return 1, nil
+			},
+		})
+		if err := state.SetMetatable(-2); err != nil {
+			t.Fatal(err)
+		}
+
+		const source = `return 3.14 + nil`
+		if err := state.Load(strings.NewReader(source), Source(source), "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Call(ctx, 0, 1); err != nil {
+			t.Fatal(err)
+		}
+
+		if isNil[0] || !isNil[1] {
+			t.Errorf("when calling __add, (x == nil), (y == nil) = %t, %t; want false, true", isNil[0], isNil[1])
+		}
+
+		const wantResult = 3.14
+		if got, want := state.Type(-1), TypeNumber; got != want {
+			t.Fatalf("state.Type(-1) = %v; want %v", got, want)
+		} else if got, ok := state.ToNumber(-1); got != wantResult || !ok {
+			t.Errorf("state.ToNumber(-1) = %g, %t; want %g, true", got, ok, wantResult)
+		}
+	})
 }
