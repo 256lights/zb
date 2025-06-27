@@ -561,7 +561,6 @@ func (p *parser) codeCommutative(fs *funcState, operator binaryOperator, e1, e2 
 	flip := e1.isNumeral()
 	if flip {
 		e1, e2 = e2, e1
-		flip = true
 	}
 	if i, isInt := e2.intConstant(); isInt && fitsSignedArg(i) && operator == binaryOperatorAdd {
 		return p.codeBinaryExpImmediate(fs, OpAddI, e1, e2, flip, line, TagMethodAdd)
@@ -570,22 +569,24 @@ func (p *parser) codeCommutative(fs *funcState, operator binaryOperator, e1, e2 
 }
 
 // codeBitwise appends instructions for bitwise operators
+// to fs.Code.
 //
 // Equivalent to `codebitwise` in upstream Lua.
 func (p *parser) codeBitwise(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor, line int) (expressionDescriptor, error) {
-	// All operations are commutative,
-	// so if first operand is a numeric constant,
-	// change order of operands to try to use an immediate or K operator.
-	flip := e1.kind == expressionKindIntConstant
-	if flip {
-		e1, e2 = e2, e1
-	}
-	if e2.kind == expressionKindIntConstant {
+	switch {
+	case e1.kind == expressionKindIntConstant:
+		// All operations are commutative,
+		// so if first operand is a numeric constant,
+		// change order of operands to try to use an immediate or K operator.
+		if e1, _, ok := p.toConstantTable(fs, e1); ok {
+			return p.codeBinaryExpConstant(fs, operator, e2, e1, true, line)
+		}
+	case e2.kind == expressionKindIntConstant:
 		if e2, _, ok := p.toConstantTable(fs, e2); ok {
-			return p.codeBinaryExpConstant(fs, operator, e1, e2, flip, line)
+			return p.codeBinaryExpConstant(fs, operator, e1, e2, false, line)
 		}
 	}
-	return p.codeBinaryExpNoConstants(fs, operator, e1, e2, flip, line)
+	return p.codeBinaryExp(fs, operator, e1, e2, line)
 }
 
 // codeArithmetic appends instructions for an arithmetic binary operator
@@ -598,17 +599,7 @@ func (p *parser) codeArithmetic(fs *funcState, operator binaryOperator, e1, e2 e
 			return p.codeBinaryExpConstant(fs, operator, e1, e2, flip, line)
 		}
 	}
-	return p.codeBinaryExpNoConstants(fs, operator, e1, e2, flip, line)
-}
-
-// codeBinaryExpNoConstants appends the instructions
-// for a binary expression without constant operands
-// to fs.Code.
-//
-// Equivalent to `codebinNoK` in upstream Lua.
-func (p *parser) codeBinaryExpNoConstants(fs *funcState, operator binaryOperator, e1, e2 expressionDescriptor, flip bool, line int) (expressionDescriptor, error) {
 	if flip {
-		// Back to original order.
 		e1, e2 = e2, e1
 	}
 	return p.codeBinaryExp(fs, operator, e1, e2, line)
