@@ -79,7 +79,7 @@ func TestExport(t *testing.T) {
 	generateImport := func(dir zbstore.Directory) ([]narRecord, []byte, error) {
 		const fileContent = "Hello, World!\n"
 		exportBuffer := new(bytes.Buffer)
-		exporter := zbstore.NewExporter(exportBuffer)
+		exporter := zbstore.NewExportWriter(exportBuffer)
 		result := make([]narRecord, 4)
 		var err error
 		result[noDepsPath], err = exportSourceFile(exporter, []byte(fileContent), storetest.SourceExportOptions{
@@ -310,7 +310,7 @@ type narRecord struct {
 	trailer zbstore.ExportTrailer
 }
 
-func exportSourceFile(exp *zbstore.Exporter, data []byte, opts storetest.SourceExportOptions) (narRecord, error) {
+func exportSourceFile(exp *zbstore.ExportWriter, data []byte, opts storetest.SourceExportOptions) (narRecord, error) {
 	narBuffer := new(bytes.Buffer)
 	if err := storetest.SingleFileNAR(narBuffer, data); err != nil {
 		return narRecord{}, err

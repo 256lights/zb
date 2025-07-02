@@ -40,7 +40,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExporter(exportBuffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
 	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
 		Name:      "hello.txt",
 		Directory: dir,
@@ -127,7 +127,7 @@ func TestRealizeReuse(t *testing.T) {
 
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExporter(exportBuffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
 	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
 		Name:      "hello.txt",
 		Directory: dir,
@@ -223,7 +223,7 @@ func TestRealizeMultiStep(t *testing.T) {
 
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExporter(exportBuffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
 	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
 		Name:      "hello.txt",
 		Directory: dir,
@@ -324,7 +324,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExporter(exportBuffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
 	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
 		Name:      "hello.txt",
 		Directory: dir,
@@ -473,7 +473,7 @@ func TestRealizeSelfReference(t *testing.T) {
 
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExporter(exportBuffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
 	const wantOutputName = "self.txt"
 	drvContent := &zbstore.Derivation{
 		Name:   wantOutputName,
@@ -558,7 +558,7 @@ func TestRealizeFixed(t *testing.T) {
 	dir := backendtest.NewStoreDirectory(t)
 
 	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExporter(exportBuffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
 	const wantOutputName = "hello.txt"
 	const wantOutputContent = "Hello, World!\n"
 	wantOutputCA := nix.FlatFileContentAddress(mustParseHash(t, "sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31"))
@@ -674,7 +674,7 @@ func TestRealizeFailure(t *testing.T) {
 	dir := backendtest.NewStoreDirectory(t)
 
 	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExporter(exportBuffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
 	const drvName = "hello.txt"
 	// Create a derivation that fails after creating its output.
 	drvContent := &zbstore.Derivation{
@@ -792,7 +792,7 @@ func TestRealizeNoOutput(t *testing.T) {
 	dir := backendtest.NewStoreDirectory(t)
 
 	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExporter(exportBuffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
 	const drvName = "hello.txt"
 	// Create a derivation that no-ops.
 	drvContent := &zbstore.Derivation{
@@ -913,7 +913,7 @@ func TestRealizeCores(t *testing.T) {
 			dir := backendtest.NewStoreDirectory(t)
 
 			exportBuffer := new(bytes.Buffer)
-			exporter := zbstore.NewExporter(exportBuffer)
+			exporter := zbstore.NewExportWriter(exportBuffer)
 			const drvName = "cores.txt"
 			// Create a derivation that fails after creating its output.
 			drvContent := &zbstore.Derivation{
@@ -997,7 +997,7 @@ func TestRealizeFetchURL(t *testing.T) {
 	defer srv.Close()
 
 	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExporter(exportBuffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
 	const wantOutputName = "hello.txt"
 	wantOutputCA := nix.FlatFileContentAddress(mustParseHash(t, "sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31"))
 	drvContent := &zbstore.Derivation{

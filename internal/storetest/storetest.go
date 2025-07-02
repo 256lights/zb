@@ -18,7 +18,7 @@ import (
 )
 
 // ExportFlatFile writes a fixed-hash flat file to the exporter with the given content.
-func ExportFlatFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, ht nix.HashType) (zbstore.Path, zbstore.ContentAddress, error) {
+func ExportFlatFile(exp *zbstore.ExportWriter, dir zbstore.Directory, name string, data []byte, ht nix.HashType) (zbstore.Path, zbstore.ContentAddress, error) {
 	h := nix.NewHasher(ht)
 	h.Write(data)
 	ca := nix.FlatFileContentAddress(h.SumHash())
@@ -34,7 +34,7 @@ func ExportFlatFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, d
 
 // ExportText writes a text file (e.g. a ".drv" file)
 // to the exporter with the given content.
-func ExportText(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, refs *sets.Sorted[zbstore.Path]) (zbstore.Path, zbstore.ContentAddress, error) {
+func ExportText(exp *zbstore.ExportWriter, dir zbstore.Directory, name string, data []byte, refs *sets.Sorted[zbstore.Path]) (zbstore.Path, zbstore.ContentAddress, error) {
 	h := nix.NewHasher(nix.SHA256)
 	h.Write(data)
 	ca := nix.TextContentAddress(h.SumHash())
@@ -52,7 +52,7 @@ func ExportText(exp *zbstore.Exporter, dir zbstore.Directory, name string, data 
 }
 
 // ExportDerivation writes a ".drv" file to the exporter.
-func ExportDerivation(exp *zbstore.Exporter, drv *zbstore.Derivation) (zbstore.Path, zbstore.ContentAddress, error) {
+func ExportDerivation(exp *zbstore.ExportWriter, drv *zbstore.Derivation) (zbstore.Path, zbstore.ContentAddress, error) {
 	name := drv.Name + zbstore.DerivationExt
 	data, err := drv.MarshalText()
 	if err != nil {
@@ -72,7 +72,7 @@ func ExportDerivation(exp *zbstore.Exporter, drv *zbstore.Derivation) (zbstore.P
 	return p, ca, nil
 }
 
-func exportFile(exp *zbstore.Exporter, dir zbstore.Directory, name string, data []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) (zbstore.Path, error) {
+func exportFile(exp *zbstore.ExportWriter, dir zbstore.Directory, name string, data []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) (zbstore.Path, error) {
 	refsClone := *refs.Clone()
 	p, err := zbstore.FixedCAOutputPath(dir, name, ca, zbstore.References{Others: refsClone})
 	if err != nil {
@@ -104,7 +104,7 @@ type SourceExportOptions struct {
 }
 
 // ExportSourceFile writes a file with the given content to the exporter.
-func ExportSourceFile(exp *zbstore.Exporter, data []byte, opts SourceExportOptions) (zbstore.Path, zbstore.ContentAddress, error) {
+func ExportSourceFile(exp *zbstore.ExportWriter, data []byte, opts SourceExportOptions) (zbstore.Path, zbstore.ContentAddress, error) {
 	narBuffer := new(bytes.Buffer)
 	if err := SingleFileNAR(narBuffer, data); err != nil {
 		return "", zbstore.ContentAddress{}, err
@@ -113,7 +113,7 @@ func ExportSourceFile(exp *zbstore.Exporter, data []byte, opts SourceExportOptio
 }
 
 // ExportSourceDir writes the given filesystem to the exporter.
-func ExportSourceDir(exp *zbstore.Exporter, fsys fs.FS, opts SourceExportOptions) (zbstore.Path, zbstore.ContentAddress, error) {
+func ExportSourceDir(exp *zbstore.ExportWriter, fsys fs.FS, opts SourceExportOptions) (zbstore.Path, zbstore.ContentAddress, error) {
 	narBuffer := new(bytes.Buffer)
 	if err := new(nar.Dumper).Dump(narBuffer, fsys, "."); err != nil {
 		return "", zbstore.ContentAddress{}, err
@@ -122,7 +122,7 @@ func ExportSourceDir(exp *zbstore.Exporter, fsys fs.FS, opts SourceExportOptions
 }
 
 // ExportSourceNAR writes narBytes to the exporter.
-func ExportSourceNAR(exp *zbstore.Exporter, narBytes []byte, opts SourceExportOptions) (zbstore.Path, zbstore.ContentAddress, error) {
+func ExportSourceNAR(exp *zbstore.ExportWriter, narBytes []byte, opts SourceExportOptions) (zbstore.Path, zbstore.ContentAddress, error) {
 	if !opts.References.Self {
 		opts.TempDigest = ""
 	}

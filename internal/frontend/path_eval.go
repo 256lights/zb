@@ -675,7 +675,7 @@ func collatePath(a, b string) int {
 	}
 }
 
-func startExport(ctx context.Context, store Store) (exporter *zbstore.Exporter, closeFunc func(ok bool) error, err error) {
+func startExport(ctx context.Context, store Store) (exporter *zbstore.ExportWriter, closeFunc func(ok bool) error, err error) {
 	pr, pw := io.Pipe()
 	done := make(chan error)
 	go func() {
@@ -685,7 +685,7 @@ func startExport(ctx context.Context, store Store) (exporter *zbstore.Exporter, 
 		close(done)
 	}()
 
-	exporter = zbstore.NewExporter(pw)
+	exporter = zbstore.NewExportWriter(pw)
 	var once sync.Once
 	closeFunc = func(ok bool) error {
 		var errs [3]error

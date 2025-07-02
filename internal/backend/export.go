@@ -43,7 +43,7 @@ func exporterFromContext(ctx context.Context) Exporter {
 // Export exports the store objects according to the request
 // in `nix-store --export` format to dst.
 func (s *Server) Export(ctx context.Context, dst io.Writer, req *zbstorerpc.ExportRequest) error {
-	e := zbstore.NewExporter(dst)
+	e := zbstore.NewExportWriter(dst)
 
 	var manifest []*zbstore.ExportTrailer
 	var err error

@@ -33,7 +33,7 @@ func TestImport(t *testing.T) {
 
 		const fileContent = "Hello, World!\n"
 		exportBuffer := new(bytes.Buffer)
-		exporter := zbstore.NewExporter(exportBuffer)
+		exporter := zbstore.NewExportWriter(exportBuffer)
 		storePath1, ca1, err := storetest.ExportFlatFile(exporter, dir, "hello.txt", []byte(fileContent), nix.SHA256)
 		if err != nil {
 			t.Fatal(err)
@@ -171,7 +171,7 @@ func TestDelete(t *testing.T) {
 	dir := zbstore.DefaultDirectory()
 	const fileContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExporter(exportBuffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
 	storePath1, _, err := storetest.ExportFlatFile(exporter, dir, "hello.txt", []byte(fileContent), nix.SHA256)
 	if err != nil {
 		t.Fatal(err)

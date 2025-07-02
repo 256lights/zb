@@ -348,7 +348,7 @@ func catExports(ctx context.Context, client *jsonrpc.Client, exportFiles []strin
 
 	// Copy each NAR inside each export file.
 	var storePaths []zbstore.Path
-	exporter := zbstore.NewExporter(pw)
+	exporter := zbstore.NewExportWriter(pw)
 	for _, path := range exportFiles {
 		var err error
 		storePaths, err = copyToExporter(ctx, storePaths, exporter, path)
@@ -369,7 +369,7 @@ func catExports(ctx context.Context, client *jsonrpc.Client, exportFiles []strin
 // copyToExporter reads the file at path in the `nix-store --export` format
 // and copies each NAR file to the exporter.
 // It appends each of the store paths encountered to storePaths.
-func copyToExporter(ctx context.Context, storePaths []zbstore.Path, exporter *zbstore.Exporter, path string) ([]zbstore.Path, error) {
+func copyToExporter(ctx context.Context, storePaths []zbstore.Path, exporter *zbstore.ExportWriter, path string) ([]zbstore.Path, error) {
 	f, err := openInputFile(path)
 	if err != nil {
 		return nil, err
@@ -394,7 +394,7 @@ func copyToExporter(ctx context.Context, storePaths []zbstore.Path, exporter *zb
 // passthroughReceiver copies NAR files to an exporter.
 // It is a helper for [copyToExporter].
 type passthroughReceiver struct {
-	exporter *zbstore.Exporter
+	exporter *zbstore.ExportWriter
 	err      error
 }
 

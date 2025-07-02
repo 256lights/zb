@@ -28,65 +28,65 @@ type ExportTrailer struct {
 	ContentAddress ContentAddress
 }
 
-// An Exporter serializes zero or more NARs to a stream
+// An ExportWriter serializes zero or more NARs to a stream
 // in `nix-store --export` format.
-type Exporter struct {
+type ExportWriter struct {
 	w          io.Writer
 	trailerBuf []byte
 	header     bool
 	closed     bool
 }
 
-// NewExporter returns a new [Exporter] that writes to w.
-// The caller is responsible for calling [Exporter.Close] on the returned exporter
+// NewExportWriter returns a new [ExportWriter] that writes to w.
+// The caller is responsible for calling [ExportWriter.Close] on the returned exporter
 // to finish the stream.
-func NewExporter(w io.Writer) *Exporter {
-	return &Exporter{w: w}
+func NewExportWriter(w io.Writer) *ExportWriter {
+	return &ExportWriter{w: w}
 }
 
 // Write writes bytes of a store object to the exporter's underlying writer.
-func (imp *Exporter) Write(p []byte) (int, error) {
-	if imp.closed {
+func (ew *ExportWriter) Write(p []byte) (int, error) {
+	if ew.closed {
 		return 0, fmt.Errorf("write to closed exporter")
 	}
-	if !imp.header {
-		if _, err := io.WriteString(imp.w, exportObjectMarker); err != nil {
+	if !ew.header {
+		if _, err := io.WriteString(ew.w, exportObjectMarker); err != nil {
 			return 0, err
 		}
-		imp.header = true
+		ew.header = true
 	}
-	return imp.w.Write(p)
+	return ew.w.Write(p)
 }
 
 // Trailer marks the end of a store object in the stream.
-// Subsequent calls to [Exporter.Write] will be part of a new store object.
-func (imp *Exporter) Trailer(t *ExportTrailer) error {
-	if imp.closed {
+// Subsequent calls to [ExportWriter.Write] will be part of a new store object.
+func (ew *ExportWriter) Trailer(t *ExportTrailer) error {
+	if ew.closed {
 		return fmt.Errorf("write nix store export trailer: write to closed exporter")
 	}
-	if !imp.header {
+	if !ew.header {
 		return fmt.Errorf("write nix store export trailer: NAR not yet written")
 	}
-	imp.header = false
+	ew.header = false
 
-	imp.trailerBuf = imp.trailerBuf[:0]
-	imp.trailerBuf = append(imp.trailerBuf, exportTrailerMarker...)
-	imp.trailerBuf = appendNARString(imp.trailerBuf, string(t.StorePath))
-	imp.trailerBuf = binary.LittleEndian.AppendUint64(imp.trailerBuf, uint64(t.References.Len()))
+	ew.trailerBuf = ew.trailerBuf[:0]
+	ew.trailerBuf = append(ew.trailerBuf, exportTrailerMarker...)
+	ew.trailerBuf = appendNARString(ew.trailerBuf, string(t.StorePath))
+	ew.trailerBuf = binary.LittleEndian.AppendUint64(ew.trailerBuf, uint64(t.References.Len()))
 	for _, ref := range t.References.All() {
-		imp.trailerBuf = appendNARString(imp.trailerBuf, string(ref))
+		ew.trailerBuf = appendNARString(ew.trailerBuf, string(ref))
 	}
-	imp.trailerBuf = appendNARString(imp.trailerBuf, string(t.Deriver))
+	ew.trailerBuf = appendNARString(ew.trailerBuf, string(t.Deriver))
 	if t.ContentAddress.IsZero() {
-		imp.trailerBuf = binary.LittleEndian.AppendUint64(imp.trailerBuf, 0)
+		ew.trailerBuf = binary.LittleEndian.AppendUint64(ew.trailerBuf, 0)
 	} else {
 		// Nix 1.X used this field to store RSA-based signatures.
 		// Nix 2.0 onwards ignore this field, so we use it to inject a content addressability assertion.
-		imp.trailerBuf = binary.LittleEndian.AppendUint64(imp.trailerBuf, 1)
-		imp.trailerBuf = appendNARString(imp.trailerBuf, t.ContentAddress.String())
+		ew.trailerBuf = binary.LittleEndian.AppendUint64(ew.trailerBuf, 1)
+		ew.trailerBuf = appendNARString(ew.trailerBuf, t.ContentAddress.String())
 	}
 
-	if _, err := imp.w.Write(imp.trailerBuf); err != nil {
+	if _, err := ew.w.Write(ew.trailerBuf); err != nil {
 		return err
 	}
 	return nil
@@ -94,17 +94,17 @@ func (imp *Exporter) Trailer(t *ExportTrailer) error {
 
 // Close writes the footer of the export to the exporter's underlying writer.
 // Close returns an error if a store object has been written
-// but [Exporter.Trailer] has not been called.
+// but [ExportWriter.Trailer] has not been called.
 // Close does not close the underlying writer.
-func (imp *Exporter) Close() error {
-	if imp.closed {
+func (ew *ExportWriter) Close() error {
+	if ew.closed {
 		return fmt.Errorf("close nar exporter: exporter already closed")
 	}
-	if imp.header {
+	if ew.header {
 		return fmt.Errorf("close nar exporter: missing trailer")
 	}
 
-	_, err := io.WriteString(imp.w, exportEOFMarker)
+	_, err := io.WriteString(ew.w, exportEOFMarker)
 	if err != nil {
 		return err
 	}
