@@ -147,7 +147,7 @@ func TestExport(t *testing.T) {
 				_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 					TempDir: t.TempDir(),
 					ClientOptions: zbstorerpc.CodecOptions{
-						NARReceiver: receiver,
+						Importer: zbstorerpc.NewReceiverImporter(receiver),
 					},
 				})
 				if err != nil {

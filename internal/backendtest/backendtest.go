@@ -111,7 +111,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 	serveCtx, stopServe := context.WithCancel(context.WithoutCancel(ctx))
 	serverReceiver := srv.NewNARReceiver(serveCtx, bytebuffer.BufferCreator{})
 	serverCodec := zbstorerpc.NewCodec(serverConn, &zbstorerpc.CodecOptions{
-		NARReceiver: serverReceiver,
+		Importer: zbstorerpc.NewReceiverImporter(serverReceiver),
 	})
 	wg.Add(1)
 	go func() {

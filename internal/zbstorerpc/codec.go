@@ -41,14 +41,9 @@ type Codec struct {
 
 // CodecOptions is the set of optional parameters to [NewCodec].
 type CodecOptions struct {
-	// If Importer is non-nil, then it is used to handle application/zb-store-export messages
-	// and NARReceiver will be ignored.
-	// If both Importer and NARReceiver are nil, such messages are discarded.
+	// If Importer is non-nil, then it is used to handle application/zb-store-export messages.
+	// If Importer is nil, such messages are discarded.
 	Importer Importer
-	// If NARReceiver is non-nil, then it will be used to handle individual NAR files
-	// from application/zb-store-export messages.
-	// This field is ignored if Importer is non-nil.
-	NARReceiver zbstore.NARReceiver
 }
 
 // Importer is the interface used by [Codec] to handle application/zb-store-export messages.
@@ -74,13 +69,10 @@ func (f ImportFunc) Import(header jsonrpc.Header, body io.Reader) error {
 // If opts is nil, it is treated the same as the zero value.
 func NewCodec(rwc io.ReadWriteCloser, opts *CodecOptions) *Codec {
 	var importer Importer
-	switch {
-	case opts != nil && opts.Importer != nil:
+	if opts != nil && opts.Importer != nil {
 		importer = opts.Importer
-	case opts != nil && opts.NARReceiver != nil:
-		importer = receiverImporter{opts.NARReceiver}
-	default:
-		importer = receiverImporter{nopReceiver{}}
+	} else {
+		importer = NewReceiverImporter(nopReceiver{})
 	}
 
 	c := new(Codec)
@@ -181,11 +173,22 @@ func (c *Codec) Close() error {
 	return err
 }
 
-type receiverImporter struct {
+// ReceiverImporter adapts a [zbstore.NARReceiver] into a [Importer].
+type ReceiverImporter struct {
 	receiver zbstore.NARReceiver
 }
 
-func (imp receiverImporter) Import(header jsonrpc.Header, body io.Reader) error {
+// NewReceiverImporter returns a new [ReceiverImporter] that sends data to the given receiver.
+// NewReceiverImporter panics if receiver is nil.
+func NewReceiverImporter(receiver zbstore.NARReceiver) *ReceiverImporter {
+	if receiver == nil {
+		panic("nil receiver")
+	}
+	return &ReceiverImporter{receiver}
+}
+
+// Import implements [Importer] by calling [zbstore.ReceiveExport] on the given body.
+func (imp *ReceiverImporter) Import(header jsonrpc.Header, body io.Reader) error {
 	return zbstore.ReceiveExport(imp.receiver, body)
 }
 
