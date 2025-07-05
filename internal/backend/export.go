@@ -15,7 +15,6 @@ import (
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
-	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix/nar"
 )
 
@@ -82,14 +81,13 @@ func (s *Server) export(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 	}
 
 	var header jsonrpc.Header
-	if id, ok := jsonrpc.RequestIDFromContext(ctx); ok {
-		s, err := marshalJSONString(id)
-		if err != nil {
-			log.Warnf(ctx, "Marshal request ID for export: %v", err)
-		} else {
-			header = make(jsonrpc.Header)
-			header.Set("X-Request-Id", s)
+	if idJSON := req.Extra[zbstorerpc.ExportIDExtraFieldName]; len(idJSON) > 0 {
+		var id string
+		if err := json.Unmarshal(idJSON, &id); err != nil {
+			return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s: %v", zbstorerpc.ExportIDExtraFieldName, err))
 		}
+		header = make(jsonrpc.Header)
+		header.Set(zbstorerpc.ExportIDHeaderName, id)
 	}
 
 	pr, pw := io.Pipe()

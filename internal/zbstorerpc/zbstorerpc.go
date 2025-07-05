@@ -345,6 +345,15 @@ func (resp *ReadLogResponse) SetPayload(src []byte) {
 // that can be used to correlate the response.
 const ExportMethod = "zb.export"
 
+// ExportIDExtraFieldName is the name of the extra field in [jsonrpc.Request]
+// used to pass a value that will be passed through with [ExportIDHeaderName].
+const ExportIDExtraFieldName = "zbExportID"
+
+// ExportIDHeaderName is the name of the header used to correlate an [ExportRequest]
+// with an export message.
+// The request should have used [ExportIDExtraFieldName].
+const ExportIDHeaderName = "Zb-Export-Id"
+
 // ExportRequest is the set of parameters for [ExportMethod].
 type ExportRequest struct {
 	Paths []zbstore.Path `json:"paths"`
