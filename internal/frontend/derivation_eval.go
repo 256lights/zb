@@ -5,6 +5,7 @@ package frontend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -323,14 +324,12 @@ func writeDerivation(ctx context.Context, store Store, drv *zbstore.Derivation) 
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
 
-	exists, err := store.Exists(ctx, string(trailer.StorePath))
-	if err != nil {
-		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
-	}
-	if exists {
+	if _, err := store.Object(ctx, trailer.StorePath); err == nil {
 		// Already exists: no need to re-import.
 		log.Debugf(ctx, "Using existing store path %s", trailer.StorePath)
 		return trailer.StorePath, nil
+	} else if !errors.Is(err, zbstore.ErrNotFound) {
+		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
 
 	exporter, closeExport, err := startExport(ctx, store)

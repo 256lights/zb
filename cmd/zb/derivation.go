@@ -107,12 +107,15 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 		}
 	}
 
-	storeClient, waitStoreClient := g.storeClient(nil)
+	di := new(zbstorerpc.DeferredImporter)
+	storeClient, waitStoreClient := g.storeClient(&zbstorerpc.CodecOptions{
+		Importer: di,
+	})
 	defer func() {
 		storeClient.Close()
 		waitStoreClient()
 	}()
-	eval, err := opts.newEval(g, storeClient)
+	eval, err := opts.newEval(g, storeClient, di)
 	if err != nil {
 		return err
 	}
@@ -351,12 +354,15 @@ func newDerivationEnvCommand(g *globalConfig) *cobra.Command {
 }
 
 func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvOptions) error {
-	storeClient, waitStoreClient := g.storeClient(nil)
+	di := new(zbstorerpc.DeferredImporter)
+	storeClient, waitStoreClient := g.storeClient(&zbstorerpc.CodecOptions{
+		Importer: di,
+	})
 	defer func() {
 		storeClient.Close()
 		waitStoreClient()
 	}()
-	eval, err := opts.newEval(g, storeClient)
+	eval, err := opts.newEval(g, storeClient, di)
 	if err != nil {
 		return err
 	}

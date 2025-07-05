@@ -60,17 +60,14 @@ type Options struct {
 
 // Store is the set of store operations that [Eval] needs.
 //
-// Exists reports whether the given path exists in the store.
-//
-// Import reads the `nix-store --export` data from the given reader
-// and adds any objects from the stream into the store.
-//
-// Realize starts a build for the given derivation paths,
-// waits for the build to finish,
-// then returns the results of the build.
+// TODO(#44): Embed [zbstore.WritableRandomAccessStore].
 type Store interface {
-	Exists(ctx context.Context, path string) (bool, error)
-	Import(ctx context.Context, r io.Reader) error
+	zbstore.Store
+	zbstore.Importer
+
+	// Realize starts a build for the given derivation paths,
+	// waits for the build to finish,
+	// then returns the results of the build.
 	Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error)
 }
 
@@ -313,12 +310,10 @@ func (eval *Eval) storePathFunction(ctx context.Context, l *lua.State) (int, err
 		return 0, fmt.Errorf("%sstorePath: path %s is not under %s",
 			lua.Where(l, 1), lualex.Quote(rawPath), lualex.Quote(string(eval.storeDir)))
 	}
-	exists, err := eval.store.Exists(ctx, string(path))
-	if err != nil {
-		return 0, fmt.Errorf("%sstorePath: %v", lua.Where(l, 1), err)
-	}
-	if !exists {
+	if _, err := eval.store.Object(ctx, path); errors.Is(err, zbstore.ErrNotFound) {
 		return 0, fmt.Errorf("%sstorePath: %s does not exist", lua.Where(l, 1), path)
+	} else if err != nil {
+		return 0, fmt.Errorf("%sstorePath: %v", lua.Where(l, 1), err)
 	}
 	l.PushStringContext(rawPath, sets.New(contextValue{path: path}.String()))
 	return 1, nil
@@ -613,6 +608,7 @@ func loadFile(l *lua.State, path string) error {
 	if err != nil {
 		return fmt.Errorf("load file: %w", err)
 	}
+	// TODO(#44): Use store to open file if pathInStore(path, dir).
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("load file: %w", err)

@@ -11,6 +11,7 @@ import (
 	"io"
 	"maps"
 	"strconv"
+	"sync"
 
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/zbstore"
@@ -190,6 +191,38 @@ func NewReceiverImporter(receiver zbstore.NARReceiver) *ReceiverImporter {
 // Import implements [Importer] by calling [zbstore.ReceiveExport] on the given body.
 func (imp *ReceiverImporter) Import(header jsonrpc.Header, body io.Reader) error {
 	return zbstore.ReceiveExport(imp.receiver, body)
+}
+
+// DeferredImporter allows switching out an [Importer].
+// The zero value discards any imports received.
+type DeferredImporter struct {
+	mu  sync.RWMutex
+	imp Importer
+}
+
+// SetImporter changes the [Importer] that [*DeferredImporter.Import] calls will be dispatched to.
+// nil is treated like an [Importer] that reads the body and discards the contents,
+// only returning an error if the body is not well-formed `nix-store --export` data.
+//
+// SetImporter is safe to call concurrently with [*DeferredImporter.Import].
+// After SetImporter returns, calls to Import will use the new importer.
+func (di *DeferredImporter) SetImporter(imp Importer) {
+	di.mu.Lock()
+	di.imp = imp
+	di.mu.Unlock()
+}
+
+// Import calls Import on its underlying [Importer]
+// as set by [*DeferredImporter.SetImporter].
+func (di *DeferredImporter) Import(header jsonrpc.Header, body io.Reader) error {
+	di.mu.RLock()
+	imp := di.imp
+	di.mu.RUnlock()
+
+	if imp == nil {
+		return zbstore.ReceiveExport(nopReceiver{}, body)
+	}
+	return imp.Import(header, body)
 }
 
 type nopReceiver struct{}

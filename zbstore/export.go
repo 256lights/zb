@@ -4,9 +4,11 @@
 package zbstore
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"iter"
 	"slices"
 
 	"zb.256lights.llc/pkg/sets"
@@ -18,6 +20,153 @@ const (
 	exportTrailerMarker = "NIXE\x00\x00\x00\x00"
 	exportEOFMarker     = "\x00\x00\x00\x00\x00\x00\x00\x00"
 )
+
+// An Exporter is a [Store] that can efficiently export objects.
+// The [Export] function will use this method if available.
+// StoreExport must be safe to call concurrently from multiple goroutines.
+type Exporter interface {
+	Store
+	StoreExport(ctx context.Context, dst io.Writer, paths sets.Set[Path], opts *ExportOptions) error
+}
+
+// ExportOptions is the set of optional parameters to [Exporter.StoreExport].
+type ExportOptions struct {
+	// If ExcludeReferences is true, then only the paths given will be exported.
+	// Otherwise, paths that are referenced by those store objects will also be included
+	// and the store objects will be sorted in dependency order.
+	ExcludeReferences bool
+
+	// MaxConcurrency specifies the maximum number of objects to look up concurrently
+	// if the store does not implement [BatchStore].
+	// Values of MaxConcurrency less than 1 are treated as if 1 was given.
+	MaxConcurrency int
+}
+
+// Export writes the store objects named by paths
+// (and the transitive closure of objects they reference by default)
+// to dst in `nix-store --export` format.
+// If no paths are given, then an empty export will be written to dst
+// without using store.
+//
+// If store implements [Exporter], then Export will use store.Export to perform the export.
+// Otherwise, Export will query the store for all the objects needed
+// and serialize them to dst.
+func Export(ctx context.Context, store Store, dst io.Writer, paths sets.Set[Path], opts *ExportOptions) error {
+	if len(paths) == 0 {
+		_, err := io.WriteString(dst, exportEOFMarker)
+		return newExportError(slices.Sorted(paths.All()), err)
+	}
+	if e, ok := store.(Exporter); ok {
+		return e.StoreExport(ctx, dst, paths, opts)
+	}
+
+	maxConcurrency := 1
+	if opts != nil && opts.MaxConcurrency > 1 {
+		maxConcurrency = opts.MaxConcurrency
+	}
+	objects, err := orderedObjectBatch(ctx, store, slices.Values(slices.Sorted(paths.All())), maxConcurrency)
+	if err != nil {
+		return newExportError(slices.Sorted(paths.All()), err)
+	}
+	if excludeRefs := opts != nil && opts.ExcludeReferences; !excludeRefs {
+		objects, err = expandClosure(ctx, store, objects, maxConcurrency)
+		if err != nil {
+			return newExportError(slices.Sorted(paths.All()), err)
+		}
+	}
+
+	w := NewExportWriter(dst)
+	for _, obj := range objects {
+		if err := obj.WriteNAR(ctx, w); err != nil {
+			return newExportError(slices.Sorted(paths.All()), err)
+		}
+		if err := w.Trailer(obj.Trailer()); err != nil {
+			return newExportError(slices.Sorted(paths.All()), err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		return newExportError(slices.Sorted(paths.All()), err)
+	}
+
+	return nil
+}
+
+func expandClosure(ctx context.Context, store Store, objects []Object, maxConcurrency int) ([]Object, error) {
+	for {
+		newObjects, err := orderedObjectBatch(ctx, store, missingReferences(objects), maxConcurrency)
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, newObjects...)
+		if len(newObjects) == 0 {
+			break
+		}
+	}
+
+	// Topologically sort new closure.
+	for sortEnd := 0; sortEnd < len(objects); sortEnd++ {
+		sorted := objects[:sortEnd]
+		unsorted := objects[sortEnd:]
+		i := slices.IndexFunc(unsorted, func(obj Object) bool {
+			trailer := obj.Trailer()
+			for ref := range trailer.References.Values() {
+				if ref != trailer.StorePath && !objectsHavePath(slices.Values(sorted), ref) {
+					return false
+				}
+			}
+			return true
+		})
+		// Move object to front of unsorted slice.
+		unsorted[0], unsorted[i] = unsorted[i], unsorted[0]
+	}
+
+	return objects, nil
+}
+
+func orderedObjectBatch(ctx context.Context, store Store, paths iter.Seq[Path], maxConcurrency int) ([]Object, error) {
+	pathSet := sets.Collect(paths)
+	if pathSet.Len() == 0 {
+		return nil, nil
+	}
+	batch, err := ObjectBatch(ctx, store, pathSet, maxConcurrency)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]Object, 0, pathSet.Len())
+	for path := range paths {
+		i := slices.IndexFunc(batch, func(obj Object) bool {
+			return obj.Trailer().StorePath == path
+		})
+		if i < 0 {
+			return nil, fmt.Errorf("store object %s: %w", path, ErrNotFound)
+		}
+		result = append(result, batch[i])
+	}
+	return result, nil
+}
+
+func missingReferences(objects []Object) iter.Seq[Path] {
+	return func(yield func(Path) bool) {
+		for _, obj := range objects {
+			for ref := range obj.Trailer().References.Values() {
+				if !objectsHavePath(slices.Values(objects), ref) {
+					if !yield(ref) {
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+func objectsHavePath(objects iter.Seq[Object], path Path) bool {
+	for obj := range objects {
+		if obj.Trailer().StorePath == path {
+			return true
+		}
+	}
+	return false
+}
 
 // ExportTrailer holds metadata about a Nix store object
 // used in the `nix-store --export` format.
@@ -298,4 +447,15 @@ func (ew *errWriter) Write(p []byte) (int, error) {
 	var n int
 	n, ew.err = ew.w.Write(p)
 	return n, ew.err
+}
+
+func newExportError(paths []Path, err error) error {
+	switch len(paths) {
+	case 0:
+		return fmt.Errorf("export store objects: %w", err)
+	case 1:
+		return fmt.Errorf("export %s: %w", paths[0], err)
+	default:
+		return fmt.Errorf("export %s (+%d more): %w", paths[0], len(paths)-1, err)
+	}
 }

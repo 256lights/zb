@@ -118,10 +118,9 @@ func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int,
 	if prevStorePath, err := eval.checkStamp(cache, p, name); err != nil {
 		log.Debugf(ctx, "%v", err)
 	} else {
-		exists, err := eval.store.Exists(ctx, string(prevStorePath))
-		if err != nil {
-			log.Debugf(ctx, "Unable to query store path %s: %v", prevStorePath, err)
-		} else if exists {
+		if _, err := eval.store.Object(ctx, prevStorePath); err != nil {
+			log.Debugf(ctx, "%v", err)
+		} else {
 			log.Debugf(ctx, "Using existing store path %s", prevStorePath)
 			pushStorePath(l, prevStorePath)
 			return 1, nil
@@ -186,6 +185,7 @@ func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int,
 				if err != nil {
 					return err
 				}
+				// TODO(#44): Use store to open file if pathInStore(path, dir).
 				f, err := os.Open(fpath)
 				if err != nil {
 					return err
@@ -300,10 +300,9 @@ func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error)
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 
-	exists, err := eval.store.Exists(ctx, string(storePath))
-	if err != nil {
-		log.Debugf(ctx, "Unable to query store path %s: %v", storePath, err)
-	} else if exists {
+	if _, err := eval.store.Object(ctx, storePath); err != nil {
+		log.Debugf(ctx, "%v", err)
+	} else {
 		// Already exists: no need to re-import.
 		log.Debugf(ctx, "Using existing store path %s", storePath)
 		pushStorePath(l, storePath)
@@ -675,11 +674,11 @@ func collatePath(a, b string) int {
 	}
 }
 
-func startExport(ctx context.Context, store Store) (exporter *zbstore.ExportWriter, closeFunc func(ok bool) error, err error) {
+func startExport(ctx context.Context, store zbstore.Importer) (exporter *zbstore.ExportWriter, closeFunc func(ok bool) error, err error) {
 	pr, pw := io.Pipe()
 	done := make(chan error)
 	go func() {
-		err := store.Import(ctx, pr)
+		err := store.StoreImport(ctx, pr)
 		pr.Close()
 		done <- err
 		close(done)

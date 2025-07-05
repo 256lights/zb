@@ -120,12 +120,17 @@ type evalOptions struct {
 	keepFailed bool
 }
 
-func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client) (*frontend.Eval, error) {
-	return frontend.NewEval(&frontend.Options{
-		Store: &rpcStore{
-			client:     storeClient,
-			keepFailed: opts.keepFailed,
+func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client, di *zbstorerpc.DeferredImporter) (*frontend.Eval, error) {
+	store := &rpcStore{
+		dir:        g.storeDir,
+		keepFailed: opts.keepFailed,
+		Store: zbstorerpc.Store{
+			Handler: storeClient,
 		},
+	}
+	di.SetImporter(store)
+	return frontend.NewEval(&frontend.Options{
+		Store:          store,
 		StoreDirectory: g.storeDir,
 		CacheDBPath:    g.cacheDB,
 		LookupEnv: func(ctx context.Context, key string) (string, bool) {
@@ -167,12 +172,15 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 }
 
 func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
-	storeClient, waitStoreClient := g.storeClient(nil)
+	di := new(zbstorerpc.DeferredImporter)
+	storeClient, waitStoreClient := g.storeClient(&zbstorerpc.CodecOptions{
+		Importer: di,
+	})
 	defer func() {
 		storeClient.Close()
 		waitStoreClient()
 	}()
-	eval, err := opts.newEval(g, storeClient)
+	eval, err := opts.newEval(g, storeClient, di)
 	if err != nil {
 		return err
 	}
@@ -232,12 +240,15 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 }
 
 func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
-	storeClient, waitStoreClient := g.storeClient(nil)
+	di := new(zbstorerpc.DeferredImporter)
+	storeClient, waitStoreClient := g.storeClient(&zbstorerpc.CodecOptions{
+		Importer: di,
+	})
 	defer func() {
 		storeClient.Close()
 		waitStoreClient()
 	}()
-	eval, err := opts.newEval(g, storeClient)
+	eval, err := opts.newEval(g, storeClient, di)
 	if err != nil {
 		return err
 	}
@@ -299,28 +310,14 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 // It copies builder logs to stderr
 // and propagates options from [evalOptions].
 type rpcStore struct {
-	client     *jsonrpc.Client
+	zbstorerpc.Store
+	dir        zbstore.Directory
 	keepFailed bool
-}
-
-func (store *rpcStore) Exists(ctx context.Context, path string) (bool, error) {
-	var response bool
-	err := jsonrpc.Do(ctx, store.client, zbstorerpc.ExistsMethod, &response, &zbstorerpc.ExistsRequest{
-		Path: path,
-	})
-	if err != nil {
-		return false, err
-	}
-	return response, nil
-}
-
-func (store *rpcStore) Import(ctx context.Context, r io.Reader) error {
-	return importToStore(ctx, store.client, r, -1)
 }
 
 func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
 	var realizeResponse zbstorerpc.RealizeResponse
-	err := jsonrpc.Do(ctx, store.client, zbstorerpc.RealizeMethod, &realizeResponse, &zbstorerpc.RealizeRequest{
+	err := jsonrpc.Do(ctx, store.Handler, zbstorerpc.RealizeMethod, &realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: slices.Collect(func(yield func(zbstore.Path) bool) {
 			for ref := range want.All() {
 				if !yield(ref.DrvPath) {
@@ -333,7 +330,7 @@ func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.Output
 	if err != nil {
 		return nil, err
 	}
-	build, _, err := waitForBuild(ctx, store.client, realizeResponse.BuildID)
+	build, _, err := waitForBuild(ctx, store.Handler, realizeResponse.BuildID)
 	if err != nil {
 		return nil, err
 	}

@@ -161,7 +161,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 
 // WaitForBuild waits until the store finishes a build or the context is canceled,
 // whichever comes first.
-func WaitForBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (*zbstorerpc.Build, error) {
+func WaitForBuild(ctx context.Context, client jsonrpc.Handler, buildID string) (*zbstorerpc.Build, error) {
 	if buildID == "" {
 		return nil, fmt.Errorf("cannot wait for empty build ID")
 	}
@@ -190,7 +190,7 @@ func WaitForBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (
 // whichever comes first.
 // If the build status is not [zbstore.BuildSuccess],
 // then WaitForSuccessfulBuild returns an error.
-func WaitForSuccessfulBuild(ctx context.Context, client *jsonrpc.Client, buildID string) (*zbstorerpc.Build, error) {
+func WaitForSuccessfulBuild(ctx context.Context, client jsonrpc.Handler, buildID string) (*zbstorerpc.Build, error) {
 	resp, err := WaitForBuild(ctx, client, buildID)
 	if err == nil && resp.Status != zbstorerpc.BuildSuccess {
 		err = fmt.Errorf("build %s failed with status %q", buildID, resp.Status)
