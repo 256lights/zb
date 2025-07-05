@@ -44,13 +44,18 @@ type Response struct {
 
 // Do makes a single JSON-RPC to the given [Handler].
 // request should be any Go value that can be passed to [json.Marshal].
+// If request is nil, then the parameters are omitted.
 // response should be any Go value (usually a pointer) that can be passed to [json.Unmarshal].
 // If response is the nil interface, then any result data is ignored
 // (but Do will still wait for the call to complete).
 func Do(ctx context.Context, h Handler, method string, response, request any) error {
-	params, err := json.Marshal(request)
-	if err != nil {
-		return fmt.Errorf("call json rpc %s: %v", method, err)
+	var params json.RawMessage
+	if request != nil {
+		var err error
+		params, err = json.Marshal(request)
+		if err != nil {
+			return fmt.Errorf("call json rpc %s: %v", method, err)
+		}
 	}
 	fullResponse, err := h.JSONRPC(ctx, &Request{
 		Method: method,

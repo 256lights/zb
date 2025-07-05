@@ -252,6 +252,12 @@ func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 		zbstorerpc.GetBuildResultMethod: jsonrpc.HandlerFunc(s.getBuildResult),
 		zbstorerpc.CancelBuildMethod:    jsonrpc.HandlerFunc(s.cancelBuild),
 		zbstorerpc.ReadLogMethod:        jsonrpc.HandlerFunc(s.readLog),
+
+		zbstorerpc.NopMethod: jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+			return &jsonrpc.Response{
+				Result: json.RawMessage("null"),
+			}, nil
+		}),
 	}.JSONRPC(ctx, req)
 }
 

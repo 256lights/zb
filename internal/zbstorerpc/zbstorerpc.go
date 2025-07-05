@@ -20,6 +20,10 @@ import (
 	"zombiezen.com/go/nix"
 )
 
+// NopMethod is the name of the method that does nothing.
+// The request is ignored and the response is null.
+const NopMethod = "zb.nop"
+
 // ExistsMethod is the name of the method that checks whether a store path exists.
 // [ExistsRequest] is used for the request and the response is a boolean.
 const ExistsMethod = "zb.exists"
@@ -340,9 +344,6 @@ func (resp *ReadLogResponse) SetPayload(src []byte) {
 
 // ExportMethod is the name of the method that triggers an export of store objects.
 // [ExportRequest] is used for the request and the response is null.
-// It can be sent as a notification,
-// but sending it as a normal request will cause the export to include an X-Request-ID header
-// that can be used to correlate the response.
 const ExportMethod = "zb.export"
 
 // ExportIDExtraFieldName is the name of the extra field in [jsonrpc.Request]
