@@ -18,8 +18,15 @@ import (
 const MediaType = "application/hal+json"
 
 // Well-known link relation types.
+// See https://www.iana.org/assignments/link-relations/link-relations.xhtml
+// for a complete list of registered link relations.
 const (
-	SelfRelationType = "self"
+	SelfRelationType     = "self"
+	PreviousRelationType = "prev"
+	NextRelationType     = "next"
+	FirstRelationType    = "first"
+	LastRelationType     = "last"
+	UpRelationType       = "up"
 )
 
 const (
