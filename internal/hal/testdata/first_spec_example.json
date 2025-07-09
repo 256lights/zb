@@ -1,0 +1,10 @@
+{
+  "_links": {
+    "self": { "href": "/orders/523" },
+    "warehouse": { "href": "/warehouse/56" },
+    "invoice": { "href": "/invoices/873" }
+  },
+  "currency": "USD",
+  "status": "shipped",
+  "total": 10.20
+}

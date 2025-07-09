@@ -16,7 +16,7 @@ buildGoModule {
 
   src = ./.;
 
-  vendorHash = "sha256-B1DROm8KMfKPupJ7d75Oh8QcJae3UyWwVm8EhnNMayA=";
+  vendorHash = "sha256-gTyu00L/i6KghU7mvlVi24kELWRSTvag/GZrj+IGDBA=";
 
   meta = {
     description = "An experiment in hermetic, reproducible build systems.";
