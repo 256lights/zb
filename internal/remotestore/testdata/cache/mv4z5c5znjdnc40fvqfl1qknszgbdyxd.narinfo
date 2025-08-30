@@ -1,0 +1,6 @@
+StorePath: /opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt
+URL: nar/0xmvxmsmmc6n79sk2h3r6db3yp8drmxps61mdk7iqnvc6vcsww60.nar
+Compression: none
+NarHash: sha256:0xmvxmsmmc6n79sk2h3r6db3yp8drmxps61mdk7iqnvc6vcsww60
+NarSize: 128
+CA: fixed:r:sha256:1qicirpsz48j7a2r5h9lj04kipdyvxanwglv9ymfq0qsv7isywdf
