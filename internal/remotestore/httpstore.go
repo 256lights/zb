@@ -4,6 +4,9 @@
 package remotestore
 
 import (
+	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +16,7 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/dsnet/compress/brotli"
 	"zb.256lights.llc/pkg/internal/hal"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -125,7 +129,8 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 		Method: http.MethodGet,
 		URL:    u,
 		Header: http.Header{
-			"Accept": {accept},
+			"Accept":          {accept},
+			"Accept-Encoding": {acceptEncoding},
 		},
 	}).WithContext(ctx)
 	resp, err := client.Do(req)
@@ -153,7 +158,39 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 			return nil, fmt.Errorf("fetch %v: response too large", u.Redacted())
 		}
 	}
+	if e := resp.Header.Get("Content-Encoding"); e != "" {
+		dec, err := decodeBody(bytes.NewReader(data), e)
+		if err != nil {
+			return nil, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
+		}
+		defer dec.Close()
+		data, err = io.ReadAll(dec)
+		if err != nil {
+			return nil, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
+		}
+	}
 	return data, nil
+}
+
+// acceptEncoding is the value of an [Accept-Encoding header]
+// that advertises the algorithms that [decodeBody] supports.
+//
+// [Accept-Encoding header]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Accept-Encoding
+const acceptEncoding = "br,gzip,deflate"
+
+func decodeBody(r io.Reader, contentEncoding string) (io.ReadCloser, error) {
+	switch contentEncoding {
+	case "":
+		return io.NopCloser(r), nil
+	case "br":
+		return brotli.NewReader(r, nil)
+	case "gzip", "x-gzip":
+		return gzip.NewReader(r)
+	case "deflate":
+		return flate.NewReader(r), nil
+	default:
+		return nil, fmt.Errorf("unsupported Content-Encoding %s", contentEncoding)
+	}
 }
 
 // httpObject is the implementation of [zbstore.Object] for [HTTPStore].
@@ -183,22 +220,28 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 		Method: http.MethodGet,
 		URL:    narFileURL,
 		Header: http.Header{
-			"Accept": {"*/*"},
+			"Accept":          {"*/*"},
+			"Accept-Encoding": {acceptEncoding},
 		},
 	}
 	resp, err := obj.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("download %s: get %v: %v", obj.info.StorePath, narFileURL, err)
+		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download %s: get %v: %v", obj.info.StorePath, narFileURL, &httpError{
+		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), &httpError{
 			statusCode: resp.StatusCode,
 			status:     resp.Status,
 		})
 	}
-	if _, err := io.Copy(dst, resp.Body); err != nil {
-		return fmt.Errorf("download %s: get %v: %v", obj.info.StorePath, narFileURL, err)
+	decodedBody, err := decodeBody(resp.Body, resp.Header.Get("Content-Encoding"))
+	if err != nil {
+		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
+	}
+	defer decodedBody.Close()
+	if _, err := io.Copy(dst, decodedBody); err != nil {
+		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
 	}
 	return nil
 }
