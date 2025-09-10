@@ -7,10 +7,13 @@
 package hal
 
 import (
-	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
+	"slices"
 
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"zombiezen.com/go/uritemplate"
 )
 
@@ -46,7 +49,7 @@ type Resource struct {
 	// Embedded is a map of link relation types to embedded resources.
 	Embedded map[string]ArrayOrObject[*Resource]
 	// Properties are top-level properties of the resource object.
-	Properties map[string]json.RawMessage
+	Properties map[string]jsontext.Value
 }
 
 // Link returns the link object for the link relation type
@@ -62,82 +65,106 @@ func (r *Resource) Link(rel string) *Link {
 
 // MarshalJSON marshals the resource as a JSON object.
 func (r *Resource) MarshalJSON() ([]byte, error) {
+	return jsonv2.Marshal(r, jsonv2.Deterministic(true))
+}
+
+// MarshalJSONTo writes the resource to the given JSON encoder.
+func (r *Resource) MarshalJSONTo(enc *jsontext.Encoder) error {
 	if r == nil {
-		return []byte("null"), nil
+		if err := enc.WriteToken(jsontext.Null); err != nil {
+			return fmt.Errorf("marshal hal resource: %w", err)
+		}
 	}
 
 	for _, name := range [...]string{linksPropertyName, embeddedPropertyName} {
 		if _, ok := r.Properties[name]; ok {
-			return nil, fmt.Errorf("marshal hal resource: %s property is reserved", name)
+			return fmt.Errorf("marshal hal resource: %s property is reserved", name)
 		}
 	}
 
-	var buf []byte
-	buf = append(buf, '{')
+	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+		return fmt.Errorf("marshal hal resource: %w", err)
+	}
 	if len(r.Links) > 0 {
-		buf = append(buf, `"`+linksPropertyName+`":`...)
-		data, err := json.Marshal(r.Links)
-		if err != nil {
-			return nil, fmt.Errorf("marshal hal resource: %s: %v", linksPropertyName, err)
+		if err := enc.WriteToken(jsontext.String(linksPropertyName)); err != nil {
+			return fmt.Errorf("marshal hal resource: %s: %w", linksPropertyName, err)
 		}
-		buf = append(buf, data...)
+		if err := jsonv2.MarshalEncode(enc, r.Links); err != nil {
+			return fmt.Errorf("marshal hal resource: %s: %w", linksPropertyName, err)
+		}
 	}
 	if len(r.Embedded) > 0 {
-		if len(buf) > len("{") {
-			buf = append(buf, ',')
+		if err := enc.WriteToken(jsontext.String(embeddedPropertyName)); err != nil {
+			return fmt.Errorf("marshal hal resource: %w", err)
 		}
-		buf = append(buf, `"`+embeddedPropertyName+`":`...)
-		data, err := json.Marshal(r.Embedded)
-		if err != nil {
-			return nil, fmt.Errorf("marshal hal resource: %s: %v", embeddedPropertyName, err)
+		if err := jsonv2.MarshalEncode(enc, r.Embedded); err != nil {
+			return fmt.Errorf("marshal hal resource: %s: %w", embeddedPropertyName, err)
 		}
-		buf = append(buf, data...)
 	}
 	if len(r.Properties) > 0 {
-		if len(buf) > len("{") {
-			buf = append(buf, ',')
+		keys := maps.Keys(r.Properties)
+		if deterministic, _ := jsonv2.GetOption(enc.Options(), jsonv2.Deterministic); deterministic {
+			keys = slices.Values(slices.Sorted(keys))
 		}
-		data, err := json.Marshal(r.Properties)
-		if err != nil {
-			return nil, fmt.Errorf("marshal hal resource: %v", err)
+		for k := range keys {
+			if err := enc.WriteToken(jsontext.String(k)); err != nil {
+				return fmt.Errorf("marshal hal resource: %s: %w", k, err)
+			}
+			if err := enc.WriteValue(jsontext.Value(r.Properties[k])); err != nil {
+				return fmt.Errorf("marshal hal resource: %s: %w", k, err)
+			}
 		}
-		buf = append(buf, data[len("{"):]...)
-		// Already contains the closing brace, so return early.
-		return buf, nil
 	}
-	buf = append(buf, '}')
-	return buf, nil
+	if err := enc.WriteToken(jsontext.EndObject); err != nil {
+		return fmt.Errorf("marshal hal resource: %w", err)
+	}
+	return nil
 }
 
 // UnmarshalJSON unmarshals a JSON object into the resource.
 func (r *Resource) UnmarshalJSON(data []byte) error {
-	var properties map[string]json.RawMessage
-	if err := json.Unmarshal(data, &properties); err != nil {
+	return jsonv2.Unmarshal(data, r)
+}
+
+// UnmarshalJSON unmarshals a JSON object into the resource.
+func (r *Resource) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
+	if tok, err := dec.ReadToken(); err != nil {
 		return fmt.Errorf("unmarshal hal resource: %w", err)
+	} else if got := tok.Kind(); got != '{' {
+		return fmt.Errorf("unmarshal hal resource: unexpected %v token (want object)", got)
 	}
-	if links := properties[linksPropertyName]; len(links) > 0 {
-		delete(properties, linksPropertyName)
-		if err := json.Unmarshal(links, &r.Links); err != nil {
-			return fmt.Errorf("unmarshal hal resource: %s: %v", linksPropertyName, err)
+
+	for {
+		keyToken, err := dec.ReadToken()
+		if err != nil {
+			return fmt.Errorf("unmarshal hal resource: %w", err)
 		}
-		if len(r.Links) == 0 {
-			r.Links = nil
+		if keyToken.Kind() == '}' {
+			break
+		}
+		key := keyToken.String()
+
+		switch key {
+		case linksPropertyName:
+			if err := jsonv2.UnmarshalDecode(dec, &r.Links); err != nil {
+				return fmt.Errorf("unmarshal hal resource: %s: %w", key, err)
+			}
+		case embeddedPropertyName:
+			if err := jsonv2.UnmarshalDecode(dec, &r.Embedded); err != nil {
+				return fmt.Errorf("unmarshal hal resource: %s: %w", key, err)
+			}
+		default:
+			if r.Properties == nil {
+				r.Properties = make(map[string]jsontext.Value)
+			}
+			var err error
+			r.Properties[key], err = dec.ReadValue()
+			if err != nil {
+				return fmt.Errorf("unmarshal hal resource: %s: %w", key, err)
+			}
 		}
 	}
-	if embedded := properties[embeddedPropertyName]; len(embedded) > 0 {
-		delete(properties, embeddedPropertyName)
-		if err := json.Unmarshal(embedded, &r.Embedded); err != nil {
-			return fmt.Errorf("unmarshal hal resource: %s: %v", embeddedPropertyName, err)
-		}
-		if len(r.Embedded) == 0 {
-			r.Embedded = nil
-		}
-	}
-	if len(properties) > 0 {
-		r.Properties = properties
-	} else {
-		r.Properties = nil
-	}
+
 	return nil
 }
 
@@ -173,21 +200,33 @@ func (arr ArrayOrObject[T]) Get() (_ T, ok bool) {
 
 // MarshalJSON marshals arr as JSON.
 func (arr ArrayOrObject[T]) MarshalJSON() ([]byte, error) {
+	return jsonv2.Marshal(arr, jsonv2.Deterministic(true))
+}
+
+// MarshalJSONTo writes arr to a JSON encoder.
+func (arr ArrayOrObject[T]) MarshalJSONTo(enc *jsontext.Encoder) error {
 	if obj, ok := arr.Get(); ok {
-		return json.Marshal(obj)
+		return jsonv2.MarshalEncode(enc, obj)
 	}
-	return json.Marshal(arr.Objects)
+	return jsonv2.MarshalEncode(enc, arr.Objects)
 }
 
 // UnmarshalJSON unmarshals arrays into arr.
 // Any other type of JSON value is treated as a single type T.
 func (arr *ArrayOrObject[T]) UnmarshalJSON(data []byte) error {
-	arr.Single = len(data) == 0 || data[0] != '['
+	return jsonv2.Unmarshal(data, arr)
+}
+
+// UnmarshalJSONFrom unmarshals the next value from a JSON decoder into arr.
+// Arrays are parsed as an array of T.
+// Any other type of JSON value is treated as a single type T.
+func (arr *ArrayOrObject[T]) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
+	arr.Single = dec.PeekKind() != '['
 	if arr.Single {
 		arr.Objects = make([]T, 1)
-		return json.Unmarshal(data, &arr.Objects[0])
+		return jsonv2.UnmarshalDecode(dec, &arr.Objects[0])
 	}
-	return json.Unmarshal(data, &arr.Objects)
+	return jsonv2.UnmarshalDecode(dec, &arr.Objects)
 }
 
 // Link represents a HAL [link object].

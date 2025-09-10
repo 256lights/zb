@@ -4,14 +4,14 @@
 package hal
 
 import (
-	"bytes"
-	"encoding/json"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -37,10 +37,10 @@ var unmarshalTests = []struct {
 					HRef: "/invoices/873",
 				}),
 			},
-			Properties: map[string]json.RawMessage{
-				"currency": json.RawMessage(`"USD"`),
-				"status":   json.RawMessage(`"shipped"`),
-				"total":    json.RawMessage(`10.20`),
+			Properties: map[string]jsontext.Value{
+				"currency": jsontext.Value(`"USD"`),
+				"status":   jsontext.Value(`"shipped"`),
+				"total":    jsontext.Value(`10.20`),
 			},
 		},
 	},
@@ -73,10 +73,10 @@ var unmarshalTests = []struct {
 								HRef: "/customers/7809",
 							}),
 						},
-						Properties: map[string]json.RawMessage{
-							"total":    json.RawMessage(`30.00`),
-							"currency": json.RawMessage(`"USD"`),
-							"status":   json.RawMessage(`"shipped"`),
+						Properties: map[string]jsontext.Value{
+							"total":    jsontext.Value(`30.00`),
+							"currency": jsontext.Value(`"USD"`),
+							"status":   jsontext.Value(`"shipped"`),
 						},
 					},
 					{
@@ -91,17 +91,17 @@ var unmarshalTests = []struct {
 								HRef: "/customers/12369",
 							}),
 						},
-						Properties: map[string]json.RawMessage{
-							"total":    json.RawMessage(`20.00`),
-							"currency": json.RawMessage(`"USD"`),
-							"status":   json.RawMessage(`"processing"`),
+						Properties: map[string]jsontext.Value{
+							"total":    jsontext.Value(`20.00`),
+							"currency": jsontext.Value(`"USD"`),
+							"status":   jsontext.Value(`"processing"`),
 						},
 					},
 				}),
 			},
-			Properties: map[string]json.RawMessage{
-				"currentlyProcessing": json.RawMessage(`14`),
-				"shippedToday":        json.RawMessage(`20`),
+			Properties: map[string]jsontext.Value{
+				"currentlyProcessing": jsontext.Value(`14`),
+				"shippedToday":        jsontext.Value(`20`),
 			},
 		},
 	},
@@ -116,7 +116,7 @@ func TestUnmarshal(t *testing.T) {
 			}
 
 			var got Resource
-			if err := json.Unmarshal(data, &got); err != nil {
+			if err := jsonv2.Unmarshal(data, &got); err != nil {
 				t.Error("Unmarshal:", err)
 			}
 			if diff := cmp.Diff(&test.want, &got); diff != "" {
@@ -139,16 +139,16 @@ func FuzzMarshal(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		got1 := new(Resource)
-		if err := json.Unmarshal(data, got1); err != nil {
+		if err := jsonv2.Unmarshal(data, got1); err != nil {
 			t.Skip("Unmarshal #1:", err)
 		}
-		data2, err := json.Marshal(got1)
+		data2, err := jsonv2.Marshal(got1)
 		if err != nil {
 			t.Fatal("Re-marshal:", err)
 		}
 
 		got2 := new(Resource)
-		if err := json.Unmarshal(data2, got2); err != nil {
+		if err := jsonv2.Unmarshal(data2, got2); err != nil {
 			t.Error("Unmarshal #2:", err)
 		}
 		if diff := cmp.Diff(got1, got2, cmp.Transformer("decodeRawMessage", decodeRawMessage)); diff != "" {
@@ -194,11 +194,9 @@ func TestLinkExpand(t *testing.T) {
 	}
 }
 
-func decodeRawMessage(msg json.RawMessage) any {
-	d := json.NewDecoder(bytes.NewReader(msg))
-	d.UseNumber()
+func decodeRawMessage(msg jsontext.Value) any {
 	var x any
-	if err := d.Decode(&x); err != nil {
+	if err := jsonv2.Unmarshal(msg, &x); err != nil {
 		panic(err)
 	}
 	return x
