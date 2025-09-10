@@ -1,2 +1,3 @@
 *.drv eol=lf
+*.narinfo eol=lf
 /cmd/zb/docs/*.txt eol=lf
