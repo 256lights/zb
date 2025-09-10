@@ -8,14 +8,15 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"zb.256lights.llc/pkg/bytebuffer"
@@ -106,7 +107,7 @@ func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectI
 		if opts.jsonFormat {
 			// Dump info response directly to preserve unknown fields.
 			var partialParsed struct {
-				Info json.RawMessage `json:"info"`
+				Info jsontext.Value `json:"info"`
 			}
 			err = jsonrpc.Do(ctx, storeClient, zbstorerpc.InfoMethod, &partialParsed, req)
 			if err != nil {
@@ -115,11 +116,10 @@ func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectI
 			if string(partialParsed.Info) == "null" {
 				return fmt.Errorf("%s: %v", path, errNotExist)
 			}
-			jsonBytes, err := dedentJSON(partialParsed.Info)
-			if err != nil {
+			if err := partialParsed.Info.Compact(); err != nil {
 				return fmt.Errorf("%s: %v", path, err)
 			}
-			jsonBytes = append(jsonBytes, '\n')
+			jsonBytes := append(slices.Clip([]byte(partialParsed.Info)), '\n')
 			if _, err := os.Stdout.Write(jsonBytes); err != nil {
 				return err
 			}

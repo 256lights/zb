@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"iter"
 	"maps"
@@ -14,6 +13,8 @@ import (
 	"slices"
 	"strings"
 
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/spf13/cobra"
 	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
@@ -314,7 +315,7 @@ func marshalDerivationJSON(drvPath string, drv *zbstore.Derivation) ([]byte, err
 		}),
 	}
 
-	data, err := json.Marshal(j)
+	data, err := jsonv2.Marshal(j, jsonv2.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("marshal derivation %s: %v", drvPath, err)
 	}
@@ -411,16 +412,15 @@ func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvO
 	if opts.jsonFormat {
 		// Dump expand response directly to preserve unknown fields.
 		var parsed struct {
-			Expand json.RawMessage `json:"expand"`
+			Expand jsontext.Value `json:"expand"`
 		}
-		if err := json.Unmarshal(rawBuild, &parsed); err != nil {
+		if err := jsonv2.Unmarshal(rawBuild, &parsed); err != nil {
 			return fmt.Errorf("%s: %v", drv.Path, err)
 		}
-		jsonBytes, err := dedentJSON(parsed.Expand)
-		if err != nil {
+		if err := parsed.Expand.Compact(); err != nil {
 			return fmt.Errorf("%s: %v", drv.Path, err)
 		}
-		jsonBytes = append(jsonBytes, '\n')
+		jsonBytes := append(slices.Clip([]byte(parsed.Expand)), '\n')
 		if _, err := os.Stdout.Write(jsonBytes); err != nil {
 			return err
 		}
