@@ -5,9 +5,10 @@ package jsonrpc_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 )
 
@@ -24,7 +25,7 @@ func ExampleClient_Codec() {
 	defer releaseCodec()
 
 	// Send a notification manually.
-	err = codec.WriteRequest(json.RawMessage(`{"jsonrpc": "2.0", "method": "foobar"}`))
+	err = codec.WriteRequest(jsontext.Value(`{"jsonrpc": "2.0", "method": "foobar"}`))
 	if err != nil {
 		// handle error...
 	}
@@ -50,7 +51,7 @@ func ExampleNotify() {
 	handler := jsonrpc.ServeMux{
 		"update": jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 			var params []int64
-			if err := json.Unmarshal(req.Params, &params); err != nil {
+			if err := jsonv2.Unmarshal(req.Params, &params); err != nil {
 				return nil, err
 			}
 			fmt.Println(params)

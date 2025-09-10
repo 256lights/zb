@@ -6,7 +6,6 @@ package jsonrpc
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"reflect"
@@ -15,6 +14,8 @@ import (
 	"sync"
 	"testing"
 
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
@@ -22,7 +23,7 @@ import (
 func TestServe(t *testing.T) {
 	tests := []struct {
 		name      string
-		requests  []json.RawMessage
+		requests  []jsontext.Value
 		responses []any
 
 		ignoreErrorMessages bool
@@ -32,33 +33,33 @@ func TestServe(t *testing.T) {
 		},
 		{
 			name: "Positional",
-			requests: []json.RawMessage{
-				json.RawMessage(`{"jsonrpc": "2.0", "method": "subtract", "params": [42, 23], "id": 1}`),
-				json.RawMessage(`{"jsonrpc": "2.0", "method": "subtract", "params": [23, 42], "id": 2}`),
+			requests: []jsontext.Value{
+				jsontext.Value(`{"jsonrpc": "2.0", "method": "subtract", "params": [42, 23], "id": 1}`),
+				jsontext.Value(`{"jsonrpc": "2.0", "method": "subtract", "params": [23, 42], "id": 2}`),
 			},
 			responses: []any{
 				map[string]any{
 					"jsonrpc": "2.0",
-					"result":  json.Number("19"),
-					"id":      json.Number("1"),
+					"result":  19.0,
+					"id":      1.0,
 				},
 				map[string]any{
 					"jsonrpc": "2.0",
-					"result":  json.Number("-19"),
-					"id":      json.Number("2"),
+					"result":  -19.0,
+					"id":      2.0,
 				},
 			},
 		},
 		{
 			name: "NonExistentMethod",
-			requests: []json.RawMessage{
-				json.RawMessage(`{"jsonrpc": "2.0", "method": "foobar", "id": "1"}`),
+			requests: []jsontext.Value{
+				jsontext.Value(`{"jsonrpc": "2.0", "method": "foobar", "id": "1"}`),
 			},
 			responses: []any{
 				map[string]any{
 					"jsonrpc": "2.0",
 					"error": map[string]any{
-						"code":    json.Number("-32601"),
+						"code":    -32601.0,
 						"message": "unknown method \"foobar\"",
 					},
 					"id": "1",
@@ -67,35 +68,35 @@ func TestServe(t *testing.T) {
 		},
 		{
 			name: "Cancel",
-			requests: []json.RawMessage{
-				json.RawMessage(`{"jsonrpc": "2.0", "method": "hang", "id": 1}`),
-				json.RawMessage(`{"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": 1}}`),
+			requests: []jsontext.Value{
+				jsontext.Value(`{"jsonrpc": "2.0", "method": "hang", "id": 1}`),
+				jsontext.Value(`{"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": 1}}`),
 			},
 			responses: []any{
 				map[string]any{
 					"jsonrpc": "2.0",
 					"result":  nil,
-					"id":      json.Number("1"),
+					"id":      1.0,
 				},
 			},
 		},
 		{
 			name: "NonExistentNotification",
-			requests: []json.RawMessage{
-				json.RawMessage(`{"jsonrpc": "2.0", "method": "foobar"}`),
+			requests: []jsontext.Value{
+				jsontext.Value(`{"jsonrpc": "2.0", "method": "foobar"}`),
 			},
 			responses: []any{},
 		},
 		{
 			name: "InvalidJSON",
-			requests: []json.RawMessage{
-				json.RawMessage(`{"jsonrpc": "2.0", "method": "foobar, "params": "bar", "baz]`),
+			requests: []jsontext.Value{
+				jsontext.Value(`{"jsonrpc": "2.0", "method": "foobar, "params": "bar", "baz]`),
 			},
 			responses: []any{
 				map[string]any{
 					"jsonrpc": "2.0",
 					"error": map[string]any{
-						"code": json.Number("-32700"),
+						"code": -32700.0,
 					},
 					"id": nil,
 				},
@@ -104,14 +105,14 @@ func TestServe(t *testing.T) {
 		},
 		{
 			name: "InvalidRequest",
-			requests: []json.RawMessage{
-				json.RawMessage(`{"jsonrpc": "2.0", "method": 1, "params": "bar"}`),
+			requests: []jsontext.Value{
+				jsontext.Value(`{"jsonrpc": "2.0", "method": 1, "params": "bar"}`),
 			},
 			responses: []any{
 				map[string]any{
 					"jsonrpc": "2.0",
 					"error": map[string]any{
-						"code": json.Number("-32600"),
+						"code": -32600.0,
 					},
 					"id": nil,
 				},
@@ -124,12 +125,12 @@ func TestServe(t *testing.T) {
 		switch req.Method {
 		case "subtract":
 			var args []int64
-			if err := json.Unmarshal(req.Params, &args); err != nil {
+			if err := jsonv2.Unmarshal(req.Params, &args); err != nil {
 				return nil, Error(InvalidRequest, fmt.Errorf("params: %v", err))
 			}
 			if len(args) == 0 {
 				return &Response{
-					Result: json.RawMessage("0"),
+					Result: jsontext.Value("0"),
 				}, nil
 			}
 			result := args[0]
@@ -137,7 +138,7 @@ func TestServe(t *testing.T) {
 				result -= arg
 			}
 			return &Response{
-				Result: json.RawMessage(strconv.AppendInt(nil, result, 10)),
+				Result: jsontext.Value(strconv.AppendInt(nil, result, 10)),
 			}, nil
 		case "hang":
 			<-ctx.Done()
@@ -165,8 +166,8 @@ func TestServe(t *testing.T) {
 			compareJSONValue := func(a, b any) int {
 				// Marshaling per-comparison is super-expensive,
 				// but we're just in test and it's easy to reason about.
-				aJSON, _ := json.Marshal(a)
-				bJSON, _ := json.Marshal(b)
+				aJSON, _ := jsonv2.Marshal(a, jsonv2.Deterministic(true))
+				bJSON, _ := jsonv2.Marshal(b, jsonv2.Deterministic(true))
 				return bytes.Compare(aJSON, bJSON)
 			}
 			slices.SortFunc(got, compareJSONValue)
@@ -213,11 +214,11 @@ var (
 
 type testServerCodec struct {
 	mu        sync.Mutex
-	requests  []json.RawMessage
+	requests  []jsontext.Value
 	responses []any
 }
 
-func (c *testServerCodec) ReadRequest() (json.RawMessage, error) {
+func (c *testServerCodec) ReadRequest() (jsontext.Value, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.requests) == 0 {
@@ -228,9 +229,9 @@ func (c *testServerCodec) ReadRequest() (json.RawMessage, error) {
 	return req, nil
 }
 
-func (c *testServerCodec) WriteResponse(response json.RawMessage) error {
-	parsed, err := unmarshalJSONWithNumbers(response)
-	if err != nil {
+func (c *testServerCodec) WriteResponse(response jsontext.Value) error {
+	var parsed any
+	if err := jsonv2.Unmarshal(response, &parsed); err != nil {
 		return err
 	}
 

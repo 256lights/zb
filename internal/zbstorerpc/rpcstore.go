@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/go-json-experiment/json/jsontext"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/jsonstring"
 	"zb.256lights.llc/pkg/sets"
@@ -171,7 +172,7 @@ func sendExportRequest(ctx context.Context, h jsonrpc.Handler, id string, params
 	_, err = h.JSONRPC(ctx, &jsonrpc.Request{
 		Method: ExportMethod,
 		Params: paramsJSON,
-		Extra: map[string]json.RawMessage{
+		Extra: map[string]jsontext.Value{
 			ExportIDExtraFieldName: jsonstring.Append(nil, id),
 		},
 	})

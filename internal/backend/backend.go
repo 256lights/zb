@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/uuid"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
@@ -255,7 +256,7 @@ func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 
 		zbstorerpc.NopMethod: jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 			return &jsonrpc.Response{
-				Result: json.RawMessage("null"),
+				Result: jsontext.Value("null"),
 			}, nil
 		}),
 	}.JSONRPC(ctx, req)
@@ -274,7 +275,7 @@ func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 	if err != nil {
 		log.Debugf(ctx, "Queried invalid path %s", args.Path)
 		return &jsonrpc.Response{
-			Result: json.RawMessage("false"),
+			Result: jsontext.Value("false"),
 		}, nil
 	}
 	unlock, err := s.writing.lock(ctx, p)
@@ -285,12 +286,12 @@ func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 	if _, err := os.Lstat(filepath.Join(s.realPath(p), filepath.FromSlash(sub))); err != nil {
 		log.Debugf(ctx, "%s does not exist (%v)", args.Path, err)
 		return &jsonrpc.Response{
-			Result: json.RawMessage("false"),
+			Result: jsontext.Value("false"),
 		}, nil
 	}
 	log.Debugf(ctx, "%s exists", args.Path)
 	return &jsonrpc.Response{
-		Result: json.RawMessage("true"),
+		Result: jsontext.Value("true"),
 	}, nil
 }
 

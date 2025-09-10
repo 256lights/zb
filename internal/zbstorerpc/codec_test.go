@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/go-json-experiment/json/jsontext"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 )
 
@@ -45,7 +46,7 @@ func TestCodec(t *testing.T) {
 					result -= arg
 				}
 				return &jsonrpc.Response{
-					Result: json.RawMessage(strconv.FormatInt(result, 10)),
+					Result: jsontext.Value(strconv.FormatInt(result, 10)),
 				}, nil
 			}),
 		})

@@ -5,7 +5,6 @@ package jsonrpc
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,12 +12,14 @@ import (
 	"testing"
 	"time"
 
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/go-cmp/cmp"
 )
 
 type clientTestWireInteraction struct {
 	wantRequests []any
-	responses    []json.RawMessage
+	responses    []jsontext.Value
 }
 
 func TestClient(t *testing.T) {
@@ -46,10 +47,10 @@ func TestClient(t *testing.T) {
 				{
 					request: &Request{
 						Method: "subtract",
-						Params: json.RawMessage(`[42, 23]`),
+						Params: jsontext.Value(`[42, 23]`),
 					},
 					wantResponse: &Response{
-						Result: json.RawMessage(`19`),
+						Result: jsontext.Value(`19`),
 					},
 				},
 			},
@@ -60,14 +61,14 @@ func TestClient(t *testing.T) {
 							"jsonrpc": "2.0",
 							"method":  "subtract",
 							"params": []any{
-								json.Number("42"),
-								json.Number("23"),
+								42.0,
+								23.0,
 							},
 							"id": "1",
 						},
 					},
-					responses: []json.RawMessage{
-						json.RawMessage(`{"jsonrpc": "2.0", "result": 19, "id": "1"}`),
+					responses: []jsontext.Value{
+						jsontext.Value(`{"jsonrpc": "2.0", "result": 19, "id": "1"}`),
 					},
 				},
 			},
@@ -78,7 +79,7 @@ func TestClient(t *testing.T) {
 				{
 					request: &Request{
 						Method:       "update",
-						Params:       json.RawMessage(`[1,2,3,4,5]`),
+						Params:       jsontext.Value(`[1,2,3,4,5]`),
 						Notification: true,
 					},
 					wantResponse: nil,
@@ -91,15 +92,15 @@ func TestClient(t *testing.T) {
 							"jsonrpc": "2.0",
 							"method":  "update",
 							"params": []any{
-								json.Number("1"),
-								json.Number("2"),
-								json.Number("3"),
-								json.Number("4"),
-								json.Number("5"),
+								1.0,
+								2.0,
+								3.0,
+								4.0,
+								5.0,
 							},
 						},
 					},
-					responses: []json.RawMessage{},
+					responses: []jsontext.Value{},
 				},
 			},
 		},
@@ -124,8 +125,8 @@ func TestClient(t *testing.T) {
 							"id":      "1",
 						},
 					},
-					responses: []json.RawMessage{
-						json.RawMessage(`{"jsonrpc": "2.0", "error": {"code": -32601, "message": "Method not found"}, "id": "1"}`),
+					responses: []jsontext.Value{
+						jsontext.Value(`{"jsonrpc": "2.0", "error": {"code": -32601, "message": "Method not found"}, "id": "1"}`),
 					},
 				},
 			},
@@ -136,7 +137,7 @@ func TestClient(t *testing.T) {
 				{
 					request: &Request{
 						Method: "foobar",
-						Params: json.RawMessage(`42`),
+						Params: jsontext.Value(`42`),
 					},
 					wantResponse:  nil,
 					wantError:     true,
@@ -150,20 +151,20 @@ func TestClient(t *testing.T) {
 				{
 					request: &Request{
 						Method: "subtract",
-						Params: json.RawMessage(`[42, 23]`),
+						Params: jsontext.Value(`[42, 23]`),
 					},
 					wantResponse: &Response{
-						Result: json.RawMessage(`19`),
+						Result: jsontext.Value(`19`),
 					},
 				},
 				{
 					waitUntil: 1,
 					request: &Request{
 						Method: "subtract",
-						Params: json.RawMessage(`[23, 42]`),
+						Params: jsontext.Value(`[23, 42]`),
 					},
 					wantResponse: &Response{
-						Result: json.RawMessage(`-19`),
+						Result: jsontext.Value(`-19`),
 					},
 				},
 			},
@@ -174,8 +175,8 @@ func TestClient(t *testing.T) {
 							"jsonrpc": "2.0",
 							"method":  "subtract",
 							"params": []any{
-								json.Number("42"),
-								json.Number("23"),
+								42.0,
+								23.0,
 							},
 							"id": "1",
 						},
@@ -187,15 +188,15 @@ func TestClient(t *testing.T) {
 							"jsonrpc": "2.0",
 							"method":  "subtract",
 							"params": []any{
-								json.Number("23"),
-								json.Number("42"),
+								23.0,
+								42.0,
 							},
 							"id": "2",
 						},
 					},
-					responses: []json.RawMessage{
-						json.RawMessage(`{"jsonrpc": "2.0", "result": -19, "id": "2"}`),
-						json.RawMessage(`{"jsonrpc": "2.0", "result": 19, "id": "1"}`),
+					responses: []jsontext.Value{
+						jsontext.Value(`{"jsonrpc": "2.0", "result": -19, "id": "2"}`),
+						jsontext.Value(`{"jsonrpc": "2.0", "result": 19, "id": "1"}`),
 					},
 				},
 			},
@@ -275,8 +276,8 @@ func TestClientCancel(t *testing.T) {
 					},
 				},
 			},
-			responses: []json.RawMessage{
-				json.RawMessage(`{"jsonrpc": "2.0", "result": 123, "id": "1"}`),
+			responses: []jsontext.Value{
+				jsontext.Value(`{"jsonrpc": "2.0", "result": 123, "id": "1"}`),
 			},
 		},
 	})
@@ -343,7 +344,7 @@ func TestClientCodec(t *testing.T) {
 	if got != codec {
 		t.Errorf("client.Codec(ctx) = %#v; want %#v", got, codec)
 	}
-	if err := got.WriteRequest(json.RawMessage(`{"jsonrpc": "2.0", "method": "foobar"}`)); err != nil {
+	if err := got.WriteRequest(jsontext.Value(`{"jsonrpc": "2.0", "method": "foobar"}`)); err != nil {
 		t.Error("WriteRequest:", err)
 	}
 	codec.waitUntil(1)
@@ -360,7 +361,7 @@ type testClientCodec struct {
 	requestIndex    int
 
 	responsesCond sync.Cond
-	responses     []json.RawMessage
+	responses     []jsontext.Value
 }
 
 func newTestClientCodec(tb testing.TB, interactions []clientTestWireInteraction) *testClientCodec {
@@ -383,7 +384,7 @@ func (c *testClientCodec) waitUntil(interactionIndex int) {
 	}
 }
 
-func (c *testClientCodec) WriteRequest(request json.RawMessage) error {
+func (c *testClientCodec) WriteRequest(request jsontext.Value) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -395,8 +396,8 @@ func (c *testClientCodec) WriteRequest(request json.RawMessage) error {
 		c.tb.Errorf("Unexpected request: %s", request)
 		return nil
 	}
-	parsed, err := unmarshalJSONWithNumbers(request)
-	if err != nil {
+	var parsed any
+	if err := jsonv2.Unmarshal(request, &parsed); err != nil {
 		c.tb.Errorf("Client wrote invalid request: %v", err)
 		c.requestIndex++
 		c.lockedAdvance()
@@ -429,7 +430,7 @@ func (c *testClientCodec) lockedAdvance() {
 	}
 }
 
-func (c *testClientCodec) ReadResponse() (json.RawMessage, error) {
+func (c *testClientCodec) ReadResponse() (jsontext.Value, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for len(c.responses) == 0 && !c.closed {

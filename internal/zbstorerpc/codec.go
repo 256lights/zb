@@ -6,13 +6,13 @@ package zbstorerpc
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
 	"strconv"
 	"sync"
 
+	"github.com/go-json-experiment/json/jsontext"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -35,7 +35,7 @@ type Codec struct {
 	w *jsonrpc.Writer
 	c io.Closer
 
-	messages  <-chan json.RawMessage
+	messages  <-chan jsontext.Value
 	readError error // can only be read after messages is closed
 	readDone  <-chan struct{}
 }
@@ -77,7 +77,7 @@ func NewCodec(rwc io.ReadWriteCloser, opts *CodecOptions) *Codec {
 	}
 
 	c := new(Codec)
-	messages := make(chan json.RawMessage)
+	messages := make(chan jsontext.Value)
 	readDone := make(chan struct{})
 	*c = Codec{
 		w:        jsonrpc.NewWriter(rwc),
@@ -96,12 +96,12 @@ func NewCodec(rwc io.ReadWriteCloser, opts *CodecOptions) *Codec {
 }
 
 // ReadRequest implements [jsonrpc.ServerCodec].
-func (c *Codec) ReadRequest() (json.RawMessage, error) {
+func (c *Codec) ReadRequest() (jsontext.Value, error) {
 	return c.ReadResponse()
 }
 
 // ReadResponse implements [jsonrpc.ClientCodec].
-func (c *Codec) ReadResponse() (json.RawMessage, error) {
+func (c *Codec) ReadResponse() (jsontext.Value, error) {
 	msg, ok := <-c.messages
 	if !ok {
 		return nil, c.readError
@@ -109,7 +109,7 @@ func (c *Codec) ReadResponse() (json.RawMessage, error) {
 	return msg, nil
 }
 
-func readLoop(messages chan<- json.RawMessage, importer Importer, r *jsonrpc.Reader) error {
+func readLoop(messages chan<- jsontext.Value, importer Importer, r *jsonrpc.Reader) error {
 	for {
 		header, bodySize, err := r.NextMessage()
 		if err != nil {
@@ -145,7 +145,7 @@ func readLoop(messages chan<- json.RawMessage, importer Importer, r *jsonrpc.Rea
 }
 
 // WriteRequest implements [jsonrpc.ClientCodec].
-func (c *Codec) WriteRequest(request json.RawMessage) error {
+func (c *Codec) WriteRequest(request jsontext.Value) error {
 	hdr := jsonrpc.Header{
 		"Content-Length": {strconv.Itoa(len(request))},
 		"Content-Type":   {rpcContentType},
@@ -154,7 +154,7 @@ func (c *Codec) WriteRequest(request json.RawMessage) error {
 }
 
 // WriteResponse implements [jsonrpc.ServerCodec].
-func (c *Codec) WriteResponse(response json.RawMessage) error {
+func (c *Codec) WriteResponse(response jsontext.Value) error {
 	return c.WriteRequest(response)
 }
 

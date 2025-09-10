@@ -5,12 +5,13 @@ package jsonrpc_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"strconv"
 
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 )
 
@@ -42,13 +43,13 @@ func Example() {
 	// Call the server using the client.
 	response, err := client.JSONRPC(context.Background(), &jsonrpc.Request{
 		Method: "subtract",
-		Params: json.RawMessage(`[42, 23]`),
+		Params: jsontext.Value(`[42, 23]`),
 	})
 	if err != nil {
 		panic(err)
 	}
 	var x int64
-	if err := json.Unmarshal(response.Result, &x); err != nil {
+	if err := jsonv2.Unmarshal(response.Result, &x); err != nil {
 		panic(err)
 	}
 	fmt.Println("Server returned", x)
@@ -62,7 +63,7 @@ func Example() {
 func subtractHandler(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	// Parse the arguments into the desired JSON structure.
 	var params []int64
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := jsonv2.Unmarshal(req.Params, &params); err != nil {
 		return nil, err
 	}
 
@@ -78,55 +79,54 @@ func subtractHandler(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Respon
 		result -= x
 	}
 	return &jsonrpc.Response{
-		Result: json.RawMessage(strconv.FormatInt(result, 10)),
+		Result: jsontext.Value(strconv.FormatInt(result, 10)),
 	}, nil
 }
 
 // codec is a simple implementation of [jsonrpc.ServerCodec] and [jsonrpc.ClientCodec]
 // that reads and writes JSON messages with no framing.
 type codec struct {
-	enc *json.Encoder
-	dec *json.Decoder
+	enc *jsontext.Encoder
+	dec *jsontext.Decoder
 	c   io.Closer
 }
 
 // newCodec returns a new codec that reads, writes, and closes the given stream.
 func newCodec(rwc io.ReadWriteCloser) *codec {
 	c := &codec{
-		enc: json.NewEncoder(rwc),
-		dec: json.NewDecoder(rwc),
+		enc: jsontext.NewEncoder(rwc),
+		dec: jsontext.NewDecoder(rwc),
 		c:   rwc,
 	}
-	c.dec.UseNumber()
 	return c
 }
 
 // ReadRequest implements [jsonrpc.ServerCodec].
-func (c *codec) ReadRequest() (json.RawMessage, error) {
-	var msg json.RawMessage
-	if err := c.dec.Decode(&msg); err != nil {
+func (c *codec) ReadRequest() (jsontext.Value, error) {
+	msg, err := c.dec.ReadValue()
+	if err != nil {
 		return nil, err
 	}
-	return msg, nil
+	return msg.Clone(), nil
 }
 
 // ReadResponse implements [jsonrpc.ClientCodec].
-func (c *codec) ReadResponse() (json.RawMessage, error) {
-	var msg json.RawMessage
-	if err := c.dec.Decode(&msg); err != nil {
+func (c *codec) ReadResponse() (jsontext.Value, error) {
+	msg, err := c.dec.ReadValue()
+	if err != nil {
 		return nil, err
 	}
-	return msg, nil
+	return msg.Clone(), nil
 }
 
 // WriteRequest implements [jsonrpc.ClientCodec].
-func (c *codec) WriteRequest(request json.RawMessage) error {
-	return c.enc.Encode(request)
+func (c *codec) WriteRequest(request jsontext.Value) error {
+	return c.enc.WriteValue(request)
 }
 
 // WriteResponse implements [jsonrpc.ServerCodec].
-func (c *codec) WriteResponse(response json.RawMessage) error {
-	return c.enc.Encode(response)
+func (c *codec) WriteResponse(response jsontext.Value) error {
+	return c.enc.WriteValue(response)
 }
 
 // Close closes the underlying connection.

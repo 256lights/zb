@@ -6,7 +6,6 @@ package jsonrpc
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,7 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"zb.256lights.llc/pkg/internal/jsonstring"
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/xcontext"
 )
@@ -31,13 +31,14 @@ import (
 // doing so should interrupt either call and cause the call to return an error.
 type ClientCodec interface {
 	RequestWriter
-	ReadResponse() (json.RawMessage, error)
+	ReadResponse() (jsontext.Value, error)
 	Close() error
 }
 
 // RequestWriter holds the WriteRequest method of [ClientCodec].
+// WriteRequest must not retain request after it returns.
 type RequestWriter interface {
-	WriteRequest(request json.RawMessage) error
+	WriteRequest(request jsontext.Value) error
 }
 
 // OpenFunc opens a connection for a [Client].
@@ -166,7 +167,7 @@ type inflightRequestState struct {
 func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Closer) {
 	// Read messages in a separate goroutine,
 	// so we can select on them down below.
-	messages := make(chan json.RawMessage)
+	messages := make(chan jsontext.Value)
 	go func() {
 		defer close(messages)
 		for {
@@ -209,6 +210,7 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 
 	nextID := int64(1)
 	buf := new(bytes.Buffer)
+	var enc jsontext.Encoder
 	for {
 		select {
 		case msg := <-messages:
@@ -220,9 +222,6 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 		case req := <-c.comms:
 			// Handle incoming application requests.
 
-			buf.Reset()
-			buf.WriteString(`{"jsonrpc":"2.0","method":`)
-			buf.Write(jsonstring.Append(nil, req.Method))
 			id := int64(-1)
 			if req.Notification {
 				log.Debugf(ctx, "Writing %s JSON-RPC notification", req.Method)
@@ -245,18 +244,24 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 					},
 				}
 
-				buf.WriteString(`,"id":`)
-				clientID := marshalClientID(nil, id)
-				buf.Write(clientID)
-				log.Debugf(ctx, "Writing %s JSON-RPC with id=%s", req.Method, clientID)
+				if log.IsEnabled(log.Debug) {
+					clientID := marshalClientID(nil, id)
+					log.Debugf(ctx, "Writing %s JSON-RPC with id=%s", req.Method, clientID)
+				}
 			}
-			if len(req.Params) > 0 {
-				buf.WriteString(`,"params":`)
-				buf.Write(req.Params)
-			}
-			buf.WriteString("}")
 
-			err := conn.WriteRequest(json.RawMessage(buf.Bytes()))
+			buf.Reset()
+			enc.Reset(buf)
+			if err := marshalClientRequestJSONTo(&enc, id, req); err != nil {
+				if req.write != nil {
+					req.write <- err
+				} else {
+					log.Warnf(ctx, "Failed to marshal message: %v", err)
+				}
+				continue
+			}
+
+			err := conn.WriteRequest(jsonValueFromBuffer(buf))
 			if req.write != nil {
 				req.write <- err
 			}
@@ -272,14 +277,16 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 				continue
 			}
 
+			if log.IsEnabled(log.Debug) {
+				clientID := marshalClientID(nil, id)
+				log.Debugf(ctx, "Canceling JSON-RPC with id=%s", clientID)
+			}
 			buf.Reset()
-			buf.WriteString(`{"jsonrpc":"2.0","method":"`)
-			buf.WriteString(cancelMethod) // Method name is JSON safe.
-			buf.WriteString(`","params":{"id":`)
-			clientID := marshalClientID(nil, id)
-			buf.Write(clientID)
-			buf.WriteString(`}}`)
-			log.Debugf(ctx, "Canceling JSON-RPC with id=%s", clientID)
+			enc.Reset(buf)
+			if err := marshalCancelRequestJSONTo(&enc, id); err != nil {
+				log.Errorf(ctx, "Failed to marshal cancel message: %v", err)
+				continue
+			}
 
 			// Remove from in-flight.
 			// We don't reuse IDs unless we wrap 2^64,
@@ -294,7 +301,7 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 			}
 			delete(inflight, id)
 
-			if err := conn.WriteRequest(json.RawMessage(buf.Bytes())); err != nil {
+			if err := conn.WriteRequest(jsonValueFromBuffer(buf)); err != nil {
 				log.Debugf(ctx, "Failed to send message: %v", err)
 				return
 			}
@@ -324,11 +331,99 @@ func (c *Client) handleConn(ctx context.Context, conn ClientCodec, closer io.Clo
 	}
 }
 
+func marshalClientRequestJSONTo(enc *jsontext.Encoder, id int64, req clientRequest) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("marshal json-rpc request: %v", err)
+		}
+	}()
+
+	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+		return err
+	}
+	if err := marshalJSONRPCVersionTo(enc); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.String("method")); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.String(req.Method)); err != nil {
+		return err
+	}
+
+	if !req.Notification {
+		if err := enc.WriteToken(jsontext.String("id")); err != nil {
+			return err
+		}
+		clientID := marshalClientID(enc.AvailableBuffer(), id)
+		if err := enc.WriteValue(clientID); err != nil {
+			return err
+		}
+	}
+
+	if len(req.Params) > 0 {
+		if err := enc.WriteToken(jsontext.String("params")); err != nil {
+			return err
+		}
+		if err := enc.WriteValue(req.Params); err != nil {
+			return err
+		}
+	}
+
+	if err := enc.WriteToken(jsontext.EndObject); err != nil {
+		return err
+	}
+	return nil
+}
+
+func marshalCancelRequestJSONTo(enc *jsontext.Encoder, id int64) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("marshal json-rpc cancel request: %v", err)
+		}
+	}()
+
+	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+		return err
+	}
+	if err := marshalJSONRPCVersionTo(enc); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.String("method")); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.String(cancelMethod)); err != nil {
+		return err
+	}
+
+	if err := enc.WriteToken(jsontext.String("params")); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.String("id")); err != nil {
+		return err
+	}
+	clientID := marshalClientID(enc.AvailableBuffer(), id)
+	if err := enc.WriteValue(clientID); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.EndObject); err != nil {
+		return err
+	}
+
+	if err := enc.WriteToken(jsontext.EndObject); err != nil {
+		return err
+	}
+	return nil
+}
+
 var errInterrupt = errors.New("connection interrupted")
 
 // dispatchResponse sends a server response (possibly a batch)
 // to the corresponding listener(s).
-func dispatchResponse(ctx context.Context, msg json.RawMessage, inflight map[int64]inflightRequestState) {
+func dispatchResponse(ctx context.Context, msg jsontext.Value, inflight map[int64]inflightRequestState) {
 	batch, err := unmarshalResponseBatch(msg)
 	if err != nil {
 		log.Warnf(ctx, "JSON-RPC server returned invalid JSON: %v", err)
@@ -417,7 +512,7 @@ type clientCodecRequest struct {
 }
 
 type rawResponse struct {
-	msg   map[string]json.RawMessage
+	msg   map[string]jsontext.Value
 	error error
 }
 
@@ -447,7 +542,7 @@ func (resp rawResponse) toResponse() (*Response, error) {
 			Code    ErrorCode `json:"code"`
 			Message string    `json:"message"`
 		}
-		err := json.Unmarshal(errorField, &errorObject)
+		err := jsonv2.Unmarshal(errorField, &errorObject)
 		if err != nil {
 			err = fmt.Errorf("failed to unmarshal jsonrpc error: %v", err)
 		} else if errorObject.Message != "" {
@@ -474,7 +569,7 @@ func (resp rawResponse) checkVersion() error {
 		return fmt.Errorf("jsonrpc version missing in response")
 	}
 	var s string
-	if err := json.Unmarshal(version, &s); err != nil {
+	if err := jsonv2.Unmarshal(version, &s); err != nil {
 		return fmt.Errorf("jsonrpc version: %v", err)
 	}
 	if s != "2.0" {
@@ -533,34 +628,41 @@ func unmarshalClientID(s string) (int64, bool) {
 
 // unmarshalResponseBatch unmarshals either a JSON-RPC response object
 // or an array of such objects.
-func unmarshalResponseBatch(msg json.RawMessage) ([]rawResponse, error) {
-	if len(msg) == 0 || msg[0] != '[' {
+func unmarshalResponseBatch(msg jsontext.Value) ([]rawResponse, error) {
+	if msg.Kind() != '[' {
 		var response rawResponse
-		if err := json.Unmarshal(msg, &response.msg); err != nil {
+		if err := jsonv2.Unmarshal(msg, &response.msg); err != nil {
 			return nil, err
 		}
 		return []rawResponse{response}, nil
 	}
 
-	// First pass: split apart the array.
+	// Split apart the array ourselves.
 	// If one element isn't an object, don't fail the entire batch.
-	var array []json.RawMessage
-	if err := json.Unmarshal(msg, &array); err != nil {
+	dec := jsontext.NewDecoder(bytes.NewBuffer(msg))
+	if tok, err := dec.ReadToken(); err != nil {
 		return nil, err
+	} else if got := tok.Kind(); got != '[' {
+		return nil, fmt.Errorf("unexpected %v token", got)
 	}
-
-	responses := make([]rawResponse, len(array))
-	for i, data := range array {
-		responses[i].error = json.Unmarshal(data, &responses[i].msg)
+	var responses []rawResponse
+	for dec.PeekKind() != ']' {
+		data, err := dec.ReadValue()
+		if err != nil {
+			return nil, err
+		}
+		var r rawResponse
+		r.error = jsonv2.Unmarshal(data, &r.msg)
+		responses = append(responses, r)
 	}
 	return responses, nil
 }
 
-func isValidParamStruct(msg json.RawMessage) bool {
+func isValidParamStruct(msg jsontext.Value) bool {
 	if len(msg) == 0 {
 		// Omitted is fine.
 		return true
 	}
-	return msg[0] == '{' && msg[len(msg)-1] == '}' ||
-		msg[0] == '[' && msg[len(msg)-1] == ']'
+	kind := msg.Kind()
+	return kind == '{' || kind == '['
 }

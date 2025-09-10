@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"zb.256lights.llc/pkg/bytebuffer"
@@ -343,7 +344,7 @@ func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.Output
 // If the build was not successful,
 // the build response is returned along with a non-nil error.
 // waitForBuild will also copy build logs to stderr.
-func waitForBuild(ctx context.Context, storeClient jsonrpc.Handler, buildID string) (_ *zbstorerpc.Build, _ json.RawMessage, err error) {
+func waitForBuild(ctx context.Context, storeClient jsonrpc.Handler, buildID string) (_ *zbstorerpc.Build, _ jsontext.Value, err error) {
 	defer func() {
 		if err != nil && ctx.Err() != nil {
 			log.Debugf(ctx, "Context canceled while waiting for build %s. Canceling build...", buildID)

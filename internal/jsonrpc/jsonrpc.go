@@ -6,13 +6,14 @@
 package jsonrpc
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
 
-	"zb.256lights.llc/pkg/internal/jsonstring"
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 )
 
 // Request represents a parsed [JSON-RPC request].
@@ -24,11 +25,11 @@ type Request struct {
 	// Params is the raw JSON of the parameters.
 	// If len(Params) == 0, then the parameters are omitted on the wire.
 	// Otherwise, Params must hold a valid JSON array or a valid JSON object.
-	Params json.RawMessage
+	Params jsontext.Value
 	// Notification is true if the client does not care about a response.
 	Notification bool
 	// Extra holds a map of additional top-level fields on the request object.
-	Extra map[string]json.RawMessage
+	Extra map[string]jsontext.Value
 }
 
 // Response represents a parsed [JSON-RPC response].
@@ -37,22 +38,22 @@ type Request struct {
 type Response struct {
 	// Result is the result of invoking the method.
 	// This may be any JSON.
-	Result json.RawMessage
+	Result jsontext.Value
 	// Extra holds a map of additional top-level fields on the response object.
-	Extra map[string]json.RawMessage
+	Extra map[string]jsontext.Value
 }
 
 // Do makes a single JSON-RPC to the given [Handler].
-// request should be any Go value that can be passed to [json.Marshal].
+// request should be any Go value that can be passed to [jsonv2.Marshal].
 // If request is nil, then the parameters are omitted.
-// response should be any Go value (usually a pointer) that can be passed to [json.Unmarshal].
+// response should be any Go value (usually a pointer) that can be passed to [jsonv2.Unmarshal].
 // If response is the nil interface, then any result data is ignored
 // (but Do will still wait for the call to complete).
 func Do(ctx context.Context, h Handler, method string, response, request any) error {
-	var params json.RawMessage
+	var params jsontext.Value
 	if request != nil {
 		var err error
-		params, err = json.Marshal(request)
+		params, err = jsonv2.Marshal(request)
 		if err != nil {
 			return fmt.Errorf("call json rpc %s: %v", method, err)
 		}
@@ -67,16 +68,16 @@ func Do(ctx context.Context, h Handler, method string, response, request any) er
 	if len(fullResponse.Result) == 0 || response == nil {
 		return nil
 	}
-	if err := json.Unmarshal(fullResponse.Result, response); err != nil {
+	if err := jsonv2.Unmarshal(fullResponse.Result, response); err != nil {
 		return fmt.Errorf("call json rpc %s: %v", method, err)
 	}
 	return nil
 }
 
 // Notify makes a single JSON-RPC to the given [Handler].
-// params should be any Go value that can be passed to [json.Marshal].
+// params should be any Go value that can be passed to [jsonv2.Marshal].
 func Notify(ctx context.Context, h Handler, method string, params any) error {
-	rawParams, err := json.Marshal(params)
+	rawParams, err := jsonv2.Marshal(params)
 	if err != nil {
 		return fmt.Errorf("call json rpc %s: %v", method, err)
 	}
@@ -196,36 +197,61 @@ func (id RequestID) IsString() bool {
 
 // MarshalJSON returns the request ID's JSON representation.
 func (id RequestID) MarshalJSON() ([]byte, error) {
+	buf := new(bytes.Buffer)
+	enc := jsontext.NewEncoder(buf)
+	if err := id.MarshalJSONTo(enc); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// MarshalJSONTo writes the request ID's JSON representation to the given encoder.
+func (id RequestID) MarshalJSONTo(enc *jsontext.Encoder) error {
 	switch id.typ {
 	case 0:
-		return []byte("null"), nil
+		return enc.WriteToken(jsontext.Null)
 	case 1:
-		return strconv.AppendInt(nil, id.n, 10), nil
+		return enc.WriteToken(jsontext.Int(id.n))
 	case 2:
-		return jsonstring.Append(nil, id.s), nil
+		return enc.WriteToken(jsontext.String(id.s))
 	default:
-		return nil, fmt.Errorf("invalid request id type %d (internal error)", id.typ)
+		return fmt.Errorf("invalid request id type %d (internal error)", id.typ)
 	}
 }
 
 // UnmarshalJSON parses the request ID.
 // UnmarshalJSON returns an error if the data is not null, a string, or an integer.
 func (id *RequestID) UnmarshalJSON(data []byte) error {
-	if len(data) == 0 {
-		return fmt.Errorf("empty request id json")
-	}
-	switch {
-	case string(data) == "null":
+	buf := bytes.NewBuffer(data)
+	dec := jsontext.NewDecoder(buf)
+	return id.UnmarshalJSONFrom(dec)
+}
+
+// UnmarshalJSONFrom reads the request ID from the decoder.
+// UnmarshalJSONFrom returns an error if the data is not null, a string, or an integer.
+func (id *RequestID) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
+	switch kind := dec.PeekKind(); kind {
+	case 'n':
 		*id = RequestID{}
 		return nil
-	case data[0] == '"':
+	case '"':
 		*id = RequestID{typ: 2}
-		return json.Unmarshal(data, &id.s)
-	default:
+		tok, err := dec.ReadToken()
+		if err != nil {
+			return err
+		}
+		id.s = tok.String()
+		return nil
+	case '0':
 		*id = RequestID{typ: 1}
-		var err error
-		id.n, err = strconv.ParseInt(string(data), 10, 64)
+		tok, err := dec.ReadToken()
+		if err != nil {
+			return err
+		}
+		id.n, err = strconv.ParseInt(tok.String(), 10, 64)
 		return err
+	default:
+		return fmt.Errorf("request id must be null, a string, or a number (got %v)", kind)
 	}
 }
 
@@ -237,6 +263,20 @@ const cancelMethod = "$/cancelRequest"
 // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#cancelRequest
 type cancelParams struct {
 	ID RequestID `json:"id"`
+}
+
+func marshalJSONRPCVersionTo(enc *jsontext.Encoder) error {
+	if err := enc.WriteToken(jsontext.String("jsonrpc")); err != nil {
+		return fmt.Errorf("marshal json-rpc version: %v", err)
+	}
+	if err := enc.WriteToken(jsontext.String("2.0")); err != nil {
+		return fmt.Errorf("marshal json-rpc version: %v", err)
+	}
+	return nil
+}
+
+func jsonValueFromBuffer(buf *bytes.Buffer) jsontext.Value {
+	return jsontext.Value(bytes.TrimSuffix(buf.Bytes(), []byte{'\n'}))
 }
 
 // inverseFilterMap returns a new map that contains all the keys

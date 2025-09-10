@@ -6,21 +6,24 @@ package jsonrpc
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
+	"maps"
+	"slices"
 	"sync"
 
-	"zb.256lights.llc/pkg/internal/jsonstring"
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 )
 
 // ServerCodec represents a single connection from a server to a client.
 // ReadRequest and WriteResponse must be safe to call concurrently with each other,
 // but [Server] guarantees that it will never make multiple concurrent ReadRequest calls
 // nor multiple concurrent WriteResponse calls.
+//
+// WriteResponse must not retain response after it returns.
 type ServerCodec interface {
-	ReadRequest() (json.RawMessage, error)
-	WriteResponse(response json.RawMessage) error
+	ReadRequest() (jsontext.Value, error)
+	WriteResponse(response jsontext.Value) error
 }
 
 // A type that implements Handler responds to JSON-RPC requests.
@@ -76,7 +79,8 @@ func Serve(ctx context.Context, codec ServerCodec, handler Handler) error {
 
 		// TODO(someday): Support batches.
 		parsed := new(serverRequest)
-		if err := parsed.UnmarshalJSON(content); err != nil {
+		dec := jsontext.NewDecoder(bytes.NewBuffer(content))
+		if err := parsed.UnmarshalJSONFrom(dec); err != nil {
 			srv.writeError(err)
 			continue
 		}
@@ -102,16 +106,16 @@ func (srv *server) single(ctx context.Context, handler Handler, req *serverReque
 	notification := req.Notification
 
 	var resp *Response
-	var err error
+	var handlerError error
 	switch req.Method {
 	case cancelMethod:
-		resp, err = srv.cancel(&req.Request)
+		resp, handlerError = srv.cancel(&req.Request)
 	default:
 		handlerCtx := ctx
 		if !notification {
 			handlerCtx = withRequestID(ctx, req.id)
 		}
-		resp, err = handler.JSONRPC(handlerCtx, &req.Request)
+		resp, handlerError = handler.JSONRPC(handlerCtx, &req.Request)
 	}
 	cancel()
 
@@ -125,43 +129,26 @@ func (srv *server) single(ctx context.Context, handler Handler, req *serverReque
 	srv.mu.Unlock()
 
 	buf := new(bytes.Buffer)
-	if err != nil {
-		marshalError(buf, req.id, err)
-	} else {
-		buf.WriteString(`{"jsonrpc":"2.0","id":`)
-		idJSON, err := req.id.MarshalJSON()
-		if err != nil {
+	enc := jsontext.NewEncoder(buf)
+	if handlerError != nil {
+		if err := marshalErrorResponseJSONTo(enc, req.id, handlerError); err != nil {
 			panic(err)
 		}
-		buf.Write(idJSON)
-		buf.WriteString(`,"result":`)
-		if resp == nil || len(resp.Result) == 0 {
-			buf.WriteString("null")
-		} else {
-			buf.Write(resp.Result)
+	} else {
+		if err := marshalResponseJSONTo(enc, req.id, resp); err != nil {
+			panic(err)
 		}
-		if resp != nil {
-			for k, v := range resp.Extra {
-				if !isReservedResponseField(k) {
-					buf.WriteString(",")
-					buf.Write(jsonstring.Append(nil, k))
-					buf.WriteString(":")
-					buf.Write(v)
-				}
-			}
-		}
-		buf.WriteString("}")
 	}
 
 	srv.writeLock.Lock()
 	defer srv.writeLock.Unlock()
-	srv.codec.WriteResponse(json.RawMessage(buf.Bytes()))
+	srv.codec.WriteResponse(jsonValueFromBuffer(buf))
 }
 
 // cancel handles a [cancelMethod] request.
 func (srv *server) cancel(req *Request) (*Response, error) {
 	var args cancelParams
-	if err := json.Unmarshal(req.Params, &args); err != nil {
+	if err := jsonv2.Unmarshal(req.Params, &args); err != nil {
 		return nil, Error(InvalidParams, err)
 	}
 
@@ -176,11 +163,14 @@ func (srv *server) cancel(req *Request) (*Response, error) {
 
 func (srv *server) writeError(err error) {
 	buf := new(bytes.Buffer)
-	marshalError(buf, RequestID{}, err)
+	enc := jsontext.NewEncoder(buf)
+	if err := marshalErrorResponseJSONTo(enc, RequestID{}, err); err != nil {
+		panic(err)
+	}
 
 	srv.writeLock.Lock()
 	defer srv.writeLock.Unlock()
-	srv.codec.WriteResponse(json.RawMessage(buf.Bytes()))
+	srv.codec.WriteResponse(jsonValueFromBuffer(buf))
 }
 
 // ServeMux is a mapping of method names to JSON-RPC handlers.
@@ -201,64 +191,204 @@ type serverRequest struct {
 	Request
 }
 
-func (req *serverRequest) UnmarshalJSON(data []byte) error {
-	raw := make(map[string]json.RawMessage)
-	if err := json.Unmarshal(data, &raw); err != nil {
+func (req *serverRequest) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
+	tok, err := dec.ReadToken()
+	if err != nil {
 		return Error(ParseError, err)
 	}
-
-	version := raw["jsonrpc"]
-	if len(version) == 0 {
-		return Error(InvalidRequest, fmt.Errorf("jsonrpc version missing in request"))
-	}
-	var versionString string
-	if err := json.Unmarshal(version, &versionString); err != nil {
-		return Error(InvalidRequest, fmt.Errorf("jsonrpc version: %v", err))
-	}
-	if versionString != "2.0" {
-		return Error(InvalidRequest, fmt.Errorf("jsonrpc version %q not supported", versionString))
+	if got, want := tok.Kind(), jsontext.Kind('{'); got != want {
+		return Error(InvalidRequest, fmt.Errorf("jsonrpc request must be an object (got %v)", got))
 	}
 
-	err := json.Unmarshal(raw["method"], &req.Method)
-	if err != nil {
-		return Error(InvalidRequest, fmt.Errorf("jsonrpc method: %v", err))
-	}
-
-	req.Params = raw["params"]
-
-	rawID := raw["id"]
-	req.Notification = len(rawID) == 0
-	if req.Notification {
-		req.id = RequestID{}
-	} else {
-		err = req.id.UnmarshalJSON(rawID)
+	hadVersion := false
+	hadMethod := false
+	req.Notification = true
+keys:
+	for {
+		tok, err := dec.ReadToken()
 		if err != nil {
-			return Error(InvalidRequest, fmt.Errorf("jsonrpc id: %v", err))
+			return Error(ParseError, err)
+		}
+		var key string
+		switch kind := tok.Kind(); kind {
+		case '"':
+			key = tok.String()
+		case '}':
+			break keys
+		default:
+			return Error(ParseError, fmt.Errorf("unexpected %v token", kind))
+		}
+
+		switch key {
+		case "jsonrpc":
+			hadVersion = true
+			var versionString string
+			if err := jsonv2.UnmarshalDecode(dec, &versionString); err != nil {
+				return Error(InvalidRequest, fmt.Errorf("jsonrpc version: %v", err))
+			}
+			if versionString != "2.0" {
+				return Error(InvalidRequest, fmt.Errorf("jsonrpc version %q not supported", versionString))
+			}
+		case "method":
+			hadMethod = true
+			if err := jsonv2.UnmarshalDecode(dec, &req.Method); err != nil {
+				return Error(InvalidRequest, fmt.Errorf("jsonrpc method: %v", err))
+			}
+		case "params":
+			var err error
+			req.Params, err = dec.ReadValue()
+			if err != nil {
+				return Error(InvalidRequest, err)
+			}
+		case "id":
+			req.Notification = false
+			if err := req.id.UnmarshalJSONFrom(dec); err != nil {
+				return Error(InvalidRequest, fmt.Errorf("jsonrpc id: %v", err))
+			}
+		default:
+			if isReservedRequestField(key) {
+				if err := dec.SkipValue(); err != nil {
+					return Error(InvalidRequest, err)
+				}
+				continue
+			}
+			if req.Extra == nil {
+				req.Extra = make(map[string]jsontext.Value)
+			}
+			v, err := dec.ReadValue()
+			if err != nil {
+				return Error(InvalidRequest, err)
+			}
+			req.Extra[key] = v.Clone()
 		}
 	}
 
-	req.Extra = inverseFilterMap(raw, isReservedRequestField)
+	if !hadVersion {
+		return Error(InvalidRequest, fmt.Errorf("jsonrpc version missing in request"))
+	}
+	if !hadMethod {
+		return Error(InvalidRequest, fmt.Errorf("jsonrpc method missing in request"))
+	}
+	if req.Notification {
+		req.id = RequestID{}
+	}
 
 	return nil
 }
 
-func marshalError(buf *bytes.Buffer, id RequestID, err error) {
-	code, ok := CodeFromError(err)
+func marshalResponseJSONTo(enc *jsontext.Encoder, id RequestID, resp *Response) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("marshal json-rpc response: %v", err)
+		}
+	}()
+
+	if resp != nil {
+		for k := range resp.Extra {
+			if isReservedResponseField(k) {
+				return fmt.Errorf("extra field %q not permitted", k)
+			}
+		}
+	}
+
+	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+		return err
+	}
+	if err := marshalJSONRPCVersionTo(enc); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.String("id")); err != nil {
+		return err
+	}
+	if err := id.MarshalJSONTo(enc); err != nil {
+		return err
+	}
+
+	if err := enc.WriteToken(jsontext.String("result")); err != nil {
+		return err
+	}
+	if resp == nil || len(resp.Result) == 0 {
+		if err := enc.WriteToken(jsontext.Null); err != nil {
+			return err
+		}
+	} else {
+		if err := enc.WriteValue(resp.Result); err != nil {
+			return err
+		}
+	}
+
+	if resp != nil {
+		extraKeys := maps.Keys(resp.Extra)
+		if deterministic, _ := jsonv2.GetOption(enc.Options(), jsonv2.Deterministic); deterministic {
+			extraKeys = slices.Values(slices.Sorted(extraKeys))
+		}
+		for k := range extraKeys {
+			if err := enc.WriteToken(jsontext.String(k)); err != nil {
+				return err
+			}
+			if err := enc.WriteValue(resp.Extra[k]); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := enc.WriteToken(jsontext.EndObject); err != nil {
+		return err
+	}
+	return nil
+}
+
+func marshalErrorResponseJSONTo(enc *jsontext.Encoder, id RequestID, responseError error) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("marshal json-rpc response: %v", err)
+		}
+	}()
+
+	code, ok := CodeFromError(responseError)
 	if !ok {
 		code = UnknownErrorCode
 	}
 
-	buf.WriteString(`{"jsonrpc":"2.0","id":`)
-	idJSON, idError := id.MarshalJSON()
-	if idError != nil {
-		panic(err)
+	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+		return err
 	}
-	buf.Write(idJSON)
-	buf.WriteString(`,"error":{"code":`)
-	buf.Write(strconv.AppendInt(nil, int64(code), 10))
-	buf.WriteString(`,"message":`)
-	buf.Write(jsonstring.Append(nil, err.Error()))
-	buf.WriteString("}}")
+	if err := marshalJSONRPCVersionTo(enc); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.String("id")); err != nil {
+		return err
+	}
+	if err := id.MarshalJSONTo(enc); err != nil {
+		return err
+	}
+
+	if err := enc.WriteToken(jsontext.String("error")); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.String("code")); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.Int(int64(code))); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.String("message")); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.String(responseError.Error())); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.EndObject); err != nil {
+		return err
+	}
+
+	if err := enc.WriteToken(jsontext.EndObject); err != nil {
+		return err
+	}
+	return nil
 }
 
 type requestIDContextKey struct{}
