@@ -8,16 +8,15 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
 	"strconv"
 	"sync"
 
+	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
-	"zb.256lights.llc/pkg/internal/jsonstring"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 )
@@ -165,7 +164,11 @@ func (s *Store) export(ctx context.Context, dst io.Writer, req *ExportRequest) e
 }
 
 func sendExportRequest(ctx context.Context, h jsonrpc.Handler, id string, params *ExportRequest) error {
-	paramsJSON, err := json.Marshal(params)
+	paramsJSON, err := jsonv2.Marshal(params)
+	if err != nil {
+		return fmt.Errorf("call json rpc %s: %v", ExportMethod, err)
+	}
+	idJSON, err := jsontext.AppendQuote(nil, id)
 	if err != nil {
 		return fmt.Errorf("call json rpc %s: %v", ExportMethod, err)
 	}
@@ -173,7 +176,7 @@ func sendExportRequest(ctx context.Context, h jsonrpc.Handler, id string, params
 		Method: ExportMethod,
 		Params: paramsJSON,
 		Extra: map[string]jsontext.Value{
-			ExportIDExtraFieldName: jsonstring.Append(nil, id),
+			ExportIDExtraFieldName: idJSON,
 		},
 	})
 	return err
