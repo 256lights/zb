@@ -5,12 +5,12 @@ package zbstorerpc
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"strconv"
 	"testing"
 
+	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 )
@@ -35,7 +35,7 @@ func TestCodec(t *testing.T) {
 		jsonrpc.Serve(context.Background(), serverCodec, jsonrpc.ServeMux{
 			"subtract": jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 				var params []int64
-				if err := json.Unmarshal(req.Params, &params); err != nil {
+				if err := jsonv2.Unmarshal(req.Params, &params); err != nil {
 					return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 				}
 				if len(params) == 0 {

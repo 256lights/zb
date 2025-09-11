@@ -8,7 +8,6 @@ package zbstorerpc
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"iter"
 	"slices"
@@ -366,33 +365,9 @@ type ExportRequest struct {
 
 // Nullable wraps a type to permit a null JSON serialization.
 // The zero value is null.
-type Nullable[T any] struct {
-	X     T
-	Valid bool
-}
+type Nullable[T any] = zbstore.Nullable[T]
 
 // NonNull returns a [Nullable] that wraps the given value.
 func NonNull[T any](x T) Nullable[T] {
-	return Nullable[T]{x, true}
-}
-
-// MarshalJSON marshals n.X if n.Valid is true.
-// Otherwise, MarshalJSON returns null.
-func (n Nullable[T]) MarshalJSON() ([]byte, error) {
-	if !n.Valid {
-		return []byte("null"), nil
-	}
-	return json.Marshal(n.X)
-}
-
-// UnmarshalJSON unmarshals the given JSON data into n.X
-// unless it receives a JSON null, in which case n is zeroed out.
-func (n *Nullable[T]) UnmarshalJSON(data []byte) error {
-	if string(data) == "null" { // Compiler optimizes out allocation.
-		*n = Nullable[T]{}
-		return nil
-	}
-	err := json.Unmarshal(data, &n.X)
-	n.Valid = err == nil
-	return err
+	return zbstore.NonNull(x)
 }
