@@ -36,7 +36,7 @@ func (n Nullable[T]) MarshalJSON() ([]byte, error) {
 	if !n.Valid {
 		return []byte("null"), nil
 	}
-	return jsonv2.Marshal(n.X)
+	return jsonv2.Marshal(n.X, jsonv2.Deterministic(true))
 }
 
 // MarshalJSONTo encodes n.X if n.Valid is true.
@@ -51,13 +51,7 @@ func (n Nullable[T]) MarshalJSONTo(enc *jsontext.Encoder) error {
 // UnmarshalJSON unmarshals the given JSON data into n.X
 // unless it receives a JSON null, in which case n is zeroed out.
 func (n *Nullable[T]) UnmarshalJSON(data []byte) error {
-	if string(data) == "null" { // Compiler optimizes out allocation.
-		*n = Nullable[T]{}
-		return nil
-	}
-	err := jsonv2.Unmarshal(data, &n.X)
-	n.Valid = err == nil
-	return err
+	return jsonv2.Unmarshal(data, n)
 }
 
 // UnmarshalJSONFrom unmarshals the next value from the JSON decoder into n.X
