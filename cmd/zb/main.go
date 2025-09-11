@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -359,7 +359,7 @@ func waitForBuild(ctx context.Context, storeClient jsonrpc.Handler, buildID stri
 		}
 	}()
 
-	paramsJSON, err := json.Marshal(&zbstorerpc.GetBuildRequest{
+	paramsJSON, err := jsonv2.Marshal(&zbstorerpc.GetBuildRequest{
 		BuildID: buildID,
 	})
 	if err != nil {
@@ -380,7 +380,7 @@ func waitForBuild(ctx context.Context, storeClient jsonrpc.Handler, buildID stri
 			return nil, nil, fmt.Errorf("wait for build %s: %w", buildID, err)
 		}
 		buildResponse := new(zbstorerpc.Build)
-		if err := json.Unmarshal(buildRPCResponse.Result, buildResponse); err != nil {
+		if err := jsonv2.Unmarshal(buildRPCResponse.Result, buildResponse); err != nil {
 			return nil, nil, fmt.Errorf("wait for build %s: %v", buildID, err)
 		}
 		log.Debugf(ctx, "Build %s is currently in status %q", buildID, buildResponse.Status)

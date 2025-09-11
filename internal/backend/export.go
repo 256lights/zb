@@ -5,12 +5,12 @@ package backend
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"slices"
 
+	jsonv2 "github.com/go-json-experiment/json"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
@@ -76,14 +76,14 @@ func (s *Server) export(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 		return nil, fmt.Errorf("internal error: no exporter present")
 	}
 	args := new(zbstorerpc.ExportRequest)
-	if err := json.Unmarshal(req.Params, args); err != nil {
+	if err := jsonv2.Unmarshal(req.Params, args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 
 	var header jsonrpc.Header
 	if idJSON := req.Extra[zbstorerpc.ExportIDExtraFieldName]; len(idJSON) > 0 {
 		var id string
-		if err := json.Unmarshal(idJSON, &id); err != nil {
+		if err := jsonv2.Unmarshal(idJSON, &id); err != nil {
 			return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s: %v", zbstorerpc.ExportIDExtraFieldName, err))
 		}
 		header = make(jsonrpc.Header)

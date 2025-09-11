@@ -8,7 +8,6 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 	"strconv"
 
 	"github.com/dsnet/compress/brotli"
+	jsonv2 "github.com/go-json-experiment/json"
 	"zb.256lights.llc/pkg/internal/hal"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -54,7 +54,7 @@ func (s *HTTPStore) discover(ctx context.Context) (*hal.Resource, error) {
 		return nil, fmt.Errorf("get discovery document: %v", err)
 	}
 	hr := new(hal.Resource)
-	if err := json.Unmarshal(data, hr); err != nil {
+	if err := jsonv2.Unmarshal(data, hr); err != nil {
 		return nil, fmt.Errorf("get discovery document: %v", err)
 	}
 	return hr, nil

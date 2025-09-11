@@ -6,7 +6,6 @@ package backend
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/uuid"
 	"zb.256lights.llc/pkg/bytebuffer"
@@ -268,7 +268,7 @@ func (s *Server) realPath(path zbstore.Path) string {
 
 func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	var args zbstorerpc.ExistsRequest
-	if err := json.Unmarshal(req.Params, &args); err != nil {
+	if err := jsonv2.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 	p, sub, err := s.dir.ParsePath(args.Path)
@@ -297,7 +297,7 @@ func (s *Server) exists(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 
 func (s *Server) info(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	var args zbstorerpc.InfoRequest
-	if err := json.Unmarshal(req.Params, &args); err != nil {
+	if err := jsonv2.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 	if args.Path.Dir() != s.dir {
@@ -322,7 +322,7 @@ func (s *Server) info(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Respo
 
 func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	var args zbstorerpc.GetBuildRequest
-	if err := json.Unmarshal(req.Params, &args); err != nil {
+	if err := jsonv2.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 	buildID, ok := parseBuildID(args.BuildID)
@@ -415,7 +415,7 @@ func (s *Server) getBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.R
 
 func (s *Server) getBuildResult(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	var args zbstorerpc.GetBuildResultRequest
-	if err := json.Unmarshal(req.Params, &args); err != nil {
+	if err := jsonv2.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 	buildID, ok := parseBuildID(args.BuildID)
@@ -452,7 +452,7 @@ func (s *Server) getBuildResult(ctx context.Context, req *jsonrpc.Request) (*jso
 
 func (s *Server) cancelBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	var args zbstorerpc.CancelBuildNotification
-	if err := json.Unmarshal(req.Params, &args); err != nil {
+	if err := jsonv2.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 	buildID, ok := parseBuildID(args.BuildID)
@@ -470,7 +470,7 @@ func (s *Server) cancelBuild(ctx context.Context, req *jsonrpc.Request) (*jsonrp
 
 func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	var args zbstorerpc.ReadLogRequest
-	if err := json.Unmarshal(req.Params, &args); err != nil {
+	if err := jsonv2.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 	newNotFoundError := func() error {
@@ -902,8 +902,8 @@ func parseBuildID(id string) (_ uuid.UUID, ok bool) {
 	return u, true
 }
 
-func marshalResponse(data any) (*jsonrpc.Response, error) {
-	jsonData, err := json.Marshal(data)
+func marshalResponse(data any, opts ...jsonv2.Options) (*jsonrpc.Response, error) {
+	jsonData, err := jsonv2.Marshal(data, opts...)
 	if err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InternalError, err)
 	}

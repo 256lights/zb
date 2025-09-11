@@ -7,7 +7,6 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +23,7 @@ import (
 	"time"
 	"unique"
 
+	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/google/uuid"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/detect"
@@ -54,7 +54,7 @@ const (
 func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.Response, err error) {
 	// Validate request.
 	var args zbstorerpc.RealizeRequest
-	if err := json.Unmarshal(req.Params, &args); err != nil {
+	if err := jsonv2.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 	if len(args.DrvPaths) == 0 {
@@ -137,7 +137,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.Response, err error) {
 	// Validate request.
 	var args zbstorerpc.ExpandRequest
-	if err := json.Unmarshal(req.Params, &args); err != nil {
+	if err := jsonv2.Unmarshal(req.Params, &args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 	drvPath, subPath, err := s.dir.ParsePath(string(args.DrvPath))

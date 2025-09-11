@@ -6,10 +6,8 @@ package backend
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"iter"
 	"os"
@@ -20,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/uuid"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
@@ -1003,25 +1003,12 @@ func loadSchema() sqlitemigration.Schema {
 
 func marshalJSONString(v any) (string, error) {
 	sb := new(strings.Builder)
-	enc := json.NewEncoder(sb)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "")
-	err := enc.Encode(v)
-	return strings.TrimSuffix(sb.String(), "\n"), err
+	err := jsonv2.MarshalWrite(sb, v, jsontext.EscapeForHTML(false))
+	return sb.String(), err
 }
 
-func unmarshalJSONString(data string, v any) error {
-	dec := json.NewDecoder(strings.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-	var buf [1]byte
-	n, _ := io.ReadFull(dec.Buffered(), buf[:])
-	if n > 0 {
-		return errors.New("unmarshal json: trailing data")
-	}
-	return nil
+func unmarshalJSONString(data string, out any, opts ...jsonv2.Options) error {
+	return jsonv2.UnmarshalRead(strings.NewReader(data), out, opts...)
 }
 
 // readonlySavepoint starts a new SAVEPOINT.

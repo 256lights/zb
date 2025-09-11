@@ -4,11 +4,11 @@
 package system
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/tailscale/hujson"
 	"zb.256lights.llc/pkg/internal/xmaps"
 )
@@ -25,24 +25,24 @@ func TestSystem(t *testing.T) {
 	}
 
 	type testCase struct {
-		Arch   string
-		Vendor string
-		OS     string
-		Env    string
+		Arch   string `json:"arch"`
+		Vendor string `json:"vendor"`
+		OS     string `json:"os"`
+		Env    string `json:"env"`
 
-		IsX86      bool
-		IsARM      bool
-		Is32Bit    bool
-		Is64Bit    bool
-		IsMacOS    bool
-		IsiOS      bool
-		IsDarwin   bool
-		IsLinux    bool
-		IsWindows  bool
-		Normalized string
+		IsX86      bool   `json:"isX86"`
+		IsARM      bool   `json:"isARM"`
+		Is32Bit    bool   `json:"is32Bit"`
+		Is64Bit    bool   `json:"is64Bit"`
+		IsMacOS    bool   `json:"isMacOS"`
+		IsiOS      bool   `json:"isiOS"`
+		IsDarwin   bool   `json:"isDarwin"`
+		IsLinux    bool   `json:"isLinux"`
+		IsWindows  bool   `json:"isWindows"`
+		Normalized string `json:"normalized"`
 	}
 	var tests map[string]testCase
-	if err := json.Unmarshal(goldenJSON, &tests); err != nil {
+	if err := jsonv2.Unmarshal(goldenJSON, &tests); err != nil {
 		t.Fatalf("parse %s: %v", goldenPath, err)
 	}
 
@@ -106,7 +106,7 @@ func TestSystem(t *testing.T) {
 		t.Fatalf("parse %s: %v", badPath, err)
 	}
 	var badTests []string
-	if err := json.Unmarshal(badJSON, &badTests); err != nil {
+	if err := jsonv2.Unmarshal(badJSON, &badTests); err != nil {
 		t.Fatalf("parse %s: %v", badPath, err)
 	}
 	for _, test := range badTests {
