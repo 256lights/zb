@@ -53,7 +53,8 @@ type Object interface {
 // A RandomAccessStore is a [Store] that supports efficient access of store object files.
 //
 // StoreFS returns a filesystem of the store directory.
-// The filesystem may not support listing the root directory.
+// The filesystem must support listing object directories,
+// but may not support listing the root (store) directory.
 // Operations in the filesystem should use the provided context if applicable.
 // StoreFS must be safe to call concurrently from multiple goroutines.
 type RandomAccessStore interface {
