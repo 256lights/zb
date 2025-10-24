@@ -46,24 +46,6 @@ type pathAndEquivalenceClass struct {
 	equivalenceClass equivalenceClass
 }
 
-// hashDrv computes the hash for the given derivation
-// based on the realizations of its input derivations.
-// This hash is intended for use in [newEquivalenceClass].
-func hashDrv(drv *zbstore.Derivation, realization func(ref zbstore.OutputReference) (zbstore.Path, bool)) (nix.Hash, error) {
-	if drv.Outputs[zbstore.DefaultDerivationOutputName].IsFixed() {
-		return hashDrvFixed(drv)
-	}
-
-	rewrites, err := derivationInputRewrites(drv, realization)
-	if err != nil {
-		return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)
-	}
-	expandedDrv := expandDerivationPlaceholders(newReplacer(maps.All(rewrites)), drv)
-	expandedDrv.InputDerivations = nil
-	expandedDrv.InputSources.AddSeq(maps.Values(rewrites))
-	return hashDrvFloating(expandedDrv)
-}
-
 // pseudoHashDrv computes a hash of a derivation
 // that can be used for comparing derivations for structural similarity.
 // If hashDrv(drv1) == hashDrv(drv2),
@@ -71,7 +53,9 @@ func hashDrv(drv *zbstore.Derivation, realization func(ref zbstore.OutputReferen
 // (but the converse is not necessarily true).
 func pseudoHashDrv(drv *zbstore.Derivation) (nix.Hash, error) {
 	if drv.Outputs[zbstore.DefaultDerivationOutputName].IsFixed() {
-		return hashDrvFixed(drv)
+		return drv.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
+			return "", false
+		})
 	}
 
 	var pseudoInputs sets.Sorted[zbstore.Path]
@@ -102,34 +86,10 @@ func pseudoHashDrv(drv *zbstore.Derivation) (nix.Hash, error) {
 		rewrites[placeholder] = rewritten
 	}
 
-	expandedDrv := expandDerivationPlaceholders(newReplacer(maps.All(rewrites)), drv)
+	expandedDrv := drv.ReplaceStrings(newReplacer(maps.All(rewrites)))
 	expandedDrv.InputDerivations = nil
 	expandedDrv.InputSources = pseudoInputs
 	return hashDrvFloating(expandedDrv)
-}
-
-// hashDrvFixed computes the equivalence class for a fixed-output derivation.
-func hashDrvFixed(drv *zbstore.Derivation) (nix.Hash, error) {
-	ca, isFixed := drv.Outputs[zbstore.DefaultDerivationOutputName].FixedCA()
-	if !isFixed || len(drv.Outputs) != 1 {
-		return nix.Hash{}, fmt.Errorf("hash derivation: not fixed")
-	}
-	outputPath, err := drv.OutputPath(zbstore.DefaultDerivationOutputName)
-	if err != nil {
-		return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)
-	}
-	h2 := nix.NewHasher(nix.SHA256)
-	h2.WriteString("fixed:out:")
-	switch {
-	case ca.IsText():
-		h2.WriteString("text:")
-	case ca.IsRecursiveFile():
-		h2.WriteString("r:")
-	}
-	h2.WriteString(ca.Hash().Base16())
-	h2.WriteString(":")
-	h2.WriteString(string(outputPath))
-	return h2.SumHash(), nil
 }
 
 func hashDrvFloating(expandedDrv *zbstore.Derivation) (nix.Hash, error) {

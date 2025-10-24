@@ -410,7 +410,7 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 				log.Debugf(ctx, "Pausing %s to build dependencies", curr.DrvPath)
 				continue
 			}
-			drvHash, err := hashDrv(drv, b.lookup)
+			drvHash, err := drv.SHA256RealizationHash(b.lookup)
 			if err != nil {
 				return fmt.Errorf("realize %s: %v", curr, err)
 			}
@@ -460,7 +460,7 @@ func (b *builder) expand(drvPath zbstore.Path, drv *zbstore.Derivation, temporar
 		outputPathRewrites(outPaths),
 		maps.All(inputRewrites),
 	))
-	expandedDrv := expandDerivationPlaceholders(r, drv)
+	expandedDrv := drv.ReplaceStrings(r)
 	fillBaseEnv(expandedDrv.Env, drv.Dir, temporaryDirectory, b.server.coresPerBuild)
 	return expandedDrv, nil
 }
@@ -1124,7 +1124,7 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 		outputPathRewrites(outPaths),
 		maps.All(inputRewrites),
 	))
-	expandedDrv := expandDerivationPlaceholders(r, drv)
+	expandedDrv := drv.ReplaceStrings(r)
 
 	log.Debugf(ctx, "Starting builder for %s...", drvPath)
 	if err := recordBuilderStart(conn, buildResultID, time.Now()); err != nil {
@@ -1276,28 +1276,6 @@ func hasPlaceholders(drv *zbstore.Derivation, s string) bool {
 		}
 	}
 	return false
-}
-
-type replacer interface {
-	Replace(s string) string
-}
-
-// expandDerivationPlaceholders returns a copy of drv
-// with r.Replace applied to its builder, builder arguments, and environment variables.
-func expandDerivationPlaceholders(r replacer, drv *zbstore.Derivation) *zbstore.Derivation {
-	drv = drv.Clone()
-	drv.Builder = r.Replace(drv.Builder)
-	if len(drv.Args) > 0 {
-		for i, arg := range drv.Args {
-			drv.Args[i] = r.Replace(arg)
-		}
-	}
-	oldEnv := drv.Env
-	drv.Env = make(map[string]string, len(oldEnv))
-	for k, v := range oldEnv {
-		drv.Env[r.Replace(k)] = r.Replace(v)
-	}
-	return drv
 }
 
 func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.DerivationOutputType) (map[string]zbstore.Path, error) {

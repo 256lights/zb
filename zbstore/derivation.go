@@ -141,6 +141,24 @@ func (drv *Derivation) Clone() *Derivation {
 	return drvClone
 }
 
+// ReplaceStrings returns a copy of drv
+// with r.Replace applied to its builder, builder arguments, and environment variables.
+func (drv *Derivation) ReplaceStrings(r Replacer) *Derivation {
+	drv = drv.Clone()
+	drv.Builder = r.Replace(drv.Builder)
+	if len(drv.Args) > 0 {
+		for i, arg := range drv.Args {
+			drv.Args[i] = r.Replace(arg)
+		}
+	}
+	oldEnv := drv.Env
+	drv.Env = make(map[string]string, len(oldEnv))
+	for k, v := range oldEnv {
+		drv.Env[r.Replace(k)] = r.Replace(v)
+	}
+	return drv
+}
+
 // InputDerivationOutputs returns an iterator over the output references
 // this derivation uses as inputs.
 // The iterator will produce references in lexicographic order of the derivation path,
@@ -296,6 +314,24 @@ func marshalInputDerivations[K ~string](buf []byte, m map[K]*sets.Sorted[string]
 		buf = append(buf, "])"...)
 	}
 	return buf
+}
+
+// SHA256RealizationHash computes the hash for the given derivation
+// based on the realizations of its input derivations.
+// This hash is intended for use in [newEquivalenceClass].
+func (drv *Derivation) SHA256RealizationHash(realization func(ref OutputReference) (Path, bool)) (nix.Hash, error) {
+	if drv.Outputs[DefaultDerivationOutputName].IsFixed() {
+		return hashDrvFixed(drv)
+	}
+
+	rewrites, err := derivationInputRewrites(drv, realization)
+	if err != nil {
+		return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)
+	}
+	expandedDrv := drv.ReplaceStrings(newReplacer(maps.All(rewrites)))
+	expandedDrv.InputDerivations = nil
+	expandedDrv.InputSources.AddSeq(maps.Values(rewrites))
+	return hashDrvFloating(expandedDrv)
 }
 
 func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
