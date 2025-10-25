@@ -167,7 +167,7 @@ type realizationOutput struct {
 	references map[zbstore.Path]sets.Set[equivalenceClass]
 }
 
-func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash, outputs map[string]realizationOutput) (err error) {
+func recordRealizations(ctx context.Context, conn *sqlite.Conn, keyring *Keyring, drvHash nix.Hash, outputs map[string]realizationOutput) (err error) {
 	if log.IsEnabled(log.Debug) {
 		outputPaths := make(map[string]zbstore.Path)
 		for outputName, out := range outputs {
@@ -208,6 +208,16 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash
 		return fmt.Errorf("record realizations for %s: %v", drvHash, err)
 	}
 	defer refClassStmt.Finalize()
+	publicKeyStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "insert_public_key.sql")
+	if err != nil {
+		return fmt.Errorf("record realizations for %s: %v", drvHash, err)
+	}
+	defer publicKeyStmt.Finalize()
+	signatureStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "insert_signature.sql")
+	if err != nil {
+		return fmt.Errorf("record realizations for %s: %v", drvHash, err)
+	}
+	defer signatureStmt.Finalize()
 
 	realizationStmt.SetText(":drv_hash_algorithm", drvHash.Type().String())
 	realizationStmt.SetBytes(":drv_hash_bits", drvHash.Bytes(nil))
@@ -247,9 +257,61 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash
 				}
 			}
 		}
+
+		ref := zbstore.RealizationOutputReference{
+			DerivationHash: drvHash,
+			OutputName:     outputName,
+		}
+		signatures, err := keyring.Sign(ref, makeRealization(output))
+		if err != nil {
+			log.Warnf(ctx, "%v", err)
+		}
+		for _, sig := range signatures {
+			publicKeyStmt.SetText(":format", string(sig.Format))
+			publicKeyStmt.SetBytes(":public_key", sig.PublicKey)
+			if _, err := publicKeyStmt.Step(); err != nil {
+				return fmt.Errorf("record realizations for %v: %v", ref, err)
+			}
+			if err := publicKeyStmt.Reset(); err != nil {
+				return fmt.Errorf("record realizations for %v: %v", ref, err)
+			}
+
+			signatureStmt.SetText(":drv_hash_algorithm", drvHash.Type().String())
+			signatureStmt.SetBytes(":drv_hash_bits", drvHash.Bytes(nil))
+			signatureStmt.SetText(":output_name", outputName)
+			signatureStmt.SetText(":output_path", string(output.path))
+			signatureStmt.SetText(":format", string(sig.Format))
+			signatureStmt.SetBytes(":public_key", sig.PublicKey)
+			signatureStmt.SetBytes(":signature", sig.Signature)
+			if _, err := signatureStmt.Step(); err != nil {
+				return fmt.Errorf("record realizations for %v: %v", ref, err)
+			}
+			if err := signatureStmt.Reset(); err != nil {
+				return fmt.Errorf("record realizations for %v: %v", ref, err)
+			}
+		}
 	}
 
 	return nil
+}
+
+func makeRealization(output realizationOutput) *zbstore.Realization {
+	r := &zbstore.Realization{
+		OutputPath: output.path,
+	}
+	for path, eqClasses := range output.references {
+		for eqClass := range eqClasses.All() {
+			rc := &zbstore.ReferenceClass{Path: path}
+			if !eqClass.isZero() {
+				rc.Realization = zbstore.NonNull(zbstore.RealizationOutputReference{
+					DerivationHash: eqClass.drvHashKey.toHash(),
+					OutputName:     eqClass.outputName.Value(),
+				})
+			}
+			r.ReferenceClasses = append(r.ReferenceClasses, rc)
+		}
+	}
+	return r
 }
 
 // pathInfo returns basic information about an object in the store.
@@ -647,16 +709,21 @@ func recordExpandResult(conn *sqlite.Conn, buildID uuid.UUID, result *zbstorerpc
 	return nil
 }
 
-func insertBuildResult(conn *sqlite.Conn, buildID uuid.UUID, drvPath zbstore.Path, t time.Time) (buildResultID int64, err error) {
+func insertBuildResult(conn *sqlite.Conn, buildID uuid.UUID, drvPath zbstore.Path, drvHash nix.Hash, t time.Time) (buildResultID int64, err error) {
 	defer sqlitex.Save(conn)(&err)
 	if err := upsertPath(conn, drvPath); err != nil {
 		return -1, fmt.Errorf("record build result for %s in %v: %v", drvPath, buildID, err)
 	}
+	if err := upsertDrvHash(conn, drvHash); err != nil {
+		return -1, fmt.Errorf("record build result for %s in %v: %v", drvPath, buildID, err)
+	}
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/insert_result.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
-			":build_id":         buildID.String(),
-			":drv_path":         string(drvPath),
-			":timestamp_millis": t.UnixMilli(),
+			":build_id":           buildID.String(),
+			":drv_path":           string(drvPath),
+			":drv_hash_algorithm": drvHash.Type().String(),
+			":drv_hash_bits":      drvHash.Bytes(nil),
+			":timestamp_millis":   t.UnixMilli(),
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			buildResultID = stmt.ColumnInt64(0)
@@ -672,9 +739,16 @@ func insertBuildResult(conn *sqlite.Conn, buildID uuid.UUID, drvPath zbstore.Pat
 // findBuildResults appends the build results in the build with the given ID to dst.
 // If drvPath is not empty, then only the result for drvPath is appended (if it exists).
 // If logDir is not empty, then the LogSize field in [*zbstorerpc.BuildResult] will be populated.
-func findBuildResults(dst []*zbstorerpc.BuildResult, conn *sqlite.Conn, logDir string, buildID uuid.UUID, drvPath zbstore.Path) ([]*zbstorerpc.BuildResult, error) {
+func findBuildResults(dst []*zbstorerpc.BuildResult, conn *sqlite.Conn, logDir string, buildID uuid.UUID, drvPath zbstore.Path) (_ []*zbstorerpc.BuildResult, err error) {
+	defer sqlitex.Save(conn)(&err)
+
+	signatureStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "build/result_signatures.sql")
+	if err != nil {
+		return dst, fmt.Errorf("list build results for %v: %v", buildID, err)
+	}
+	defer signatureStmt.Finalize()
 	initDstLen := len(dst)
-	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/results.sql", &sqlitex.ExecOptions{
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "build/results.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":build_id": buildID.String(),
 			":drv_path": string(drvPath),
@@ -688,8 +762,20 @@ func findBuildResults(dst []*zbstorerpc.BuildResult, conn *sqlite.Conn, logDir s
 			if len(dst) > initDstLen && dst[len(dst)-1].DrvPath == drvPath {
 				curr = dst[len(dst)-1]
 			} else {
+				var drvHash nix.Hash
+				if algo := stmt.GetText("drv_hash_algorithm"); algo != "" {
+					buf := make([]byte, stmt.GetLen("drv_hash_bits"))
+					stmt.GetBytes("drv_hash_bits", buf)
+					var err error
+					drvHash, err = unmarshalHash(algo, buf)
+					if err != nil {
+						return err
+					}
+				}
+
 				curr = &zbstorerpc.BuildResult{
 					DrvPath: drvPath,
+					DrvHash: zbstore.NonNull(drvHash),
 					Status:  zbstorerpc.BuildStatus(stmt.GetText("status")),
 					Outputs: []*zbstorerpc.RealizeOutput{},
 				}
@@ -715,6 +801,13 @@ func findBuildResults(dst []*zbstorerpc.BuildResult, conn *sqlite.Conn, logDir s
 						return fmt.Errorf("output %s: %v", outputName, err)
 					}
 					newOutput.Path = zbstorerpc.NonNull(p)
+
+					newOutput.Signatures, err = signaturesForRealization(signatureStmt, buildID, drvPath, outputName, p)
+					if err != nil {
+						// signaturesForRealization includes the outputName in the error message,
+						// so no need to additionally wrap.
+						return err
+					}
 				}
 				curr.Outputs = append(curr.Outputs, newOutput)
 			}
@@ -729,6 +822,42 @@ func findBuildResults(dst []*zbstorerpc.BuildResult, conn *sqlite.Conn, logDir s
 		return dst, fmt.Errorf("fetch build result for %s in build %v: %v", drvPath, buildID, err)
 	}
 	return dst, nil
+}
+
+// signaturesForRealization fetches the list of signatures stored for the given realization.
+func signaturesForRealization(stmt *sqlite.Stmt, buildID uuid.UUID, drvPath zbstore.Path, outputName string, outputPath zbstore.Path) ([]*zbstore.RealizationSignature, error) {
+	var result []*zbstore.RealizationSignature
+	stmt.SetText(":build_id", buildID.String())
+	stmt.SetText(":drv_path", string(drvPath))
+	stmt.SetText(":output_name", outputName)
+	stmt.SetText(":output_path", string(outputPath))
+
+	for {
+		hasRow, err := stmt.Step()
+		if err != nil {
+			_ = stmt.Reset()
+			return nil, fmt.Errorf("output %s: signatures: %v", outputName, err)
+		}
+		if !hasRow {
+			break
+		}
+
+		buf := make([]byte, stmt.GetLen("public_key")+stmt.GetLen("signature"))
+		newSignature := &zbstore.RealizationSignature{
+			Format: zbstore.RealizationSignatureFormat(stmt.GetText("format")),
+		}
+		n := stmt.GetBytes("public_key", buf)
+		newSignature.PublicKey = buf[:n:n]
+		buf = buf[n:]
+		n = stmt.GetBytes("signature", buf)
+		newSignature.Signature = buf[:n:n]
+
+		result = append(result, newSignature)
+	}
+	if err := stmt.Reset(); err != nil {
+		return result, fmt.Errorf("signatures: %v", err)
+	}
+	return result, nil
 }
 
 func recordBuilderStart(conn *sqlite.Conn, buildResultID int64, t time.Time) error {
@@ -1009,6 +1138,18 @@ func marshalJSONString(v any) (string, error) {
 
 func unmarshalJSONString(data string, out any, opts ...jsonv2.Options) error {
 	return jsonv2.UnmarshalRead(strings.NewReader(data), out, opts...)
+}
+
+func unmarshalHash(algo string, bits []byte) (nix.Hash, error) {
+	t, err := nix.ParseHashType(algo)
+	if err != nil {
+		return nix.Hash{}, err
+	}
+	if got, want := len(bits), t.Size(); got != want {
+		return nix.Hash{}, fmt.Errorf("unmarshal hash: digest is incorrect size (%d instead of %d) for %s",
+			got, want, t)
+	}
+	return nix.NewHash(t, bits), nil
 }
 
 // readonlySavepoint starts a new SAVEPOINT.

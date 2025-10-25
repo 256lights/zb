@@ -95,6 +95,7 @@ func main() {
 		newBuildCommand(g),
 		newDerivationCommand(g),
 		newEvalCommand(g),
+		newKeyCommand(),
 		newNARCommand(),
 		newServeCommand(g),
 		newStoreCommand(g),

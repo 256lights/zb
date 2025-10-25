@@ -309,22 +309,6 @@ func (s *Server) newBuilder(id uuid.UUID, derivations map[zbstore.Path]*zbstore.
 	}
 }
 
-func (b *builder) makeBuildResult(drvPath zbstore.Path) *zbstorerpc.BuildResult {
-	result := new(zbstorerpc.BuildResult)
-	for _, outputName := range xmaps.SortedKeys(b.derivations[drvPath].Outputs) {
-		var p zbstorerpc.Nullable[zbstore.Path]
-		p.X, p.Valid = b.lookup(zbstore.OutputReference{
-			DrvPath:    drvPath,
-			OutputName: outputName,
-		})
-		result.Outputs = append(result.Outputs, &zbstorerpc.RealizeOutput{
-			Name: outputName,
-			Path: p,
-		})
-	}
-	return result
-}
-
 func (b *builder) toEquivalenceClass(ref zbstore.OutputReference) (_ equivalenceClass, ok bool) {
 	if ref.OutputName == "" {
 		return equivalenceClass{}, false
@@ -725,7 +709,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		}
 		defer endFn(&err)
 
-		buildResultID, err = insertBuildResult(conn, b.id, drvPath, startTime)
+		buildResultID, err = insertBuildResult(conn, b.id, drvPath, drvHash, startTime)
 		if err != nil {
 			return fmt.Errorf("build %s: %v", drvPath, err)
 		}
@@ -1637,7 +1621,7 @@ func (b *builder) recordRealizations(ctx context.Context, conn *sqlite.Conn, drv
 	}
 	defer endFn(&err)
 
-	if err := recordRealizations(ctx, conn, drvHash, outputs); err != nil {
+	if err := recordRealizations(ctx, conn, b.server.keyring, drvHash, outputs); err != nil {
 		return err
 	}
 	buildOutputs := func(yield func(string, zbstore.Path) bool) {

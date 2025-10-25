@@ -5,6 +5,7 @@ package backend_test
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	. "zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
@@ -745,21 +747,16 @@ func TestRealizeFailure(t *testing.T) {
 			},
 		},
 	}
-	buildType := reflect.TypeFor[zbstorerpc.Build]()
 	diff := cmp.Diff(
 		want, got,
 		cmp.FilterPath(
 			func(p cmp.Path) bool {
-				if p.Index(-2).Type() != buildType {
-					return false
-				}
-				fieldName := p.Last().(cmp.StructField).Name()
-				return fieldName == "StartedAt" ||
-					fieldName == "EndedAt"
+				return isFieldAnyOf[zbstorerpc.Build](p, "StartedAt", "EndedAt")
 			},
 			cmp.Ignore(),
 		),
 		buildResultOption,
+		ignoreDrvHashOption,
 	)
 	if diff != "" {
 		t.Errorf("build (-want +got):\n%s", diff)
@@ -863,21 +860,16 @@ func TestRealizeNoOutput(t *testing.T) {
 			},
 		},
 	}
-	buildType := reflect.TypeFor[zbstorerpc.Build]()
 	diff := cmp.Diff(
 		want, got,
 		cmp.FilterPath(
 			func(p cmp.Path) bool {
-				if p.Index(-2).Type() != buildType {
-					return false
-				}
-				fieldName := p.Last().(cmp.StructField).Name()
-				return fieldName == "StartedAt" ||
-					fieldName == "EndedAt"
+				return isFieldAnyOf[zbstorerpc.Build](p, "StartedAt", "EndedAt")
 			},
 			cmp.Ignore(),
 		),
 		buildResultOption,
+		ignoreDrvHashOption,
 	)
 	if diff != "" {
 		t.Errorf("build (-want +got):\n%s", diff)
@@ -1057,14 +1049,180 @@ func TestRealizeFetchURL(t *testing.T) {
 	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(fileContent), got)
 }
 
+func TestRealizeSignature(t *testing.T) {
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	dir := backendtest.NewStoreDirectory(t)
+
+	testKey := ed25519.PrivateKey{
+		0xf8, 0xd3, 0x03, 0x35, 0xfb, 0xe3, 0x0a, 0x67,
+		0x53, 0xf6, 0x62, 0xeb, 0xf7, 0x36, 0x9d, 0x61,
+		0x05, 0xf0, 0x17, 0xf9, 0x8f, 0x2e, 0xc4, 0xe8,
+		0x33, 0x0d, 0xfa, 0xc9, 0x7e, 0xf0, 0xe8, 0x70,
+		0x95, 0x09, 0x22, 0xbd, 0x27, 0x65, 0xac, 0x30,
+		0x63, 0xc2, 0x01, 0x3f, 0x54, 0xd9, 0x8f, 0x79,
+		0xf4, 0xd1, 0x60, 0x01, 0xf7, 0x62, 0x49, 0x61,
+		0x91, 0xbd, 0x66, 0xd7, 0x62, 0x51, 0x94, 0x70,
+	}
+	testPublicKey := testKey.Public().(ed25519.PublicKey)
+
+	const inputContent = "Hello, World!\n"
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
+		Name:      "hello.txt",
+		Directory: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantOutputName = "hello2.txt"
+	drvContent := &zbstore.Derivation{
+		Name:   wantOutputName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"in":  string(inputFilePath),
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		InputSources: *sets.NewSorted(
+			inputFilePath,
+		),
+		Outputs: map[string]*zbstore.DerivationOutputType{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	drvContent.Builder, drvContent.Args = catcatBuilder()
+	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	drvHash, err := drvContent.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
+		return "", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir: t.TempDir(),
+		Options: Options{
+			Keyring: &Keyring{
+				Ed25519: []ed25519.PrivateKey{testKey},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(nil, exportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
+	})
+	if err != nil {
+		t.Fatal("RPC error:", err)
+	}
+	if realizeResponse.BuildID == "" {
+		t.Fatal("no build ID returned")
+	}
+
+	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+	if err != nil {
+		gotLog, _ := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvPath)
+		t.Fatalf("build drv: %v\nlog:\n%s", err, gotLog)
+	}
+
+	const wantOutputContent = "Hello, World!\nHello, World!\n"
+	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, []byte(wantOutputContent), zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gotResult, err := got.ResultForPath(drvPath)
+	if err != nil {
+		t.Error(err)
+	}
+	if gotResult == nil {
+		return
+	}
+
+	outputRef := zbstore.RealizationOutputReference{
+		DerivationHash: drvHash,
+		OutputName:     "out",
+	}
+	realization := &zbstore.Realization{
+		OutputPath: wantOutputPath,
+		Signatures: []*zbstore.RealizationSignature{
+			{
+				Format:    zbstore.Ed25519SignatureFormat,
+				PublicKey: testPublicKey,
+			},
+		},
+	}
+	sig, err := zbstore.SignRealizationWithEd25519(outputRef, realization, testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &zbstorerpc.BuildResult{
+		DrvPath: drvPath,
+		DrvHash: zbstorerpc.NonNull(drvHash),
+		Status:  zbstorerpc.BuildSuccess,
+		Outputs: []*zbstorerpc.RealizeOutput{
+			{
+				Name:       zbstore.DefaultDerivationOutputName,
+				Path:       zbstorerpc.NonNull(wantOutputPath),
+				Signatures: []*zbstore.RealizationSignature{sig},
+			},
+		},
+	}
+	diff := cmp.Diff(
+		want, gotResult,
+		buildResultOption,
+	)
+	if diff != "" {
+		t.Errorf("realize response (-want +got):\n%s", diff)
+	}
+}
+
 var buildResultOption = cmp.Options{
 	cmp.FilterPath(func(p cmp.Path) bool {
-		if p.Index(-2).Type() != reflect.TypeFor[zbstorerpc.BuildResult]() {
-			return false
-		}
-		name := p.Last().(cmp.StructField).Name()
-		return name == "LogSize"
+		return isFieldAnyOf[zbstorerpc.BuildResult](p, "LogSize")
 	}, cmp.Ignore()),
+	cmp.FilterPath(isRealizeOutputSignaturesField, cmpopts.EquateEmpty()),
+}
+
+var ignoreDrvHashOption = cmp.FilterPath(func(p cmp.Path) bool {
+	return isFieldAnyOf[zbstorerpc.BuildResult](p, "DrvHash")
+}, cmp.Ignore())
+
+func isRealizeOutputSignaturesField(p cmp.Path) bool {
+	return isFieldAnyOf[zbstorerpc.RealizeOutput](p, "Signatures")
+}
+
+func isFieldAnyOf[T any](p cmp.Path, names ...string) bool {
+	if p.Index(-2).Type() != reflect.TypeFor[T]() {
+		return false
+	}
+	name := p.Last().(cmp.StructField).Name()
+	for _, n := range names {
+		if name == n {
+			return true
+		}
+	}
+	return false
 }
 
 func checkSingleFileOutput(tb testing.TB, drvPath, wantOutputPath zbstore.Path, wantOutputContent []byte, resp *zbstorerpc.Build) {
@@ -1088,7 +1246,12 @@ func checkSingleFileOutput(tb testing.TB, drvPath, wantOutputPath zbstore.Path, 
 			},
 		},
 	}
-	diff := cmp.Diff(want, got, buildResultOption)
+	diff := cmp.Diff(
+		want, got,
+		buildResultOption,
+		ignoreDrvHashOption,
+		cmp.FilterPath(isRealizeOutputSignaturesField, cmp.Ignore()),
+	)
 	if diff != "" {
 		tb.Errorf("realize response (-want +got):\n%s", diff)
 	}

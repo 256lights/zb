@@ -207,10 +207,11 @@ type GetBuildResultRequest struct {
 
 // BuildResult is the result of a single derivation in a [Build].
 type BuildResult struct {
-	DrvPath zbstore.Path     `json:"drvPath"`
-	Status  BuildStatus      `json:"status"`
-	Outputs []*RealizeOutput `json:"outputs"`
-	LogSize int64            `json:"logSize"`
+	DrvPath zbstore.Path       `json:"drvPath"`
+	DrvHash Nullable[nix.Hash] `json:"drvHash"`
+	Status  BuildStatus        `json:"status"`
+	Outputs []*RealizeOutput   `json:"outputs"`
+	LogSize int64              `json:"logSize"`
 }
 
 // OutputForName returns the [*RealizeOutput] with the given name.
@@ -267,6 +268,8 @@ type RealizeOutput struct {
 	// Path is the store path of the output if successfully built,
 	// or null if the build failed.
 	Path Nullable[zbstore.Path] `json:"path"`
+	// Signatures is the set of signatures for the realization.
+	Signatures []*zbstore.RealizationSignature `json:"signatures"`
 }
 
 // CancelBuildMethod is the name of the method that informs the store
