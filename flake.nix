@@ -23,8 +23,8 @@
 
         inherit (pkgs.lib.attrsets) optionalAttrs;
 
-        go = pkgs.go_1_24;
-        buildGoModule = pkgs.buildGo124Module;
+        go = pkgs.go_1_25;
+        buildGoModule = pkgs.buildGo125Module;
 
         zbPackage = pkgs.callPackage ./package.nix {
           inherit buildGoModule;
@@ -40,9 +40,7 @@
               inherit buildGoModule;
             })
             go
-            (pkgs.gopls.override {
-              inherit buildGoModule;
-            })
+            pkgs.gopls
 
             # JavaScript tooling.
             pkgs.nodejs_22
