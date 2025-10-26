@@ -5,7 +5,7 @@ go 1.25.2
 require (
 	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/dsnet/compress v0.0.1
-	github.com/go-json-experiment/json v0.0.0-20250813233538-9b1f9ea2e11b
+	github.com/go-json-experiment/json v0.0.0-20251024212118-8a0206d3c796
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/handlers v1.5.2
