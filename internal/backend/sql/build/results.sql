@@ -1,5 +1,7 @@
 select
   "drv_path"."path" as "drv_path",
+  "drv_hash"."algorithm" as "drv_hash_algorithm",
+  "drv_hash"."bits" as "drv_hash_bits",
   "build_results"."status" as "status",
   "build_results"."started_at" as "started_at",
   "build_results"."ended_at" as "ended_at",
@@ -11,6 +13,7 @@ from
   "build_results"
   join "builds" on "builds"."id" = "build_results"."build_id"
   join "paths" as "drv_path" on "drv_path"."id" = "build_results"."drv_path"
+  left join "drv_hashes" as "drv_hash" on "drv_hash"."id" = "build_results"."drv_hash"
   left join "build_outputs" as "outputs" on "outputs"."result_id" = "build_results"."id"
   left join "paths" as "output_path" on "output_path"."id" = "outputs"."output_path"
 where

@@ -46,6 +46,7 @@ type serveOptions struct {
 	buildDir          string
 	buildUsersGroup   string
 	logDir            string
+	keyFiles          []string
 	sandbox           bool
 	sandboxPaths      map[string]backend.SandboxPath
 	allowKeepFailed   bool
@@ -82,6 +83,7 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 	c.Flags().StringVar(&opts.buildDir, "build-root", os.TempDir(), "`dir`ectory to store temporary build artifacts")
 	c.Flags().StringVar(&opts.logDir, "log-directory", filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "log", "zb"), "`dir`ectory to store builder logs in")
 	c.Flags().StringVar(&opts.buildUsersGroup, "build-users-group", opts.buildUsersGroup, "name of Unix `group` of users to run builds as")
+	c.Flags().StringArrayVar(&opts.keyFiles, "signing-key", nil, "key `file` for signing realizations (can be passed multiple times)")
 	c.Flags().BoolVar(&opts.sandbox, "sandbox", opts.sandbox, "run builders in a restricted environment")
 	sandboxPaths := make(map[string]string)
 	c.Flags().Var(pathMapFlag(sandboxPaths), "sandbox-path", "`path` to allow in sandbox (can be passed multiple times)")
@@ -112,6 +114,10 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 			return fmt.Errorf("sandboxing requested but not supported on %v", system.Current())
 		}
 		return fmt.Errorf("sandboxing requested but unable to use (are you running with admin privileges?)")
+	}
+	keyring, err := readKeyringFromFiles(opts.keyFiles)
+	if err != nil {
+		return err
 	}
 	storeDirGroupID, buildUsers, err := buildUsersForGroup(ctx, opts.buildUsersGroup)
 	if err != nil {
@@ -203,6 +209,7 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 		AllowKeepFailed:             opts.allowKeepFailed,
 		CoresPerBuild:               opts.coresPerBuild,
 		BuildLogRetention:           opts.buildLogRetention,
+		Keyring:                     keyring,
 	})
 	defer func() {
 		if err := backendServer.Close(); err != nil {
