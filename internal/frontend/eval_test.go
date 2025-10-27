@@ -647,6 +647,7 @@ func (store *testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.Ou
 				}
 			}
 		}),
+		Reuse: &zbstorerpc.ReusePolicy{All: true},
 	})
 	if err != nil {
 		return nil, err

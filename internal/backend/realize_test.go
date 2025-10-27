@@ -181,6 +181,7 @@ func TestRealizeReuse(t *testing.T) {
 	realize1Response := new(zbstorerpc.RealizeResponse)
 	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realize1Response, &zbstorerpc.RealizeRequest{
 		DrvPaths: []zbstore.Path{drvPath},
+		Reuse:    &zbstorerpc.ReusePolicy{All: true},
 	})
 	if err != nil {
 		t.Fatal("first RPC error:", err)
@@ -193,6 +194,7 @@ func TestRealizeReuse(t *testing.T) {
 	realize2Response := new(zbstorerpc.RealizeResponse)
 	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realize2Response, &zbstorerpc.RealizeRequest{
 		DrvPaths: []zbstore.Path{drvPath},
+		Reuse:    &zbstorerpc.ReusePolicy{All: true},
 	})
 	if err != nil {
 		t.Fatal("second RPC error:", err)
@@ -207,6 +209,103 @@ func TestRealizeReuse(t *testing.T) {
 		t.Error("accessing second build's logs:", err)
 	}
 	if want := ""; string(gotLog) != want {
+		t.Errorf("build log:\n%s\n(want %q)", gotLog, want)
+	}
+
+	const wantOutputContent = "Hello, World!\nHello, World!\n"
+	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, []byte(wantOutputContent), zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(wantOutputContent), got)
+}
+
+func TestRealizeDisableReuse(t *testing.T) {
+	ctx, cancel := testcontext.New(t)
+	defer cancel()
+	dir := backendtest.NewStoreDirectory(t)
+
+	const inputContent = "Hello, World!\n"
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
+		Name:      "hello.txt",
+		Directory: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantOutputName = "hello2.txt"
+	drvContent := &zbstore.Derivation{
+		Name:   wantOutputName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"in":  string(inputFilePath),
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		InputSources: *sets.NewSorted(
+			inputFilePath,
+		),
+		Outputs: map[string]*zbstore.DerivationOutputType{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	drvContent.Builder, drvContent.Args = catcatBuilder()
+	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(nil, exportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	realize1Response := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realize1Response, &zbstorerpc.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
+	})
+	if err != nil {
+		t.Fatal("first RPC error:", err)
+	}
+	if _, err := backendtest.WaitForSuccessfulBuild(ctx, client, realize1Response.BuildID); err != nil {
+		gotLog, _ := backendtest.ReadLog(ctx, client, realize1Response.BuildID, drvPath)
+		t.Fatalf("first build failed: %v\nlog:\n%s", err, gotLog)
+	}
+
+	realize2Response := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realize2Response, &zbstorerpc.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
+		Reuse:    nil,
+	})
+	if err != nil {
+		t.Fatal("second RPC error:", err)
+	}
+	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realize2Response.BuildID)
+	if err != nil {
+		t.Error("second build failed:", err)
+	}
+
+	gotLog, err := backendtest.ReadLog(ctx, client, realize2Response.BuildID, drvPath)
+	if err != nil {
+		t.Error("accessing second build's logs:", err)
+	}
+	if want := "catcat\n"; string(gotLog) != want {
 		t.Errorf("build log:\n%s\n(want %q)", gotLog, want)
 	}
 

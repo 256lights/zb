@@ -131,15 +131,38 @@ func validateOutputs(drv *zbstore.Derivation) error {
 	return nil
 }
 
-func findPossibleRealizations(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass) (presentInStore, absentFromStore sets.Set[zbstore.Path], err error) {
+func findPossibleRealizations(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass, reuse *zbstorerpc.ReusePolicy) (presentInStore, absentFromStore sets.Set[zbstore.Path], err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("find existing realizations for %v: %v", eqClass, err)
+		}
+	}()
+
+	rollback, err := readonlySavepoint(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rollback()
+
+	dropTrustedPublicKeys, err := createTrustedPublicKeysTable(conn, reuse.PublicKeys)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if err := dropTrustedPublicKeys(); err != nil {
+			log.Warnf(ctx, "%v", err)
+		}
+	}()
+
 	drvHash := eqClass.drvHashKey.toHash()
 	presentInStore = make(sets.Set[zbstore.Path])
 	absentFromStore = make(sets.Set[zbstore.Path])
-	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "find_realizations.sql", &sqlitex.ExecOptions{
+	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "realizations/find.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":drv_hash_algorithm": drvHash.Type().String(),
 			":drv_hash_bits":      drvHash.Bytes(nil),
 			":output_name":        eqClass.outputName.Value(),
+			":trust_all":          reuse.All,
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			rawPath := stmt.GetText("output_path")
@@ -157,9 +180,48 @@ func findPossibleRealizations(ctx context.Context, conn *sqlite.Conn, eqClass eq
 		},
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("find existing realizations for %v: %v", eqClass, err)
+		return nil, nil, err
 	}
 	return presentInStore, absentFromStore, nil
+}
+
+func createTrustedPublicKeysTable(conn *sqlite.Conn, keys []*zbstore.RealizationPublicKey) (dropTable func() error, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("create trusted public keys table: %w", err)
+		}
+	}()
+	defer sqlitex.Save(conn)(&err)
+
+	err = sqlitex.ExecuteScriptFS(conn, sqlFiles(), "realizations/create_trusted_public_keys.sql", nil)
+	if err != nil {
+		return nil, err
+	}
+	stmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "realizations/insert_trusted_public_key.sql")
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Finalize()
+
+	for _, k := range keys {
+		stmt.SetText(":format", string(k.Format))
+		stmt.SetBytes(":public_key", k.Data)
+
+		if _, err := stmt.Step(); err != nil {
+			return nil, err
+		}
+		if err := stmt.Reset(); err != nil {
+			return nil, err
+		}
+	}
+
+	return func() error {
+		err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "realizations/drop_trusted_public_keys.sql", nil)
+		if err != nil {
+			return fmt.Errorf("internal error: clean up temporary trusted public keys table: %v", err)
+		}
+		return nil
+	}, nil
 }
 
 type realizationOutput struct {
@@ -198,22 +260,22 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, keyring *Keyring
 		}
 	}
 
-	realizationStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "insert_realization.sql")
+	realizationStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "realizations/insert.sql")
 	if err != nil {
 		return fmt.Errorf("record realizations for %s: %v", drvHash, err)
 	}
 	defer realizationStmt.Finalize()
-	refClassStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "insert_reference_class.sql")
+	refClassStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "realizations/insert_reference_class.sql")
 	if err != nil {
 		return fmt.Errorf("record realizations for %s: %v", drvHash, err)
 	}
 	defer refClassStmt.Finalize()
-	publicKeyStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "insert_public_key.sql")
+	publicKeyStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "realizations/insert_public_key.sql")
 	if err != nil {
 		return fmt.Errorf("record realizations for %s: %v", drvHash, err)
 	}
 	defer publicKeyStmt.Finalize()
-	signatureStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "insert_signature.sql")
+	signatureStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "realizations/insert_signature.sql")
 	if err != nil {
 		return fmt.Errorf("record realizations for %s: %v", drvHash, err)
 	}
@@ -1094,6 +1156,7 @@ func prepareConn(conn *sqlite.Conn) error {
 //go:embed sql/*.sql
 //go:embed sql/build/*.sql
 //go:embed sql/delete/*.sql
+//go:embed sql/realizations/*.sql
 //go:embed sql/schema/*.sql
 var rawSQLFiles embed.FS
 
