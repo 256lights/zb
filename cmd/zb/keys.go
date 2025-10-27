@@ -155,14 +155,11 @@ func runShowPublicKey(ctx context.Context, dst io.Writer, src io.Reader) error {
 	if err := keyFile.appendToKeyring(k); err != nil {
 		return err
 	}
-	var result struct {
-		Format    zbstore.RealizationSignatureFormat `json:"format"`
-		PublicKey []byte                             `json:"publicKey,format:base64"`
-	}
+	var result zbstore.RealizationPublicKey
 	switch {
 	case len(k.Ed25519) > 0:
 		result.Format = zbstore.Ed25519SignatureFormat
-		result.PublicKey = k.Ed25519[0].Public().(ed25519.PublicKey)
+		result.Data = k.Ed25519[0].Public().(ed25519.PublicKey)
 	default:
 		return nil
 	}

@@ -189,11 +189,16 @@ const (
 	Ed25519SignatureFormat RealizationSignatureFormat = "ed25519"
 )
 
+// RealizationPublicKey stores a public key used for a [RealizationSignature].
+type RealizationPublicKey struct {
+	Format RealizationSignatureFormat `json:"format"`
+	Data   []byte                     `json:"publicKey,format:base64"`
+}
+
 // A RealizationSignature is a cryptographic signature of a [RealizationOutputReference], [Realization] tuple.
 type RealizationSignature struct {
-	Format    RealizationSignatureFormat `json:"format"`
-	PublicKey []byte                     `json:"publicKey,format:base64"`
-	Signature []byte                     `json:"signature,format:base64"`
+	PublicKey RealizationPublicKey `json:",inline"`
+	Signature []byte               `json:"signature,format:base64"`
 }
 
 // SignRealizationWithEd25519 creates a signature for the realization
@@ -205,29 +210,31 @@ func SignRealizationWithEd25519(ref RealizationOutputReference, r *Realization, 
 	}
 	sig := ed25519.Sign(key, v)
 	return &RealizationSignature{
-		Format:    Ed25519SignatureFormat,
-		PublicKey: key.Public().(ed25519.PublicKey),
+		PublicKey: RealizationPublicKey{
+			Format: Ed25519SignatureFormat,
+			Data:   key.Public().(ed25519.PublicKey),
+		},
 		Signature: sig,
 	}, nil
 }
 
 // VerifyRealizationSignature verifies that the signature for the realization is valid.
 func VerifyRealizationSignature(ref RealizationOutputReference, r *Realization, sig *RealizationSignature) error {
-	switch sig.Format {
+	switch sig.PublicKey.Format {
 	case Ed25519SignatureFormat:
-		if got, want := len(sig.PublicKey), ed25519.PublicKeySize; got != want {
+		if got, want := len(sig.PublicKey.Data), ed25519.PublicKeySize; got != want {
 			return fmt.Errorf("verify realization signature: ed25519 public key is the wrong size (%d instead of %d bytes)", got, want)
 		}
 		v, err := marshalRealizationForSignature(ref, r)
 		if err != nil {
 			return fmt.Errorf("verify realization signature: %v", err)
 		}
-		if !ed25519.Verify(ed25519.PublicKey(sig.PublicKey), v, sig.Signature) {
+		if !ed25519.Verify(ed25519.PublicKey(sig.PublicKey.Data), v, sig.Signature) {
 			return fmt.Errorf("verify realization signature: ed25519 signature does not match")
 		}
 		return nil
 	default:
-		return fmt.Errorf("verify realization signature: unsupported format %q", sig.Format)
+		return fmt.Errorf("verify realization signature: unsupported format %q", sig.PublicKey.Format)
 	}
 }
 

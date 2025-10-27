@@ -267,8 +267,8 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, keyring *Keyring
 			log.Warnf(ctx, "%v", err)
 		}
 		for _, sig := range signatures {
-			publicKeyStmt.SetText(":format", string(sig.Format))
-			publicKeyStmt.SetBytes(":public_key", sig.PublicKey)
+			publicKeyStmt.SetText(":format", string(sig.PublicKey.Format))
+			publicKeyStmt.SetBytes(":public_key", sig.PublicKey.Data)
 			if _, err := publicKeyStmt.Step(); err != nil {
 				return fmt.Errorf("record realizations for %v: %v", ref, err)
 			}
@@ -280,8 +280,8 @@ func recordRealizations(ctx context.Context, conn *sqlite.Conn, keyring *Keyring
 			signatureStmt.SetBytes(":drv_hash_bits", drvHash.Bytes(nil))
 			signatureStmt.SetText(":output_name", outputName)
 			signatureStmt.SetText(":output_path", string(output.path))
-			signatureStmt.SetText(":format", string(sig.Format))
-			signatureStmt.SetBytes(":public_key", sig.PublicKey)
+			signatureStmt.SetText(":format", string(sig.PublicKey.Format))
+			signatureStmt.SetBytes(":public_key", sig.PublicKey.Data)
 			signatureStmt.SetBytes(":signature", sig.Signature)
 			if _, err := signatureStmt.Step(); err != nil {
 				return fmt.Errorf("record realizations for %v: %v", ref, err)
@@ -844,10 +844,12 @@ func signaturesForRealization(stmt *sqlite.Stmt, buildID uuid.UUID, drvPath zbst
 
 		buf := make([]byte, stmt.GetLen("public_key")+stmt.GetLen("signature"))
 		newSignature := &zbstore.RealizationSignature{
-			Format: zbstore.RealizationSignatureFormat(stmt.GetText("format")),
+			PublicKey: zbstore.RealizationPublicKey{
+				Format: zbstore.RealizationSignatureFormat(stmt.GetText("format")),
+			},
 		}
 		n := stmt.GetBytes("public_key", buf)
-		newSignature.PublicKey = buf[:n:n]
+		newSignature.PublicKey.Data = buf[:n:n]
 		buf = buf[n:]
 		n = stmt.GetBytes("signature", buf)
 		newSignature.Signature = buf[:n:n]
