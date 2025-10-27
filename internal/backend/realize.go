@@ -113,7 +113,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 				})
 			}
 		}
-		b := s.newBuilder(buildID, drvCache)
+		b := s.newBuilder(buildID, drvCache, args.Reuse)
 		realizeError := b.realize(buildCtx, wantOutputs, args.KeepFailed)
 
 		recordCtx, cancel := xcontext.KeepAlive(buildCtx, 30*time.Second)
@@ -195,7 +195,7 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 		drv := drvCache[drvPath]
 		inputs := sets.Collect(drv.InputDerivationOutputs())
 
-		b := s.newBuilder(buildID, drvCache)
+		b := s.newBuilder(buildID, drvCache, args.Reuse)
 		realizeError := b.realize(buildCtx, inputs, false)
 
 		recordCtx, cancel := xcontext.KeepAlive(buildCtx, 30*time.Second)
@@ -283,6 +283,7 @@ type builder struct {
 	id     uuid.UUID
 	server *Server
 
+	reusePolicy  *zbstorerpc.ReusePolicy
 	derivations  map[zbstore.Path]*zbstore.Derivation
 	drvHashes    map[zbstore.Path]nix.Hash
 	realizations map[equivalenceClass]cachedRealization
@@ -298,12 +299,16 @@ type cachedRealization struct {
 	closure map[zbstore.Path]sets.Set[equivalenceClass]
 }
 
-func (s *Server) newBuilder(id uuid.UUID, derivations map[zbstore.Path]*zbstore.Derivation) *builder {
+func (s *Server) newBuilder(id uuid.UUID, derivations map[zbstore.Path]*zbstore.Derivation, reuse *zbstorerpc.ReusePolicy) *builder {
+	if reuse == nil {
+		reuse = new(zbstorerpc.ReusePolicy)
+	}
 	return &builder{
 		server:      s,
 		id:          id,
 		derivations: derivations,
 
+		reusePolicy:  reuse,
 		drvHashes:    make(map[zbstore.Path]nix.Hash),
 		realizations: make(map[equivalenceClass]cachedRealization),
 	}
@@ -483,7 +488,7 @@ func (b *builder) fetchRealization(ctx context.Context, conn *sqlite.Conn, eqCla
 	defer sqlitex.Save(conn)(&err)
 
 	log.Debugf(ctx, "Searching for realizations for %v...", eqClass)
-	presentInStore, absentFromStore, err := findPossibleRealizations(ctx, conn, eqClass)
+	presentInStore, absentFromStore, err := findPossibleRealizations(ctx, conn, eqClass, b.reusePolicy)
 	if err != nil {
 		return nil, err
 	}

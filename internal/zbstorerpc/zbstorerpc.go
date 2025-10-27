@@ -74,6 +74,22 @@ type RealizeRequest struct {
 	// KeepFailed indicates that if the realization fails,
 	// the user wants the store to keep the build directory for further investigation.
 	KeepFailed bool `json:"keepFailed"`
+	// Reuse defines the set of realizations that the server can use from previous builds.
+	Reuse *ReusePolicy `json:"reuse"`
+}
+
+// ReusePolicy specifies a policy for [RealizeRequest] or [ExpandRequest]
+// that determine which existing realizations can be reused.
+// The zero value or nil represents a policy that prevents any previous realizations from being used,
+// thus performing a clean build.
+type ReusePolicy struct {
+	// If All is true, all realizations can be reused
+	// and all other fields are ignored.
+	All bool `json:"all,omitzero"`
+	// PublicKeys is a set of public keys.
+	// If a realization has a valid signature whose public key is in the PublicKeys set,
+	// then the server will use that realization.
+	PublicKeys []*zbstore.RealizationPublicKey `json:"publicKeys,omitempty"`
 }
 
 // RealizeResponse is the result for [RealizeMethod].
@@ -93,6 +109,9 @@ const ExpandMethod = "zb.expand"
 type ExpandRequest struct {
 	DrvPath            zbstore.Path `json:"drvPath"`
 	TemporaryDirectory string       `json:"tempDir"`
+
+	// Reuse defines the set of realizations that the server can use from previous builds.
+	Reuse *ReusePolicy `json:"reuse"`
 }
 
 // ExpandResponse is the result for [ExpandMethod].
