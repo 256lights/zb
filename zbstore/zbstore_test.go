@@ -60,8 +60,10 @@ func TestRealizationSignature(t *testing.T) {
 				continue
 			}
 			want := &RealizationSignature{
-				Format:    Ed25519SignatureFormat,
-				PublicKey: testPublicKey,
+				PublicKey: RealizationPublicKey{
+					Format: Ed25519SignatureFormat,
+					Data:   testPublicKey,
+				},
 				Signature: test.wantEd25519,
 			}
 			if diff := cmp.Diff(want, got); diff != "" {
@@ -73,8 +75,10 @@ func TestRealizationSignature(t *testing.T) {
 	t.Run("VerifyRealizationSignature", func(t *testing.T) {
 		for _, test := range tests {
 			err := VerifyRealizationSignature(test.output, test.realization, &RealizationSignature{
-				Format:    Ed25519SignatureFormat,
-				PublicKey: testPublicKey,
+				PublicKey: RealizationPublicKey{
+					Format: Ed25519SignatureFormat,
+					Data:   testPublicKey,
+				},
 				Signature: test.wantEd25519,
 			})
 			if err != nil {
@@ -83,8 +87,10 @@ func TestRealizationSignature(t *testing.T) {
 			}
 
 			err = VerifyRealizationSignature(test.output, test.realization, &RealizationSignature{
-				Format:    Ed25519SignatureFormat,
-				PublicKey: testPublicKey,
+				PublicKey: RealizationPublicKey{
+					Format: Ed25519SignatureFormat,
+					Data:   testPublicKey,
+				},
 				Signature: make([]byte, ed25519.SignatureSize),
 			})
 			if err == nil {
@@ -97,8 +103,10 @@ func TestRealizationSignature(t *testing.T) {
 				negated[i] = ^negated[i]
 			}
 			err = VerifyRealizationSignature(test.output, test.realization, &RealizationSignature{
-				Format:    Ed25519SignatureFormat,
-				PublicKey: testPublicKey,
+				PublicKey: RealizationPublicKey{
+					Format: Ed25519SignatureFormat,
+					Data:   testPublicKey,
+				},
 				Signature: negated,
 			})
 			if err == nil {

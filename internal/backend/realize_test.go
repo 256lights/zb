@@ -1064,7 +1064,6 @@ func TestRealizeSignature(t *testing.T) {
 		0xf4, 0xd1, 0x60, 0x01, 0xf7, 0x62, 0x49, 0x61,
 		0x91, 0xbd, 0x66, 0xd7, 0x62, 0x51, 0x94, 0x70,
 	}
-	testPublicKey := testKey.Public().(ed25519.PublicKey)
 
 	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
@@ -1165,12 +1164,6 @@ func TestRealizeSignature(t *testing.T) {
 	}
 	realization := &zbstore.Realization{
 		OutputPath: wantOutputPath,
-		Signatures: []*zbstore.RealizationSignature{
-			{
-				Format:    zbstore.Ed25519SignatureFormat,
-				PublicKey: testPublicKey,
-			},
-		},
 	}
 	sig, err := zbstore.SignRealizationWithEd25519(outputRef, realization, testKey)
 	if err != nil {
