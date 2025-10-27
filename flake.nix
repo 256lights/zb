@@ -46,6 +46,12 @@
             pkgs.nodejs_22
           ];
 
+          # Since using Go 1.25 from nixpkgs,
+          # the Go tool seems to try to use cgo for net and os/user,
+          # even though it is not necessary.
+          # We disable cgo forcibly for consistency.
+          CGO_ENABLED = "0";
+
           hardeningDisable = [ "fortify" ];
         };
 
