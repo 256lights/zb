@@ -106,8 +106,8 @@ func newServeCommand(g *globalConfig) *cobra.Command {
 }
 
 func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
-	if !g.storeDir.IsNative() {
-		return fmt.Errorf("%s cannot be used on this system", g.storeDir)
+	if !g.Directory.IsNative() {
+		return fmt.Errorf("%s cannot be used on this system", g.Directory)
 	}
 	if opts.sandbox && !backend.CanSandbox() {
 		if !backend.SystemSupportsSandbox() {
@@ -123,10 +123,10 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureStoreDirectory(string(g.storeDir), storeDirGroupID); err != nil {
+	if err := ensureStoreDirectory(string(g.Directory), storeDirGroupID); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(g.storeSocket), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(g.StoreSocket), 0o755); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(opts.dbPath), 0o755); err != nil {
@@ -165,12 +165,12 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 		l = listeners[0]
 	} else {
 		var err error
-		l, err = listenUnix(g.storeSocket)
+		l, err = listenUnix(g.StoreSocket)
 		if err != nil {
 			return err
 		}
 		defer func() {
-			if err := os.Remove(g.storeSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := os.Remove(g.StoreSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
 				log.Warnf(ctx, "Failed to clean up socket: %v", err)
 			}
 		}()
@@ -198,8 +198,8 @@ func runServe(ctx context.Context, g *globalConfig, opts *serveOptions) error {
 		return nil
 	})
 
-	log.Infof(ctx, "Listening on %s", g.storeSocket)
-	backendServer := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
+	log.Infof(ctx, "Listening on %s", g.StoreSocket)
+	backendServer := backend.NewServer(g.Directory, opts.dbPath, &backend.Options{
 		BuildDirectory:              opts.buildDir,
 		LogDirectory:                opts.logDir,
 		ContentAddressBufferCreator: bytebuffer.TempFileCreator{Pattern: contentAddressTempFilePattern},

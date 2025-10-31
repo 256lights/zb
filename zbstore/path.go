@@ -159,6 +159,26 @@ func (dir Directory) IsNative() bool {
 	return detectPathStyle(string(dir)) == localPathStyle()
 }
 
+// MarshalText returns a byte slice of the path
+// or an error if it's empty.
+func (dir Directory) MarshalText() ([]byte, error) {
+	if dir == "" {
+		return nil, fmt.Errorf("marshal zb store directory: empty")
+	}
+	return []byte(dir), nil
+}
+
+// UnmarshalText validates and cleans the directory in the same way as [CleanDirectory]
+// and stores it into *dir.
+func (dir *Directory) UnmarshalText(data []byte) error {
+	var err error
+	*dir, err = CleanDirectory(string(data))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // Path is a zb store path:
 // the absolute path of a zb store object in the filesystem.
 // For example: "/opt/zb/store/s66mzxpvicwk07gjbjfw9izjfa797vsw-hello-2.12.1"
