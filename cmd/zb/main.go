@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
+	"iter"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -32,24 +32,6 @@ import (
 	"zombiezen.com/go/log"
 )
 
-type globalConfig struct {
-	storeDir    zbstore.Directory
-	storeSocket string
-	cacheDB     string
-}
-
-func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) (_ *jsonrpc.Client, wait func()) {
-	var wg sync.WaitGroup
-	c := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
-		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", g.storeSocket)
-		if err != nil {
-			return nil, err
-		}
-		return zbstorerpc.NewCodec(conn, opts), nil
-	})
-	return c, wg.Wait
-}
-
 func main() {
 	rootCommand := &cobra.Command{
 		Use:           "zb",
@@ -58,33 +40,48 @@ func main() {
 		SilenceUsage:  true,
 	}
 
-	g := &globalConfig{
-		cacheDB:     filepath.Join(cacheDir(), "zb", "cache.db"),
-		storeSocket: os.Getenv("ZB_STORE_SOCKET"),
-	}
-	var err error
-	g.storeDir, err = zbstore.DirectoryFromEnvironment()
-	if err != nil {
-		initLogging(false)
+	g := defaultGlobalConfig()
+	if err := g.mergeEnvironment(); err != nil {
+		initLogging(g.Debug)
 		log.Errorf(context.Background(), "%v", err)
 		os.Exit(1)
 	}
-	if g.storeSocket == "" {
-		g.storeSocket = filepath.Join(defaultVarDir(), "server.sock")
+	configFilePaths := iter.Seq[string](func(yield func(string) bool) {
+		for dir := range systemConfigDirs() {
+			if !yield(filepath.Join(dir, "zb", "config.json")) {
+				return
+			}
+			if !yield(filepath.Join(dir, "zb", "config.jwcc")) {
+				return
+			}
+		}
+	})
+	if err := g.mergeFiles(configFilePaths); err != nil {
+		initLogging(g.Debug)
+		log.Errorf(context.Background(), "%v", err)
+		os.Exit(1)
 	}
 
 	ignoreSIGPIPE()
 	ctx, cancel := signal.NotifyContext(context.Background(), interruptSignals...)
 
-	rootCommand.PersistentFlags().StringVar(&g.cacheDB, "cache", g.cacheDB, "`path` to cache database")
-	rootCommand.PersistentFlags().Var((*storeDirectoryFlag)(&g.storeDir), "store", "path to store `dir`ectory")
-	rootCommand.PersistentFlags().StringVar(&g.storeSocket, "store-socket", g.storeSocket, "`path` to store server socket")
-	showDebug := rootCommand.PersistentFlags().Bool("debug", false, "show debugging output")
+	rootCommand.PersistentFlags().StringVar(&g.CacheDB, "cache", g.CacheDB, "`path` to cache database")
+	rootCommand.PersistentFlags().Var((*storeDirectoryFlag)(&g.Directory), "store", "path to store `dir`ectory")
+	rootCommand.PersistentFlags().StringVar(&g.StoreSocket, "store-socket", g.StoreSocket, "`path` to store server socket")
+	rootCommand.PersistentFlags().BoolVar(&g.Debug, "debug", g.Debug, "show debugging output")
 	versionCobraFlag := rootCommand.PersistentFlags().VarPF(versionFlag{ctx}, "version", "", "show version information")
 	versionCobraFlag.NoOptDefVal = "true"
+	extraConfigs := rootCommand.PersistentFlags().StringArray("config", nil, "`path` to a configuration file to load (can be passed multiple times)")
 
 	rootCommand.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		initLogging(*showDebug)
+		// Load any command-line-passed configuration files before merging the rest.
+		if err := g.mergeFiles(slices.Values(*extraConfigs)); err != nil {
+			return err
+		}
+		initLogging(g.Debug)
+		if err := g.validate(); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -103,13 +100,13 @@ func main() {
 		luacCommand,
 	)
 
-	err = rootCommand.ExecuteContext(ctx)
+	err := rootCommand.ExecuteContext(ctx)
 	if errors.Is(err, errShowVersion) {
 		err = runVersion(ctx)
 	}
 	cancel()
 	if err != nil {
-		initLogging(*showDebug)
+		initLogging(g.Debug)
 		log.Errorf(context.Background(), "%v", err)
 		os.Exit(1)
 	}
@@ -118,13 +115,12 @@ func main() {
 type evalOptions struct {
 	expression bool
 	args       []string
-	allowEnv   stringAllowList
 	keepFailed bool
 }
 
 func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client, di *zbstorerpc.DeferredImporter) (*frontend.Eval, error) {
 	store := &rpcStore{
-		dir:        g.storeDir,
+		dir:        g.Directory,
 		keepFailed: opts.keepFailed,
 		Store: zbstorerpc.Store{
 			Handler: storeClient,
@@ -133,10 +129,10 @@ func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client, d
 	di.SetImporter(store)
 	return frontend.NewEval(&frontend.Options{
 		Store:          store,
-		StoreDirectory: g.storeDir,
-		CacheDBPath:    g.cacheDB,
+		StoreDirectory: g.Directory,
+		CacheDBPath:    g.CacheDB,
 		LookupEnv: func(ctx context.Context, key string) (string, bool) {
-			if !opts.allowEnv.Has(key) {
+			if !g.AllowEnv.Has(key) {
 				log.Warnf(ctx, "os.getenv(%s) not permitted (use --allow-env=%s if this is intentional)", lualex.Quote(key), key)
 				return "", false
 			}
@@ -165,7 +161,7 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 	opts := new(evalOptions)
 	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as Lua expression")
 	c.Flags().BoolVarP(&opts.keepFailed, "keep-failed", "k", false, "keep temporary directories of failed builds")
-	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
+	addEnvAllowListFlag(c.Flags(), &g.AllowEnv)
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.args = args
 		return runEval(cmd.Context(), g, opts)
@@ -232,7 +228,7 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 	opts := new(buildOptions)
 	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as a Lua expression")
 	c.Flags().BoolVarP(&opts.keepFailed, "keep-failed", "k", false, "keep temporary directories of failed builds")
-	addEnvAllowListFlag(c.Flags(), &opts.allowEnv)
+	addEnvAllowListFlag(c.Flags(), &g.AllowEnv)
 	c.Flags().StringVarP(&opts.outLink, "out-link", "o", "result", "change the name of the output path symlink to `path`")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.args = args
@@ -517,11 +513,6 @@ func outputFileName(name string) string {
 		return "stdout"
 	}
 	return name
-}
-
-// defaultVarDir returns "/opt/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
-func defaultVarDir() string {
-	return filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "zb")
 }
 
 func addEnvAllowListFlag(fset *pflag.FlagSet, list *stringAllowList) {

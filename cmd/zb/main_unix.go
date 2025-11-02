@@ -6,6 +6,7 @@
 package main
 
 import (
+	"iter"
 	"os"
 	"os/signal"
 
@@ -20,6 +21,19 @@ var interruptSignals = []os.Signal{
 
 func cacheDir() string {
 	return xdgdir.Cache.Path()
+}
+
+// systemConfigDirs returns a sequence of configuration directory paths
+// in increasing order of preference (i.e. later entries should override earlier entries).
+func systemConfigDirs() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		paths := xdgdir.Config.SearchPaths()
+		for i := len(paths) - 1; i >= 0; i-- {
+			if !yield(paths[i]) {
+				return
+			}
+		}
+	}
 }
 
 func ignoreSIGPIPE() {

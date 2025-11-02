@@ -500,7 +500,7 @@ func newStoreObjectDeleteCommand(g *globalConfig) *cobra.Command {
 }
 
 func runStoreObjectDelete(ctx context.Context, g *globalConfig, opts *storeObjectDeleteOptions) error {
-	backendServer := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
+	backendServer := backend.NewServer(g.Directory, opts.dbPath, &backend.Options{
 		DatabasePoolSize:  1,
 		DisableSandbox:    true,
 		BuildLogRetention: -1,
@@ -553,7 +553,7 @@ func runStoreObjectRegister(ctx context.Context, g *globalConfig, opts *storeObj
 		return err
 	}
 
-	backendServer := backend.NewServer(g.storeDir, opts.dbPath, &backend.Options{
+	backendServer := backend.NewServer(g.Directory, opts.dbPath, &backend.Options{
 		DatabasePoolSize:            1,
 		DisableSandbox:              true,
 		BuildLogRetention:           -1,

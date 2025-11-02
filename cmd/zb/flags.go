@@ -6,10 +6,13 @@ package main
 import (
 	"bytes"
 	"encoding/csv"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 )
@@ -26,6 +29,71 @@ func (list *stringAllowList) Has(s string) bool {
 		return false
 	}
 	return list.all || list.set.Has(s)
+}
+
+// MarshalJSONTo marshals a list if list.all is true,
+// otherwise the array of strings in the set.
+func (list *stringAllowList) MarshalJSONTo(enc *jsontext.Encoder) error {
+	if list.all {
+		return enc.WriteToken(jsontext.True)
+	}
+	if err := enc.WriteToken(jsontext.BeginArray); err != nil {
+		return err
+	}
+	seq := list.set.All()
+	if deterministic, _ := jsonv2.GetOption(enc.Options(), jsonv2.Deterministic); deterministic {
+		seq = slices.Values(slices.Sorted(seq))
+	}
+	for s := range seq {
+		if err := enc.WriteToken(jsontext.String(s)); err != nil {
+			return err
+		}
+	}
+	if err := enc.WriteToken(jsontext.EndArray); err != nil {
+		return err
+	}
+	return nil
+}
+
+// UnmarshalJSONFrom unmarshals a boolean or an array of strings.
+// Booleans are treated as setting the all flag,
+// and arrays add to list.set.
+func (list *stringAllowList) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
+	switch kind := dec.PeekKind(); kind {
+	case 't':
+		*list = stringAllowList{all: true}
+		if _, err := dec.ReadToken(); err != nil {
+			return fmt.Errorf("unmarshal allow list: %w", err)
+		}
+	case 'f':
+		*list = stringAllowList{all: false}
+		if _, err := dec.ReadToken(); err != nil {
+			return fmt.Errorf("unmarshal allow list: %w", err)
+		}
+	case '[':
+		if _, err := dec.ReadToken(); err != nil {
+			return fmt.Errorf("unmarshal allow list: %w", err)
+		}
+
+	listBody:
+		for {
+			tok, err := dec.ReadToken()
+			if err != nil {
+				return fmt.Errorf("unmarshal allow list: %w", err)
+			}
+			switch tok.Kind() {
+			case '"':
+				list.set.Add(tok.String())
+			case ']':
+				break listBody
+			default:
+				return fmt.Errorf("unmarshal allow list: only strings allowed in list")
+			}
+		}
+	default:
+		return fmt.Errorf("unmarshal allow list: %v not supported", kind)
+	}
+	return nil
 }
 
 func (list *stringAllowList) argFlag(csv bool) *stringAllowListFlag {
