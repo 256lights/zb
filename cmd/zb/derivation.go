@@ -61,6 +61,7 @@ func newDerivationShowCommand(g *globalConfig) *cobra.Command {
 	opts := new(derivationShowOptions)
 	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as Lua expression")
 	addEnvAllowListFlag(c.Flags(), &g.AllowEnv)
+	addCleanFlag(c.Flags(), &opts.clean)
 	c.Flags().BoolVar(&opts.jsonFormat, "json", false, "print derivation as JSON")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.args = args
@@ -345,6 +346,7 @@ func newDerivationEnvCommand(g *globalConfig) *cobra.Command {
 	opts := new(derivationEnvOptions)
 	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as Lua expression")
 	addEnvAllowListFlag(c.Flags(), &g.AllowEnv)
+	addCleanFlag(c.Flags(), &opts.clean)
 	c.Flags().BoolVar(&opts.jsonFormat, "json", false, "print environments as JSON")
 	c.Flags().StringVar(&opts.tempDir, "temp-dir", os.TempDir(), "temporary `dir`ectory to fill in")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
@@ -398,6 +400,7 @@ func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvO
 	err = jsonrpc.Do(ctx, storeClient, zbstorerpc.ExpandMethod, expandResponse, &zbstorerpc.ExpandRequest{
 		DrvPath:            drv.Path,
 		TemporaryDirectory: opts.tempDir,
+		Reuse:              opts.reusePolicy(g),
 	})
 	if err != nil {
 		return err

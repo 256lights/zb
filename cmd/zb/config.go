@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/tailscale/hujson"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -21,11 +22,12 @@ import (
 )
 
 type globalConfig struct {
-	Debug       bool              `json:"debug"`
-	Directory   zbstore.Directory `json:"storeDirectory"`
-	StoreSocket string            `json:"storeSocket"`
-	CacheDB     string            `json:"cacheDB"`
-	AllowEnv    stringAllowList   `json:"allowEnvironment"`
+	Debug             bool                            `json:"debug"`
+	Directory         zbstore.Directory               `json:"storeDirectory"`
+	StoreSocket       string                          `json:"storeSocket"`
+	CacheDB           string                          `json:"cacheDB"`
+	AllowEnv          stringAllowList                 `json:"allowEnvironment"`
+	TrustedPublicKeys []*zbstore.RealizationPublicKey `json:"trustedPublicKeys"`
 }
 
 // defaultGlobalConfig returns
@@ -77,6 +79,68 @@ func (g *globalConfig) mergeFiles(paths iter.Seq[string]) error {
 	return nil
 }
 
+// UnmarshalJSONFrom unmarshals the configuration object from the JSON decoder,
+// merging any fields in the JSON object with existing values.
+func (g *globalConfig) UnmarshalJSONFrom(in *jsontext.Decoder) error {
+	tok, err := in.ReadToken()
+	if err != nil {
+		return err
+	}
+	if got := tok.Kind(); got != '{' {
+		return fmt.Errorf("config must be an object not a %v", got)
+	}
+
+	for {
+		keyToken, err := in.ReadToken()
+		if err != nil {
+			return err
+		}
+		switch kind := keyToken.Kind(); kind {
+		case '}':
+			return nil
+		case '"':
+			// Keep going.
+		default:
+			return fmt.Errorf("unexpected non-string key (%v) in object", kind)
+		}
+
+		switch k := keyToken.String(); k {
+		case "debug":
+			if err := jsonv2.UnmarshalDecode(in, &g.Debug); err != nil {
+				return fmt.Errorf("unmarshal config.debug: %w", err)
+			}
+		case "storeDirectory":
+			if err := jsonv2.UnmarshalDecode(in, &g.Directory); err != nil {
+				return fmt.Errorf("unmarshal config.storeDirectory: %w", err)
+			}
+		case "storeSocket":
+			if err := jsonv2.UnmarshalDecode(in, &g.StoreSocket); err != nil {
+				return fmt.Errorf("unmarshal config.storeSocket: %w", err)
+			}
+		case "cacheDB":
+			if err := jsonv2.UnmarshalDecode(in, &g.CacheDB); err != nil {
+				return fmt.Errorf("unmarshal config.cacheDB: %w", err)
+			}
+		case "allowEnvironment":
+			if err := jsonv2.UnmarshalDecode(in, &g.AllowEnv); err != nil {
+				return fmt.Errorf("unmarshal config.allowEnvironment: %w", err)
+			}
+		case "trustedPublicKeys":
+			// Use any unused capacity at end of the slice.
+			newKeys := g.TrustedPublicKeys[len(g.TrustedPublicKeys):]
+
+			if err := jsonv2.UnmarshalDecode(in, &newKeys); err != nil {
+				return fmt.Errorf("unmarshal config.trustedPublicKeys: %w", err)
+			}
+			g.TrustedPublicKeys = append(g.TrustedPublicKeys, newKeys...)
+		default:
+			if reject, _ := jsonv2.GetOption(in.Options(), jsonv2.RejectUnknownMembers); reject {
+				return fmt.Errorf("unmarshal config: unknown field %q", k)
+			}
+		}
+	}
+}
+
 func (g *globalConfig) validate() error {
 	if !filepath.IsAbs(string(g.Directory)) {
 		// The directory must be in the format of the local OS.
@@ -90,6 +154,13 @@ func (g *globalConfig) validate() error {
 	}
 
 	return nil
+}
+
+func (g *globalConfig) reusePolicy() *zbstorerpc.ReusePolicy {
+	if len(g.TrustedPublicKeys) == 0 {
+		return &zbstorerpc.ReusePolicy{All: true}
+	}
+	return &zbstorerpc.ReusePolicy{PublicKeys: g.TrustedPublicKeys}
 }
 
 func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) (_ *jsonrpc.Client, wait func()) {
