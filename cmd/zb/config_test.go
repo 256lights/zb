@@ -13,6 +13,7 @@ import (
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 )
 
@@ -41,6 +42,28 @@ func TestGlobalConfigMergeFiles(t *testing.T) {
 			want: globalConfig{
 				Debug:     true,
 				Directory: "/bar",
+			},
+		},
+		{
+			name: "DontMergeAllowEnvironment",
+			files: []string{
+				`{"allowEnvironment": ["FOO"]}` + "\n",
+				`{"allowEnvironment": ["BAR"]}` + "\n",
+			},
+			want: globalConfig{
+				AllowEnv: stringAllowList{
+					set: sets.New("BAR"),
+				},
+			},
+		},
+		{
+			name: "BooleanClearsSet",
+			files: []string{
+				`{"allowEnvironment": ["FOO"]}` + "\n",
+				`{"allowEnvironment": true}` + "\n",
+			},
+			want: globalConfig{
+				AllowEnv: stringAllowList{all: true},
 			},
 		},
 		{

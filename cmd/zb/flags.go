@@ -56,8 +56,7 @@ func (list *stringAllowList) MarshalJSONTo(enc *jsontext.Encoder) error {
 }
 
 // UnmarshalJSONFrom unmarshals a boolean or an array of strings.
-// Booleans are treated as setting the all flag,
-// and arrays add to list.set.
+// Booleans are treated as setting the all flag.
 func (list *stringAllowList) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	switch kind := dec.PeekKind(); kind {
 	case 't':
@@ -73,6 +72,11 @@ func (list *stringAllowList) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	case '[':
 		if _, err := dec.ReadToken(); err != nil {
 			return fmt.Errorf("unmarshal allow list: %w", err)
+		}
+		if list.set == nil {
+			list.set = make(sets.Set[string])
+		} else {
+			list.set.Clear()
 		}
 
 	listBody:
