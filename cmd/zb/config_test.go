@@ -10,7 +10,10 @@ import (
 	"slices"
 	"testing"
 
+	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"zb.256lights.llc/pkg/zbstore"
 )
 
 func TestDefaultGlobalConfig(t *testing.T) {
@@ -40,6 +43,34 @@ func TestGlobalConfigMergeFiles(t *testing.T) {
 				Directory: "/bar",
 			},
 		},
+		{
+			name: "MergePublicKeys",
+			files: []string{
+				`{"trustedPublicKeys": [{"format": "ed25519", "publicKey": "+NMDNfvjCmdT9mLr9zadYQXwF/mPLsToMw36yX7w6HCVCSK9J2WsMGPCAT9U2Y959NFgAfdiSWGRvWbXYlGUcA=="}]}` + "\n",
+				`{"trustedPublicKeys": [{"format": "foo", "publicKey": "YmFy"}]}` + "\n",
+			},
+			want: globalConfig{
+				TrustedPublicKeys: []*zbstore.RealizationPublicKey{
+					{
+						Format: "ed25519",
+						Data: []byte{
+							0xf8, 0xd3, 0x03, 0x35, 0xfb, 0xe3, 0x0a, 0x67,
+							0x53, 0xf6, 0x62, 0xeb, 0xf7, 0x36, 0x9d, 0x61,
+							0x05, 0xf0, 0x17, 0xf9, 0x8f, 0x2e, 0xc4, 0xe8,
+							0x33, 0x0d, 0xfa, 0xc9, 0x7e, 0xf0, 0xe8, 0x70,
+							0x95, 0x09, 0x22, 0xbd, 0x27, 0x65, 0xac, 0x30,
+							0x63, 0xc2, 0x01, 0x3f, 0x54, 0xd9, 0x8f, 0x79,
+							0xf4, 0xd1, 0x60, 0x01, 0xf7, 0x62, 0x49, 0x61,
+							0x91, 0xbd, 0x66, 0xd7, 0x62, 0x51, 0x94, 0x70,
+						},
+					},
+					{
+						Format: "foo",
+						Data:   []byte{0x62, 0x61, 0x72},
+					},
+				},
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -59,9 +90,42 @@ func TestGlobalConfigMergeFiles(t *testing.T) {
 			if err != nil {
 				t.Error("mergeFiles:", err)
 			}
-			if diff := cmp.Diff(&test.want, got, cmp.AllowUnexported(stringAllowList{})); diff != "" {
+			if diff := cmp.Diff(&test.want, got, globalConfigCompareOptions); diff != "" {
 				t.Errorf("-want +got:\n%s", diff)
 			}
 		})
 	}
+}
+
+func FuzzConfigMarshal(f *testing.F) {
+	f.Add([]byte(`{"debug": true, "storeDirectory": "/foo"}` + "\n"))
+	f.Add([]byte(`{"storeDirectory": "/bar"}` + "\n"))
+	f.Add([]byte(`{"storeSocket": "/var/foo.socket"}` + "\n"))
+	f.Add([]byte(`{"cacheDB": "/var/cache.db"}` + "\n"))
+	f.Add([]byte(`{"trustedPublicKeys": []}` + "\n"))
+	f.Add([]byte(`{"trustedPublicKeys": [{"format": "ed25519", "publicKey": "+NMDNfvjCmdT9mLr9zadYQXwF/mPLsToMw36yX7w6HCVCSK9J2WsMGPCAT9U2Y959NFgAfdiSWGRvWbXYlGUcA=="}]}` + "\n"))
+	f.Add([]byte(`{"trustedPublicKeys": [{"format": "foo", "publicKey": "YmFy"}]}`))
+
+	f.Fuzz(func(t *testing.T, in []byte) {
+		init := defaultGlobalConfig()
+		if err := jsonv2.Unmarshal(in, &init); err != nil {
+			t.Skip(err)
+		}
+		marshalled, err := jsonv2.Marshal(init)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := new(globalConfig)
+		if err := jsonv2.Unmarshal(marshalled, got, jsonv2.RejectUnknownMembers(true)); err != nil {
+			t.Error("Unmarshal:", err)
+		}
+		if diff := cmp.Diff(init, got, globalConfigCompareOptions); diff != "" {
+			t.Errorf("Marshal result -want +got:\n%s", diff)
+		}
+	})
+}
+
+var globalConfigCompareOptions = cmp.Options{
+	cmp.AllowUnexported(stringAllowList{}),
+	cmpopts.EquateEmpty(),
 }

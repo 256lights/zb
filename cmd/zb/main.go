@@ -116,6 +116,7 @@ type evalOptions struct {
 	expression bool
 	args       []string
 	keepFailed bool
+	clean      bool
 }
 
 func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client, di *zbstorerpc.DeferredImporter) (*frontend.Eval, error) {
@@ -125,6 +126,7 @@ func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client, d
 		Store: zbstorerpc.Store{
 			Handler: storeClient,
 		},
+		reuse: opts.reusePolicy(g),
 	}
 	di.SetImporter(store)
 	return frontend.NewEval(&frontend.Options{
@@ -142,6 +144,13 @@ func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client, d
 			Pattern: "zb-download-*",
 		},
 	})
+}
+
+func (opts *evalOptions) reusePolicy(g *globalConfig) *zbstorerpc.ReusePolicy {
+	if opts.clean {
+		return nil
+	}
+	return g.reusePolicy()
 }
 
 func newEvalCommand(g *globalConfig) *cobra.Command {
@@ -162,6 +171,7 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as Lua expression")
 	c.Flags().BoolVarP(&opts.keepFailed, "keep-failed", "k", false, "keep temporary directories of failed builds")
 	addEnvAllowListFlag(c.Flags(), &g.AllowEnv)
+	addCleanFlag(c.Flags(), &opts.clean)
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.args = args
 		return runEval(cmd.Context(), g, opts)
@@ -230,6 +240,7 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 	c.Flags().BoolVarP(&opts.keepFailed, "keep-failed", "k", false, "keep temporary directories of failed builds")
 	addEnvAllowListFlag(c.Flags(), &g.AllowEnv)
 	c.Flags().StringVarP(&opts.outLink, "out-link", "o", "result", "change the name of the output path symlink to `path`")
+	addCleanFlag(c.Flags(), &opts.clean)
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.args = args
 		return runBuild(cmd.Context(), g, opts)
@@ -282,6 +293,7 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 	err = jsonrpc.Do(ctx, storeClient, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths:   drvPaths,
 		KeepFailed: opts.keepFailed,
+		Reuse:      opts.reusePolicy(g),
 	})
 	if err != nil {
 		return err
@@ -311,6 +323,7 @@ type rpcStore struct {
 	zbstorerpc.Store
 	dir        zbstore.Directory
 	keepFailed bool
+	reuse      *zbstorerpc.ReusePolicy
 }
 
 func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
@@ -324,6 +337,7 @@ func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.Output
 			}
 		}),
 		KeepFailed: store.keepFailed,
+		Reuse:      store.reuse,
 	})
 	if err != nil {
 		return nil, err
@@ -519,6 +533,10 @@ func addEnvAllowListFlag(fset *pflag.FlagSet, list *stringAllowList) {
 	fset.Var(list.argFlag(true), "allow-env", "allow the given environment `var`iable to be accessed with os.getenv")
 	all := fset.VarPF(list.allFlag(), "allow-all-env", "", "allow all environment variables to be accessed with os.getenv")
 	all.NoOptDefVal = "true"
+}
+
+func addCleanFlag(fset *pflag.FlagSet, p *bool) {
+	fset.BoolVar(p, "clean", false, "ignore any previous realizations in the store")
 }
 
 var initLogOnce sync.Once
