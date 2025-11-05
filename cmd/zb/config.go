@@ -21,6 +21,8 @@ import (
 	"zb.256lights.llc/pkg/zbstore"
 )
 
+// globalConfig is the set of configuration settings and persistent command-line flags.
+// More details at https://main--zb-docs.netlify.app/configuration
 type globalConfig struct {
 	Debug             bool                            `json:"debug"`
 	Directory         zbstore.Directory               `json:"storeDirectory"`
@@ -30,7 +32,8 @@ type globalConfig struct {
 	TrustedPublicKeys []*zbstore.RealizationPublicKey `json:"trustedPublicKeys"`
 }
 
-// defaultGlobalConfig returns
+// defaultGlobalConfig returns a [globalConfig] populated with default values based on OS,
+// but does not reference any environment variables.
 func defaultGlobalConfig() *globalConfig {
 	return &globalConfig{
 		Directory:   zbstore.DefaultDirectory(),
@@ -38,6 +41,7 @@ func defaultGlobalConfig() *globalConfig {
 	}
 }
 
+// mergeEnvironment copies environment variable values to [globalConfig] fields.
 func (g *globalConfig) mergeEnvironment() error {
 	if dir := os.Getenv("ZB_STORE_DIR"); dir != "" {
 		zbDir, err := zbstore.CleanDirectory(dir)
@@ -58,6 +62,9 @@ func (g *globalConfig) mergeEnvironment() error {
 	return nil
 }
 
+// mergeFiles parses each path as JSON With Commas and Comments
+// and merges each into g.
+// Thus, later files in the paths sequence take precedence over earlier files.
 func (g *globalConfig) mergeFiles(paths iter.Seq[string]) error {
 	for path := range paths {
 		huJSONData, err := os.ReadFile(path)
@@ -141,6 +148,9 @@ func (g *globalConfig) UnmarshalJSONFrom(in *jsontext.Decoder) error {
 	}
 }
 
+// validate checks the configuration for any missing or semantically incorrect settings.
+// validate should be called after the configuration is complete,
+// because partial configurations may not pass validation.
 func (g *globalConfig) validate() error {
 	if !filepath.IsAbs(string(g.Directory)) {
 		// The directory must be in the format of the local OS.
