@@ -8,16 +8,67 @@ package zbstorerpc
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"iter"
+	"net"
+	"os"
 	"slices"
 	"time"
 	"unicode/utf8"
 
+	"zb.256lights.llc/pkg/internal/storepath"
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
 )
+
+// NewListener creates a net.Listener for the zbstore RPC server.
+// It listens on the Unix domain socket specified by `storepath.SocketPath()`.
+// This function performs a pre-flight check for stale or active socket files
+// to ensure only one server instance runs at a time and to clean up gracefully.
+//
+// The caller is responsible for serving RPCs on the returned listener and closing it.
+// When the listener is closed, the underlying socket file will typically be removed
+// by the operating system.
+func NewListener() (net.Listener, error) {
+	socketPath := storepath.SocketPath()
+
+	// Check if the socket path already exists.
+	fileInfo, err := os.Stat(socketPath)
+	if err == nil {
+		// Path exists. Check if it's an active socket, a stale one, or something else.
+		conn, dialErr := net.DialTimeout("unix", socketPath, 100*time.Millisecond)
+		if dialErr == nil {
+			// A server is actively listening on the socket.
+			conn.Close()
+			return nil, fmt.Errorf("zbstore: server already running; a process is listening on %q", socketPath)
+		}
+
+		// Dial failed, so the socket is likely stale.
+		// Verify it's a socket file before removing it to avoid deleting other file types.
+		if fileInfo.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("zbstore: path %q exists but is not a socket (mode %s); please remove it manually", socketPath, fileInfo.Mode())
+		}
+
+		// It's a stale socket file. Attempt to remove it.
+		fmt.Printf("zbstore: removing stale socket file at %q\n", socketPath)
+		if removeErr := os.Remove(socketPath); removeErr != nil {
+			return nil, fmt.Errorf("zbstore: could not clean up stale socket at %q: %w; please remove it manually", socketPath, removeErr)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		// An unexpected error occurred while checking the path (e.g., permissions issue).
+		return nil, fmt.Errorf("zbstore: failed to check socket path %q: %w", socketPath, err)
+	}
+
+	// At this point, either the socket path did not exist or we have successfully cleaned it up.
+	// Proceed with creating the new listener.
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("zbstore: failed to listen on %q: %w", socketPath, err)
+	}
+	return ln, nil
+}
 
 // NopMethod is the name of the method that does nothing.
 // The request is ignored and the response is null.
@@ -167,229 +218,4 @@ type Build struct {
 	StartedAt time.Time           `json:"startedAt"`
 	EndedAt   Nullable[time.Time] `json:"endedAt"`
 	Results   []*BuildResult      `json:"results"`
-	Expand    *ExpandResult       `json:"expand,omitempty"`
-}
-
-// Duration returns the length of the build.
-func (resp *Build) Duration() time.Duration {
-	if !resp.EndedAt.Valid {
-		return 0
-	}
-	return resp.EndedAt.X.Sub(resp.StartedAt)
-}
-
-// ResultForPath returns the build result with the given derivation path.
-// It returns an error if there is not exactly one.
-func (resp *Build) ResultForPath(drvPath zbstore.Path) (*BuildResult, error) {
-	var seq iter.Seq[*BuildResult]
-	if resp == nil {
-		seq = func(yield func(*BuildResult) bool) {}
-	} else {
-		seq = func(yield func(*BuildResult) bool) {
-			for _, result := range resp.Results {
-				if result.DrvPath == drvPath {
-					if !yield(result) {
-						return
-					}
-				}
-			}
-		}
-	}
-
-	result, err := xiter.Single(seq)
-	if err != nil {
-		err = fmt.Errorf("build result for %s: %w", drvPath, err)
-	}
-	return result, err
-}
-
-// FindRealizeOutput searches through resp.Results for the given output.
-func (resp *Build) FindRealizeOutput(ref zbstore.OutputReference) (Nullable[zbstore.Path], error) {
-	var results []*BuildResult
-	if resp != nil {
-		results = resp.Results
-	}
-	return FindRealizeOutput(slices.Values(results), ref)
-}
-
-// GetBuildResultMethod is the name of the method
-// that queries the status of a single builder in a [Build].
-// [GetBuildResultRequest] is used for the request
-// and [BuildResult] is used for the response.
-const GetBuildResultMethod = "zb.getBuildResult"
-
-// GetBuildResultRequest is the set of parameters for [GetBuildMethod].
-type GetBuildResultRequest struct {
-	BuildID string       `json:"buildID"`
-	DrvPath zbstore.Path `json:"drvPath"`
-}
-
-// BuildResult is the result of a single derivation in a [Build].
-type BuildResult struct {
-	DrvPath zbstore.Path       `json:"drvPath"`
-	DrvHash Nullable[nix.Hash] `json:"drvHash"`
-	Status  BuildStatus        `json:"status"`
-	Outputs []*RealizeOutput   `json:"outputs"`
-	LogSize int64              `json:"logSize"`
-}
-
-// OutputForName returns the [*RealizeOutput] with the given name.
-// It returns an error if there is not exactly one.
-func (result *BuildResult) OutputForName(name string) (*RealizeOutput, error) {
-	var seq iter.Seq[*RealizeOutput]
-	if result == nil {
-		seq = func(yield func(*RealizeOutput) bool) {}
-	} else {
-		seq = func(yield func(*RealizeOutput) bool) {
-			for _, out := range result.Outputs {
-				if out.Name == name {
-					if !yield(out) {
-						return
-					}
-				}
-			}
-		}
-	}
-
-	output, err := xiter.Single(seq)
-	if err != nil {
-		err = fmt.Errorf("output for %s: %w", name, err)
-	}
-	return output, err
-}
-
-// FindRealizeOutput searches through a list of [*BuildResult] values for the given output.
-func FindRealizeOutput(results iter.Seq[*BuildResult], ref zbstore.OutputReference) (Nullable[zbstore.Path], error) {
-	p, err := xiter.Single(func(yield func(Nullable[zbstore.Path]) bool) {
-		for result := range results {
-			if result.DrvPath != ref.DrvPath {
-				continue
-			}
-			for _, output := range result.Outputs {
-				if output.Name == ref.OutputName {
-					if !yield(output.Path) {
-						return
-					}
-				}
-			}
-		}
-	})
-	if err != nil {
-		return Nullable[zbstore.Path]{}, fmt.Errorf("look up %v: %w", ref, err)
-	}
-	return p, nil
-}
-
-// RealizeOutput is an output in [BuildResult].
-type RealizeOutput struct {
-	// OutputName is the name of the output that was built (e.g. "out" or "dev").
-	Name string `json:"name"`
-	// Path is the store path of the output if successfully built,
-	// or null if the build failed.
-	Path Nullable[zbstore.Path] `json:"path"`
-	// Signatures is the set of signatures for the realization.
-	Signatures []*zbstore.RealizationSignature `json:"signatures"`
-}
-
-// CancelBuildMethod is the name of the method that informs the store
-// that the client is no longer interested in the results of the build
-// and wishes it to be canceled.
-// [CancelBuildNotification] is used for the request
-// and the response is ignored.
-const CancelBuildMethod = "zb.cancelBuild"
-
-// CancelBuildNotification is the set of parameters for [CancelBuildMethod].
-type CancelBuildNotification struct {
-	BuildID string `json:"buildID"`
-}
-
-// ReadLogMethod is the name of the method that reads the build log from a running build.
-// [ReadLogRequest] is used for the request
-// and [ReadLogResponse] is used for the response.
-const ReadLogMethod = "zb.readLog"
-
-// ReadLogRequest is the set of parameters for [ReadLogMethod].
-type ReadLogRequest struct {
-	BuildID string       `json:"buildID"`
-	DrvPath zbstore.Path `json:"drvPath"`
-	// RangeStart is the first byte of the log to read,
-	// where zero is the start of the log.
-	// If RangeStart is greater than the number of bytes in the log
-	// and the derivation has finished building,
-	// then an error is returned.
-	// If RangeStart is greater than or equal to the number of bytes in the log
-	// and the derivation's build is still active,
-	// then the method blocks until at least RangeStart+1 bytes have been written to the log.
-	RangeStart int64 `json:"rangeStart"`
-	// RangeEnd is an optional upper bound on the number of bytes to read.
-	// If non-null, it must be greater than RangeStart.
-	// This method may return less bytes than requested.
-	RangeEnd Nullable[int64] `json:"rangeEnd"`
-}
-
-// ReadLogResponse is the result for [ReadLogMethod].
-// At most one of Text or Base64 should be set;
-// the payload fields can be read with [*ReadLogResponse.Payload]
-// and can be written with [*ReadLogResponse.SetPayload].
-type ReadLogResponse struct {
-	Text   string `json:"text,omitempty"`
-	Base64 string `json:"base64,omitempty"`
-
-	// EOF indicates whether the end of this payload is the end of the log.
-	// If true, this implies that the derivation has finished its realization.
-	EOF bool `json:"eof"`
-}
-
-// Payload returns the log's byte content.
-func (resp *ReadLogResponse) Payload() ([]byte, error) {
-	switch {
-	case resp.Base64 != "":
-		return base64.StdEncoding.DecodeString(resp.Base64)
-	case resp.Text != "":
-		return []byte(resp.Text), nil
-	default:
-		return nil, nil
-	}
-}
-
-// SetPayload sets resp.Text and resp.Base64 to reflect the given payload.
-func (resp *ReadLogResponse) SetPayload(src []byte) {
-	if utf8.Valid(src) {
-		resp.Text = string(src)
-		resp.Base64 = ""
-	} else {
-		resp.Text = ""
-		resp.Base64 = base64.StdEncoding.EncodeToString(src)
-	}
-}
-
-// ExportMethod is the name of the method that triggers an export of store objects.
-// [ExportRequest] is used for the request and the response is null.
-const ExportMethod = "zb.export"
-
-// ExportIDExtraFieldName is the name of the extra field in [jsonrpc.Request]
-// used to pass a value that will be passed through with [ExportIDHeaderName].
-const ExportIDExtraFieldName = "zbExportID"
-
-// ExportIDHeaderName is the name of the header used to correlate an [ExportRequest]
-// with an export message.
-// The request should have used [ExportIDExtraFieldName].
-const ExportIDHeaderName = "Zb-Export-Id"
-
-// ExportRequest is the set of parameters for [ExportMethod].
-type ExportRequest struct {
-	Paths []zbstore.Path `json:"paths"`
-
-	// If ExcludeReferences is true, then only the paths in Paths will be exported.
-	// Otherwise, paths that are referenced by those store objects will also be included.
-	ExcludeReferences bool `json:"excludeReferences"`
-}
-
-// Nullable wraps a type to permit a null JSON serialization.
-// The zero value is null.
-type Nullable[T any] = zbstore.Nullable[T]
-
-// NonNull returns a [Nullable] that wraps the given value.
-func NonNull[T any](x T) Nullable[T] {
-	return zbstore.NonNull(x)
-}
+	Expand    *ExpandResult
