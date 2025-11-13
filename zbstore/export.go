@@ -22,7 +22,8 @@ const (
 )
 
 // An Exporter is a [Store] that can efficiently export objects.
-// The [Export] function will use this method if available.
+// The [Export] function will use this interface if available.
+// StoreExport must return an error if one or more of the paths named are not present in the store.
 // StoreExport must be safe to call concurrently from multiple goroutines.
 type Exporter interface {
 	Store
