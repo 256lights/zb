@@ -54,8 +54,10 @@ type ExportOptions struct {
 // and serialize them to dst.
 func Export(ctx context.Context, store Store, dst io.Writer, paths sets.Set[Path], opts *ExportOptions) error {
 	if len(paths) == 0 {
-		_, err := io.WriteString(dst, exportEOFMarker)
-		return newExportError(slices.Sorted(paths.All()), err)
+		if _, err := io.WriteString(dst, exportEOFMarker); err != nil {
+			return newExportError(nil, err)
+		}
+		return nil
 	}
 	if e, ok := store.(Exporter); ok {
 		return e.StoreExport(ctx, dst, paths, opts)
