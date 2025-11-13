@@ -596,9 +596,13 @@ func (b *builder) fetchRealizationSet(ctx context.Context, conn *sqlite.Conn, eq
 	return nil
 }
 
-func (b *builder) pickRealizationFromSet(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass, existing sets.Set[zbstore.Path]) (zbstore.Path, map[zbstore.Path]sets.Set[equivalenceClass], error) {
-	var selectedPath zbstore.Path
-	closure := make(map[zbstore.Path]sets.Set[equivalenceClass])
+// pickRealizationFromSet finds the only realization in the existing set
+// that has closures compatible with the rest of the builder's realizations.
+// pickRealizationFromSet will return an error that unwraps to [errRealizationNotFound]
+// if there is no such realization,
+// or an error that unwraps to [errMultipleRealizations] if there are multiple such realizations.
+func (b *builder) pickRealizationFromSet(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass, existing sets.Set[zbstore.Path]) (selectedPath zbstore.Path, closure map[zbstore.Path]sets.Set[equivalenceClass], err error) {
+	closure = make(map[zbstore.Path]sets.Set[equivalenceClass])
 	remaining := existing.Clone()
 	for outputPath := range existing.All() {
 		log.Debugf(ctx, "Checking whether %s can be used as %v...", outputPath, eqClass)
@@ -635,9 +639,9 @@ func (b *builder) pickRealizationFromSet(ctx context.Context, conn *sqlite.Conn,
 		return "", nil, fmt.Errorf("pick compatible realization for %v: %w", eqClass, errRealizationNotFound)
 	}
 
-	// TODO(someday): In the case where there are multiple valid candidates,
-	// we should use a heuristic and/or consult the client's trust settings.
-	// Until then, we bias towards rebuilding.
+	// In the case where there are multiple valid candidates
+	// that match the client's reuse policy,
+	// we don't use any of them and rebuild.
 	for outputPath := range remaining.All() {
 		pe := pathAndEquivalenceClass{
 			path:             outputPath,
