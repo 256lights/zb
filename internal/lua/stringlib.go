@@ -311,12 +311,46 @@ func stringFormat(ctx context.Context, l *State) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			if c == 'a' || c == 'A' {
-				// Hexadecimal float. Go uses 'x'/'X'.
-				spec = spec[:len(spec)-1] + string(c+('X'-'A'))
+
+			isUpper := (c >= 'A' && c <= 'Z')
+			switch {
+			case math.IsNaN(n):
+				var s string
+				if isUpper {
+					s = "NAN"
+				} else {
+					s = "nan"
+				}
+
+				spec = spec[:len(spec)-1] + "s"
+				fmt.Fprintf(sb, spec, s)
+			case math.IsInf(n, 0):
+				var s string
+				if isUpper {
+					s = "INF"
+				} else {
+					s = "inf"
+				}
+				if n < 0 {
+					s = "-" + s
+				} else {
+					options := spec[1 : len(spec)-1]
+					if strings.Contains(options, "+") {
+						s = "+" + s
+					} else if strings.Contains(options, " ") {
+						s = " " + s
+					}
+				}
+
+				spec = spec[:len(spec)-1] + "s"
+				fmt.Fprintf(sb, spec, s)
+			default:
+				if c == 'a' || c == 'A' {
+					// Hexadecimal float. Go uses 'x'/'X'.
+					spec = spec[:len(spec)-1] + string(c+('X'-'A'))
+				}
+				fmt.Fprintf(sb, spec, n)
 			}
-			// TODO(now): Special floats.
-			fmt.Fprintf(sb, spec, n)
 		case 'p':
 			if arg > top {
 				return 0, NewArgError(l, arg, "no value")
