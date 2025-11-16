@@ -6,11 +6,13 @@ package lua
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"zb.256lights.llc/pkg/internal/luacode"
 	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/sets"
 )
@@ -1412,6 +1414,137 @@ func TestStringGSub(t *testing.T) {
 				t.Errorf("type(select(2, %s)) = %v; want %v", testName, got, want)
 			} else if got, _ := state.ToInteger(-1); got != test.wantReplacements {
 				t.Errorf("(select(2, %s)) = %d; want %d", testName, got, test.wantReplacements)
+			}
+		}()
+	}
+}
+
+func TestStringFormat(t *testing.T) {
+	tests := []struct {
+		format        string
+		formatContext sets.Set[string]
+		args          []any
+
+		want        string
+		wantContext sets.Set[string]
+	}{
+		{
+			format: "",
+			args:   []any{},
+			want:   "",
+		},
+		{
+			format: "foo",
+			args:   []any{},
+			want:   "foo",
+		},
+		{
+			format: "foo",
+			args:   []any{"bar"},
+			want:   "foo",
+		},
+		{
+			format: "Hello, %s",
+			args:   []any{"world"},
+			want:   "Hello, world",
+		},
+		{
+			format: "answer is %d",
+			args:   []any{int64(42)},
+			want:   "answer is 42",
+		},
+		{
+			format: "pi is exactly %g",
+			args:   []any{3.14},
+			want:   "pi is exactly 3.14",
+		},
+		{
+			format: "to %g and beyond",
+			args:   []any{math.Inf(1)},
+			want:   "to inf and beyond",
+		},
+		{
+			format: "to %G and beyond",
+			args:   []any{math.Inf(1)},
+			want:   "to INF and beyond",
+		},
+		{
+			format: "%g is so negative",
+			args:   []any{math.Inf(-1)},
+			want:   "-inf is so negative",
+		},
+		{
+			format: "a %6f cat?",
+			args:   []any{math.NaN()},
+			want:   "a    nan cat?",
+		},
+		{
+			format: "a %6G cat?",
+			args:   []any{math.NaN()},
+			want:   "a    NAN cat?",
+		},
+		{
+			format: "a %6f cat?",
+			args:   []any{-math.NaN()},
+			// Slightly differing from PUC-Rio Lua:
+			// we do not distinguish a "negative" NaN.
+			want: "a    nan cat?",
+		},
+	}
+
+	ctx := context.Background()
+	for _, test := range tests {
+		func() {
+			state := new(State)
+			defer func() {
+				if err := state.Close(); err != nil {
+					t.Error("Close:", err)
+				}
+			}()
+
+			state.PushClosure(0, OpenString)
+			if err := state.Call(ctx, 0, 1); err != nil {
+				t.Error(err)
+				return
+			}
+			if _, err := state.Field(ctx, -1, "format"); err != nil {
+				t.Error(err)
+				return
+			}
+			funcIndex := state.Top()
+			state.PushStringContext(test.format, test.formatContext)
+
+			testName := fmt.Sprintf("string.format(%s", lualex.Quote(test.format))
+			for _, x := range test.args {
+				testName += ", "
+				pushValue(state, x)
+				switch x := x.(type) {
+				case nil:
+					testName += "nil"
+				case int64:
+					testName = fmt.Sprintf("%s%d", testName, x)
+				case float64:
+					testName += luacode.FloatValue(x).String()
+				case string:
+					testName += lualex.Quote(x)
+				}
+			}
+			testName += ")"
+
+			if err := state.Call(ctx, state.Top()-funcIndex, 1); err != nil {
+				t.Errorf("%s: %v", testName, err)
+				return
+			}
+
+			if got, want := state.Type(-1), TypeString; got != want {
+				t.Errorf("type(%s) = %v; want %v", testName, got, want)
+			} else {
+				if got, _ := state.ToString(-1); got != test.want {
+					t.Errorf("%s = %s; want %s", testName, lualex.Quote(got), lualex.Quote(test.want))
+				}
+				if diff := cmp.Diff(test.wantContext, state.StringContext(-1), cmpopts.EquateEmpty()); diff != "" {
+					t.Errorf("%s string context (-want +got):\n%s", testName, diff)
+				}
 			}
 		}()
 	}
