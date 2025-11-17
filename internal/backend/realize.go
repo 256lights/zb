@@ -819,13 +819,18 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		_, err = os.Lstat(b.server.realPath(outputPath))
 		log.Debugf(ctx, "%s exists=%t (output of %s)", outputPath, err == nil, drvPath)
 		if err == nil {
-			outputs := map[string]realizationOutput{
-				zbstore.DefaultDerivationOutputName: {
-					path: outputPath,
-					// Fixed outputs don't have references.
+			outputs := zbstore.RealizationMap{
+				DerivationHash: drvHash,
+				Realizations: map[string][]*zbstore.Realization{
+					zbstore.DefaultDerivationOutputName: {
+						{
+							OutputPath: outputPath,
+							// Fixed outputs don't have references.
+						},
+					},
 				},
 			}
-			if err := b.recordRealizations(ctx, conn, drvHash, buildResultID, outputs); err != nil {
+			if err := b.recordRealizations(ctx, conn, buildResultID, outputs); err != nil {
 				return fmt.Errorf("build %s: %v", drvPath, err)
 			}
 			return nil
@@ -906,7 +911,10 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		return err
 	}
 	inputPaths := sets.CollectSorted(maps.Keys(inputs))
-	outputs := make(map[string]realizationOutput)
+	outputs := zbstore.RealizationMap{
+		DerivationHash: drvHash,
+		Realizations:   make(map[string][]*zbstore.Realization),
+	}
 	for outputName, tempOutputPath := range tempOutPaths {
 		ref := zbstore.OutputReference{
 			DrvPath:    drvPath,
@@ -926,28 +934,35 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 				drvPath, outputName, info.StorePath, prev.path)
 		}
 
-		outputs[outputName] = realizationOutput{
-			path: info.StorePath,
-			references: maps.Collect(func(yield func(zbstore.Path, sets.Set[equivalenceClass]) bool) {
-				for ref, eqClasses := range inputs {
-					if info.References.Has(ref) {
-						if !yield(ref, eqClasses) {
-							return
-						}
-					}
+		r := &zbstore.Realization{OutputPath: info.StorePath}
+		for ref, eqClasses := range inputs {
+			if info.References.Has(ref) {
+				for eqClass := range eqClasses.All() {
+					r.ReferenceClasses = append(r.ReferenceClasses, &zbstore.ReferenceClass{
+						Path:        ref,
+						Realization: zbstore.NonNull(eqClass.toRealizationOutputReference()),
+					})
 				}
-			}),
+			}
 		}
+		r.Signatures, err = b.server.keyring.Sign(zbstore.RealizationOutputReference{
+			DerivationHash: drvHash,
+			OutputName:     outputName,
+		}, r)
+		if err != nil {
+			log.Warnf(ctx, "Signing built realization: %v", err)
+		}
+		outputs.Realizations[outputName] = []*zbstore.Realization{r}
 	}
 
 	// Record realizations.
-	if err := b.recordRealizations(ctx, conn, drvHash, buildResultID, outputs); err != nil {
+	if err := b.recordRealizations(ctx, conn, buildResultID, outputs); err != nil {
 		return fmt.Errorf("build %s: %v", drvPath, err)
 	}
 
 	log.Infof(ctx, "Built %s: %s", drvPath, formatOutputPaths(maps.Collect(func(yield func(string, zbstore.Path) bool) {
-		for outputName, r := range outputs {
-			if !yield(outputName, r.path) {
+		for ref, r := range outputs.All() {
+			if !yield(ref.OutputName, r.OutputPath) {
 				return
 			}
 		}
@@ -1623,19 +1638,26 @@ func rewriteAtPath(path string, baseOffset int64, newDigest string, rewriters []
 // recordRealizations calls [recordRealizations] and [recordBuildOutputs] in a transaction
 // and on success, saves the realizations into b.realizations.
 // The outputs must exist in the store.
-func (b *builder) recordRealizations(ctx context.Context, conn *sqlite.Conn, drvHash nix.Hash, buildResultID int64, outputs map[string]realizationOutput) (err error) {
+func (b *builder) recordRealizations(ctx context.Context, conn *sqlite.Conn, buildResultID int64, outputs zbstore.RealizationMap) (err error) {
+	if log.IsEnabled(log.Debug) {
+		outputPaths := make(map[string]zbstore.Path)
+		for ref, r := range outputs.All() {
+			outputPaths[ref.OutputName] = r.OutputPath
+		}
+		log.Debugf(ctx, "Recording realizations for %v: %s", outputs.DerivationHash, formatOutputPaths(outputPaths))
+	}
+
 	endFn, err := sqlitex.ImmediateTransaction(conn)
 	if err != nil {
-		return fmt.Errorf("record realizations for %v: %v", drvHash, err)
+		return fmt.Errorf("record realizations for %v: %v", outputs.DerivationHash, err)
 	}
 	defer endFn(&err)
-
-	if err := recordRealizations(ctx, conn, b.server.keyring, drvHash, outputs); err != nil {
+	if err := recordRealizations(conn, outputs.All()); err != nil {
 		return err
 	}
 	buildOutputs := func(yield func(string, zbstore.Path) bool) {
-		for outputName, output := range outputs {
-			if !yield(outputName, output.path) {
+		for ref, r := range outputs.All() {
+			if !yield(ref.OutputName, r.OutputPath) {
 				return
 			}
 		}
@@ -1644,10 +1666,10 @@ func (b *builder) recordRealizations(ctx context.Context, conn *sqlite.Conn, drv
 		return err
 	}
 
-	for outputName, output := range outputs {
-		eqClass := newEquivalenceClass(drvHash, outputName)
+	for ref, r := range outputs.All() {
 		closure := make(map[zbstore.Path]sets.Set[equivalenceClass])
-		pe := pathAndEquivalenceClass{path: output.path, equivalenceClass: eqClass}
+		eqClass := realizationOutputReferenceKey(ref)
+		pe := pathAndEquivalenceClass{path: r.OutputPath, equivalenceClass: eqClass}
 		err := closurePaths(conn, pe, func(pe pathAndEquivalenceClass) bool {
 			addToMultiMap(closure, pe.path, pe.equivalenceClass)
 			return true
@@ -1656,7 +1678,7 @@ func (b *builder) recordRealizations(ctx context.Context, conn *sqlite.Conn, drv
 			return err
 		}
 		b.realizations[eqClass] = cachedRealization{
-			path:    output.path,
+			path:    r.OutputPath,
 			closure: closure,
 		}
 	}
