@@ -163,6 +163,9 @@ func (eval *Eval) initZygote() error {
 	if err := registerDerivationMetatable(ctx, l); err != nil {
 		return err
 	}
+	if err := registerLazyMetatable(ctx, l); err != nil {
+		return err
+	}
 	if err := registerModuleMetatable(ctx, l); err != nil {
 		return err
 	}
@@ -179,6 +182,7 @@ func (eval *Eval) initZygote() error {
 		"await":      awaitFunction,
 		"derivation": eval.derivationFunction,
 		"import":     eval.importFunction,
+		"lazy":       lazyFunction,
 		"toFile":     eval.toFileFunction,
 		"path":       eval.pathFunction,
 		"readFile":   eval.readFileFunction,

@@ -73,6 +73,14 @@ function extract(args) end
 ---@return derivation
 function fetchArchive(args) end
 
+---Return a table whose fields are initialized lazily by calling f.
+---@generic K: string|boolean|number
+---@generic V
+---@param f fun(t: table<K, V>, k: K): V?
+---@param init? table<K, V>
+---@return table<K, V>
+function lazy(f, init) end
+
 os = {}
 
 ---Returns the value of the process environment variable `varname`
