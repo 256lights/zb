@@ -206,7 +206,7 @@ type RealizationSignature struct {
 func SignRealizationWithEd25519(ref RealizationOutputReference, r *Realization, key ed25519.PrivateKey) (*RealizationSignature, error) {
 	v, err := marshalRealizationForSignature(ref, r)
 	if err != nil {
-		return nil, fmt.Errorf("sign realization: %v", err)
+		return nil, fmt.Errorf("sign realization %v: %v", ref, err)
 	}
 	sig := ed25519.Sign(key, v)
 	return &RealizationSignature{
