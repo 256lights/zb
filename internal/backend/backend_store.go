@@ -224,156 +224,112 @@ func createTrustedPublicKeysTable(conn *sqlite.Conn, keys []*zbstore.Realization
 	}, nil
 }
 
-type realizationOutput struct {
-	path       zbstore.Path
-	references map[zbstore.Path]sets.Set[equivalenceClass]
-}
-
-func recordRealizations(ctx context.Context, conn *sqlite.Conn, keyring *Keyring, drvHash nix.Hash, outputs map[string]realizationOutput) (err error) {
-	if log.IsEnabled(log.Debug) {
-		outputPaths := make(map[string]zbstore.Path)
-		for outputName, out := range outputs {
-			outputPaths[outputName] = out.path
-		}
-		log.Debugf(ctx, "Recording realizations for %v: %s", drvHash, formatOutputPaths(outputPaths))
-	}
-
+func recordRealizations(conn *sqlite.Conn, realizations iter.Seq2[zbstore.RealizationOutputReference, *zbstore.Realization]) (err error) {
 	defer sqlitex.Save(conn)(&err)
-
-	if err := upsertDrvHash(conn, drvHash); err != nil {
-		return fmt.Errorf("record realizations for %v: %v", drvHash, err)
-	}
-	for _, output := range outputs {
-		if err := upsertPath(conn, output.path); err != nil {
-			return fmt.Errorf("record realizations for %v: %v", drvHash, err)
-		}
-		for path, eqClasses := range output.references {
-			if err := upsertPath(conn, path); err != nil {
-				return fmt.Errorf("record realizations for %v: %v", drvHash, err)
-			}
-			for eqClass := range eqClasses.All() {
-				h := eqClass.drvHashKey.toHash()
-				if err := upsertDrvHash(conn, h); err != nil {
-					return fmt.Errorf("record realizations for %v: %v", drvHash, err)
-				}
-			}
-		}
-	}
 
 	realizationStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "realizations/insert.sql")
 	if err != nil {
-		return fmt.Errorf("record realizations for %s: %v", drvHash, err)
+		return err
 	}
 	defer realizationStmt.Finalize()
 	refClassStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "realizations/insert_reference_class.sql")
 	if err != nil {
-		return fmt.Errorf("record realizations for %s: %v", drvHash, err)
+		return err
 	}
 	defer refClassStmt.Finalize()
 	publicKeyStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "realizations/insert_public_key.sql")
 	if err != nil {
-		return fmt.Errorf("record realizations for %s: %v", drvHash, err)
+		return err
 	}
 	defer publicKeyStmt.Finalize()
 	signatureStmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "realizations/insert_signature.sql")
 	if err != nil {
-		return fmt.Errorf("record realizations for %s: %v", drvHash, err)
+		return err
 	}
 	defer signatureStmt.Finalize()
 
-	realizationStmt.SetText(":drv_hash_algorithm", drvHash.Type().String())
-	realizationStmt.SetBytes(":drv_hash_bits", drvHash.Bytes(nil))
-	refClassStmt.SetText(":referrer_drv_hash_algorithm", drvHash.Type().String())
-	refClassStmt.SetBytes(":referrer_drv_hash_bits", drvHash.Bytes(nil))
-	for outputName, output := range outputs {
-		realizationStmt.SetText(":output_name", outputName)
-		realizationStmt.SetText(":output_path", string(output.path))
+	for ref, realization := range realizations {
+		if err := upsertDrvHash(conn, ref.DerivationHash); err != nil {
+			return fmt.Errorf("record realization for %v: %v", ref, err)
+		}
+		if err := upsertPath(conn, realization.OutputPath); err != nil {
+			return fmt.Errorf("record realization for %v: %v", ref, err)
+		}
+
+		drvHashAlgorithm := ref.DerivationHash.Type().String()
+		drvHashBits := ref.DerivationHash.Bytes(nil)
+
+		realizationStmt.SetText(":drv_hash_algorithm", drvHashAlgorithm)
+		realizationStmt.SetBytes(":drv_hash_bits", drvHashBits)
+		realizationStmt.SetText(":output_name", ref.OutputName)
+		realizationStmt.SetText(":output_path", string(realization.OutputPath))
 		if _, err := realizationStmt.Step(); err != nil {
-			return fmt.Errorf("record realizations for %s: output %s: %v", drvHash, outputName, err)
+			return fmt.Errorf("record realization for %v: %v", ref, err)
 		}
 		if err := realizationStmt.Reset(); err != nil {
-			return fmt.Errorf("record realizations for %s: output %s: %v", drvHash, outputName, err)
+			return fmt.Errorf("record realization for %v: %v", ref, err)
 		}
 
-		refClassStmt.SetText(":referrer_path", string(output.path))
-		refClassStmt.SetText(":referrer_output_name", outputName)
-		for path, eqClasses := range output.references {
-			refClassStmt.SetText(":reference_path", string(path))
-			for eqClass := range eqClasses.All() {
-				if eqClass.isZero() {
-					refClassStmt.SetNull(":reference_drv_hash_algorithm")
-					refClassStmt.SetNull(":reference_drv_hash_bits")
-					refClassStmt.SetNull(":reference_output_name")
-				} else {
-					h := eqClass.drvHashKey.toHash()
-					refClassStmt.SetText(":reference_drv_hash_algorithm", h.Type().String())
-					refClassStmt.SetBytes(":reference_drv_hash_bits", h.Bytes(nil))
-					refClassStmt.SetText(":reference_output_name", eqClass.outputName.Value())
+		refClassStmt.SetText(":referrer_drv_hash_algorithm", drvHashAlgorithm)
+		refClassStmt.SetBytes(":referrer_drv_hash_bits", drvHashBits)
+		refClassStmt.SetText(":referrer_path", string(realization.OutputPath))
+		refClassStmt.SetText(":referrer_output_name", ref.OutputName)
+		for _, rc := range realization.ReferenceClasses {
+			if err := upsertPath(conn, rc.Path); err != nil {
+				return fmt.Errorf("record realizations for %v: reference %s: %v", ref, rc.Path, err)
+			}
+
+			refClassStmt.SetText(":reference_path", string(rc.Path))
+			if !rc.Realization.Valid {
+				refClassStmt.SetNull(":reference_drv_hash_algorithm")
+				refClassStmt.SetNull(":reference_drv_hash_bits")
+				refClassStmt.SetNull(":reference_output_name")
+			} else {
+				h := rc.Realization.X.DerivationHash
+				if err := upsertDrvHash(conn, h); err != nil {
+					return fmt.Errorf("record realization for %v: reference %s: %v", ref, rc.Path, err)
 				}
 
-				if _, err := refClassStmt.Step(); err != nil {
-					return fmt.Errorf("record realizations for %s: output %s: reference %s: %v", drvHash, outputName, path, err)
-				}
-				if err := refClassStmt.Reset(); err != nil {
-					return fmt.Errorf("record realizations for %s: output %s: reference %s: %v", drvHash, outputName, path, err)
-				}
+				refClassStmt.SetText(":reference_drv_hash_algorithm", h.Type().String())
+				refClassStmt.SetBytes(":reference_drv_hash_bits", h.Bytes(nil))
+				refClassStmt.SetText(":reference_output_name", rc.Realization.X.OutputName)
+			}
+
+			if _, err := refClassStmt.Step(); err != nil {
+				return fmt.Errorf("record realization for %v: reference %s: %v", ref, rc.Path, err)
+			}
+			if err := refClassStmt.Reset(); err != nil {
+				return fmt.Errorf("record realization for %v: reference %s: %v", ref, rc.Path, err)
 			}
 		}
 
-		ref := zbstore.RealizationOutputReference{
-			DerivationHash: drvHash,
-			OutputName:     outputName,
-		}
-		signatures, err := keyring.Sign(ref, makeRealization(output))
-		if err != nil {
-			log.Warnf(ctx, "%v", err)
-		}
-		for _, sig := range signatures {
+		for _, sig := range realization.Signatures {
 			publicKeyStmt.SetText(":format", string(sig.PublicKey.Format))
 			publicKeyStmt.SetBytes(":public_key", sig.PublicKey.Data)
 			if _, err := publicKeyStmt.Step(); err != nil {
-				return fmt.Errorf("record realizations for %v: %v", ref, err)
+				return fmt.Errorf("record realization for %v: %v", ref, err)
 			}
 			if err := publicKeyStmt.Reset(); err != nil {
-				return fmt.Errorf("record realizations for %v: %v", ref, err)
+				return fmt.Errorf("record realization for %v: %v", ref, err)
 			}
 
-			signatureStmt.SetText(":drv_hash_algorithm", drvHash.Type().String())
-			signatureStmt.SetBytes(":drv_hash_bits", drvHash.Bytes(nil))
-			signatureStmt.SetText(":output_name", outputName)
-			signatureStmt.SetText(":output_path", string(output.path))
+			signatureStmt.SetText(":drv_hash_algorithm", drvHashAlgorithm)
+			signatureStmt.SetBytes(":drv_hash_bits", drvHashBits)
+			signatureStmt.SetText(":output_name", ref.OutputName)
+			signatureStmt.SetText(":output_path", string(realization.OutputPath))
 			signatureStmt.SetText(":format", string(sig.PublicKey.Format))
 			signatureStmt.SetBytes(":public_key", sig.PublicKey.Data)
 			signatureStmt.SetBytes(":signature", sig.Signature)
 			if _, err := signatureStmt.Step(); err != nil {
-				return fmt.Errorf("record realizations for %v: %v", ref, err)
+				return fmt.Errorf("record realization for %v: %v", ref, err)
 			}
 			if err := signatureStmt.Reset(); err != nil {
-				return fmt.Errorf("record realizations for %v: %v", ref, err)
+				return fmt.Errorf("record realization for %v: %v", ref, err)
 			}
 		}
 	}
 
 	return nil
-}
-
-func makeRealization(output realizationOutput) *zbstore.Realization {
-	r := &zbstore.Realization{
-		OutputPath: output.path,
-	}
-	for path, eqClasses := range output.references {
-		for eqClass := range eqClasses.All() {
-			rc := &zbstore.ReferenceClass{Path: path}
-			if !eqClass.isZero() {
-				rc.Realization = zbstore.NonNull(zbstore.RealizationOutputReference{
-					DerivationHash: eqClass.drvHashKey.toHash(),
-					OutputName:     eqClass.outputName.Value(),
-				})
-			}
-			r.ReferenceClasses = append(r.ReferenceClasses, rc)
-		}
-	}
-	return r
 }
 
 // pathInfo returns basic information about an object in the store.
