@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unique"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/google/uuid"
@@ -334,24 +335,25 @@ func (b *builder) lookup(ref zbstore.OutputReference) (_ zbstore.Path, ok bool) 
 	return r.path, ok
 }
 
+// allRealized reports whether all the given references have realizations.
+func (b *builder) allRealized(refs iter.Seq[zbstore.OutputReference]) bool {
+	for ref := range refs {
+		if _, ok := b.lookup(ref); !ok {
+			return false
+		}
+	}
+	return true
+}
+
 var errUnfinishedRealization = errors.New("realization did not complete")
 
 func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputReference], keepFailed bool) error {
 	log.Debugf(ctx, "Will realize %v...", want)
 
-	// Multi-output derivations are particularly troublesome for us
-	// because if we realize they need to be built
-	// after we've already picked a realization for one of the outputs,
-	// the build can invalidate the usage of other realizations.
-	// (However, this can only occur if more than one output is used in the build.)
-	// As long as the derivation is *mostly* deterministic,
-	// then we have a good shot of being able to reuse more realizations throughout the rest of the build process
-	// because of the early cutoff optimization from content-addressing.
-	multiOutputs, err := findMultiOutputDerivationsInBuild(b.derivations, want)
+	graph, err := analyze(b.derivations, want)
 	if err != nil {
 		return err
 	}
-	log.Debugf(ctx, "Found multi-outputs for %v: %v", want, multiOutputs)
 
 	// TODO(soon): Find realizations we can use without requiring all build dependencies.
 
@@ -362,60 +364,32 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 			unlock()
 		}
 	}()
-	stack := slices.Collect(want.All())
+	stack := slices.AppendSeq(make([]zbstore.Path, 0, graph.roots.Len()), graph.roots.All())
 	for len(stack) > 0 {
 		curr := xslices.Last(stack)
 		stack = xslices.Pop(stack, 1)
 
-		if _, realized := b.lookup(curr); realized {
-			continue
-		}
-		drv := b.derivations[curr.DrvPath]
+		drv := b.derivations[curr]
 		if drv == nil {
 			return fmt.Errorf("realize %v: unknown derivation", curr)
 		}
-		if !xmaps.HasKey(drv.Outputs, curr.OutputName) {
-			return fmt.Errorf("realize %v: unknown output %q", curr, curr.OutputName)
+		log.Debugf(ctx, "Reached %v", curr)
+		drvHash, err := drv.SHA256RealizationHash(b.lookup)
+		if err != nil {
+			return fmt.Errorf("realize %s: %v", curr, err)
 		}
-		drvHash := b.drvHashes[curr.DrvPath]
-		if !drvHash.IsZero() {
-			log.Debugf(ctx, "Resuming %s", curr.DrvPath)
-		} else {
-			// First visit to derivation.
-			log.Debugf(ctx, "Reached %v", curr)
-			unmetDependencies := false
-			for ref := range drv.InputDerivationOutputs() {
-				if _, realized := b.lookup(ref); !realized {
-					log.Debugf(ctx, "Enqueuing %s (dependency of %s)", ref, curr.DrvPath)
-					if !unmetDependencies {
-						stack = append(stack, curr)
-						unmetDependencies = true
-					}
-					stack = append(stack, ref)
-				}
-			}
-			if unmetDependencies {
-				log.Debugf(ctx, "Pausing %s to build dependencies", curr.DrvPath)
-				continue
-			}
-			drvHash, err := drv.SHA256RealizationHash(b.lookup)
-			if err != nil {
-				return fmt.Errorf("realize %s: %v", curr, err)
-			}
-			log.Debugf(ctx, "Hashed %s to %v", curr.DrvPath, drvHash)
-			b.drvHashes[curr.DrvPath] = drvHash
-		}
+		log.Debugf(ctx, "Hashed %s to %v", curr, drvHash)
+		b.drvHashes[curr] = drvHash
 
-		log.Debugf(ctx, "Waiting for build lock on %s...", curr.DrvPath)
-		unlock, err := b.server.building.lock(ctx, curr.DrvPath)
+		log.Debugf(ctx, "Waiting for build lock on %s...", curr)
+		unlock, err := b.server.building.lock(ctx, curr)
 		if err != nil {
 			return err
 		}
-		drvLocks[curr.DrvPath] = unlock
-		log.Debugf(ctx, "Acquired build lock on %s", curr.DrvPath)
-		outputs := sets.New(curr.OutputName)
-		outputs.AddSeq(multiOutputs[curr.DrvPath].All())
-		if err := b.do(ctx, curr.DrvPath, outputs, keepFailed); err != nil {
+		drvLocks[curr] = unlock
+		log.Debugf(ctx, "Acquired build lock on %s", curr)
+		graphNode := graph.nodes[curr]
+		if err := b.do(ctx, curr, graphNode.usedOutputs, keepFailed); err != nil {
 			// b.do already records the build failure,
 			// so we don't need to report the same error at the build level.
 			if !isBuilderFailure(err) {
@@ -423,8 +397,15 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 			}
 			return errUnfinishedRealization
 		}
-		drvLocks[curr.DrvPath]()
-		delete(drvLocks, curr.DrvPath)
+		drvLocks[curr]()
+		delete(drvLocks, curr)
+
+		// Queue up new work.
+		for possible := range graphNode.dependents {
+			if b.allRealized(b.derivations[possible].InputDerivationOutputs()) {
+				stack = append(stack, possible)
+			}
+		}
 	}
 
 	return nil
@@ -682,7 +663,7 @@ func (b *builder) isCompatible(pe pathAndEquivalenceClass) bool {
 // b.drvHashes must have a non-zero value for drvPath before calling do
 // (which implies the caller realized all of the derivation's inputs)
 // or else do returns an error.
-func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets.Set[string], keepFailed bool) (err error) {
+func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets.Set[unique.Handle[string]], keepFailed bool) (err error) {
 	startTime := time.Now()
 	drv := b.derivations[drvPath]
 	if drv == nil {
@@ -693,10 +674,10 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		return fmt.Errorf("build %s: missing hash", drvPath)
 	}
 	for outputName := range outputNames.All() {
-		if drv.Outputs[outputName] == nil {
+		if drv.Outputs[outputName.Value()] == nil {
 			ref := zbstore.OutputReference{
 				DrvPath:    drvPath,
-				OutputName: outputName,
+				OutputName: outputName.Value(),
 			}
 			return fmt.Errorf("build %v: no such output", ref)
 		}
@@ -725,7 +706,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		// Search for existing realizations first.
 		wantEqClasses := sets.Collect(func(yield func(equivalenceClass) bool) {
 			for outputName := range outputNames.All() {
-				if !yield(newEquivalenceClass(drvHash, outputName)) {
+				if !yield(newEquivalenceClass(drvHash, outputName.Value())) {
 					return
 				}
 			}
@@ -738,12 +719,12 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		// Otherwise, we set a default of nulls for all requested outputs.
 		err = setBuildResultOutputs(conn, buildResultID, func(yield func(string, zbstore.Path) bool) {
 			for outputName := range outputNames.All() {
-				eqClass := newEquivalenceClass(drvHash, outputName)
+				eqClass := newEquivalenceClass(drvHash, outputName.Value())
 				var path zbstore.Path
 				if reuseError == nil {
 					path = b.realizations[eqClass].path
 				}
-				if !yield(outputName, path) {
+				if !yield(outputName.Value(), path) {
 					return
 				}
 			}
