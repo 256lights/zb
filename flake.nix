@@ -1,69 +1,76 @@
 # Copyright 2025 The zb Authors
 # SPDX-License-Identifier: MIT
-
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    flake-utils.url = "flake-utils";
   };
 
   outputs =
     {
       self,
       nixpkgs,
-      flake-utils,
       ...
     }:
-    flake-utils.lib.eachDefaultSystem (
-      system:
-      let
-        pkgs = import nixpkgs {
-          inherit system;
-        };
+    let
+      inherit (nixpkgs) lib;
 
-        inherit (pkgs.lib.attrsets) optionalAttrs;
+      forEachSystem =
+        fn: lib.genAttrs lib.systems.flakeExposed (system: fn system nixpkgs.legacyPackages.${system});
+    in
+    {
+      devShells = forEachSystem (
+        _: pkgs: {
+          default = pkgs.mkShellNoCC {
+            packages = [
+              # Go tooling.
+              (pkgs.delve.override {
+                buildGoModule = pkgs.buildGo125Module;
+              })
+              pkgs.go_1_25
+              pkgs.gopls
 
-        go = pkgs.go_1_25;
-        buildGoModule = pkgs.buildGo125Module;
+              # JavaScript tooling.
+              pkgs.nodejs_22
+            ];
 
-        zbPackage = pkgs.callPackage ./package.nix {
-          inherit buildGoModule;
-        };
+            # Since using Go 1.25 from nixpkgs,
+            # the Go tool seems to try to use cgo for net and os/user,
+            # even though it is not necessary.
+            # We disable cgo forcibly for consistency.
+            CGO_ENABLED = "0";
 
-        installerPackage = pkgs.callPackage ./installer {};
-      in
-      {
-        devShells.default = pkgs.mkShellNoCC {
-          packages = [
-            # Go tooling.
-            (pkgs.delve.override {
-              inherit buildGoModule;
-            })
-            go
-            pkgs.gopls
+            hardeningDisable = [ "fortify" ];
+          };
+        }
+      );
 
-            # JavaScript tooling.
-            pkgs.nodejs_22
-          ];
+      packages = forEachSystem (
+        system: pkgs:
+        let
+          buildGoModule = pkgs.buildGo125Module;
 
-          # Since using Go 1.25 from nixpkgs,
-          # the Go tool seems to try to use cgo for net and os/user,
-          # even though it is not necessary.
-          # We disable cgo forcibly for consistency.
-          CGO_ENABLED = "0";
+          zbPackage = pkgs.callPackage ./package.nix {
+            inherit buildGoModule;
+          };
 
-          hardeningDisable = [ "fortify" ];
-        };
+          installerPackage = pkgs.callPackage ./installer { };
+        in
+        (
+          {
+            default = zbPackage;
+          }
+          // lib.optionalAttrs (builtins.elem system installerPackage.meta.platforms) {
+            installer = installerPackage;
+          }
+        )
+      );
 
-        packages = {
-          default = zbPackage;
-        } // optionalAttrs (builtins.elem system installerPackage.meta.platforms) {
-          installer = installerPackage;
-        };
-      }
-    )
-    // {
-      nixosModules.default = {pkgs, lib, ... }:
+      nixosModules.default =
+        {
+          pkgs,
+          lib,
+          ...
+        }:
         let
           # Slightly higher than option defaults (1500),
           # but lower than lib.mkDefault (1000).
