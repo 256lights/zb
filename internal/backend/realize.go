@@ -97,12 +97,8 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		return nil, fmt.Errorf("build %s: %v", drvPathList, err)
 	}
 
-	s.background.Add(1)
-	go func() {
-		defer func() {
-			cancelBuild()
-			s.background.Done()
-		}()
+	s.background.Go(func() {
+		defer cancelBuild()
 
 		wantOutputs := make(sets.Set[zbstore.OutputReference])
 		for _, drvPath := range drvPaths {
@@ -127,7 +123,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		if err := recordBuildEnd(conn, buildID, realizeError); err != nil {
 			log.Errorf(recordCtx, "Unable to record end of build %s: %v. Original error: %v", buildID, err, realizeError)
 		}
-	}()
+	})
 
 	return marshalResponse(&zbstorerpc.RealizeResponse{
 		BuildID: buildID.String(),
@@ -185,12 +181,8 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
 	}
 
-	s.background.Add(1)
-	go func() {
-		defer func() {
-			endBuild()
-			s.background.Done()
-		}()
+	s.background.Go(func() {
+		defer endBuild()
 
 		drv := drvCache[drvPath]
 		inputs := sets.Collect(drv.InputDerivationOutputs())
@@ -245,7 +237,7 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 			log.Errorf(recordCtx, "Unable to record end of build %s: %v", buildID, err)
 			return
 		}
-	}()
+	})
 
 	return marshalResponse(&zbstorerpc.ExpandResponse{
 		BuildID: buildID.String(),
