@@ -217,17 +217,13 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	}
 	var bgCtx context.Context
 	bgCtx, srv.cancelBackground = context.WithCancel(context.Background())
-	srv.background.Add(1)
-	go func() {
-		defer srv.background.Done()
+	srv.background.Go(func() {
 		srv.optimizeDatabase(bgCtx)
-	}()
+	})
 	if opts.BuildLogRetention > 0 {
-		srv.background.Add(1)
-		go func() {
-			defer srv.background.Done()
+		srv.background.Go(func() {
 			srv.gcLogs(bgCtx, opts.BuildLogRetention)
-		}()
+		})
 	}
 	return srv
 }

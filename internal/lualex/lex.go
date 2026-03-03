@@ -563,7 +563,7 @@ func (s *Scanner) findClosingLongBracket(w io.ByteWriter, n int) error {
 		if err := w.WriteByte(']'); err != nil {
 			return err
 		}
-		for i := 0; i < n; i++ {
+		for range n {
 			if err := w.WriteByte('='); err != nil {
 				return err
 			}
@@ -586,7 +586,7 @@ searchStart:
 		}
 
 		// Consume equal signs.
-		for i := 0; i < n; i++ {
+		for i := range n {
 			b, err := s.readByteNoEOF()
 			if err != nil {
 				writePartial(i)

@@ -432,7 +432,7 @@ func (f pathMapFlag) Get() any {
 }
 
 func (f pathMapFlag) Set(s string) error {
-	for _, word := range strings.Fields(s) {
+	for word := range strings.FieldsSeq(s) {
 		k, v, isMap := strings.Cut(word, "=")
 		if !isMap {
 			v = k

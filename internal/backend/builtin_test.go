@@ -408,7 +408,7 @@ func TestExtractZip(t *testing.T) {
 	}
 }
 
-var mapFileType = reflect.TypeOf((*fstest.MapFile)(nil)).Elem()
+var mapFileType = reflect.TypeFor[fstest.MapFile]()
 
 func diffFS(tb testing.TB, fsys1, fsys2 fs.FS) string {
 	map1 := loadFS(tb, fsys1)

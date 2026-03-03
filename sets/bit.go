@@ -123,7 +123,7 @@ func (s *Bit) All() iter.Seq[uint] {
 				curr += bitWordSize
 				continue
 			}
-			for j := 0; j < bitWordSize; j++ {
+			for j := range bitWordSize {
 				if s.words[i]&(1<<j) != 0 {
 					if !yield(curr) {
 						return

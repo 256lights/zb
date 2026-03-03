@@ -212,9 +212,9 @@ func (fsys cacheFS) Open(name string) (fs.File, error) {
 }
 
 func firstPathElement(name string) string {
-	i := strings.IndexByte(name, '/')
-	if i < 0 {
+	before, _, ok := strings.Cut(name, "/")
+	if !ok {
 		return name
 	}
-	return name[:i]
+	return before
 }

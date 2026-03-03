@@ -481,11 +481,11 @@ func unmarshalLoadCommand(byteOrder binary.ByteOrder, data []byte) (LoadCmd, err
 }
 
 func nameToString(name []byte) string {
-	i := bytes.IndexByte(name, 0)
-	if i < 0 {
+	before, _, ok := bytes.Cut(name, []byte{0})
+	if !ok {
 		return string(name)
 	}
-	return string(name[:i])
+	return string(before)
 }
 
 func decreaseCounter(count uint32, n int) uint32 {

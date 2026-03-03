@@ -100,7 +100,7 @@ func (fs *funcState) finish() error {
 			fs.Code[i] = instruction
 		case OpJMP:
 			target := i
-			for count := 0; count < 100; count++ {
+			for range 100 {
 				curr := fs.Code[target]
 				if curr.OpCode() != OpJMP {
 					break
