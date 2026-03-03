@@ -28,8 +28,7 @@ import (
 
 func TestImport(t *testing.T) {
 	runTest := func(t *testing.T, dir zbstore.Directory, realStoreDir string) {
-		ctx, cancel := testcontext.New(t)
-		defer cancel()
+		ctx := testcontext.New(t)
 
 		const fileContent = "Hello, World!\n"
 		exportBuffer := new(bytes.Buffer)
@@ -281,8 +280,7 @@ func TestDelete(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			ctx, cancel := testcontext.New(t)
-			defer cancel()
+			ctx := testcontext.New(t)
 
 			realStoreDir := t.TempDir()
 			server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{

@@ -19,8 +19,7 @@ import (
 )
 
 func TestHTTPStore(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 
 	cacheFileRoot, err := os.OpenRoot(filepath.Join("testdata", "cache"))
 	if err != nil {
