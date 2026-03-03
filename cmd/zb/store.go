@@ -85,11 +85,8 @@ func newStoreObjectInfoCommand(g *globalConfig) *cobra.Command {
 }
 
 func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectInfoOptions) error {
-	storeClient, waitStoreClient := g.storeClient(nil)
-	defer func() {
-		storeClient.Close()
-		waitStoreClient()
-	}()
+	storeClient := g.storeClient(nil)
+	defer storeClient.Close()
 
 	const errNotExist = "does not exist"
 
@@ -196,13 +193,10 @@ func runStoreObjectExport(ctx context.Context, g *globalConfig, opts *storeObjec
 	toOutput := zbstorerpc.ImportFunc(func(header jsonrpc.Header, body io.Reader) error {
 		return zbstore.ReceiveExport(nopReceiver{}, io.TeeReader(body, opts.output))
 	})
-	storeClient, waitStoreClient := g.storeClient(&zbstorerpc.CodecOptions{
+	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: toOutput,
 	})
-	defer func() {
-		storeClient.Close()
-		waitStoreClient()
-	}()
+	defer storeClient.Close()
 
 	req := &zbstorerpc.ExportRequest{
 		Paths:             make([]zbstore.Path, len(opts.paths)),
@@ -254,11 +248,8 @@ func newStoreObjectImportCommand(g *globalConfig) *cobra.Command {
 }
 
 func runStoreObjectImport(ctx context.Context, g *globalConfig, opts *storeObjectImportOptions) error {
-	storeClient, waitStoreClient := g.storeClient(nil)
-	defer func() {
-		storeClient.Close()
-		waitStoreClient()
-	}()
+	storeClient := g.storeClient(nil)
+	defer storeClient.Close()
 
 	inputPaths := opts.paths
 	if len(inputPaths) == 0 {

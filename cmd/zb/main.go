@@ -181,13 +181,10 @@ func newEvalCommand(g *globalConfig) *cobra.Command {
 
 func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 	di := new(zbstorerpc.DeferredImporter)
-	storeClient, waitStoreClient := g.storeClient(&zbstorerpc.CodecOptions{
+	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: di,
 	})
-	defer func() {
-		storeClient.Close()
-		waitStoreClient()
-	}()
+	defer storeClient.Close()
 	eval, err := opts.newEval(g, storeClient, di)
 	if err != nil {
 		return err
@@ -250,13 +247,10 @@ func newBuildCommand(g *globalConfig) *cobra.Command {
 
 func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 	di := new(zbstorerpc.DeferredImporter)
-	storeClient, waitStoreClient := g.storeClient(&zbstorerpc.CodecOptions{
+	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: di,
 	})
-	defer func() {
-		storeClient.Close()
-		waitStoreClient()
-	}()
+	defer storeClient.Close()
 	eval, err := opts.newEval(g, storeClient, di)
 	if err != nil {
 		return err
