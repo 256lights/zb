@@ -1,6 +1,6 @@
 module zb.256lights.llc/pkg
 
-go 1.25.2
+go 1.26.0
 
 require (
 	github.com/coreos/go-systemd/v22 v22.5.0
