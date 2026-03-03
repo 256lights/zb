@@ -43,7 +43,7 @@ type TempFileCreator struct {
 	Pattern string
 }
 
-// CreateTemp creates a new temporary file of the given size.
+// CreateBuffer creates a new temporary file of the given size.
 // The returned file will be removed when calling Close.
 func (tfc TempFileCreator) CreateBuffer(size int64) (ReadWriteSeekCloser, error) {
 	f, err := os.CreateTemp(tfc.Dir, tfc.Pattern)

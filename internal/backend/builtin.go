@@ -271,6 +271,7 @@ func nextSupportedTarHeader(r *tar.Reader) (*tar.Header, error) {
 		switch hdr.Typeflag {
 		case tar.TypeXGlobalHeader:
 			// Ignore.
+		//lint:ignore SA1019 TypeRegA shouldn't be returned, but handled just in case.
 		case tar.TypeReg, tar.TypeRegA, tar.TypeSymlink, tar.TypeDir:
 			return hdr, nil
 		default:

@@ -222,6 +222,7 @@ func (info *ObjectInfo) UnmarshalText(src []byte) (err error) {
 		for w := range bytes.FieldsSeq(references) {
 			ref, err := info.StorePath.Dir().Object(string(w))
 			if err != nil {
+				//lint:ignore ST1005 Matching the field name.
 				return fmt.Errorf("References: %v", err)
 			}
 			info.References.Add(ref)
