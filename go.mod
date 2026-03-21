@@ -2,6 +2,8 @@ module zb.256lights.llc/pkg
 
 go 1.26.0
 
+toolchain go1.26.1
+
 require (
 	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/dsnet/compress v0.0.1
