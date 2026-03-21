@@ -15,7 +15,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"zb.256lights.llc/pkg/internal/luacode"
 )
 
@@ -28,30 +27,6 @@ type Command struct {
 	ParseOnly      bool   `kong:"short=p,help=Do not write bytecode."`
 	StripDebug     bool   `kong:"short=s,help=Strip debug information."`
 	RawPC          bool   `kong:"short=0,help=Show literal PC values."`
-}
-
-// New returns a new luac command.
-func New() *cobra.Command {
-	cc := &cobra.Command{
-		Use:                   "luac FILE",
-		Short:                 "luac",
-		Args:                  cobra.ExactArgs(1),
-		DisableFlagsInUseLine: true,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	c := new(Command)
-	cc.Flags().CountVarP(&c.List, "list", "l", "produce a listing of compiled bytecode")
-	cc.Flags().StringVarP(&c.OutputFilename, "output", "o", "luac.out", "output to `filename`")
-	cc.Flags().BoolVarP(&c.ParseOnly, "parse-only", "p", false, "do not write bytecode")
-	cc.Flags().BoolVarP(&c.StripDebug, "strip-debug", "s", false, "strip debug information")
-	cc.Flags().BoolVarP(&c.RawPC, "raw-pc", "0", false, "show literal PC values")
-	cc.Flags().StringVar(&c.Source, "source", "", "source `name` to show in debug information instead of filename")
-	cc.RunE = func(cmd *cobra.Command, args []string) error {
-		c.InputFilename = args[0]
-		return c.Run()
-	}
-	return cc
 }
 
 // Run runs luac.

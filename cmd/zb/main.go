@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -13,39 +12,64 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/alecthomas/kong"
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
+	"github.com/jotaen/kong-completion"
 	"zb.256lights.llc/pkg/bytebuffer"
+	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/luac"
 	"zb.256lights.llc/pkg/internal/lualex"
+	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 )
 
-func main() {
-	rootCommand := &cobra.Command{
-		Use:           "zb",
-		Short:         "zb build tool",
-		SilenceErrors: true,
-		SilenceUsage:  true,
+type zbCommand struct {
+	Config       globalConfig `kong:"embed"`
+	ExtraConfigs []string     `kong:"name=config,sep=none,placeholder=path,help=Load configuration file(s). (Can be passed multiple times.)"`
+
+	Build      buildCommand      `kong:"cmd"`
+	Eval       evalCommand       `kong:"cmd"`
+	Derivation derivationCommand `kong:"cmd"`
+	Store      storeCommand      `kong:"cmd"`
+	Key        keyCommand        `kong:"cmd"`
+	Serve      serveCommand      `kong:"cmd"`
+	NAR        narCommand        `kong:"cmd"`
+
+	Completion kongcompletion.Completion `kong:"cmd"`
+
+	Version     versionCommand `kong:"cmd"`
+	VersionFlag versionFlag    `kong:"name=version,help=Show version information."`
+
+	Luac luac.Command `kong:"cmd,hidden"`
+}
+
+func (c *zbCommand) ProvideConfig() *globalConfig {
+	return &c.Config
+}
+
+func (c *zbCommand) BeforeApply(kc *kong.Context, p *kong.Path) error {
+	configFlag := findFlagByName("config", slices.Values(p.Flags))
+	configValue := kc.Value(&kong.Path{
+		Parent: p.Node(),
+		Flag:   configFlag,
+	})
+	if configValue.IsValid() {
+		configFlag.Apply(configValue)
 	}
 
-	g := defaultGlobalConfig()
-	if err := g.mergeEnvironment(); err != nil {
-		initLogging(g.Debug)
-		log.Errorf(context.Background(), "%v", err)
-		os.Exit(1)
-	}
 	configFilePaths := iter.Seq[string](func(yield func(string) bool) {
 		for dir := range systemConfigDirs() {
 			if !yield(filepath.Join(dir, "zb", "config.json")) {
@@ -55,74 +79,108 @@ func main() {
 				return
 			}
 		}
+		for _, path := range c.ExtraConfigs {
+			if !yield(path) {
+				return
+			}
+		}
 	})
-	if err := g.mergeFiles(configFilePaths); err != nil {
-		initLogging(g.Debug)
+	if err := c.Config.mergeFiles(configFilePaths); err != nil {
+		return err
+	}
+
+	if err := c.Config.mergeEnvironment(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func main() {
+	c := new(zbCommand)
+	var defaultBuildUsersGroup string
+	if osutil.IsRoot() {
+		defaultBuildUsersGroup = backend.DefaultBuildUsersGroup
+	}
+	k := kong.Must(c,
+		kong.Name("zb"),
+		kong.Description("zb build tool"),
+		kong.ConfigureHelp(kong.HelpOptions{
+			NoExpandSubcommands: true,
+		}),
+		kong.BindToProvider(c.ProvideConfig),
+		kong.TypeMapper(reflect.TypeFor[sets.Set[string]](), kong.MapperFunc(mapStringSet)),
+		kong.NamedMapper("pathmap", kong.MapperFunc(mapPathMap)),
+		kong.NamedMapper("nativeStorePath", kong.MapperFunc(mapNativeStorePath)),
+		kong.Vars{
+			"default_store_dir":         string(defaultGlobalConfig().Directory),
+			"default_store_socket":      string(defaultGlobalConfig().StoreSocket),
+			"default_store_db":          filepath.Join(defaultVarDir(), "db.sqlite"),
+			"build_users_group":         defaultBuildUsersGroup,
+			"default_build_users_group": backend.DefaultBuildUsersGroup,
+			"default_log_dir":           filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "log", "zb"),
+			"temp_dir":                  os.TempDir(),
+			"num_cpu":                   strconv.Itoa(runtime.NumCPU()),
+			"supports_sandbox":          strconv.FormatBool(backend.SystemSupportsSandbox()),
+		},
+	)
+	kongcompletion.Register(k)
+
+	kc, err := k.Parse(os.Args[1:])
+	initLogging(c.Config.Debug)
+	if err != nil && !c.VersionFlag {
 		log.Errorf(context.Background(), "%v", err)
 		os.Exit(1)
 	}
 
 	ignoreSIGPIPE()
 	ctx, cancel := signal.NotifyContext(context.Background(), interruptSignals...)
-
-	rootCommand.PersistentFlags().StringVar(&g.CacheDB, "cache", g.CacheDB, "`path` to cache database")
-	rootCommand.PersistentFlags().Var((*storeDirectoryFlag)(&g.Directory), "store", "path to store `dir`ectory")
-	rootCommand.PersistentFlags().StringVar(&g.StoreSocket, "store-socket", g.StoreSocket, "`path` to store server socket")
-	rootCommand.PersistentFlags().BoolVar(&g.Debug, "debug", g.Debug, "show debugging output")
-	versionCobraFlag := rootCommand.PersistentFlags().VarPF(versionFlag{ctx}, "version", "", "show version information")
-	versionCobraFlag.NoOptDefVal = "true"
-	extraConfigs := rootCommand.PersistentFlags().StringArray("config", nil, "`path` to a configuration file to load (can be passed multiple times)")
-
-	rootCommand.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		// Load any command-line-passed configuration files before merging the rest.
-		if err := g.mergeFiles(slices.Values(*extraConfigs)); err != nil {
-			return err
-		}
-		initLogging(g.Debug)
-		if err := g.validate(); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	luacCommand := luac.New()
-	luacCommand.Hidden = true
-
-	rootCommand.AddCommand(
-		newBuildCommand(g),
-		newDerivationCommand(g),
-		newEvalCommand(g),
-		newKeyCommand(),
-		newNARCommand(),
-		newServeCommand(g),
-		newStoreCommand(g),
-		newVersionCommand(g),
-		luacCommand,
-	)
-
-	err := rootCommand.ExecuteContext(ctx)
-	if errors.Is(err, errShowVersion) {
-		err = runVersion(ctx)
+	if c.VersionFlag {
+		err = c.Version.Run(ctx, k)
+	} else {
+		kc.BindTo(ctx, (*context.Context)(nil))
+		err = kc.Run()
 	}
 	cancel()
 	if err != nil {
-		initLogging(g.Debug)
 		log.Errorf(context.Background(), "%v", err)
 		os.Exit(1)
 	}
 }
 
 type evalOptions struct {
-	expression bool
-	args       []string
-	keepFailed bool
-	clean      bool
+	Expression bool     `kong:"short=e,help=Interpret argument as Lua expression."`
+	Args       []string `kong:"name=URL,arg"`
+	KeepFailed bool     `kong:"short=k,help=Keep temporary directories of failed builds."`
+	Clean      bool     `kong:"help=Ignore any previous realizations in the store."`
+
+	AllowEnv    sets.Set[string] `kong:"xor=allow_env,placeholder=var,help=Allow the given environment variable to be accessed with os.getenv. (Can be passed multiple times.)"`
+	AllowAllEnv *bool            `kong:"xor=allow_env,help=Allow all environment variables to be accessed with os.getenv."`
+}
+
+func (opts *evalOptions) AfterApply(g *globalConfig) error {
+	if opts.AllowAllEnv != nil {
+		g.AllowEnv = stringAllowList{all: *opts.AllowAllEnv}
+	} else if opts.AllowEnv.Len() > 0 {
+		g.AllowEnv = stringAllowList{set: opts.AllowEnv.Clone()}
+	}
+	return nil
+}
+
+func (opts *evalOptions) Validate() error {
+	switch {
+	case opts.Expression && len(opts.Args) != 1:
+		return fmt.Errorf("accepts 1 arg, received %d", len(opts.Args))
+	case !opts.Expression && len(opts.Args) == 0:
+		return fmt.Errorf("requires at least 1 arg, only received %d", len(opts.Args))
+	}
+	return nil
 }
 
 func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client, di *zbstorerpc.DeferredImporter) (*frontend.Eval, error) {
 	store := &rpcStore{
 		dir:        g.Directory,
-		keepFailed: opts.keepFailed,
+		keepFailed: opts.KeepFailed,
 		Store: zbstorerpc.Store{
 			Handler: storeClient,
 		},
@@ -147,45 +205,27 @@ func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client, d
 }
 
 func (opts *evalOptions) reusePolicy(g *globalConfig) *zbstorerpc.ReusePolicy {
-	if opts.clean {
+	if opts.Clean {
 		return nil
 	}
 	return g.reusePolicy()
 }
 
-func newEvalCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "eval [options] [INSTALLABLE [...]]",
-		Short:                 "evaluate a Lua expression",
-		DisableFlagsInUseLine: true,
-		Args: func(c *cobra.Command, args []string) error {
-			if expr, _ := c.Flags().GetBool("expression"); expr {
-				return cobra.ExactArgs(1)(c, args)
-			}
-			return cobra.MinimumNArgs(1)(c, args)
-		},
-		SilenceErrors: true,
-		SilenceUsage:  true,
-	}
-	opts := new(evalOptions)
-	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as Lua expression")
-	c.Flags().BoolVarP(&opts.keepFailed, "keep-failed", "k", false, "keep temporary directories of failed builds")
-	addEnvAllowListFlag(c.Flags(), &g.AllowEnv)
-	addCleanFlag(c.Flags(), &opts.clean)
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.args = args
-		return runEval(cmd.Context(), g, opts)
-	}
-	return c
+type evalCommand struct {
+	evalOptions `kong:"embed"`
 }
 
-func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
+func (c *evalCommand) Signature() string {
+	return `kong:"help=Evaluate a Lua expression."`
+}
+
+func (c *evalCommand) Run(ctx context.Context, g *globalConfig) error {
 	di := new(zbstorerpc.DeferredImporter)
 	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: di,
 	})
 	defer storeClient.Close()
-	eval, err := opts.newEval(g, storeClient, di)
+	eval, err := c.newEval(g, storeClient, di)
 	if err != nil {
 		return err
 	}
@@ -196,11 +236,11 @@ func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 	}()
 
 	var results []any
-	if opts.expression {
+	if c.Expression {
 		results = make([]any, 1)
-		results[0], err = eval.Expression(ctx, opts.args[0])
+		results[0], err = eval.Expression(ctx, c.Args[0])
 	} else {
-		results, err = eval.URLs(ctx, opts.args)
+		results, err = eval.URLs(ctx, c.Args)
 	}
 	if err != nil {
 		return err
@@ -213,45 +253,22 @@ func runEval(ctx context.Context, g *globalConfig, opts *evalOptions) error {
 	return nil
 }
 
-type buildOptions struct {
-	evalOptions
-	outLink string
+type buildCommand struct {
+	evalOptions `kong:"embed"`
+	OutLink     string `kong:"short=o,default=result,placeholder=path,help=Change the name of the output path symlink. (Default: ${default})"`
 }
 
-func newBuildCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "build [options] URL [...]",
-		Short:                 "build one or more derivations",
-		DisableFlagsInUseLine: true,
-		Args: func(c *cobra.Command, args []string) error {
-			if expr, _ := c.Flags().GetBool("expression"); expr {
-				return cobra.ExactArgs(1)(c, args)
-			}
-			return cobra.MinimumNArgs(1)(c, args)
-		},
-		SilenceErrors: true,
-		SilenceUsage:  true,
-	}
-	opts := new(buildOptions)
-	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as a Lua expression")
-	c.Flags().BoolVarP(&opts.keepFailed, "keep-failed", "k", false, "keep temporary directories of failed builds")
-	addEnvAllowListFlag(c.Flags(), &g.AllowEnv)
-	c.Flags().StringVarP(&opts.outLink, "out-link", "o", "result", "change the name of the output path symlink to `path`")
-	addCleanFlag(c.Flags(), &opts.clean)
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.args = args
-		return runBuild(cmd.Context(), g, opts)
-	}
-	return c
+func (c *buildCommand) Signature() string {
+	return `kong:"help=Build one or more derivations."`
 }
 
-func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
+func (c *buildCommand) Run(ctx context.Context, g *globalConfig) error {
 	di := new(zbstorerpc.DeferredImporter)
 	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: di,
 	})
 	defer storeClient.Close()
-	eval, err := opts.newEval(g, storeClient, di)
+	eval, err := c.newEval(g, storeClient, di)
 	if err != nil {
 		return err
 	}
@@ -262,11 +279,11 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 	}()
 
 	var results []any
-	if opts.expression {
+	if c.Expression {
 		results = make([]any, 1)
-		results[0], err = eval.Expression(ctx, opts.args[0])
+		results[0], err = eval.Expression(ctx, c.Args[0])
 	} else {
-		results, err = eval.URLs(ctx, opts.args)
+		results, err = eval.URLs(ctx, c.Args)
 	}
 	if err != nil {
 		return err
@@ -286,8 +303,8 @@ func runBuild(ctx context.Context, g *globalConfig, opts *buildOptions) error {
 	realizeResponse := new(zbstorerpc.RealizeResponse)
 	err = jsonrpc.Do(ctx, storeClient, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths:   drvPaths,
-		KeepFailed: opts.keepFailed,
-		Reuse:      opts.reusePolicy(g),
+		KeepFailed: c.KeepFailed,
+		Reuse:      c.reusePolicy(g),
 	})
 	if err != nil {
 		return err
@@ -515,16 +532,6 @@ func openOutputFile(name string) (io.WriteCloser, error) {
 type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
-
-func addEnvAllowListFlag(fset *pflag.FlagSet, list *stringAllowList) {
-	fset.Var(list.argFlag(true), "allow-env", "allow the given environment `var`iable to be accessed with os.getenv")
-	all := fset.VarPF(list.allFlag(), "allow-all-env", "", "allow all environment variables to be accessed with os.getenv")
-	all.NoOptDefVal = "true"
-}
-
-func addCleanFlag(fset *pflag.FlagSet, p *bool) {
-	fset.BoolVar(p, "clean", false, "ignore any previous realizations in the store")
-}
 
 var initLogOnce sync.Once
 

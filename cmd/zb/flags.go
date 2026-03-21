@@ -4,13 +4,15 @@
 package main
 
 import (
-	"bytes"
 	"encoding/csv"
 	"fmt"
+	"iter"
+	"path/filepath"
+	"reflect"
 	"slices"
-	"strconv"
 	"strings"
 
+	"github.com/alecthomas/kong"
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"zb.256lights.llc/pkg/sets"
@@ -100,156 +102,150 @@ func (list *stringAllowList) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	return nil
 }
 
-func (list *stringAllowList) argFlag(csv bool) *stringAllowListFlag {
-	if list.set == nil {
-		list.set = make(sets.Set[string])
+func mapStringSet(dc *kong.DecodeContext, target reflect.Value) error {
+	if tp := target.Type(); tp != reflect.TypeFor[sets.Set[string]]() {
+		return fmt.Errorf("map string set: target is a %v", tp)
 	}
-	return &stringAllowListFlag{
-		stringSetFlag: stringSetFlag{
-			set: list.set,
-			csv: csv,
-		},
-		all: &list.all,
+	var s string
+	if err := dc.Scan.PopValueInto("string", &s); err != nil {
+		return err
 	}
-}
-
-func (list *stringAllowList) allFlag() *stringAllowListAllFlag {
-	return &stringAllowListAllFlag{list: list}
-}
-
-// stringAllowListFlag is the implementation of [github.com/spf13/pflag.Value]
-// and [github.com/spf13/pflag.SliceValue]
-// for [*stringAllowList.argFlag].
-// If a value is specified, then all will be set to false.
-type stringAllowListFlag struct {
-	stringSetFlag
-	all *bool
-}
-
-func (f *stringAllowListFlag) Set(s string) error {
-	*f.all = false
-	return f.stringSetFlag.Set(s)
-}
-
-func (f *stringAllowListFlag) Append(s string) error {
-	*f.all = false
-	return f.stringSetFlag.Append(s)
-}
-
-func (f *stringAllowListFlag) Replace(val []string) error {
-	*f.all = false
-	return f.stringSetFlag.Replace(val)
-}
-
-// stringSetFlag is similar to [github.com/spf13/pflag.StringArray],
-// but prevents duplicate entries.
-// If csv is true, then stringSetFlag acts like [github.com/spf13/pflag.StringSlice].
-type stringSetFlag struct {
-	set     sets.Set[string]
-	changed bool
-	csv     bool
-}
-
-func (f *stringSetFlag) Get() any { return f.set }
-
-func (f *stringSetFlag) Type() string {
-	if f.csv {
-		return "stringSlice"
+	var set sets.Set[string]
+	if target.IsNil() {
+		set = make(sets.Set[string])
+		target.Set(reflect.ValueOf(set))
 	} else {
-		return "stringArray"
+		set = target.Interface().(sets.Set[string])
 	}
-}
-
-func (f *stringSetFlag) GetSlice() []string {
-	s := slices.Collect(f.set.All())
-	slices.Sort(s)
-	return s
-}
-
-func (f *stringSetFlag) String() string {
-	buf := new(bytes.Buffer)
-	buf.WriteString("[")
-	w := csv.NewWriter(buf)
-	_ = w.Write(f.GetSlice())
-	w.Flush()
-	b := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
-	b = append(b, "]"...)
-	return string(b)
-}
-
-func (f *stringSetFlag) Set(s string) error {
-	if f.set == nil {
-		f.set = make(sets.Set[string])
-	}
-	if !f.changed {
-		f.set.Clear()
-		f.changed = true
-	}
-	if f.csv {
+	if dc.Value.Tag.Sep == -1 {
+		set.Add(s)
+	} else {
 		r := csv.NewReader(strings.NewReader(s))
+		r.Comma = dc.Value.Tag.Sep
 		vals, err := r.Read()
 		if err != nil {
 			return err
 		}
-		f.set.AddSeq(slices.Values(vals))
-	} else {
-		f.set.Add(s)
+		set.AddSeq(slices.Values(vals))
 	}
 	return nil
 }
 
-func (f *stringSetFlag) Append(val string) error {
-	if f.set == nil {
-		f.set = make(sets.Set[string])
+func mapPathMap(dc *kong.DecodeContext, target reflect.Value) error {
+	tp := target.Type()
+	if tp.Kind() != reflect.Map {
+		return fmt.Errorf("%v is not a map", tp)
 	}
-	f.set.Add(val)
+	keyType := tp.Key()
+	valueType := tp.Elem()
+	if keyType.Kind() != reflect.String || valueType.Kind() != reflect.String {
+		return fmt.Errorf("%v is not a map[~string]~string", tp)
+	}
+
+	var s string
+	if err := dc.Scan.PopValueInto("string", &s); err != nil {
+		return err
+	}
+
+	if target.IsNil() {
+		target.Set(reflect.MakeMap(tp))
+	}
+	for word := range strings.FieldsSeq(s) {
+		k, v, isMap := strings.Cut(word, string(dc.Value.Tag.Sep))
+		if !isMap {
+			v = k
+		}
+		target.SetMapIndex(reflect.ValueOf(k).Convert(keyType), reflect.ValueOf(v).Convert(valueType))
+	}
 	return nil
 }
 
-func (f *stringSetFlag) Replace(val []string) error {
-	if f.set == nil {
-		f.set = make(sets.Set[string])
-	} else {
-		f.set.Clear()
+func mapNativeStorePath(dc *kong.DecodeContext, target reflect.Value) error {
+	storePathType := reflect.TypeFor[zbstore.Path]()
+	if tp := target.Type(); tp != storePathType {
+		if tp.Kind() == reflect.Slice && tp.Elem() == storePathType {
+			return decodeSlice(dc, kong.MapperFunc(mapNativeStorePath), target)
+		}
+		return fmt.Errorf("%v is not a zbstore.Path", tp)
 	}
-	for _, s := range val {
-		f.set.Add(s)
+
+	var arg string
+	if err := dc.Scan.PopValueInto("path", &arg); err != nil {
+		return err
 	}
-	return nil
-}
-
-// stringAllowListAllFlag is the implementation of [github.com/spf13/pflag.Value]
-// for [*stringAllowList.allFlag].
-// If set false, then list.set will be cleared.
-type stringAllowListAllFlag struct {
-	list *stringAllowList
-}
-
-func (f *stringAllowListAllFlag) IsBoolFlag() bool { return true }
-func (f *stringAllowListAllFlag) Type() string     { return "bool" }
-func (f *stringAllowListAllFlag) String() string   { return strconv.FormatBool(f.list.all) }
-func (f *stringAllowListAllFlag) Get() any         { return f.list.all }
-
-func (f *stringAllowListAllFlag) Set(s string) error {
-	b, err := strconv.ParseBool(s)
-	f.list.all = b
-	if !b {
-		f.list.set.Clear()
-	}
-	return err
-}
-
-type storeDirectoryFlag zbstore.Directory
-
-func (f *storeDirectoryFlag) Type() string  { return "string" }
-func (f storeDirectoryFlag) String() string { return string(f) }
-func (f storeDirectoryFlag) Get() any       { return zbstore.Directory(f) }
-
-func (f *storeDirectoryFlag) Set(s string) error {
-	dir, err := zbstore.CleanDirectory(s)
+	path, err := parseNativeStorePath(arg)
 	if err != nil {
 		return err
 	}
-	*f = storeDirectoryFlag(dir)
+	target.Set(reflect.ValueOf(path))
+	return nil
+}
+
+// decodeSlice scans values into a slice like Kong does
+// with the given [kong.Mapper] for each element.
+func decodeSlice(dc *kong.DecodeContext, mapper kong.Mapper, target reflect.Value) error {
+	tp := target.Type()
+	if tp.Kind() != reflect.Slice {
+		return fmt.Errorf("%v is not a slice", tp)
+	}
+
+	var elementScanner *kong.Scanner
+	if dc.Value.Flag != nil {
+		token := dc.Scan.Pop()
+		tail := ""
+		sep := dc.Value.Tag.Sep
+		if sep != -1 {
+			tail += string(sep) + "..."
+		}
+		if token.IsEOL() {
+			return fmt.Errorf("missing value, expecting \"<arg>%s\"", tail)
+		}
+		switch v := reflect.ValueOf(token.Value); v.Kind() {
+		case reflect.String:
+			elementScanner = kong.ScanAsType(token.Type, kong.SplitEscaped(v.String(), sep)...)
+		case reflect.Array, reflect.Slice:
+			tokens := make([]kong.Token, 0, v.Len())
+			for _, element := range v.Seq2() {
+				tokens = append(tokens, kong.Token{
+					Type:  token.Type,
+					Value: element,
+				})
+			}
+			elementScanner = kong.ScanFromTokens(tokens...)
+		default:
+			elementScanner = kong.ScanFromTokens(token)
+		}
+	} else {
+		tokens := dc.Scan.PopWhile(kong.Token.IsValue)
+		elementScanner = kong.ScanFromTokens(tokens...)
+	}
+
+	elementType := tp.Elem()
+	for !elementScanner.Peek().IsEOL() {
+		newSlice := reflect.Append(target, reflect.Zero(elementType))
+		newElement := newSlice.Index(newSlice.Len() - 1)
+		if err := mapper.Decode(dc.WithScanner(elementScanner), newElement); err != nil {
+			return err
+		}
+		target.Set(newSlice)
+	}
+
+	return nil
+}
+
+func parseNativeStorePath(s string) (zbstore.Path, error) {
+	s, err := filepath.Abs(s)
+	if err != nil {
+		return "", err
+	}
+	return zbstore.ParsePath(s)
+}
+
+func findFlagByName(name string, flags iter.Seq[*kong.Flag]) *kong.Flag {
+	for flag := range flags {
+		if flag.Name == name {
+			return flag
+		}
+	}
 	return nil
 }

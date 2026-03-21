@@ -17,7 +17,6 @@ import (
 	"strconv"
 
 	"github.com/go-json-experiment/json/jsontext"
-	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
@@ -29,62 +28,40 @@ import (
 	"zombiezen.com/go/log"
 )
 
-func newStoreCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "store COMMAND",
-		Short:                 "inspect the store",
-		DisableFlagsInUseLine: true,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	c.AddCommand(
-		newStoreObjectCommand(g),
-	)
-	return c
+type storeDatabaseFlags struct {
+	DBPath string `kong:"name=db,default=${default_store_db},help=Path to store database file."`
 }
 
-func newStoreObjectCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "object COMMAND",
-		Short:                 "inspect and transfer store objects",
-		DisableFlagsInUseLine: true,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	c.AddCommand(
-		newStoreObjectInfoCommand(g),
-		newStoreObjectImportCommand(g),
-		newStoreObjectExportCommand(g),
-		newStoreObjectDeleteCommand(g),
-		newStoreObjectRegisterCommand(g),
-	)
-	return c
+type storeCommand struct {
+	Object storeObjectCommand `kong:"cmd"`
 }
 
-type storeObjectInfoOptions struct {
-	paths      []string
-	jsonFormat bool
+func (storeCommand) Signature() string {
+	return `kong:"cmd,help=Inspect the store."`
 }
 
-func newStoreObjectInfoCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "info [options] [PATH [...]]",
-		Short:                 "show metadata of one or more store objects",
-		DisableFlagsInUseLine: true,
-		Args:                  cobra.ArbitraryArgs,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	opts := new(storeObjectInfoOptions)
-	c.Flags().BoolVar(&opts.jsonFormat, "json", false, "print object info as JSON")
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.paths = args
-		return runStoreObjectInfo(cmd.Context(), g, opts)
-	}
-	return c
+type storeObjectCommand struct {
+	Info     storeObjectInfoCommand     `kong:"cmd"`
+	Import   storeObjectImportCommand   `kong:"cmd"`
+	Export   storeObjectExportCommand   `kong:"cmd"`
+	Delete   storeObjectDeleteCommand   `kong:"cmd,aliases=rm"`
+	Register storeObjectRegisterCommand `kong:"cmd,hidden"`
 }
 
-func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectInfoOptions) error {
+func (storeObjectCommand) Signature() string {
+	return `kong:"help=Inspect and transfer store objects."`
+}
+
+type storeObjectInfoCommand struct {
+	Paths      []string `kong:"name=path,arg,optional"`
+	JSONFormat bool     `kong:"name=json,Print object info as JSON"`
+}
+
+func (c *storeObjectInfoCommand) Signature() string {
+	return `kong:"help=Show metadata of one or more store objects."`
+}
+
+func (c *storeObjectInfoCommand) Run(ctx context.Context, g *globalConfig) error {
 	storeClient := g.storeClient(nil)
 	defer storeClient.Close()
 
@@ -92,7 +69,7 @@ func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectI
 
 	// TODO(someday): Batch.
 	var buf []byte
-	for i, p := range opts.paths {
+	for i, p := range c.Paths {
 		path, err := zbstore.ParsePath(p)
 		if err != nil {
 			return err
@@ -101,7 +78,7 @@ func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectI
 		req := &zbstorerpc.InfoRequest{
 			Path: path,
 		}
-		if opts.jsonFormat {
+		if c.JSONFormat {
 			// Dump info response directly to preserve unknown fields.
 			var partialParsed struct {
 				Info jsontext.Value `json:"info"`
@@ -149,50 +126,30 @@ func runStoreObjectInfo(ctx context.Context, g *globalConfig, opts *storeObjectI
 	return nil
 }
 
-type storeObjectExportOptions struct {
-	paths             []string
-	includeReferences bool
-	output            io.WriteCloser
+type storeObjectExportCommand struct {
+	Paths             []string `kong:"arg,name=path"`
+	IncludeReferences bool     `kong:"name=references,negatable,help=Include referenced store objects (default ${default}),default=true"`
+	OutputPath        string   `kong:"name=output,short=o,placeholder=file,help=Output file"`
 }
 
-func newStoreObjectExportCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "export [options] PATH [...]",
-		Short:                 "export one or more store objects",
-		DisableFlagsInUseLine: true,
-		Args:                  cobra.MinimumNArgs(1),
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	opts := new(storeObjectExportOptions)
-	c.Flags().BoolVar(&opts.includeReferences, "references", true, "include referenced store objects")
-	outputPath := c.Flags().StringP("output", "o", "", "output `file`")
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		if *outputPath == "" && term.IsTerminal(int(os.Stdout.Fd())) {
-			//lint:ignore ST1005 Output is known to be a terminal: punctuation is okay.
-			return errors.New("refusing to send binary export to stdout (a tty). Pass --output=- to override.")
-		}
-		if *outputPath == "" {
-			*outputPath = "-"
-		}
-		var err error
-		opts.output, err = openOutputFile(*outputPath)
-		if err != nil {
-			return err
-		}
-
-		opts.paths = args
-		return runStoreObjectExport(cmd.Context(), g, opts)
-	}
-	return c
+func (c *storeObjectExportCommand) Signature() string {
+	return `kong:"help=Export one or more store objects."`
 }
 
-func runStoreObjectExport(ctx context.Context, g *globalConfig, opts *storeObjectExportOptions) error {
-	closer := xio.CloseOnce(opts.output)
+func (c *storeObjectExportCommand) Run(ctx context.Context, g *globalConfig) error {
+	if c.OutputPath == "" && term.IsTerminal(int(os.Stdout.Fd())) {
+		//lint:ignore ST1005 Output is known to be a terminal: punctuation is okay.
+		return errors.New("refusing to send binary export to stdout (a tty). Pass --output=- to override.")
+	}
+	output, err := openOutputFile(c.OutputPath)
+	if err != nil {
+		return err
+	}
+	closer := xio.CloseOnce(output)
 	defer closer.Close()
 
 	toOutput := zbstorerpc.ImportFunc(func(header jsonrpc.Header, body io.Reader) error {
-		return zbstore.ReceiveExport(nopReceiver{}, io.TeeReader(body, opts.output))
+		return zbstore.ReceiveExport(nopReceiver{}, io.TeeReader(body, output))
 	})
 	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: toOutput,
@@ -200,10 +157,10 @@ func runStoreObjectExport(ctx context.Context, g *globalConfig, opts *storeObjec
 	defer storeClient.Close()
 
 	req := &zbstorerpc.ExportRequest{
-		Paths:             make([]zbstore.Path, len(opts.paths)),
-		ExcludeReferences: !opts.includeReferences,
+		Paths:             make([]zbstore.Path, len(c.Paths)),
+		ExcludeReferences: !c.IncludeReferences,
 	}
-	for i, p := range opts.paths {
+	for i, p := range c.Paths {
 		var err error
 		req.Paths[i], err = zbstore.ParsePath(p)
 		if err != nil {
@@ -227,32 +184,19 @@ type nopReceiver struct{}
 func (nopReceiver) Write(p []byte) (n int, err error)         { return len(p), nil }
 func (nopReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {}
 
-type storeObjectImportOptions struct {
-	paths []string
+type storeObjectImportCommand struct {
+	Paths []string `kong:"arg,name=path,optional"`
 }
 
-func newStoreObjectImportCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "import [options] [PATH [...]]",
-		Short:                 "import store objects from a previous `zb store object export` command",
-		DisableFlagsInUseLine: true,
-		Args:                  cobra.ArbitraryArgs,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	opts := new(storeObjectImportOptions)
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.paths = args
-		return runStoreObjectImport(cmd.Context(), g, opts)
-	}
-	return c
+func (c *storeObjectImportCommand) Signature() string {
+	return `kong:"help=Import store objects from a previous \\'zb store object export\\' command."`
 }
 
-func runStoreObjectImport(ctx context.Context, g *globalConfig, opts *storeObjectImportOptions) error {
+func (c *storeObjectImportCommand) Run(ctx context.Context, g *globalConfig) error {
 	storeClient := g.storeClient(nil)
 	defer storeClient.Close()
 
-	inputPaths := opts.paths
+	inputPaths := c.Paths
 	if len(inputPaths) == 0 {
 		inputPaths = []string{"-"}
 	}
@@ -451,48 +395,18 @@ func (rec *exportPathRecorder) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	}
 }
 
-type storeObjectDeleteOptions struct {
-	paths     []zbstore.Path
-	recursive bool
-	dbPath    string
+type storeObjectDeleteCommand struct {
+	Paths     []zbstore.Path `kong:"arg,name=path,type=nativeStorePath,required,help=Store object paths."`
+	Recursive bool           `kong:"short=r,help=Delete objects that depend on the paths."`
+	DBPath    string         `kong:"name=db,placeholder=path,help=Path to store database file."`
 }
 
-func newStoreObjectDeleteCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "delete [options] PATH [...]",
-		Short:                 "delete one or more store objects",
-		Aliases:               []string{"rm"},
-		DisableFlagsInUseLine: true,
-		Args:                  cobra.MinimumNArgs(1),
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-		Hidden:                true,
-	}
-	opts := &storeObjectDeleteOptions{
-		dbPath: filepath.Join(defaultVarDir(), "db.sqlite"),
-	}
-	c.Flags().StringVar(&opts.dbPath, "db", opts.dbPath, "`path` to store database file")
-	c.Flags().BoolVarP(&opts.recursive, "recursive", "r", false, "delete objects that depend on the paths")
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.paths = make([]zbstore.Path, 0, len(args))
-		for _, arg := range args {
-			arg, err := filepath.Abs(arg)
-			if err != nil {
-				return err
-			}
-			path, err := zbstore.ParsePath(arg)
-			if err != nil {
-				return err
-			}
-			opts.paths = append(opts.paths, path)
-		}
-		return runStoreObjectDelete(cmd.Context(), g, opts)
-	}
-	return c
+func (c *storeObjectDeleteCommand) Signature() string {
+	return `kong:"help=Delete one or more store objects."`
 }
 
-func runStoreObjectDelete(ctx context.Context, g *globalConfig, opts *storeObjectDeleteOptions) error {
-	backendServer := backend.NewServer(g.Directory, opts.dbPath, &backend.Options{
+func (c *storeObjectDeleteCommand) Run(ctx context.Context, g *globalConfig) error {
+	backendServer := backend.NewServer(g.Directory, c.DBPath, &backend.Options{
 		DatabasePoolSize:  1,
 		DisableSandbox:    true,
 		BuildLogRetention: -1,
@@ -500,52 +414,43 @@ func runStoreObjectDelete(ctx context.Context, g *globalConfig, opts *storeObjec
 	defer backendServer.Close()
 
 	f := backendServer.Delete
-	if opts.recursive {
+	if c.Recursive {
 		f = backendServer.DeleteIncludingReferences
 	}
-	if err := f(ctx, sets.New(opts.paths...)); err != nil {
+	if err := f(ctx, sets.New(c.Paths...)); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-type storeObjectRegisterOptions struct {
-	input  io.Reader
-	dbPath string
+type storeObjectRegisterCommand struct {
+	Input  io.Reader `kong:"-"`
+	DBPath string    `kong:"name=db,placeholder=path,help=Path to store database file."`
+}
+
+func (c *storeObjectRegisterCommand) Signature() string {
+	return `kong:"help=Add info for objects already present in the store directory."`
+}
+
+func (c *storeObjectRegisterCommand) BeforeResolve() error {
+	c.Input = os.Stdin
+	return nil
 }
 
 //go:embed docs/store_object_register.txt
 var storeObjectRegisterDoc string
 
-func newStoreObjectRegisterCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "register [options]",
-		Short:                 "add info for objects already present in the store directory",
-		Long:                  storeObjectRegisterDoc,
-		DisableFlagsInUseLine: true,
-		Args:                  cobra.NoArgs,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-		Hidden:                true,
-	}
-	opts := &storeObjectRegisterOptions{
-		input:  os.Stdin,
-		dbPath: filepath.Join(defaultVarDir(), "db.sqlite"),
-	}
-	c.Flags().StringVar(&opts.dbPath, "db", opts.dbPath, "`path` to store database file")
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runStoreObjectRegister(cmd.Context(), g, opts)
-	}
-	return c
+func (c *storeObjectRegisterCommand) Help() string {
+	return storeObjectRegisterDoc
 }
 
-func runStoreObjectRegister(ctx context.Context, g *globalConfig, opts *storeObjectRegisterOptions) error {
-	if err := os.MkdirAll(filepath.Dir(opts.dbPath), 0o755); err != nil {
+func (c *storeObjectRegisterCommand) Run(ctx context.Context, g *globalConfig) error {
+	if err := os.MkdirAll(filepath.Dir(c.DBPath), 0o755); err != nil {
 		return err
 	}
 
-	backendServer := backend.NewServer(g.Directory, opts.dbPath, &backend.Options{
+	backendServer := backend.NewServer(g.Directory, c.DBPath, &backend.Options{
 		DatabasePoolSize:            1,
 		DisableSandbox:              true,
 		BuildLogRetention:           -1,
@@ -553,7 +458,7 @@ func runStoreObjectRegister(ctx context.Context, g *globalConfig, opts *storeObj
 	})
 	defer backendServer.Close()
 
-	s := bufio.NewScanner(opts.input)
+	s := bufio.NewScanner(c.Input)
 	s.Split(splitObjectInfos)
 	ok := true
 	for info := new(backend.ObjectInfo); s.Scan(); {

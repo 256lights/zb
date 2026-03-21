@@ -15,7 +15,6 @@ import (
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
-	"github.com/spf13/cobra"
 	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xmaps"
@@ -24,61 +23,33 @@ import (
 	"zombiezen.com/go/log"
 )
 
-func newDerivationCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "derivation COMMAND",
-		Short:                 "query derivations",
-		DisableFlagsInUseLine: true,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	c.AddCommand(
-		newDerivationEnvCommand(g),
-		newDerivationShowCommand(g),
-	)
-	return c
+type derivationCommand struct {
+	Env  derivationEnvCommand  `kong:"cmd"`
+	Show derivationShowCommand `kong:"cmd"`
 }
 
-type derivationShowOptions struct {
-	evalOptions
-	jsonFormat bool
+func (c *derivationCommand) Signature() string {
+	return `help:"Query derivations."`
 }
 
-func newDerivationShowCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "show [options] [PATH [...]]",
-		Short:                 "show the contents of one or more derivations",
-		DisableFlagsInUseLine: true,
-		Args: func(c *cobra.Command, args []string) error {
-			if expr, _ := c.Flags().GetBool("expression"); expr {
-				return cobra.ExactArgs(1)(c, args)
-			}
-			return cobra.MinimumNArgs(1)(c, args)
-		},
-		SilenceErrors: true,
-		SilenceUsage:  true,
-	}
-	opts := new(derivationShowOptions)
-	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as Lua expression")
-	addEnvAllowListFlag(c.Flags(), &g.AllowEnv)
-	addCleanFlag(c.Flags(), &opts.clean)
-	c.Flags().BoolVar(&opts.jsonFormat, "json", false, "print derivation as JSON")
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.args = args
-		return runDerivationShow(cmd.Context(), g, opts)
-	}
-	return c
+type derivationShowCommand struct {
+	evalOptions `kong:"embed"`
+	JSONFormat  bool `kong:"name=json,help=Print derivation as JSON."`
 }
 
-func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationShowOptions) error {
+func (c *derivationShowCommand) Signature() string {
+	return `help:"Show the contents of one or more derivations."`
+}
+
+func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error {
 	var drvPaths []string
-	if !opts.expression {
+	if !c.Expression {
 		// The handling of arguments for `derivation show` is slightly different than other commands.
 		// If the user passes .drv file paths as arguments,
 		// we'll show the .drv file directly rather than trying to interpret it as a Lua file.
 		// These can be interspersed with other URLs.
-		drvPaths = make([]string, len(opts.args))
-		for i, arg := range opts.args {
+		drvPaths = make([]string, len(c.Args))
+		for i, arg := range c.Args {
 			u, err := frontend.ParseURL(arg)
 			if err != nil {
 				return err
@@ -94,11 +65,11 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 		if !slices.Contains(drvPaths, "") {
 			// Fast path: don't connect to the store. All arguments are local paths to .drv files.
 			for _, drvPath := range drvPaths {
-				drvBytes, err := showDerivationFile(drvPath, opts.jsonFormat)
+				drvBytes, err := showDerivationFile(drvPath, c.JSONFormat)
 				if err != nil {
 					return err
 				}
-				if !opts.jsonFormat && len(opts.args) > 1 {
+				if !c.JSONFormat && len(c.Args) > 1 {
 					drvBytes = append(drvBytes, '\n')
 				}
 				if _, err := os.Stdout.Write(drvBytes); err != nil {
@@ -114,7 +85,7 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 		Importer: di,
 	})
 	defer storeClient.Close()
-	eval, err := opts.newEval(g, storeClient, di)
+	eval, err := c.newEval(g, storeClient, di)
 	if err != nil {
 		return err
 	}
@@ -125,12 +96,12 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 	}()
 
 	var results []any
-	if opts.expression {
+	if c.Expression {
 		results = make([]any, 1)
-		results[0], err = eval.Expression(ctx, opts.args[0])
+		results[0], err = eval.Expression(ctx, c.Args[0])
 	} else {
-		urls := make([]string, 0, len(opts.args))
-		for i, arg := range opts.args {
+		urls := make([]string, 0, len(c.Args))
+		for i, arg := range c.Args {
 			if drvPaths[i] != "" {
 				continue
 			}
@@ -146,11 +117,11 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 	}
 
 	resultIndex := 0
-	for i := range opts.args {
+	for i := range c.Args {
 		var drvBytes []byte
 		var err error
 		if i < len(drvPaths) && drvPaths[i] != "" {
-			drvBytes, err = showDerivationFile(drvPaths[i], opts.jsonFormat)
+			drvBytes, err = showDerivationFile(drvPaths[i], c.JSONFormat)
 		} else {
 			result := results[resultIndex]
 			resultIndex++
@@ -158,12 +129,12 @@ func runDerivationShow(ctx context.Context, g *globalConfig, opts *derivationSho
 			if drv == nil {
 				return fmt.Errorf("%v is not a derivation", result)
 			}
-			drvBytes, err = showDerivation(drv, opts.jsonFormat)
+			drvBytes, err = showDerivation(drv, c.JSONFormat)
 		}
 		if err != nil {
 			return err
 		}
-		if !opts.jsonFormat && len(results) > 1 {
+		if !c.JSONFormat && len(results) > 1 {
 			drvBytes = append(drvBytes, '\n')
 		}
 		if _, err := os.Stdout.Write(drvBytes); err != nil {
@@ -320,46 +291,23 @@ func marshalDerivationJSON(drvPath string, drv *zbstore.Derivation) ([]byte, err
 	return data, nil
 }
 
-type derivationEnvOptions struct {
+type derivationEnvCommand struct {
 	evalOptions
-	jsonFormat bool
-	tempDir    string
+	JSONFormat bool   `kong:"help=Print environments as JSON."`
+	TempDir    string `kong:"default=${temp_dir},help=Fill in temporary directory with the given string."`
 }
 
-func newDerivationEnvCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "env [options] [INSTALLABLE [...]]",
-		Short:                 "show the environment of one or more derivations",
-		DisableFlagsInUseLine: true,
-		Args: func(c *cobra.Command, args []string) error {
-			if expr, _ := c.Flags().GetBool("expr"); expr {
-				return cobra.ExactArgs(1)(c, args)
-			}
-			return cobra.MinimumNArgs(1)(c, args)
-		},
-		SilenceErrors: true,
-		SilenceUsage:  true,
-	}
-	opts := new(derivationEnvOptions)
-	c.Flags().BoolVarP(&opts.expression, "expression", "e", false, "interpret argument as Lua expression")
-	addEnvAllowListFlag(c.Flags(), &g.AllowEnv)
-	addCleanFlag(c.Flags(), &opts.clean)
-	c.Flags().BoolVar(&opts.jsonFormat, "json", false, "print environments as JSON")
-	c.Flags().StringVar(&opts.tempDir, "temp-dir", os.TempDir(), "temporary `dir`ectory to fill in")
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.args = args
-		return runDerivationEnv(cmd.Context(), g, opts)
-	}
-	return c
+func (c *derivationEnvCommand) Signature() string {
+	return `help:"Show the environment of one or more derivations."`
 }
 
-func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvOptions) error {
+func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
 	di := new(zbstorerpc.DeferredImporter)
 	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: di,
 	})
 	defer storeClient.Close()
-	eval, err := opts.newEval(g, storeClient, di)
+	eval, err := c.newEval(g, storeClient, di)
 	if err != nil {
 		return err
 	}
@@ -370,11 +318,11 @@ func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvO
 	}()
 
 	var results []any
-	if opts.expression {
+	if c.Expression {
 		results = make([]any, 1)
-		results[0], err = eval.Expression(ctx, opts.args[0])
+		results[0], err = eval.Expression(ctx, c.Args[0])
 	} else {
-		results, err = eval.URLs(ctx, opts.args)
+		results, err = eval.URLs(ctx, c.Args)
 	}
 	if err != nil {
 		return err
@@ -393,8 +341,8 @@ func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvO
 	expandResponse := new(zbstorerpc.RealizeResponse)
 	err = jsonrpc.Do(ctx, storeClient, zbstorerpc.ExpandMethod, expandResponse, &zbstorerpc.ExpandRequest{
 		DrvPath:            drv.Path,
-		TemporaryDirectory: opts.tempDir,
-		Reuse:              opts.reusePolicy(g),
+		TemporaryDirectory: c.TempDir,
+		Reuse:              c.reusePolicy(g),
 	})
 	if err != nil {
 		return err
@@ -406,7 +354,7 @@ func runDerivationEnv(ctx context.Context, g *globalConfig, opts *derivationEnvO
 	if build.Expand == nil {
 		return fmt.Errorf("build %s did not provide expand information", expandResponse.BuildID)
 	}
-	if opts.jsonFormat {
+	if c.JSONFormat {
 		// Dump expand response directly to preserve unknown fields.
 		var parsed struct {
 			Expand jsontext.Value `json:"expand"`
