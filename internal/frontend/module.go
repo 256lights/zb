@@ -136,12 +136,8 @@ func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error)
 	}
 
 	// Start a goroutine that evaluates the module file.
-	eval.importGroup.Add(1)
-	go func() {
-		defer func() {
-			close(finished)
-			eval.importGroup.Done()
-		}()
+	eval.importGroup.Go(func() {
+		defer close(finished)
 		ctx := contextWithImportChain(eval.baseImportContext, &importChain{
 			path: filename,
 			next: chain,
@@ -150,7 +146,7 @@ func (eval *Eval) importFunction(ctx context.Context, l *lua.State) (int, error)
 		if mod.error != nil {
 			mod.state.Close()
 		}
-	}()
+	})
 
 	// Copy module from loaded state to top of stack.
 	if err := l.XMove(&eval.loadedState, 1); err != nil {

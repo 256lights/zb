@@ -224,10 +224,8 @@ func TestClient(t *testing.T) {
 			}()
 
 			var wg sync.WaitGroup
-			wg.Add(len(test.calls))
 			for i, call := range test.calls {
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					codec.waitUntil(call.waitUntil)
 					got, err := client.JSONRPC(ctx, call.request)
 					if err != nil {
@@ -243,7 +241,7 @@ func TestClient(t *testing.T) {
 					if diff := cmp.Diff(call.wantResponse, got, parseRawJSON()); diff != "" {
 						t.Errorf("call[%d] response (-want +got):\n%s", i, diff)
 					}
-				}()
+				})
 			}
 			wg.Wait()
 		})
