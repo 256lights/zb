@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sync"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
@@ -173,16 +172,14 @@ func (g *globalConfig) reusePolicy() *zbstorerpc.ReusePolicy {
 	return &zbstorerpc.ReusePolicy{PublicKeys: g.TrustedPublicKeys}
 }
 
-func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) (_ *jsonrpc.Client, wait func()) {
-	var wg sync.WaitGroup
-	c := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
+func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) *jsonrpc.Client {
+	return jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
 		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", g.StoreSocket)
 		if err != nil {
 			return nil, err
 		}
 		return zbstorerpc.NewCodec(conn, opts), nil
 	})
-	return c, wg.Wait
 }
 
 // defaultVarDir returns "/opt/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
