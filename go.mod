@@ -5,6 +5,7 @@ go 1.26.0
 toolchain go1.26.1
 
 require (
+	github.com/alecthomas/kong v1.14.0
 	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/dsnet/compress v0.0.1
 	github.com/go-json-experiment/json v0.0.0-20251024212118-8a0206d3c796
