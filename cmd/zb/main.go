@@ -516,13 +516,6 @@ type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
 
-func outputFileName(name string) string {
-	if name == "-" {
-		return "stdout"
-	}
-	return name
-}
-
 func addEnvAllowListFlag(fset *pflag.FlagSet, list *stringAllowList) {
 	fset.Var(list.argFlag(true), "allow-env", "allow the given environment `var`iable to be accessed with os.getenv")
 	all := fset.VarPF(list.allFlag(), "allow-all-env", "", "allow all environment variables to be accessed with os.getenv")

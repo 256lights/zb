@@ -573,7 +573,6 @@ func TestRealizeSelfReference(t *testing.T) {
 	defer cancel()
 	dir := backendtest.NewStoreDirectory(t)
 
-	const inputContent = "Hello, World!\n"
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExportWriter(exportBuffer)
 	const wantOutputName = "self.txt"

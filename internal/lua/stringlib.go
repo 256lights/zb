@@ -1383,5 +1383,3 @@ func numBytesToPad(n, align int) (_ int, isPowerOfTwo bool) {
 	}
 	return (align - (n & mask)) & mask, true
 }
-
-const packAlignErrorMessage = "format asks for alignment not power of 2"

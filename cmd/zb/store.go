@@ -169,6 +169,7 @@ func newStoreObjectExportCommand(g *globalConfig) *cobra.Command {
 	outputPath := c.Flags().StringP("output", "o", "", "output `file`")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		if *outputPath == "" && term.IsTerminal(int(os.Stdout.Fd())) {
+			//lint:ignore ST1005 Output is known to be a terminal: punctuation is okay.
 			return errors.New("refusing to send binary export to stdout (a tty). Pass --output=- to override.")
 		}
 		if *outputPath == "" {

@@ -341,14 +341,6 @@ var (
 	_ valueStringer = stringValue{}
 )
 
-func toString(v value) (_ stringValue, ok bool) {
-	sv, ok := v.(valueStringer)
-	if !ok {
-		return stringValue{}, false
-	}
-	return sv.stringValue(), true
-}
-
 // lenValue is a [value] that has a defined "raw" length.
 type lenValue interface {
 	value
