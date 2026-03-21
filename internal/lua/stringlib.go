@@ -74,7 +74,6 @@ func OpenString(ctx context.Context, l *State) (int, error) {
 	indexMethod := luacode.TagMethodIndex.String()
 	metaMethods[indexMethod] = nil
 	for _, op := range operators {
-		op := op // Capture constant instead of loop variable.
 		metaMethods[op.TagMethod().String()] = func(ctx context.Context, l *State) (int, error) {
 			return stringArithmetic(ctx, l, op)
 		}

@@ -395,11 +395,11 @@ func (cd *CodeDirectory) UnmarshalBinary(data []byte) error {
 }
 
 func parseCString(b []byte) (string, error) {
-	i := bytes.IndexByte(b, 0)
-	if i < 0 {
+	before, _, ok := bytes.Cut(b, []byte{0})
+	if !ok {
 		return "", errors.New("missing nul byte")
 	}
-	return string(b[:i]), nil
+	return string(before), nil
 }
 
 func isZero(b []byte) bool {

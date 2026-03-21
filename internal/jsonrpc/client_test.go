@@ -226,7 +226,6 @@ func TestClient(t *testing.T) {
 			var wg sync.WaitGroup
 			wg.Add(len(test.calls))
 			for i, call := range test.calls {
-				i, call := i, call
 				go func() {
 					defer wg.Done()
 					codec.waitUntil(call.waitUntil)

@@ -347,7 +347,7 @@ func setFuncs(l *State, nUp int, reg map[string]Function, pushFunction func(l *S
 		if f == nil {
 			l.PushBoolean(false)
 		} else {
-			for i := 0; i < nUp; i++ {
+			for range nUp {
 				l.PushValue(-nUp)
 			}
 			pushFunction(l, nUp, f)

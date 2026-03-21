@@ -23,8 +23,8 @@
 
         inherit (pkgs.lib.attrsets) optionalAttrs;
 
-        go = pkgs.go_1_25;
-        buildGoModule = pkgs.buildGo125Module;
+        go = pkgs.go_1_26;
+        buildGoModule = pkgs.buildGo126Module;
 
         zbPackage = pkgs.callPackage ./package.nix {
           inherit buildGoModule;

@@ -12,6 +12,7 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1309,12 +1310,7 @@ func isFieldAnyOf[T any](p cmp.Path, names ...string) bool {
 		return false
 	}
 	name := p.Last().(cmp.StructField).Name()
-	for _, n := range names {
-		if name == n {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(names, name)
 }
 
 func checkSingleFileOutput(tb testing.TB, drvPath, wantOutputPath zbstore.Path, wantOutputContent []byte, resp *zbstorerpc.Build) {

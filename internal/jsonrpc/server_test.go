@@ -208,8 +208,8 @@ func TestServe(t *testing.T) {
 }
 
 var (
-	anyType          = reflect.TypeOf((*any)(nil)).Elem()
-	mapStringAnyType = reflect.TypeOf((*map[string]any)(nil)).Elem()
+	anyType          = reflect.TypeFor[any]()
+	mapStringAnyType = reflect.TypeFor[map[string]any]()
 )
 
 type testServerCodec struct {

@@ -113,12 +113,10 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 	serverCodec := zbstorerpc.NewCodec(serverConn, &zbstorerpc.CodecOptions{
 		Importer: zbstorerpc.NewReceiverImporter(serverReceiver),
 	})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		jsonrpc.Serve(backend.WithExporter(serveCtx, serverCodec), serverCodec, srv)
 		serverCodec.Close()
-	}()
+	})
 
 	clientCodec := zbstorerpc.NewCodec(clientConn, &opts.ClientOptions)
 	client := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {

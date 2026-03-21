@@ -92,11 +92,9 @@ func Serve(ctx context.Context, codec ServerCodec, handler Handler) error {
 			srv.mu.Unlock()
 		}
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			srv.single(requestCtx, handler, parsed, cancel)
-		}()
+		})
 	}
 }
 
