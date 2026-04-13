@@ -531,7 +531,13 @@ func openOutputFile(name string) (io.WriteCloser, error) {
 
 type nopWriteCloser struct{ io.Writer }
 
-func (nopWriteCloser) Close() error { return nil }
+// ReadFrom implements [io.ReaderFrom] by calling [io.Copy] on the underlying writer.
+// This keeps [io.Copy] efficient in case the underlying writer implements [io.ReaderFrom].
+func (nwc nopWriteCloser) ReadFrom(r io.Reader) (n int64, err error) {
+	return io.Copy(nwc.Writer, r)
+}
+
+func (nwc nopWriteCloser) Close() error { return nil }
 
 var initLogOnce sync.Once
 
