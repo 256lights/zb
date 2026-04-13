@@ -37,8 +37,7 @@ const (
 )
 
 func TestRealizeSingleDerivation(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
 	const inputContent = "Hello, World!\n"
@@ -124,8 +123,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 }
 
 func TestRealizeReuse(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
 	const inputContent = "Hello, World!\n"
@@ -222,8 +220,7 @@ func TestRealizeReuse(t *testing.T) {
 }
 
 func TestRealizeDisableReuse(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
 	const inputContent = "Hello, World!\n"
@@ -319,8 +316,7 @@ func TestRealizeDisableReuse(t *testing.T) {
 }
 
 func TestRealizeMultiStep(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
 	const inputContent = "Hello, World!\n"
@@ -420,8 +416,7 @@ func TestRealizeMultiStep(t *testing.T) {
 }
 
 func TestRealizeReferenceToDep(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
 	const inputContent = "Hello, World!\n"
@@ -569,8 +564,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 }
 
 func TestRealizeSelfReference(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
 	exportBuffer := new(bytes.Buffer)
@@ -654,8 +648,7 @@ func TestRealizeSelfReference(t *testing.T) {
 }
 
 func TestRealizeFixed(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
 	exportBuffer := new(bytes.Buffer)
@@ -770,8 +763,7 @@ func TestRealizeFixed(t *testing.T) {
 }
 
 func TestRealizeFailure(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
 	exportBuffer := new(bytes.Buffer)
@@ -883,8 +875,7 @@ func TestRealizeFailure(t *testing.T) {
 }
 
 func TestRealizeNoOutput(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
 	exportBuffer := new(bytes.Buffer)
@@ -999,8 +990,7 @@ func TestRealizeCores(t *testing.T) {
 	tests := []int{1, 2}
 	for _, n := range tests {
 		t.Run(fmt.Sprintf("N%d", n), func(t *testing.T) {
-			ctx, cancel := testcontext.New(t)
-			defer cancel()
+			ctx := testcontext.New(t)
 			dir := backendtest.NewStoreDirectory(t)
 
 			exportBuffer := new(bytes.Buffer)
@@ -1075,8 +1065,7 @@ func TestRealizeCores(t *testing.T) {
 }
 
 func TestRealizeFetchURL(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
 	const fileContent = "Hello, World!\n"
@@ -1149,8 +1138,7 @@ func TestRealizeFetchURL(t *testing.T) {
 }
 
 func TestRealizeSignature(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
 	testKey := ed25519.PrivateKey{

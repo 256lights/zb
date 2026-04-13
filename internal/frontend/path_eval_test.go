@@ -27,8 +27,7 @@ func TestPath(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ctx, cancel := testcontext.New(t)
-		defer cancel()
+		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
 		di := new(zbstorerpc.DeferredImporter)
@@ -96,8 +95,7 @@ func TestPath(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ctx, cancel := testcontext.New(t)
-		defer cancel()
+		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
 		di := new(zbstorerpc.DeferredImporter)
@@ -180,8 +178,7 @@ func TestPath(t *testing.T) {
 	})
 
 	t.Run("Directory", func(t *testing.T) {
-		ctx, cancel := testcontext.New(t)
-		defer cancel()
+		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
 		di := new(zbstorerpc.DeferredImporter)
@@ -239,8 +236,7 @@ func TestPath(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ctx, cancel := testcontext.New(t)
-		defer cancel()
+		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
 		di := new(zbstorerpc.DeferredImporter)
@@ -314,8 +310,7 @@ func TestPath(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ctx, cancel := testcontext.New(t)
-		defer cancel()
+		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
 		di := new(zbstorerpc.DeferredImporter)
@@ -381,8 +376,7 @@ func TestPath(t *testing.T) {
 	})
 
 	t.Run("FilteredDirectory", func(t *testing.T) {
-		ctx, cancel := testcontext.New(t)
-		defer cancel()
+		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
 		di := new(zbstorerpc.DeferredImporter)
@@ -433,8 +427,7 @@ func TestPath(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ctx, cancel := testcontext.New(t)
-		defer cancel()
+		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
 		di := new(zbstorerpc.DeferredImporter)
@@ -492,8 +485,7 @@ func TestReadFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
 	di := new(zbstorerpc.DeferredImporter)

@@ -82,8 +82,7 @@ func TestLuaToGo(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
 	di := new(zbstorerpc.DeferredImporter)
@@ -150,8 +149,7 @@ func TestGetenv(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			ctx, cancel := testcontext.New(t)
-			defer cancel()
+			ctx := testcontext.New(t)
 			storeDir := backendtest.NewStoreDirectory(t)
 
 			const wantKey = "BAR"
@@ -199,8 +197,7 @@ func TestGetenv(t *testing.T) {
 }
 
 func TestStringMethod(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
 	di := new(zbstorerpc.DeferredImporter)
@@ -238,8 +235,7 @@ func TestStringMethod(t *testing.T) {
 }
 
 func TestImportFromDerivation(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
 	di := new(zbstorerpc.DeferredImporter)
@@ -281,8 +277,7 @@ func TestImportFromDerivation(t *testing.T) {
 }
 
 func TestImportExitStore(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
 	di := new(zbstorerpc.DeferredImporter)
@@ -321,8 +316,7 @@ func TestImportExitStore(t *testing.T) {
 }
 
 func TestImportCycle(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
 	di := new(zbstorerpc.DeferredImporter)
@@ -397,8 +391,7 @@ func TestImportCycle(t *testing.T) {
 }
 
 func TestExtract(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
 	di := new(zbstorerpc.DeferredImporter)
@@ -437,8 +430,7 @@ func TestExtract(t *testing.T) {
 	}
 
 	t.Run("Full", func(t *testing.T) {
-		ctx, cancel := testcontext.New(t)
-		defer cancel()
+		ctx := testcontext.New(t)
 
 		drv, ok := results[0].(*Derivation)
 		if !ok {
@@ -475,8 +467,7 @@ func TestExtract(t *testing.T) {
 	})
 
 	t.Run("Stripped", func(t *testing.T) {
-		ctx, cancel := testcontext.New(t)
-		defer cancel()
+		ctx := testcontext.New(t)
 
 		drv, ok := results[1].(*Derivation)
 		if !ok {
@@ -514,8 +505,7 @@ func TestExtract(t *testing.T) {
 }
 
 func TestNewState(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
 	di := new(zbstorerpc.DeferredImporter)
@@ -561,8 +551,7 @@ func TestNewState(t *testing.T) {
 
 // BenchmarkNewState measures the performance of spinning up a new interpreter.
 func BenchmarkNewState(b *testing.B) {
-	ctx, cancel := testcontext.New(b)
-	defer cancel()
+	ctx := testcontext.New(b)
 	storeDir := backendtest.NewStoreDirectory(b)
 
 	di := new(zbstorerpc.DeferredImporter)

@@ -134,8 +134,7 @@ func TestExport(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Run("RPC", func(t *testing.T) {
-				ctx, cancel := testcontext.New(t)
-				defer cancel()
+				ctx := testcontext.New(t)
 
 				dir := backendtest.NewStoreDirectory(t)
 				records, importData, err := generateImport(dir)
@@ -216,8 +215,7 @@ func TestExport(t *testing.T) {
 				}
 
 				t.Run(mapTestName, func(t *testing.T) {
-					ctx, cancel := testcontext.New(t)
-					defer cancel()
+					ctx := testcontext.New(t)
 
 					var dir zbstore.Directory
 					var realDir string

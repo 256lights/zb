@@ -13,8 +13,7 @@ import (
 )
 
 func TestLazy(t *testing.T) {
-	ctx, cancel := testcontext.New(t)
-	defer cancel()
+	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
 	di := new(zbstorerpc.DeferredImporter)
