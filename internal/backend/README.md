@@ -17,20 +17,23 @@
    This step produces a set of realizations
    and a map of derivations to derivation hashes.
 
-1. **Obtain missing store objects.**
-   Walk the dependency graph in breadth-first order.
-   If we encounter an output that has a realization recorded in the previous step
-   whose output store object does not exist in the store,
-   attempt to download it from the fallback store.
+1. **Obtain missing build roots.**
+   Walk the derivations in reverse dependency order
+   (i.e. derivations with no input derivations first).
+   When we encounter a derivation with outputs in the build request
+   or without output realizations:
 
-    - If the download succeeds, don't walk any dependencies.
-    - If the download fails, then ignore the realizations we collected for this derivation
-      and any realizations that transitively depend on the derivation.
+   1. Check if we have the output store object in the store.
+      If so, continue walking.
+   2. Otherwise, attempt to download the output store object.
+      If the download succeeds, continue walking.
+   3. Otherwise, ignore all realizations we collected for this derivation
+      and any realizations that that transitively depend on this derivation.
       (We do this for the full derivation to avoid complexities with multi-output derivations.)
       We also ignore any derivation hash of any derivation
       that transitively depends on the derivation.
-      Then we walk the dependencies of the derivation
-      whose output store object does not exist.
+      Visit the failed derivation's transitive input derivations in breadth-first order,
+      doing a similar set of steps to download output store objects if necessary.
 
 1. **Build what remains.**
    For each derivation that must be built to satisfy the build request
@@ -43,7 +46,13 @@
        then all of the derivation's outputs (not just the ones requested)
        must have acceptable realizations and be present in the store.
     2. If there is an acceptable realization, then use it.
-       Otherwise, run the builder and record the realization(s) on success.
+    3. If there are any realizations whose output store objects do not exist in the store
+       and are compatible with existing realizations,
+       then attempt to download the output store objects from the fallback store.
+    4. If the download(s) succeed, then use them.
+    5. Download any realizations for the derivation from the fallback store.
+    6. Repeat steps 1-4 with the new realizations.
+    7. Otherwise, run the builder and record the realization(s) on success.
 
 ## Store Concurrency
 
