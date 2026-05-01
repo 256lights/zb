@@ -4,8 +4,11 @@
 package backend
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"unique"
 
 	"zb.256lights.llc/pkg/internal/xslices"
@@ -121,4 +124,101 @@ func addToMultiMap[K comparable, V comparable, M ~map[K]sets.Set[V]](m M, k K, v
 		m[k] = dst
 	}
 	dst.Add(v)
+}
+
+// dependencyOrderIterator walks a [dependencyGraph] in dependency order
+// (i.e. derivations are returned after all their input derivations are processed).
+type dependencyOrderIterator struct {
+	graph *dependencyGraph
+
+	mu       sync.Mutex
+	stack    []zbstore.Path
+	finished map[zbstore.Path]bool
+	pending  int
+	waiting  chan struct{}
+}
+
+func newDependencyOrderIterator(g *dependencyGraph) *dependencyOrderIterator {
+	return &dependencyOrderIterator{
+		graph:    g,
+		stack:    slices.AppendSeq(make([]zbstore.Path, 0, g.roots.Len()), g.roots.All()),
+		finished: make(map[zbstore.Path]bool),
+	}
+}
+
+// next returns the next derivation path in dependency order.
+// It is the caller's responsibility to call [*dependencyOrderIterator.finish]
+// on the returned path when the path has been processed.
+// next will block until there is at least one derivation
+// whose input derivations all have been marked with [*dependencyOrderIterator.finish].
+// If there are no more derivations to visit, next returns ("", [errEndIteration]).
+func (it *dependencyOrderIterator) next(ctx context.Context) (zbstore.Path, error) {
+	it.mu.Lock()
+	for len(it.stack) == 0 {
+		if it.pending <= 0 {
+			it.mu.Unlock()
+			return "", errEndIteration
+		}
+		waiting := it.waiting
+		if waiting == nil {
+			waiting = make(chan struct{})
+			it.waiting = waiting
+		}
+		it.mu.Unlock()
+
+		select {
+		case <-waiting:
+			it.mu.Lock()
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	p := xslices.Last(it.stack)
+	it.stack = xslices.Pop(it.stack, 1)
+	it.pending++
+	it.mu.Unlock()
+	return p, nil
+}
+
+var errEndIteration = errors.New("end iteration")
+
+// finish marks the derivation with the given path as having finished processing,
+// optionally allowing the derivation's dependents to be returned by next.
+func (it *dependencyOrderIterator) finish(path zbstore.Path, processDependents bool) {
+	node := it.graph.nodes[path]
+	if node == nil {
+		return
+	}
+
+	it.mu.Lock()
+	defer it.mu.Unlock()
+	if _, hasKey := it.finished[path]; hasKey {
+		return
+	}
+	it.finished[path] = processDependents
+	it.pending--
+
+	if processDependents {
+		for possible := range node.dependents {
+			canAdd := true
+			for input := range it.graph.nodes[possible].derivation.InputDerivations {
+				if !it.finished[input] {
+					canAdd = false
+					break
+				}
+			}
+			if canAdd {
+				it.stack = append(it.stack, possible)
+				if it.waiting != nil {
+					close(it.waiting)
+					it.waiting = nil
+				}
+			}
+		}
+	}
+
+	if it.pending <= 0 && len(it.stack) == 0 && it.waiting != nil {
+		close(it.waiting)
+		it.waiting = nil
+	}
 }

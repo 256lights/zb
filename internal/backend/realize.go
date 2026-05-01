@@ -16,7 +16,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -33,7 +32,6 @@ import (
 	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/xmaps"
-	"zb.256lights.llc/pkg/internal/xslices"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -356,10 +354,15 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 			unlock()
 		}
 	}()
-	stack := slices.AppendSeq(make([]zbstore.Path, 0, graph.roots.Len()), graph.roots.All())
-	for len(stack) > 0 {
-		curr := xslices.Last(stack)
-		stack = xslices.Pop(stack, 1)
+	it := newDependencyOrderIterator(graph)
+	for {
+		curr, err := it.next(ctx)
+		if err != nil {
+			if err != errEndIteration {
+				return err
+			}
+			break
+		}
 
 		drv := b.derivations[curr]
 		if drv == nil {
@@ -393,11 +396,7 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 		delete(drvLocks, curr)
 
 		// Queue up new work.
-		for possible := range graphNode.dependents {
-			if b.allRealized(b.derivations[possible].InputDerivationOutputs()) {
-				stack = append(stack, possible)
-			}
-		}
+		it.finish(curr, true)
 	}
 
 	return nil
