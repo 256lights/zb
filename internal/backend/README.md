@@ -2,38 +2,42 @@
 
 ## Build Algorithm
 
+When the backend receives a build request
+(the `RealizeRequest` from [zbstorerpc.go](../zbstorerpc/zbstorerpc.go)):
+
 1. Load the transitive closure of derivations requested into memory.
    These should all exist on disk because the edges are store references.
 
 1. **Gather existing realizations.**
-   Walk the dependency graph,
-   selecting realizations and hashing derivations.
+   (This step produces a set of realizations
+   and a map of derivations to derivation hashes.)
+   Walk the dependency graph of derivations in dependency order
+   (i.e. derivations with no input derivations first),
+   selecting realizations and [hashing derivations][].
    Fixed-output derivations can have realizations generated for them on the fly regardless of reuse policy,
    since their derivation hash is purely based on their output hash.
    New realizations may be downloaded from the fallback store
    if an output does not have any trusted realizations
    or an output does not have any local store paths.
-   Realizations whose output store object does not exist are permitted.
-   This step produces a set of realizations
-   and a map of derivations to derivation hashes.
 
 1. **Obtain missing build roots.**
-   Walk the derivations in reverse dependency order
+   Walk the derivations in dependency order
    (i.e. derivations with no input derivations first).
    When we encounter a derivation with outputs in the build request
-   or without output realizations:
+   or with missing realizations:
 
    1. Check if we have the output store object in the store.
       If so, continue walking.
-   2. Otherwise, attempt to download the output store object.
+   2. Otherwise, attempt to download the output store object from the fallback store.
       If the download succeeds, continue walking.
    3. Otherwise, ignore all realizations we collected for this derivation
-      and any realizations that that transitively depend on this derivation.
+      and any realizations that transitively depend on this derivation.
       (We do this for the full derivation to avoid complexities with multi-output derivations.)
       We also ignore any derivation hash of any derivation
       that transitively depends on the derivation.
       Visit the failed derivation's transitive input derivations in breadth-first order,
-      doing a similar set of steps to download output store objects if necessary.
+      repeating "obtain missing build root" steps 1&2 for each
+      to download output store objects if possible.
 
 1. **Build what remains.**
    For each derivation that must be built to satisfy the build request
@@ -53,6 +57,8 @@
     5. Download any realizations for the derivation from the fallback store.
     6. Repeat steps 1-4 with the new realizations.
     7. Otherwise, run the builder and record the realization(s) on success.
+
+[hashing derivations]: https://main--zb-docs.netlify.app/binary-cache/realizations#derivation-hashes
 
 ## Store Concurrency
 
