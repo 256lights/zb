@@ -20,7 +20,7 @@ When the backend receives a build request
    if an output does not have any trusted realizations
    or an output does not have any local store paths.
 
-1. **Obtain missing build roots.**
+1. **Obtain build roots.**
    Walk the derivations in dependency order
    (i.e. derivations with no input derivations first).
    When we encounter a derivation with outputs in the build request
@@ -33,10 +33,11 @@ When the backend receives a build request
    3. Otherwise, ignore all realizations we collected for this derivation
       and any realizations that transitively depend on this derivation.
       (We do this for the full derivation to avoid complexities with multi-output derivations.)
-      We also ignore any derivation hash of any derivation
-      that transitively depends on the derivation.
+      We also ignore any derivation hash
+      and clear the build root mark
+      of any derivation that transitively depends on the derivation.
       Visit the failed derivation's transitive input derivations in breadth-first order,
-      repeating "obtain missing build roots" steps 1&2 for each
+      repeating "obtain missing build roots" steps 1-3 for each
       to download output store objects if possible.
       If we fail to download the outputs for a derivation that has no input derivations,
       then mark that derivation as a build root.

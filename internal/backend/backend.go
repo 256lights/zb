@@ -37,6 +37,12 @@ import (
 // for the users that execute builders on behalf of the daemon.
 const DefaultBuildUsersGroup = "zbld"
 
+// Store combines the [zbstore.Store] and [zbstore.RealizationFetcher] interfaces.
+type Store interface {
+	zbstore.Store
+	zbstore.RealizationFetcher
+}
+
 // Options is the set of optional parameters to [NewServer].
 type Options struct {
 	// RealStoreDirectory is where the store objects are located physically on disk.
@@ -51,6 +57,10 @@ type Options struct {
 	// ContentAddressBufferCreator is used to create buffers for content addressing analysis.
 	// If nil, then in-memory byte slices are used with reasonable limits.
 	ContentAddressBufferCreator bytebuffer.Creator
+
+	// Fallback is used to obtain objects and realizations
+	// that don't exist in the server's store directory.
+	Fallback Store
 
 	// DatabasePoolSize is the maximum permitted number of concurrent connections to the database.
 	// If less than 1, a reasonable default is used.
@@ -134,6 +144,7 @@ type Server struct {
 	allowKeepFailed bool
 	buildContext    func(context.Context, string) context.Context
 	keyring         *Keyring
+	fallback        Store
 
 	sandbox      bool
 	sandboxPaths map[string]SandboxPath
@@ -176,6 +187,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		activeBuilds:    make(map[uuid.UUID]context.CancelFunc),
 		buildContext:    opts.BuildContext,
 		keyring:         opts.Keyring.Clone(),
+		fallback:        opts.Fallback,
 
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
@@ -214,6 +226,9 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		srv.buildContext = func(_ context.Context, _ string) context.Context {
 			return context.Background()
 		}
+	}
+	if srv.fallback == nil {
+		srv.fallback = zbstore.Null{}
 	}
 	var bgCtx context.Context
 	bgCtx, srv.cancelBackground = context.WithCancel(context.Background())

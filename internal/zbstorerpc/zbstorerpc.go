@@ -92,6 +92,14 @@ type ReusePolicy struct {
 	PublicKeys []*zbstore.RealizationPublicKey `json:"publicKeys,omitempty"`
 }
 
+// IsZero reports whether the policy is one that will not reuse any realizations.
+func (reuse *ReusePolicy) IsZero() bool {
+	if reuse == nil {
+		return true
+	}
+	return !reuse.All && len(reuse.PublicKeys) == 0
+}
+
 // RealizeResponse is the result for [RealizeMethod].
 type RealizeResponse struct {
 	BuildID string `json:"buildID"`

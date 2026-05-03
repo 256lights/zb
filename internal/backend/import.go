@@ -339,6 +339,24 @@ func freeze(ctx context.Context, path string) {
 	})
 }
 
+type pathRecorderReceiver struct {
+	paths    sets.Set[zbstore.Path]
+	receiver zbstore.NARReceiver
+}
+
+func (prr *pathRecorderReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
+	if prr.paths == nil {
+		prr.paths = make(sets.Set[zbstore.Path])
+	}
+	prr.paths.Add(trailer.StorePath)
+
+	prr.receiver.ReceiveNAR(trailer)
+}
+
+func (prr *pathRecorderReceiver) Write(p []byte) (int, error) {
+	return prr.receiver.Write(p)
+}
+
 // singleConnectionGetter is a [connectionGetter] that returns a single connection.
 type singleConnectionGetter struct {
 	conn *sqlite.Conn
