@@ -20,16 +20,21 @@ import (
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
-	"zombiezen.com/go/sqlite/sqlitemigration"
+	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
+
+type connectionGetter interface {
+	Get(ctx context.Context) (*sqlite.Conn, error)
+	Put(conn *sqlite.Conn)
+}
 
 // NARReceiver is a per-connection [zbstore.NARReceiver].
 type NARReceiver struct {
 	ctx     context.Context
 	dir     zbstore.Directory
 	realDir string
-	dbPool  *sqlitemigration.Pool
+	dbPool  connectionGetter
 	writing *mutexMap[zbstore.Path]
 
 	tmpFileCreator bytebuffer.Creator
@@ -43,6 +48,10 @@ type NARReceiver struct {
 // NewNARReceiver returns a new [NARReceiver] that is attached to the server.
 // Callers are responsible for calling [NARReceiver.Cleanup] after the receiver is no longer in use.
 func (s *Server) NewNARReceiver(ctx context.Context, bufCreator bytebuffer.Creator) *NARReceiver {
+	return s.newNARReceiver(ctx, bufCreator, s.db)
+}
+
+func (s *Server) newNARReceiver(ctx context.Context, bufCreator bytebuffer.Creator, getter connectionGetter) *NARReceiver {
 	// nils are easier to catch at this point on the stack than later.
 	if ctx == nil {
 		panic("nil context passed to NewNARReceiver")
@@ -55,7 +64,7 @@ func (s *Server) NewNARReceiver(ctx context.Context, bufCreator bytebuffer.Creat
 		ctx:            ctx,
 		dir:            s.dir,
 		realDir:        s.realDir,
-		dbPool:         s.db,
+		dbPool:         getter,
 		writing:        &s.writing,
 		tmpFileCreator: bufCreator,
 		hasher:         *nix.NewHasher(nix.SHA256),
@@ -328,4 +337,19 @@ func freeze(ctx context.Context, path string) {
 		log.Warnf(ctx, "%v", err)
 		return nil
 	})
+}
+
+// singleConnectionGetter is a [connectionGetter] that returns a single connection.
+type singleConnectionGetter struct {
+	conn *sqlite.Conn
+}
+
+func (g *singleConnectionGetter) Get(ctx context.Context) (*sqlite.Conn, error) {
+	return g.conn, nil
+}
+
+func (g *singleConnectionGetter) Put(conn *sqlite.Conn) {
+	if conn != g.conn {
+		panic("mismatched connection")
+	}
 }
