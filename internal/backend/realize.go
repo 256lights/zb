@@ -361,6 +361,7 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 			unlock()
 		}
 	}()
+	// TODO(now): Use buildRoots as start of iterator.
 	it := newDependencyOrderIterator(graph)
 	for {
 		curr, err := it.next(ctx)
@@ -491,7 +492,7 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 	// (If the realization's store object does not exist locally, we accept that later,
 	// but we only want to fetch realizations from the fallback store
 	// if we don't have a suitable realization set locally.)
-	switch err := b.fetchRealizationSet(ctx, conn, wantEqClasses, true); {
+	switch _, err := b.fetchRealizationSet(ctx, conn, wantEqClasses, true); {
 	case errors.Is(err, errMultipleRealizations):
 		// Ignore.
 		// Downloading more realizations isn't going to help:
@@ -526,7 +527,7 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 
 			// Now retry with new realization data.
 			// (As noted above, this time, we accept realizations without a local store object present.)
-			if err := b.fetchRealizationSet(ctx, conn, wantEqClasses, false); err != nil {
+			if _, err := b.fetchRealizationSet(ctx, conn, wantEqClasses, false); err != nil {
 				return fmt.Errorf("realize %s: %w", curr, err)
 			}
 		}
@@ -660,7 +661,7 @@ func (b *builder) fetchRealization(ctx context.Context, conn *sqlite.Conn, eqCla
 // because selecting a realization may imply selecting realizations from its closure.
 // fetchRealizationSet will only add realizations to b.realizations
 // if it does not return an error.
-func (b *builder) fetchRealizationSet(ctx context.Context, conn *sqlite.Conn, eqClasses sets.Set[equivalenceClass], mustExist bool) (err error) {
+func (b *builder) fetchRealizationSet(ctx context.Context, conn *sqlite.Conn, eqClasses sets.Set[equivalenceClass], mustExist bool) (absentRealizations sets.Set[equivalenceClass], err error) {
 	defer sqlitex.Save(conn)(&err)
 
 	oldRealizations := maps.Clone(b.realizations)
@@ -669,13 +670,18 @@ func (b *builder) fetchRealizationSet(ctx context.Context, conn *sqlite.Conn, eq
 			b.realizations = oldRealizations
 		}
 	}()
+	if !mustExist {
+		absentRealizations = make(sets.Set[equivalenceClass])
+	}
 
 	for eqClass := range eqClasses.All() {
-		if _, err := b.fetchRealization(ctx, conn, eqClass, mustExist); err != nil {
-			return err
+		newAbsent, err := b.fetchRealization(ctx, conn, eqClass, mustExist)
+		if err != nil {
+			return nil, err
 		}
+		absentRealizations.AddSeq(newAbsent.All())
 	}
-	return nil
+	return absentRealizations, nil
 }
 
 // pickRealizationFromSet finds the only realization in the existing set
@@ -821,10 +827,19 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 		if node == nil {
 			return false, fmt.Errorf("obtain build roots for %s: %s: unknown derivation", drvPath, curr)
 		}
+		drvHash := b.drvHashes[curr]
+		if drvHash.IsZero() {
+			return false, fmt.Errorf("obtain build roots for %s: %s: missing hash", drvPath, curr)
+		}
 
-		err := b.downloadFromFallbackStore(ctx, conn, curr, func(yield func(string) bool) {
+		drvHashKey := makeHashKey(drvHash)
+		err := b.downloadFromFallbackStore(ctx, conn, func(yield func(equivalenceClass) bool) {
 			for handle := range node.usedOutputs {
-				if !yield(handle.Value()) {
+				eqClass := equivalenceClass{
+					drvHashKey: drvHashKey,
+					outputName: handle,
+				}
+				if !yield(eqClass) {
 					return
 				}
 			}
@@ -848,36 +863,28 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 	return false, nil
 }
 
-func (b *builder) downloadFromFallbackStore(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.Path, usedOutputs iter.Seq[string]) error {
-	needsBuild := false
+func (b *builder) downloadFromFallbackStore(ctx context.Context, conn *sqlite.Conn, eqClasses iter.Seq[equivalenceClass]) error {
 	storePathsToDownload := make(sets.Set[zbstore.Path])
-	for outputName := range usedOutputs {
-		ref := zbstore.OutputReference{
-			DrvPath:    drvPath,
-			OutputName: outputName,
-		}
-		outputPath, ok := b.lookup(ref)
+	for eqClass := range eqClasses {
+		r, ok := b.realizations[eqClass]
 		if !ok {
-			needsBuild = true
-			break
+			return fmt.Errorf("missing realization for %v", eqClass)
 		}
+		outputPath := r.path
 
-		log.Debugf(ctx, "Waiting for lock on %s (%v)...", outputPath, ref)
+		log.Debugf(ctx, "Waiting for lock on %s (%v)...", outputPath, eqClass)
 		unlockInput, err := b.server.writing.lock(ctx, outputPath)
 		if err != nil {
-			return fmt.Errorf("download %v: wait for %s: %w", ref, outputPath, err)
+			return fmt.Errorf("download %v: wait for %s: %w", eqClass, outputPath, err)
 		}
 		_, err = os.Lstat(b.server.realPath(outputPath))
 		unlockInput()
-		log.Debugf(ctx, "%s exists=%t (input to %s)", outputPath, err == nil, drvPath)
+		log.Debugf(ctx, "%s exists=%t (output of %v)", outputPath, err == nil, eqClass)
 		if err != nil {
 			storePathsToDownload.Add(outputPath)
 		}
 	}
 
-	if needsBuild {
-		return fmt.Errorf("download %s: missing realizations (will build)", drvPath)
-	}
 	if len(storePathsToDownload) == 0 {
 		return nil
 	}
@@ -911,7 +918,7 @@ func (b *builder) downloadFromFallbackStore(ctx context.Context, conn *sqlite.Co
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("download %s: missing %s", drvPath, joinStrings(missing, ", "))
+		return fmt.Errorf("missing %s", joinStrings(missing, ", "))
 	}
 	return nil
 }
@@ -969,6 +976,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 	defer b.server.db.Put(conn)
 
 	var buildResultID int64
+	var absentRealizations sets.Set[equivalenceClass]
 	hasExisting := false
 	err = func() (err error) {
 		endFn, err := sqlitex.ImmediateTransaction(conn)
@@ -990,44 +998,51 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 				}
 			}
 		})
-		reuseError := b.fetchRealizationSet(ctx, conn, wantEqClasses, true)
+		var reuseError error
+		absentRealizations, reuseError = b.fetchRealizationSet(ctx, conn, wantEqClasses, false)
 
+		// TODO(now): Update comment.
 		// Regardless of whether the realization search succeeded or not,
 		// we want to set outputs for this build results during this transaction.
 		// If the search succeeded, the outputs will have the found paths.
 		// Otherwise, we set a default of nulls for all requested outputs.
-		err = setBuildResultOutputs(conn, buildResultID, func(yield func(string, zbstore.Path) bool) {
-			for outputName := range outputNames.All() {
-				eqClass := newEquivalenceClass(drvHash, outputName.Value())
-				var path zbstore.Path
-				if reuseError == nil {
-					path = b.realizations[eqClass].path
+		if len(absentRealizations) == 0 {
+			err = setBuildResultOutputs(conn, buildResultID, func(yield func(string, zbstore.Path) bool) {
+				for outputName := range outputNames.All() {
+					eqClass := newEquivalenceClass(drvHash, outputName.Value())
+					var path zbstore.Path
+					if reuseError == nil {
+						path = b.realizations[eqClass].path
+					}
+					if !yield(outputName.Value(), path) {
+						return
+					}
 				}
-				if !yield(outputName.Value(), path) {
-					return
-				}
+			})
+			if err != nil {
+				// If setting the outputs failed, then it's probably an I/O error of some sort.
+				// Finalizing the build result probably won't succeed,
+				// so we just return the error and bail early.
+				return err
 			}
-		})
-		if err != nil {
-			// If setting the outputs failed, then it's probably an I/O error of some sort.
-			// Finalizing the build result probably won't succeed,
-			// so we just return the error and bail early.
-			return err
 		}
 
 		if !errors.Is(reuseError, errRealizationNotFound) {
 			// If there was a realization or the search had an abnormal failure,
 			// we can finalize the result inside this transaction.
 			hasExisting = reuseError == nil
-			err := finalizeBuildResult(ctx, conn, b.server.logDir, &buildFinalResults{
-				buildID: b.id,
-				drvPath: drvPath,
-				id:      buildResultID,
-				endTime: time.Now(),
-				error:   reuseError,
-			})
-			if err != nil {
-				log.Warnf(ctx, "For build %s: %v", drvPath, err)
+			// TODO(now): Update comment.
+			if len(absentRealizations) == 0 {
+				err := finalizeBuildResult(ctx, conn, b.server.logDir, &buildFinalResults{
+					buildID: b.id,
+					drvPath: drvPath,
+					id:      buildResultID,
+					endTime: time.Now(),
+					error:   reuseError,
+				})
+				if err != nil {
+					log.Warnf(ctx, "For build %s: %v", drvPath, err)
+				}
 			}
 			return reuseError
 		}
@@ -1037,9 +1052,19 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 	if err != nil {
 		return fmt.Errorf("build %s: %v", drvPath, err)
 	}
-	if hasExisting {
+	if hasExisting && len(absentRealizations) == 0 {
 		return nil
 	}
+	if len(absentRealizations) > 0 {
+		err := b.downloadFromFallbackStore(ctx, conn, absentRealizations.All())
+		if err == nil {
+			return nil
+		}
+		log.Debugf(ctx, "build %s: %v", drvPath, err)
+		// TODO(now): Download realizations from fallback store. (Step 5.)
+		// TODO(now): Repeat steps 1-4.
+	}
+
 	defer func() {
 		endFn, txError := sqlitex.ImmediateTransaction(conn)
 		if txError != nil {
