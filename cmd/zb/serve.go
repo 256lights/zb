@@ -108,6 +108,12 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 	} else {
 		webHandler.staticAssets = ui.StaticAssets()
 	}
+	if _, err := os.Stat(g.StoreSocket); err == nil {
+		log.Infof(ctx, "Cleaning up existing store on %s", g.StoreSocket)
+		if err = os.Remove(g.StoreSocket); err != nil {
+			return err
+		}
+	}
 
 	var l net.Listener
 	if runtime.GOOS == "linux" && c.SystemdSocket {
