@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"zb.256lights.llc/pkg/internal/luacode"
+	"zb.256lights.llc/pkg/internal/xslices"
 )
 
 // A Function is a callback for a Lua function implemented in Go.
@@ -200,18 +201,13 @@ func (l *State) checkUpvalues(top int, upvalues []*upvalue) error {
 // This is distinct from calling the “__close” metamethods,
 // but often happens at the same time.
 func (l *State) closeUpvalues(bottom int) {
-	n := 0
-	for _, uv := range l.pendingVariables {
+	l.pendingVariables = xslices.Filter(l.pendingVariables, func(uv *upvalue) bool {
 		if uv.isOpen() && uv.stackIndex >= bottom {
 			// Close the upvalue.
 			uv.storage = l.stack[uv.stackIndex]
 			uv.stackIndex = -1
-		} else {
-			// Keep the upvalue in the list.
-			l.pendingVariables[n] = uv
-			n++
+			return false
 		}
-	}
-	clear(l.pendingVariables[n:])
-	l.pendingVariables = l.pendingVariables[:n]
+		return true
+	})
 }
