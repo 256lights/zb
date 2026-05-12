@@ -361,8 +361,7 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 			unlock()
 		}
 	}()
-	// TODO(now): Use buildRoots as start of iterator.
-	it := newDependencyOrderIterator(graph)
+	it := newDependencyOrderIterator(graph, buildRoots.All())
 	for {
 		curr, err := it.next(ctx)
 		if err != nil {
@@ -437,8 +436,7 @@ func (b *builder) expand(drvPath zbstore.Path, drv *zbstore.Derivation, temporar
 // from the local and fallback stores
 // without running any builders.
 func (b *builder) gatherRealizations(ctx context.Context, graph *dependencyGraph) error {
-	it := newDependencyOrderIterator(graph)
-	for {
+	for it := graph.iterator(); ; {
 		curr, err := it.next(ctx)
 		if err != nil {
 			if err != errEndIteration {
@@ -770,8 +768,7 @@ func (b *builder) isCompatible(pe pathAndEquivalenceClass) bool {
 // downloading store objects from the fallback store as needed.
 func (b *builder) obtainBuildRoots(ctx context.Context, graph *dependencyGraph, want sets.Set[zbstore.OutputReference]) (roots sets.Set[zbstore.Path], err error) {
 	roots = make(sets.Set[zbstore.Path])
-	it := newDependencyOrderIterator(graph)
-	for {
+	for it := graph.iterator(); ; {
 		curr, err := it.next(ctx)
 		if err != nil {
 			if err != errEndIteration {
