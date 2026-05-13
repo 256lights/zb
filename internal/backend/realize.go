@@ -830,7 +830,7 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 		}
 
 		drvHashKey := makeHashKey(drvHash)
-		err := b.downloadFromFallbackStore(ctx, conn, func(yield func(equivalenceClass) bool) {
+		err := b.copyFromFallback(ctx, conn, func(yield func(equivalenceClass) bool) {
 			for handle := range node.usedOutputs {
 				eqClass := equivalenceClass{
 					drvHashKey: drvHashKey,
@@ -860,8 +860,11 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 	return false, nil
 }
 
-func (b *builder) downloadFromFallbackStore(ctx context.Context, conn *sqlite.Conn, eqClasses iter.Seq[equivalenceClass]) error {
 	storePathsToDownload := make(sets.Set[zbstore.Path])
+// copyFromFallback imports any store objects identified by the paths
+// from the fallback store
+// that are not present in the store directory.
+func (b *builder) copyFromFallback(ctx context.Context, conn *sqlite.Conn, eqClasses iter.Seq[equivalenceClass]) error {
 	for eqClass := range eqClasses {
 		r, ok := b.realizations[eqClass]
 		if !ok {
@@ -1053,7 +1056,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		return nil
 	}
 	if len(absentRealizations) > 0 {
-		err := b.downloadFromFallbackStore(ctx, conn, absentRealizations.All())
+		err := b.copyFromFallback(ctx, conn, absentRealizations.All())
 		if err == nil {
 			return nil
 		}
