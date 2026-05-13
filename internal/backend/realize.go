@@ -860,11 +860,11 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 	return false, nil
 }
 
-	storePathsToDownload := make(sets.Set[zbstore.Path])
 // copyFromFallback imports any store objects identified by the paths
 // from the fallback store
 // that are not present in the store directory.
 func (b *builder) copyFromFallback(ctx context.Context, conn *sqlite.Conn, eqClasses iter.Seq[equivalenceClass]) error {
+	storePathsToDownload := make(map[zbstore.Path]sets.Set[equivalenceClass])
 	for eqClass := range eqClasses {
 		r, ok := b.realizations[eqClass]
 		if !ok {
@@ -875,13 +875,13 @@ func (b *builder) copyFromFallback(ctx context.Context, conn *sqlite.Conn, eqCla
 		log.Debugf(ctx, "Waiting for lock on %s (%v)...", outputPath, eqClass)
 		unlockInput, err := b.server.writing.lock(ctx, outputPath)
 		if err != nil {
-			return fmt.Errorf("download %v: wait for %s: %w", eqClass, outputPath, err)
+			return fmt.Errorf("download %s (output of %v): %w", outputPath, eqClass, err)
 		}
 		_, err = os.Lstat(b.server.realPath(outputPath))
 		unlockInput()
 		log.Debugf(ctx, "%s exists=%t (output of %v)", outputPath, err == nil, eqClass)
 		if err != nil {
-			storePathsToDownload.Add(outputPath)
+			addToMultiMap(storePathsToDownload, outputPath, eqClass)
 		}
 	}
 
@@ -892,7 +892,7 @@ func (b *builder) copyFromFallback(ctx context.Context, conn *sqlite.Conn, eqCla
 	pr, pw := io.Pipe()
 	exportFinished := make(chan error)
 	go func() {
-		err := zbstore.Export(ctx, b.server.fallback, pw, storePathsToDownload, nil)
+		err := zbstore.Export(ctx, b.server.fallback, pw, sets.Collect(maps.Keys(storePathsToDownload)), nil)
 		pw.CloseWithError(err)
 		exportFinished <- err
 	}()
@@ -911,14 +911,20 @@ func (b *builder) copyFromFallback(ctx context.Context, conn *sqlite.Conn, eqCla
 	if receiveError != nil {
 		return receiveError
 	}
-	missing := make([]zbstore.Path, 0, len(storePathsToDownload))
-	for path := range storePathsToDownload {
+
+	errorMessage := new(strings.Builder)
+	for path, eqClassesForPath := range storePathsToDownload {
 		if !pathRecorder.paths.Has(path) {
-			missing = append(missing, path)
+			if errorMessage.Len() == 0 {
+				errorMessage.WriteString("missing ")
+			} else {
+				errorMessage.WriteString(", ")
+			}
+			fmt.Fprintf(errorMessage, "%s (output of %v)", path, eqClassesForPath)
 		}
 	}
-	if len(missing) > 0 {
-		return fmt.Errorf("missing %s", joinStrings(missing, ", "))
+	if errorMessage.Len() > 0 {
+		return errors.New(errorMessage.String())
 	}
 	return nil
 }
