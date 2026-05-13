@@ -409,11 +409,6 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 	return nil
 }
 
-var (
-	errRealizationNotFound  = errors.New("no suitable realizations exist")
-	errMultipleRealizations = errors.New("multiple valid realizations")
-)
-
 func (b *builder) expand(drvPath zbstore.Path, drv *zbstore.Derivation, temporaryDirectory string) (*zbstore.Derivation, error) {
 	outPaths, err := tempOutputPaths(drvPath, drv.Outputs)
 	if err != nil {
@@ -485,12 +480,12 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 		}
 	})
 
-	// Fetch realizations from local store,
-	// preferring ones that exist locally.
+	// Fetch realizations whose store objects exist locally.
 	// (If the realization's store object does not exist locally, we accept that later,
 	// but we only want to fetch realizations from the fallback store
 	// if we don't have a suitable realization set locally.)
-	switch _, err := b.fetchRealizationSet(ctx, conn, wantEqClasses, true); {
+	p := b.newLocalOnlyPlanner()
+	switch err := p.planSet(ctx, conn, wantEqClasses); {
 	case errors.Is(err, errMultipleRealizations):
 		// Ignore.
 		// Downloading more realizations isn't going to help:
@@ -525,243 +520,19 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 
 			// Now retry with new realization data.
 			// (As noted above, this time, we accept realizations without a local store object present.)
-			if _, err := b.fetchRealizationSet(ctx, conn, wantEqClasses, false); err != nil {
+			p := b.newPlanner()
+			if err := p.planSet(ctx, conn, wantEqClasses); err != nil {
 				return fmt.Errorf("realize %s: %w", curr, err)
 			}
+			p.commit()
 		}
 	case err != nil:
 		return fmt.Errorf("realize %s: %v", curr, err)
+	default:
+		p.commit()
 	}
 
 	return nil
-}
-
-// fetchRealization finds a realization to use for a derivation output
-// from the store database
-// that is compatible with existing realizations in the builder.
-// fetchRealization returns an error that unwraps to [errRealizationNotFound]
-// or if no such realization could be found,
-// an error that unwraps to [errMultipleRealizations] if multiple such realizations were found.
-// If fetchRealization does not return an error,
-// then b.realizations will have a value for eqClass.
-//
-// If mustExist is true, then the realization must be present in the store
-// to be considered.
-// Otherwise, fetchRealization will return a set of keys added to b.realizations
-// that name paths not in the store.
-//
-// fetchRealization may add realizations for equivalence classes beyond the given one
-// because selecting a realization may imply selecting realizations from its closure.
-// fetchRealization will only add realizations to b.realizations
-// if it does not return an error.
-func (b *builder) fetchRealization(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass, mustExist bool) (absentRealizations sets.Set[equivalenceClass], err error) {
-	if _, exists := b.realizations[eqClass]; exists {
-		return nil, nil
-	}
-
-	defer func() {
-		// Don't add absent realizations to the realization set if we return an error.
-		if err != nil {
-			for eqClass := range absentRealizations.All() {
-				delete(b.realizations, eqClass)
-			}
-			absentRealizations = nil
-		}
-	}()
-	defer sqlitex.Save(conn)(&err)
-
-	log.Debugf(ctx, "Searching for realizations for %v...", eqClass)
-	presentInStore, absentFromStore, err := findPossibleRealizations(ctx, conn, eqClass, b.reusePolicy)
-	if err != nil {
-		return nil, err
-	}
-
-	var r cachedRealization
-	present := false
-	r.path, r.closure, err = b.pickRealizationFromSet(ctx, conn, eqClass, presentInStore)
-	switch {
-	case err == nil:
-		present = true
-	case errors.Is(err, errRealizationNotFound):
-		if mustExist {
-			return nil, err
-		}
-		r.path, r.closure, err = b.pickRealizationFromSet(ctx, conn, eqClass, absentFromStore)
-		if errors.Is(err, errMultipleRealizations) {
-			return nil, fmt.Errorf("pick compatible realization for %v: %w", eqClass, errRealizationNotFound)
-		}
-		if err != nil {
-			return nil, err
-		}
-	default:
-		return nil, err
-	}
-
-	// Now that we selected our realization, fill out the closures.
-	log.Debugf(ctx, "Using sole viable candidate %s for %v", r.path, eqClass)
-	b.realizations[eqClass] = r
-	if !present {
-		absentRealizations = sets.New(eqClass)
-	}
-	for refPath, eqClasses := range r.closure {
-		refPathExists := true
-		if !present {
-			var err error
-			refPathExists, err = objectExists(conn, refPath)
-			if err != nil {
-				return absentRealizations, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
-			}
-		}
-
-		for eqClass := range eqClasses.All() {
-			if eqClass.isZero() {
-				continue
-			}
-			if _, exists := b.realizations[eqClass]; exists {
-				continue
-			}
-			pe := pathAndEquivalenceClass{
-				path:             refPath,
-				equivalenceClass: eqClass,
-			}
-			closureRealization := cachedRealization{
-				path:    refPath,
-				closure: make(map[zbstore.Path]sets.Set[equivalenceClass]),
-			}
-			err = closurePaths(conn, pe, func(pe pathAndEquivalenceClass) bool {
-				addToMultiMap(closureRealization.closure, pe.path, pe.equivalenceClass)
-				return true
-			})
-			if err != nil {
-				return absentRealizations, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
-			}
-			b.realizations[eqClass] = closureRealization
-			if !refPathExists {
-				absentRealizations.Add(eqClass)
-			}
-		}
-	}
-
-	return absentRealizations, nil
-}
-
-// fetchRealizationSet finds a set of realizations to use for the given set of derivation outputs
-// from the store database
-// that is compatible with existing realizations in the builder
-// and with elements in the set.
-// fetchRealizationSet returns an error that unwraps to [errRealizationNotFound]
-// if no such set of realizations could be found.
-// If fetchRealizationSet does not return an error,
-// then b.realizations will have a value for all elements of eqClasses.
-// Only realizations in the store will be considered.
-//
-// fetchRealizationSet may add realizations for equivalence classes beyond the given one
-// because selecting a realization may imply selecting realizations from its closure.
-// fetchRealizationSet will only add realizations to b.realizations
-// if it does not return an error.
-func (b *builder) fetchRealizationSet(ctx context.Context, conn *sqlite.Conn, eqClasses sets.Set[equivalenceClass], mustExist bool) (absentRealizations sets.Set[equivalenceClass], err error) {
-	defer sqlitex.Save(conn)(&err)
-
-	oldRealizations := maps.Clone(b.realizations)
-	defer func() {
-		if err != nil {
-			b.realizations = oldRealizations
-		}
-	}()
-	if !mustExist {
-		absentRealizations = make(sets.Set[equivalenceClass])
-	}
-
-	for eqClass := range eqClasses.All() {
-		newAbsent, err := b.fetchRealization(ctx, conn, eqClass, mustExist)
-		if err != nil {
-			return nil, err
-		}
-		absentRealizations.AddSeq(newAbsent.All())
-	}
-	return absentRealizations, nil
-}
-
-// pickRealizationFromSet finds the only realization in the existing set
-// that has closures compatible with the rest of the builder's realizations.
-// pickRealizationFromSet will return an error that unwraps to [errRealizationNotFound]
-// if there is no such realization,
-// or an error that unwraps to [errMultipleRealizations] if there are multiple such realizations.
-func (b *builder) pickRealizationFromSet(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass, existing sets.Set[zbstore.Path]) (selectedPath zbstore.Path, closure map[zbstore.Path]sets.Set[equivalenceClass], err error) {
-	closure = make(map[zbstore.Path]sets.Set[equivalenceClass])
-	remaining := existing.Clone()
-	for outputPath := range existing.All() {
-		log.Debugf(ctx, "Checking whether %s can be used as %v...", outputPath, eqClass)
-		remaining.Delete(outputPath)
-
-		pe := pathAndEquivalenceClass{
-			path:             outputPath,
-			equivalenceClass: eqClass,
-		}
-		clear(closure)
-		canUse := true
-		err := closurePaths(conn, pe, func(ref pathAndEquivalenceClass) bool {
-			canUse = b.isCompatible(ref)
-			if canUse {
-				addToMultiMap(closure, ref.path, ref.equivalenceClass)
-			} else {
-				log.Debugf(ctx, "Cannot use %s as %v: depends on %s (need %s)",
-					outputPath, eqClass, ref.path, b.realizations[ref.equivalenceClass].path)
-			}
-			return canUse
-		})
-		if err != nil {
-			return "", nil, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
-		}
-		if canUse {
-			log.Debugf(ctx, "Found %s as a candidate for %v", outputPath, eqClass)
-			selectedPath = outputPath
-			break
-		}
-	}
-
-	if selectedPath == "" {
-		log.Debugf(ctx, "No suitable realizations exist for %v", eqClass)
-		return "", nil, fmt.Errorf("pick compatible realization for %v: %w", eqClass, errRealizationNotFound)
-	}
-
-	// In the case where there are multiple valid candidates
-	// that match the client's reuse policy,
-	// we don't use any of them and rebuild.
-	for outputPath := range remaining.All() {
-		pe := pathAndEquivalenceClass{
-			path:             outputPath,
-			equivalenceClass: eqClass,
-		}
-		canUse := true
-		err := closurePaths(conn, pe, func(ref pathAndEquivalenceClass) bool {
-			canUse = b.isCompatible(ref)
-			return canUse
-		})
-		if err != nil {
-			return "", nil, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
-		}
-		if canUse {
-			// Multiple realizations are compatible.
-			// Return none of them.
-			log.Debugf(ctx, "Both %s and %s are viable candidates for %v. Returning nothing.", outputPath, selectedPath, eqClass)
-			return "", nil, fmt.Errorf("pick compatible realization for %v: %w", eqClass, errMultipleRealizations)
-		}
-	}
-
-	return selectedPath, closure, nil
-}
-
-// isCompatible reports whether the given path can be used
-// for the given (potentially zero) equivalence class
-// with respect to the rest of the builder's realizations.
-func (b *builder) isCompatible(pe pathAndEquivalenceClass) bool {
-	if pe.equivalenceClass.isZero() {
-		// Sources can't conflict.
-		return true
-	}
-	used, hasExisting := b.realizations[pe.equivalenceClass]
-	return !hasExisting || pe.path == used.path
 }
 
 // obtainBuildRoots computes the set of derivations that can be used as a basis for building the rest of graph,
@@ -1004,8 +775,9 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 				}
 			}
 		})
-		var reuseError error
-		absentRealizations, reuseError = b.fetchRealizationSet(ctx, conn, wantEqClasses, false)
+		p := b.newPlanner()
+		reuseError := p.planSet(ctx, conn, wantEqClasses)
+		absentRealizations = p.absent
 
 		// TODO(now): Update comment.
 		// Regardless of whether the realization search succeeded or not,
@@ -1013,6 +785,9 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		// If the search succeeded, the outputs will have the found paths.
 		// Otherwise, we set a default of nulls for all requested outputs.
 		if len(absentRealizations) == 0 {
+			if reuseError == nil {
+				p.commit()
+			}
 			err = setBuildResultOutputs(conn, buildResultID, func(yield func(string, zbstore.Path) bool) {
 				for outputName := range outputNames.All() {
 					eqClass := newEquivalenceClass(drvHash, outputName.Value())
