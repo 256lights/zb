@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"maps"
 
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -28,6 +29,7 @@ type realizationPlanner struct {
 	absent sets.Set[equivalenceClass]
 	// reusePolicy defines which realizations are permitted for selection.
 	reusePolicy *zbstorerpc.ReusePolicy
+	error       error
 }
 
 // newPlanner returns a new [*realizationPlanner].
@@ -67,9 +69,10 @@ func (p *realizationPlanner) get(eqClass equivalenceClass) (_ cachedRealization,
 }
 
 // commit copies the realizations in p.planned to p.committed,
-// then clears p.planned and p.absent.
+// then clears p.planned and p.absent,
+// unless p.error != nil.
 func (p *realizationPlanner) commit() {
-	if p == nil {
+	if p == nil || p.error != nil {
 		return
 	}
 	maps.Copy(p.committed, p.planned)
@@ -80,10 +83,10 @@ func (p *realizationPlanner) commit() {
 // plan finds a realization to use for a derivation output
 // from the store database
 // that is compatible with existing realizations in the builder.
-// plan returns an error that unwraps to [errRealizationNotFound]
+// plan sets p.error to an error that unwraps to [errRealizationNotFound]
 // if no such realization could be found,
 // or an error that unwraps to [errMultipleRealizations] if multiple such realizations were found.
-// If plan does not return an error,
+// If p.error == nil after calling plan,
 // then [*realizationPlanner.get] will have a [cachedRealization] available for eqClass.
 //
 // If p.absent is nil, then the realization must be present in the store
@@ -93,21 +96,26 @@ func (p *realizationPlanner) commit() {
 //
 // plan may add realizations to p.planned for equivalence classes beyond the given one
 // because selecting a realization may imply selecting realizations from its closure.
-func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass) error {
+func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass) {
+	if p.error != nil {
+		return
+	}
 	if _, exists := p.get(eqClass); exists {
-		return nil
+		return
 	}
 
 	rollback, err := readonlySavepoint(conn)
 	if err != nil {
-		return err
+		p.error = err
+		return
 	}
 	defer rollback()
 
 	log.Debugf(ctx, "Searching for realizations for %v...", eqClass)
 	presentInStore, absentFromStore, err := findPossibleRealizations(ctx, conn, eqClass, p.reusePolicy)
 	if err != nil {
-		return err
+		p.error = err
+		return
 	}
 
 	var r cachedRealization
@@ -118,17 +126,21 @@ func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClas
 		present = true
 	case errors.Is(err, errRealizationNotFound):
 		if p.absent == nil {
-			return err
+			p.error = err
+			return
 		}
 		r.path, r.closure, err = p.pick(ctx, conn, eqClass, absentFromStore)
 		if errors.Is(err, errMultipleRealizations) {
-			return fmt.Errorf("pick compatible realization for %v: %w", eqClass, errRealizationNotFound)
+			p.error = fmt.Errorf("pick compatible realization for %v: %w", eqClass, errRealizationNotFound)
+			return
 		}
 		if err != nil {
-			return err
+			p.error = err
+			return
 		}
 	default:
-		return err
+		p.error = err
+		return
 	}
 
 	// Now that we selected our realization, fill out the closures.
@@ -140,7 +152,8 @@ func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClas
 			var err error
 			refPathExists, err = objectExists(conn, refPath)
 			if err != nil {
-				return fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
+				p.error = fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
+				return
 			}
 		}
 
@@ -164,7 +177,8 @@ func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClas
 				return true
 			})
 			if err != nil {
-				return fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
+				p.error = fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
+				return
 			}
 			p.planned[eqClass] = closureRealization
 			if !refPathExists {
@@ -172,35 +186,35 @@ func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClas
 			}
 		}
 	}
-
-	return nil
 }
 
-// planSet finds a set of realizations to use for the given set of derivation outputs
+// planSeq finds a set of realizations to use for the given set of derivation outputs
 // from the store database
 // that is compatible with existing realizations in the planner
 // and with elements in the set.
-// planSet returns an error that unwraps to [errRealizationNotFound]
+// planSeq sets p.error to an error that unwraps to [errRealizationNotFound]
 // if no such set of realizations could be found.
-// If planSet does not return an error,
+// If p.error == nil after planSeq returns,
 // then [*realizationPlanner.get] will return a value for all elements of eqClasses.
-// Only realizations in the store will be considered.
 //
-// planSet may add realizations for equivalence classes beyond the given one
+// planSeq may add realizations for equivalence classes beyond the given one
 // because selecting a realization may imply selecting realizations from its closure.
-func (p *realizationPlanner) planSet(ctx context.Context, conn *sqlite.Conn, eqClasses sets.Set[equivalenceClass]) error {
+func (p *realizationPlanner) planSeq(ctx context.Context, conn *sqlite.Conn, eqClasses iter.Seq[equivalenceClass]) {
+	if p.error != nil {
+		return
+	}
 	rollback, err := readonlySavepoint(conn)
 	if err != nil {
-		return err
+		p.error = err
+		return
 	}
 	defer rollback()
-
-	for eqClass := range eqClasses.All() {
-		if err := p.plan(ctx, conn, eqClass); err != nil {
-			return err
+	for eqClass := range eqClasses {
+		p.plan(ctx, conn, eqClass)
+		if p.error != nil {
+			break
 		}
 	}
-	return nil
 }
 
 // pick finds the only realization in the existing set
@@ -278,6 +292,18 @@ func (p *realizationPlanner) pick(ctx context.Context, conn *sqlite.Conn, eqClas
 	}
 
 	return selectedPath, closure, nil
+}
+
+// isAvailableLocally reports whether planning succeeded
+// and all planned realizations are present in the local store.
+func (p *realizationPlanner) isAvailableLocally() bool {
+	return p.error == nil && len(p.absent) == 0
+}
+
+// isPermanentError reports whether p.error indicates a failure
+// that cannot be addressed by adding more realizations to the store database.
+func (p *realizationPlanner) isPermanentError() bool {
+	return p.error != nil && !errors.Is(p.error, errRealizationNotFound)
 }
 
 // isCompatible reports whether the given path can be used

@@ -472,7 +472,7 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 	log.Debugf(ctx, "Hashed %s to %v", curr, drvHash)
 	b.drvHashes[curr] = drvHash
 
-	wantEqClasses := sets.Collect(func(yield func(equivalenceClass) bool) {
+	wantEqClasses := iter.Seq[equivalenceClass](func(yield func(equivalenceClass) bool) {
 		for outputName := range node.usedOutputs.All() {
 			if !yield(newEquivalenceClass(drvHash, outputName.Value())) {
 				return
@@ -485,19 +485,20 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 	// but we only want to fetch realizations from the fallback store
 	// if we don't have a suitable realization set locally.)
 	p := b.newLocalOnlyPlanner()
-	switch err := p.planSet(ctx, conn, wantEqClasses); {
-	case errors.Is(err, errMultipleRealizations):
+	p.planSeq(ctx, conn, wantEqClasses)
+	switch {
+	case errors.Is(p.error, errMultipleRealizations):
 		// Ignore.
 		// Downloading more realizations isn't going to help:
 		// we have a non-hermetic step.
-		return err
-	case errors.Is(err, errRealizationNotFound):
+		return p.error
+	case errors.Is(p.error, errRealizationNotFound):
 		// It's possible the fallback store has more realizations.
 		// Fetch and record those.
 		if b.reusePolicy.IsZero() {
 			// However, if our reuse policy won't permit any realizations,
 			// there's no point.
-			return errRealizationNotFound
+			return fmt.Errorf("realize %s: %w", curr, errRealizationNotFound)
 		}
 		realizations, err := b.server.fallback.FetchRealizations(ctx, drvHash)
 		if err != nil {
@@ -521,7 +522,8 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 			// Now retry with new realization data.
 			// (As noted above, this time, we accept realizations without a local store object present.)
 			p := b.newPlanner()
-			if err := p.planSet(ctx, conn, wantEqClasses); err != nil {
+			p.planSeq(ctx, conn, wantEqClasses)
+			if p.error != nil {
 				return fmt.Errorf("realize %s: %w", curr, err)
 			}
 			p.commit()
@@ -768,15 +770,14 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		}
 
 		// Search for existing realizations first.
-		wantEqClasses := sets.Collect(func(yield func(equivalenceClass) bool) {
+		p := b.newPlanner()
+		p.planSeq(ctx, conn, func(yield func(equivalenceClass) bool) {
 			for outputName := range outputNames.All() {
 				if !yield(newEquivalenceClass(drvHash, outputName.Value())) {
 					return
 				}
 			}
 		})
-		p := b.newPlanner()
-		reuseError := p.planSet(ctx, conn, wantEqClasses)
 		absentRealizations = p.absent
 
 		// TODO(now): Update comment.
@@ -785,14 +786,14 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		// If the search succeeded, the outputs will have the found paths.
 		// Otherwise, we set a default of nulls for all requested outputs.
 		if len(absentRealizations) == 0 {
-			if reuseError == nil {
+			if p.error == nil {
 				p.commit()
 			}
 			err = setBuildResultOutputs(conn, buildResultID, func(yield func(string, zbstore.Path) bool) {
 				for outputName := range outputNames.All() {
 					eqClass := newEquivalenceClass(drvHash, outputName.Value())
 					var path zbstore.Path
-					if reuseError == nil {
+					if p.error == nil {
 						path = b.realizations[eqClass].path
 					}
 					if !yield(outputName.Value(), path) {
@@ -808,10 +809,10 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 			}
 		}
 
-		if !errors.Is(reuseError, errRealizationNotFound) {
+		if !errors.Is(p.error, errRealizationNotFound) {
 			// If there was a realization or the search had an abnormal failure,
 			// we can finalize the result inside this transaction.
-			hasExisting = reuseError == nil
+			hasExisting = p.error == nil
 			// TODO(now): Update comment.
 			if len(absentRealizations) == 0 {
 				err := finalizeBuildResult(ctx, conn, b.server.logDir, &buildFinalResults{
@@ -819,13 +820,13 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 					drvPath: drvPath,
 					id:      buildResultID,
 					endTime: time.Now(),
-					error:   reuseError,
+					error:   p.error,
 				})
 				if err != nil {
 					log.Warnf(ctx, "For build %s: %v", drvPath, err)
 				}
 			}
-			return reuseError
+			return p.error
 		}
 
 		return nil
