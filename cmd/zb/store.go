@@ -396,9 +396,10 @@ func (rec *exportPathRecorder) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 }
 
 type storeObjectDeleteCommand struct {
+	storeDatabaseFlags `kong:"embed"`
+
 	Paths     []zbstore.Path `kong:"arg,name=path,type=nativeStorePath,required,help=Store object paths."`
 	Recursive bool           `kong:"short=r,help=Delete objects that depend on the paths."`
-	DBPath    string         `kong:"name=db,placeholder=path,help=Path to store database file."`
 }
 
 func (c *storeObjectDeleteCommand) Signature() string {
@@ -425,8 +426,9 @@ func (c *storeObjectDeleteCommand) Run(ctx context.Context, g *globalConfig) err
 }
 
 type storeObjectRegisterCommand struct {
-	Input  io.Reader `kong:"-"`
-	DBPath string    `kong:"name=db,placeholder=path,help=Path to store database file."`
+	storeDatabaseFlags `kong:"embed"`
+
+	Input io.Reader `kong:"-"`
 }
 
 func (c *storeObjectRegisterCommand) Signature() string {

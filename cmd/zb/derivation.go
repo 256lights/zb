@@ -293,7 +293,7 @@ func marshalDerivationJSON(drvPath string, drv *zbstore.Derivation) ([]byte, err
 
 type derivationEnvCommand struct {
 	evalOptions
-	JSONFormat bool   `kong:"help=Print environments as JSON."`
+	JSONFormat bool   `kong:"name=json,help=Print environments as JSON."`
 	TempDir    string `kong:"default=${temp_dir},help=Fill in temporary directory with the given string."`
 }
 
