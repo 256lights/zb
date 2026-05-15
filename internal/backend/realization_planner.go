@@ -322,3 +322,7 @@ var (
 	errRealizationNotFound  = errors.New("no suitable realizations exist")
 	errMultipleRealizations = errors.New("multiple valid realizations")
 )
+
+func isRealizationPlanningError(err error) bool {
+	return errors.Is(err, errRealizationNotFound) || errors.Is(err, errMultipleRealizations)
+}
