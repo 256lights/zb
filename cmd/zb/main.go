@@ -96,23 +96,25 @@ func (c *zbCommand) BeforeApply(kc *kong.Context, p *kong.Path) error {
 	return nil
 }
 
-func main() {
-	c := new(zbCommand)
+func zbKongOption() kong.Option {
 	var defaultBuildUsersGroup string
 	if osutil.IsRoot() {
 		defaultBuildUsersGroup = backend.DefaultBuildUsersGroup
 	}
-	k := kong.Must(c,
-		kong.Name("zb"),
-		kong.Description("zb build tool"),
-		kong.ConfigureHelp(kong.HelpOptions{
-			NoExpandSubcommands: true,
-		}),
-		kong.BindToProvider(c.ProvideConfig),
-		kong.TypeMapper(reflect.TypeFor[sets.Set[string]](), kong.MapperFunc(mapStringSet)),
-		kong.NamedMapper("pathmap", kong.MapperFunc(mapPathMap)),
-		kong.NamedMapper("nativeStorePath", kong.MapperFunc(mapNativeStorePath)),
-		kong.Vars{
+	var options iter.Seq[kong.Option] = func(yield func(kong.Option) bool) {
+		if !yield(kong.BindToProvider((*zbCommand).ProvideConfig)) {
+			return
+		}
+		if !yield(kong.TypeMapper(reflect.TypeFor[sets.Set[string]](), kong.MapperFunc(mapStringSet))) {
+			return
+		}
+		if !yield(kong.NamedMapper("pathmap", kong.MapperFunc(mapPathMap))) {
+			return
+		}
+		if !yield(kong.NamedMapper("nativeStorePath", kong.MapperFunc(mapNativeStorePath))) {
+			return
+		}
+		vars := kong.Vars{
 			"default_store_dir":         string(defaultGlobalConfig().Directory),
 			"default_store_socket":      string(defaultGlobalConfig().StoreSocket),
 			"default_store_db":          filepath.Join(defaultVarDir(), "db.sqlite"),
@@ -122,7 +124,31 @@ func main() {
 			"temp_dir":                  os.TempDir(),
 			"num_cpu":                   strconv.Itoa(runtime.NumCPU()),
 			"supports_sandbox":          strconv.FormatBool(backend.SystemSupportsSandbox()),
-		},
+		}
+		if !yield(vars) {
+			return
+		}
+	}
+	return kong.OptionFunc(func(k *kong.Kong) error {
+		for opt := range options {
+			if err := opt.Apply(k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func main() {
+	c := new(zbCommand)
+	k := kong.Must(c,
+		kong.Name("zb"),
+		kong.Description("zb build tool"),
+		kong.ConfigureHelp(kong.HelpOptions{
+			NoExpandSubcommands: true,
+		}),
+		kong.Bind(c),
+		zbKongOption(),
 	)
 	kongcompletion.Register(k)
 
