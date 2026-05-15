@@ -5,14 +5,14 @@ go 1.26.0
 toolchain go1.26.1
 
 require (
+	github.com/alecthomas/kong v1.14.0
 	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/dsnet/compress v0.0.1
 	github.com/go-json-experiment/json v0.0.0-20251024212118-8a0206d3c796
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/handlers v1.5.2
-	github.com/spf13/cobra v1.8.0
-	github.com/spf13/pflag v1.0.7-0.20250601092742-8a6c85f2ae48
+	github.com/jotaen/kong-completion v0.0.12
 	github.com/tailscale/hujson v0.0.0-20250226034555-ec1d1c113d33
 	go4.org v0.0.0-20230225012048-214862532bf5
 	golang.org/x/sync v0.14.0
@@ -29,10 +29,13 @@ require (
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.0.3 // indirect
-	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/hashicorp/errwrap v1.1.0 // indirect
+	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/posener/complete v1.2.3 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/riywo/loginshell v0.0.0-20200815045211-7d26008be1ab // indirect
 	golang.org/x/exp v0.0.0-20230315142452-642cacee5cc0 // indirect
 	golang.org/x/mod v0.24.0 // indirect
 	golang.org/x/tools v0.33.0 // indirect

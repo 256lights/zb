@@ -1,7 +1,7 @@
 // Copyright 2024 The zb Authors
 // SPDX-License-Identifier: MIT
 
-// Package luac provides a Cobra command for a Lua compiler.
+// Package luac provides a Kong command for a Lua compiler.
 // Its command-line options and behavior are roughly the same as [luac(1)].
 //
 // [luac(1)]: https://www.lua.org/manual/5.4/luac.html
@@ -15,46 +15,23 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"zb.256lights.llc/pkg/internal/luacode"
 )
 
-type options struct {
-	inputFilename  string
-	source         string
-	outputFilename string
-	list           int
-	parseOnly      bool
-	stripDebug     bool
-	rawPC          bool
+// Command is a [github.com/alecthomas/kong] command for luac.
+type Command struct {
+	InputFilename  string `kong:"name=file,arg,required,help=Lua file to parse."`
+	Source         string `kong:"placeholder=name,help=Source name to show in debug information instead of filename."`
+	OutputFilename string `kong:"name=output,short=o,placeholder=filename,help=Output to file. (default ${default}),default=luac.out"`
+	List           int    `kong:"short=l,type=counter,help=Produce a listing of compiled bytecode."`
+	ParseOnly      bool   `kong:"short=p,help=Do not write bytecode."`
+	StripDebug     bool   `kong:"short=s,help=Strip debug information."`
+	RawPC          bool   `kong:"short=0,help=Show literal PC values."`
 }
 
-// New returns a new luac command.
-func New() *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "luac FILE",
-		Short:                 "luac",
-		Args:                  cobra.ExactArgs(1),
-		DisableFlagsInUseLine: true,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	opts := new(options)
-	c.Flags().CountVarP(&opts.list, "list", "l", "produce a listing of compiled bytecode")
-	c.Flags().StringVarP(&opts.outputFilename, "output", "o", "luac.out", "output to `filename`")
-	c.Flags().BoolVarP(&opts.parseOnly, "parse-only", "p", false, "do not write bytecode")
-	c.Flags().BoolVarP(&opts.stripDebug, "strip-debug", "s", false, "strip debug information")
-	c.Flags().BoolVarP(&opts.rawPC, "raw-pc", "0", false, "show literal PC values")
-	c.Flags().StringVar(&opts.source, "source", "", "source `name` to show in debug information instead of filename")
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.inputFilename = args[0]
-		return run(opts)
-	}
-	return c
-}
-
-func run(opts *options) error {
-	f, err := os.Open(opts.inputFilename)
+// Run runs luac.
+func (c *Command) Run() error {
+	f, err := os.Open(c.InputFilename)
 	if err != nil {
 		return err
 	}
@@ -73,10 +50,10 @@ func run(opts *options) error {
 		}
 	} else {
 		var sourceName luacode.Source
-		if opts.source != "" {
-			sourceName = luacode.Source(opts.source)
+		if c.Source != "" {
+			sourceName = luacode.Source(c.Source)
 		} else {
-			sourceName = luacode.FilenameSource(opts.inputFilename)
+			sourceName = luacode.FilenameSource(c.InputFilename)
 		}
 		var err error
 		proto, err = luacode.Parse(sourceName, br)
@@ -85,26 +62,26 @@ func run(opts *options) error {
 		}
 	}
 
-	if opts.list > 0 {
+	if c.List > 0 {
 		functionNames := make(map[*luacode.Prototype]string)
 		nameFunctions(functionNames, proto)
 		pcBase := 0
-		if !opts.rawPC {
+		if !c.RawPC {
 			pcBase = 1
 		}
-		if err := printFunction(proto, functionNames, pcBase, opts.list > 1); err != nil {
+		if err := printFunction(proto, functionNames, pcBase, c.List > 1); err != nil {
 			return err
 		}
 	}
 
-	if opts.parseOnly {
+	if c.ParseOnly {
 		return nil
 	}
 	output, err := proto.MarshalBinary()
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(opts.outputFilename, output, 0o666); err != nil {
+	if err := os.WriteFile(c.OutputFilename, output, 0o666); err != nil {
 		return err
 	}
 
