@@ -201,7 +201,7 @@ done
 
 zb="$ZB_STORE_DIR/$zb_object/bin/zb"
 log "Initializing store database..."
-"$zb" store object register < "$registry"
+run_as_target_user "$zb" store object register < "$registry"
 
 if [[ -z "$bin_dir" ]]; then
   log "zb installed at $zb"
