@@ -665,6 +665,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 	if drvHash.IsZero() {
 		return fmt.Errorf("build %s: missing hash", drvPath)
 	}
+	drvHashKey := makeHashKey(drvHash)
 	for outputName := range outputNames.All() {
 		if drv.Outputs[outputName.Value()] == nil {
 			ref := zbstore.OutputReference{
@@ -698,7 +699,11 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		// Search for existing realizations first.
 		wantEqClasses := sets.Collect(func(yield func(equivalenceClass) bool) {
 			for outputName := range outputNames.All() {
-				if !yield(newEquivalenceClass(drvHash, outputName.Value())) {
+				eqClass := equivalenceClass{
+					drvHashKey: drvHashKey,
+					outputName: outputName,
+				}
+				if !yield(eqClass) {
 					return
 				}
 			}
@@ -711,7 +716,10 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		// Otherwise, we set a default of nulls for all requested outputs.
 		err = setBuildResultOutputs(conn, buildResultID, func(yield func(string, zbstore.Path) bool) {
 			for outputName := range outputNames.All() {
-				eqClass := newEquivalenceClass(drvHash, outputName.Value())
+				eqClass := equivalenceClass{
+					drvHashKey: drvHashKey,
+					outputName: outputName,
+				}
 				var path zbstore.Path
 				if reuseError == nil {
 					path = b.realizations[eqClass].path
@@ -898,7 +906,11 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		}
 		delete(tempOutPaths, outputName) // No longer needs cleanup if we fail.
 
-		prev, previouslyRealized := b.realizations[newEquivalenceClass(drvHash, outputName)]
+		eqClass := equivalenceClass{
+			drvHashKey: drvHashKey,
+			outputName: unique.Make(outputName),
+		}
+		prev, previouslyRealized := b.realizations[eqClass]
 		if previouslyRealized && info.StorePath != prev.path {
 			// This should have been prevented at a higher level,
 			// but we do a safety check here anyway.

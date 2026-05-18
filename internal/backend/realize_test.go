@@ -563,6 +563,91 @@ func TestRealizeReferenceToDep(t *testing.T) {
 	}
 }
 
+func TestRealizeInputReference(t *testing.T) {
+	ctx := testcontext.New(t)
+	dir := backendtest.NewStoreDirectory(t)
+
+	const inputContent = "Hello, World!\n"
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
+		Name:      "hello.txt",
+		Directory: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const wantOutputName = "hello-path.txt"
+	drvContent := &zbstore.Derivation{
+		Name:   wantOutputName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"in":  string(inputFilePath),
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		InputSources: *sets.NewSorted(inputFilePath),
+		Outputs: map[string]*zbstore.DerivationOutputType{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	if runtime.GOOS == "windows" {
+		drvContent.Builder = powershellPath
+		drvContent.Args = []string{"-Command", "\"${env:in}`n\" | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"}
+	} else {
+		drvContent.Builder = shPath
+		drvContent.Args = []string{"-c", `echo "$in" > "$out"`}
+	}
+	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(nil, exportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
+	})
+	if err != nil {
+		t.Fatal("RPC error:", err)
+	}
+	if realizeResponse.BuildID == "" {
+		t.Fatal("no build ID returned")
+	}
+	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantOutputContent := inputFilePath + "\n"
+	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, []byte(wantOutputContent), zbstore.References{
+		Others: *sets.NewSorted(inputFilePath),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(wantOutputContent), got)
+}
+
 func TestRealizeSelfReference(t *testing.T) {
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)

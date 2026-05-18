@@ -13,8 +13,8 @@ import (
 	"zombiezen.com/go/nix"
 )
 
-// equivalenceClass is an equivalence class of [zbstore.OutputReference] values.
-// It represents a single output of equivalent derivations.
+// equivalenceClass is a representation of [zbstore.RealizationOutputReference]
+// that implements [comparable].
 type equivalenceClass struct {
 	drvHashKey hashKey
 	outputName unique.Handle[string]
@@ -31,6 +31,9 @@ func newEquivalenceClass(drvHash nix.Hash, outputName string) equivalenceClass {
 }
 
 func realizationOutputReferenceKey(ref zbstore.RealizationOutputReference) equivalenceClass {
+	if ref.IsZero() {
+		return equivalenceClass{}
+	}
 	return newEquivalenceClass(ref.DerivationHash, ref.OutputName)
 }
 
@@ -39,6 +42,9 @@ func (eqClass equivalenceClass) isZero() bool {
 }
 
 func (eqClass equivalenceClass) toRealizationOutputReference() zbstore.RealizationOutputReference {
+	if eqClass.isZero() {
+		return zbstore.RealizationOutputReference{}
+	}
 	return zbstore.RealizationOutputReference{
 		DerivationHash: eqClass.drvHashKey.toHash(),
 		OutputName:     eqClass.outputName.Value(),
