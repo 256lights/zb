@@ -186,6 +186,11 @@ type RealizationOutputReference struct {
 	OutputName     string   `json:"outputName"`
 }
 
+// IsZero reports whether ref is the zero value.
+func (ref RealizationOutputReference) IsZero() bool {
+	return ref.DerivationHash.IsZero() && ref.OutputName == ""
+}
+
 // String returns the hash and the output name separated by "!".
 func (ref RealizationOutputReference) String() string {
 	return ref.DerivationHash.Base64() + "!" + ref.OutputName

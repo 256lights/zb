@@ -23,12 +23,12 @@ import (
 // globalConfig is the set of configuration settings and persistent command-line flags.
 // More details at https://main--zb-docs.netlify.app/configuration
 type globalConfig struct {
-	Debug             bool                            `json:"debug"`
-	Directory         zbstore.Directory               `json:"storeDirectory"`
-	StoreSocket       string                          `json:"storeSocket"`
-	CacheDB           string                          `json:"cacheDB"`
-	AllowEnv          stringAllowList                 `json:"allowEnvironment"`
-	TrustedPublicKeys []*zbstore.RealizationPublicKey `json:"trustedPublicKeys"`
+	Debug             bool                            `json:"debug" kong:"help=Show debugging output."`
+	Directory         zbstore.Directory               `json:"storeDirectory" kong:"name=store,default=${default_store_dir},help=Store directory"`
+	StoreSocket       string                          `json:"storeSocket" kong:"default=${default_store_socket},help=Server socket"`
+	CacheDB           string                          `json:"cacheDB" kong:"name=cache,placeholder=path,help=Cache database"`
+	AllowEnv          stringAllowList                 `json:"allowEnvironment" kong:"-"`
+	TrustedPublicKeys []*zbstore.RealizationPublicKey `json:"trustedPublicKeys" kong:"-"`
 }
 
 // defaultGlobalConfig returns a [globalConfig] populated with default values based on OS,
@@ -147,10 +147,10 @@ func (g *globalConfig) UnmarshalJSONFrom(in *jsontext.Decoder) error {
 	}
 }
 
-// validate checks the configuration for any missing or semantically incorrect settings.
-// validate should be called after the configuration is complete,
+// Validate checks the configuration for any missing or semantically incorrect settings.
+// Validate should be called after the configuration is complete,
 // because partial configurations may not pass validation.
-func (g *globalConfig) validate() error {
+func (g *globalConfig) Validate() error {
 	if !filepath.IsAbs(string(g.Directory)) {
 		// The directory must be in the format of the local OS.
 		return fmt.Errorf("store directory %q is not absolute", g.Directory)

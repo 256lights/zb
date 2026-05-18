@@ -472,9 +472,14 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 	log.Debugf(ctx, "Hashed %s to %v", curr, drvHash)
 	b.drvHashes[curr] = drvHash
 
+	drvHashKey := makeHashKey(drvHash)
 	wantEqClasses := iter.Seq[equivalenceClass](func(yield func(equivalenceClass) bool) {
 		for outputName := range node.usedOutputs.All() {
-			if !yield(newEquivalenceClass(drvHash, outputName.Value())) {
+			eqClass := equivalenceClass{
+				drvHashKey: drvHashKey,
+				outputName: outputName,
+			}
+			if !yield(eqClass) {
 				return
 			}
 		}
@@ -708,8 +713,12 @@ func (b *builder) ignoreRealizations(graph *dependencyGraph, roots sets.Set[zbst
 		h := b.drvHashes[curr]
 		if !h.IsZero() {
 			delete(b.drvHashes, curr)
+			k := makeHashKey(h)
 			for outputName := range b.derivations[curr].Outputs {
-				delete(b.realizations, newEquivalenceClass(h, outputName))
+				delete(b.realizations, equivalenceClass{
+					drvHashKey: k,
+					outputName: unique.Make(outputName),
+				})
 			}
 		}
 		roots.Delete(curr)
@@ -722,11 +731,12 @@ func (b *builder) ignoreRealizations(graph *dependencyGraph, roots sets.Set[zbst
 
 // derivationBuildState holds information used throughout a call to [*builder.do].
 type derivationBuildState struct {
-	startTime      time.Time
-	drvPath        zbstore.Path
-	outputNames    sets.Set[unique.Handle[string]]
-	derivation     *zbstore.Derivation
-	derivationHash nix.Hash
+	startTime         time.Time
+	drvPath           zbstore.Path
+	outputNames       sets.Set[unique.Handle[string]]
+	derivation        *zbstore.Derivation
+	derivationHash    nix.Hash
+	derivationHashKey hashKey
 
 	buildResultID int64
 }
@@ -750,6 +760,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 	if state.derivationHash.IsZero() {
 		return fmt.Errorf("build %s: missing hash", drvPath)
 	}
+	state.derivationHashKey = makeHashKey(state.derivationHash)
 	for outputName := range outputNames.All() {
 		if state.derivation.Outputs[outputName.Value()] == nil {
 			ref := zbstore.OutputReference{
@@ -916,7 +927,11 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		}
 		delete(tempOutPaths, outputName) // No longer needs cleanup if we fail.
 
-		prev, previouslyRealized := b.realizations[newEquivalenceClass(state.derivationHash, outputName)]
+		eqClass := equivalenceClass{
+			drvHashKey: state.derivationHashKey,
+			outputName: unique.Make(outputName),
+		}
+		prev, previouslyRealized := b.realizations[eqClass]
 		if previouslyRealized && info.StorePath != prev.path {
 			// This should have been prevented at a higher level,
 			// but we do a safety check here anyway.
@@ -1087,7 +1102,11 @@ func (b *builder) planRealizationsAndFinalizeBuildResult(ctx context.Context, co
 	p := b.newPlanner()
 	p.planSeq(ctx, conn, func(yield func(equivalenceClass) bool) {
 		for outputName := range state.outputNames.All() {
-			if !yield(newEquivalenceClass(state.derivationHash, outputName.Value())) {
+			eqClass := equivalenceClass{
+				drvHashKey: state.derivationHashKey,
+				outputName: outputName,
+			}
+			if !yield(eqClass) {
 				return
 			}
 		}
@@ -1157,7 +1176,10 @@ func (b *builder) copyFromFallbackAndFinalizeBuildResult(ctx context.Context, co
 func buildResultOutputsFromPlanner(state *derivationBuildState, p *realizationPlanner) iter.Seq2[string, zbstore.Path] {
 	return func(yield func(string, zbstore.Path) bool) {
 		for outputName := range state.outputNames.All() {
-			eqClass := newEquivalenceClass(state.derivationHash, outputName.Value())
+			eqClass := equivalenceClass{
+				drvHashKey: state.derivationHashKey,
+				outputName: outputName,
+			}
 			r, _ := p.get(eqClass)
 			if !yield(outputName.Value(), r.path) {
 				return

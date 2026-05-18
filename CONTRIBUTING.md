@@ -1,7 +1,7 @@
 # How to Contribute
 
 zb is still in an early stage of development.
-If you have ideas or feedback, feel free to [start a discussion](https://github.com/256lights/zb/discussions).
+If you have ideas or feedback, feel free to chat in [zb's Zulip](https://zb-build.zulipchat.com/).
 If you like zb, consider giving the repository a star
 and/or [sponsoring @zombiezen](https://github.com/sponsors/zombiezen).
 
@@ -64,7 +64,7 @@ zb is open to accepting contributions.
 If your change is minor,
 please feel free to submit a [pull request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests).
 If your change is larger, or adds a feature,
-please [start a discussion](https://github.com/256lights/zb/discussions) beforehand
+please start a discussion in the [\#dev-core channel on Zulip](https://zb-build.zulipchat.com/#narrow/channel/601346-dev-core) beforehand
 so that we can discuss the change.
 You're welcome to file an implementation pull request immediately as well,
 although we generally lean towards discussing the change

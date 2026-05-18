@@ -11,7 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/spf13/cobra"
+	"github.com/alecthomas/kong"
 	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/system"
 	"zombiezen.com/go/log"
@@ -20,22 +20,14 @@ import (
 // zbVersion is the version string filled in by the linker (e.g. "1.2.3").
 var zbVersion string
 
-func newVersionCommand(g *globalConfig) *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "version",
-		Short:                 "show version information",
-		DisableFlagsInUseLine: true,
-		Args:                  cobra.NoArgs,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runVersion(cmd.Context())
-	}
-	return c
+type versionCommand struct {
 }
 
-func runVersion(ctx context.Context) error {
+func (c *versionCommand) Signature() string {
+	return `help:"Show version information."`
+}
+
+func (c *versionCommand) Run(ctx context.Context, k *kong.Kong) error {
 	firstLine := "zb"
 	if zbVersion == "" {
 		firstLine += " (version unknown)"
@@ -44,7 +36,11 @@ func runVersion(ctx context.Context) error {
 	}
 
 	currSystem := system.Current()
-	fmt.Printf("%s\nSystem:       %v\nCPUs:         %d\n", firstLine, frontend.SystemTriple(currSystem), runtime.NumCPU())
+	fmt.Fprintf(k.Stdout, ""+
+		"%s\n"+
+		"System:       %v\n"+
+		"CPUs:         %d\n",
+		firstLine, frontend.SystemTriple(currSystem), runtime.NumCPU())
 
 	switch {
 	case currSystem.OS.IsLinux():
@@ -53,7 +49,7 @@ func runVersion(ctx context.Context) error {
 			log.Errorf(ctx, "uname: %v", err)
 		} else {
 			output = bytes.TrimSuffix(output, []byte("\n"))
-			fmt.Printf("OS:           %s\n", output)
+			fmt.Fprintf(k.Stdout, "OS:           %s\n", output)
 		}
 
 		output, err = exec.CommandContext(ctx, "lsb_release", "-ds").Output()
@@ -63,7 +59,7 @@ func runVersion(ctx context.Context) error {
 			log.Errorf(ctx, "lsb_release: %v", err)
 		} else {
 			output = bytes.TrimSuffix(output, []byte("\n"))
-			fmt.Printf("Distribution: %s\n", output)
+			fmt.Fprintf(k.Stdout, "Distribution: %s\n", output)
 		}
 
 	case currSystem.OS.IsMacOS():
@@ -81,11 +77,11 @@ func runVersion(ctx context.Context) error {
 
 		switch {
 		case len(productVersion) > 0 && len(buildVersion) > 0:
-			fmt.Printf("OS:           macOS %s (build %s)\n", productVersion, buildVersion)
+			fmt.Fprintf(k.Stdout, "OS:           macOS %s (build %s)\n", productVersion, buildVersion)
 		case len(productVersion) > 0:
-			fmt.Printf("OS:           macOS %s\n", productVersion)
+			fmt.Fprintf(k.Stdout, "OS:           macOS %s\n", productVersion)
 		case len(buildVersion) > 0:
-			fmt.Printf("OS:           macOS %s\n", buildVersion)
+			fmt.Fprintf(k.Stdout, "OS:           macOS %s\n", buildVersion)
 		}
 
 	case currSystem.OS.IsWindows():
@@ -94,20 +90,20 @@ func runVersion(ctx context.Context) error {
 			log.Errorf(ctx, "ver: %v", err)
 		} else {
 			output = bytes.Trim(output, "\n\r")
-			fmt.Printf("OS:           %s\n", output)
+			fmt.Fprintf(k.Stdout, "OS:           %s\n", output)
 		}
 	}
 
 	return nil
 }
 
-type versionFlag struct {
-	ctx context.Context
-}
+type versionFlag bool
 
-func (vf versionFlag) String() string     { return "false" }
-func (vf versionFlag) Type() string       { return "bool" }
-func (vf versionFlag) IsBoolFlag() bool   { return true }
-func (vf versionFlag) Set(v string) error { return errShowVersion }
+func (flag *versionFlag) IgnoreDefault() {}
+
+func (flag *versionFlag) BeforeReset() error {
+	*flag = true
+	return errShowVersion
+}
 
 var errShowVersion = errors.New("--version flag passed")

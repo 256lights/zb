@@ -7,13 +7,14 @@ import (
 	"cmp"
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 
+	"github.com/alecthomas/kong"
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
-	"github.com/spf13/cobra"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/zbstore"
 )
@@ -54,51 +55,30 @@ func readKeyringFromFiles(files []string) (*backend.Keyring, error) {
 	return result, nil
 }
 
-func newKeyCommand() *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "key COMMAND",
-		Short:                 "operate on signing key files",
-		DisableFlagsInUseLine: true,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	c.AddCommand(
-		newGenerateKeyCommand(),
-		newShowPublicKeyCommand(),
-	)
-	return c
+type keyCommand struct {
+	Generate   generateKeyCommand   `kong:"cmd"`
+	ShowPublic showPublicKeyCommand `kong:"cmd"`
 }
 
-func newGenerateKeyCommand() *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "generate [-o PATH]",
-		Short:                 "generate a new signing key",
-		DisableFlagsInUseLine: true,
-		Args:                  cobra.NoArgs,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	outputPath := c.Flags().StringP("output", "o", "", "`file` to write to (default is stdout)")
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		outputFile := os.Stdout
-		if *outputPath != "" {
-			var err error
-			outputFile, err = os.Create(*outputPath)
-			if err != nil {
-				return err
-			}
-		}
-		err1 := runGenerateKey(cmd.Context(), outputFile)
-		var err2 error
-		if *outputPath != "" {
-			err2 = outputFile.Close()
-		}
-		return cmp.Or(err1, err2)
-	}
-	return c
+func (*keyCommand) Signature() string {
+	return `kong:"help=Operate on signing key files."`
 }
 
-func runGenerateKey(ctx context.Context, dst io.Writer) error {
+type generateKeyCommand struct {
+	OutputPath string `kong:"name=output,short=o,placeholder=file,help=File to write to. (Default: stdout)"`
+}
+
+func (c *generateKeyCommand) Signature() string {
+	return `help:"Generate a new signing key."`
+}
+
+func (c *generateKeyCommand) Run(ctx context.Context) error {
+	outputFile, err := openOutputFile(cmp.Or(c.OutputPath, "-"))
+	if err != nil {
+		return err
+	}
+	defer outputFile.Close()
+
 	_, newKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		return err
@@ -112,41 +92,38 @@ func runGenerateKey(ctx context.Context, dst io.Writer) error {
 		return err
 	}
 	keyFileData = append(keyFileData, '\n')
-	_, err = dst.Write(keyFileData)
+	_, err = outputFile.Write(keyFileData)
+	err = errors.Join(err, outputFile.Close())
 	return err
 }
 
-func newShowPublicKeyCommand() *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "show-public [PATH [...]]",
-		Short:                 "print public key of signing keys",
-		DisableFlagsInUseLine: true,
-		Args:                  cobra.ArbitraryArgs,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-		if len(args) == 0 {
-			return runShowPublicKey(ctx, os.Stdout, os.Stdin)
-		}
-		for _, path := range args {
-			f, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			err = runShowPublicKey(ctx, os.Stdout, f)
-			f.Close()
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	return c
+type showPublicKeyCommand struct {
+	Paths []string `kong:"arg,optional,name=file,help=Signing key files."`
 }
 
-func runShowPublicKey(ctx context.Context, dst io.Writer, src io.Reader) error {
+func (c *showPublicKeyCommand) Signature() string {
+	return `help:"Print public key of signing keys."`
+}
+
+func (c *showPublicKeyCommand) Run(k *kong.Kong) error {
+	if len(c.Paths) == 0 {
+		return c.run(k.Stdout, os.Stdin)
+	}
+	for _, path := range c.Paths {
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		err = c.run(k.Stdout, f)
+		f.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *showPublicKeyCommand) run(dst io.Writer, src io.Reader) error {
 	keyFile := new(privateKeyFile)
 	if err := jsonv2.UnmarshalRead(src, keyFile, jsonv2.RejectUnknownMembers(false)); err != nil {
 		return err

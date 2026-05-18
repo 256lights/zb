@@ -4,71 +4,56 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 
-	"github.com/spf13/cobra"
+	"github.com/alecthomas/kong"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix/nar"
 )
 
-func newNARCommand() *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "nar COMMAND",
-		Short:                 "operate on NAR files",
-		DisableFlagsInUseLine: true,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-	}
-	c.AddCommand(
-		newPackNARCommand(),
-	)
-	return c
+type narCommand struct {
+	Pack packNARCommand `kong:"cmd"`
 }
 
-func newPackNARCommand() *cobra.Command {
-	c := &cobra.Command{
-		Use:                   "pack [options] PATH",
-		Short:                 "serialize a filesystem object to NAR format",
-		DisableFlagsInUseLine: true,
-		Args:                  cobra.ExactArgs(1),
-		SilenceErrors:         true,
-		SilenceUsage:          true,
+func (*narCommand) Signature() string {
+	return `help:"Operate on NAR files."`
+}
+
+type packNARCommand struct {
+	InputPath      string `kong:"arg,name=path,required,help=Filesystem object to serialize."`
+	OutputPath     string `kong:"name=output,short=o,placeholder=file,help=Write NAR to file. (Defaults to stdout.)"`
+	SelfReferences bool   `kong:"help=Rewrite any self-references and print path to stdout. (Must use with --output.)"`
+}
+
+func (c *packNARCommand) Signature() string {
+	return `help:"Serialize a filesystem object to NAR format."`
+}
+
+func (c *packNARCommand) Validate() error {
+	if c.SelfReferences && (c.OutputPath == "" || c.OutputPath == "-") {
+		return errors.New("--self-references given without --output")
 	}
-	outputPath := c.Flags().StringP("output", "o", "", "`file` to write to (default is stdout)")
-	selfRefs := c.Flags().Bool("self-references", false, "rewrite any self-references and print path to stdout (must use with --output)")
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		if *selfRefs && *outputPath == "" {
-			return errors.New("--self-references given without --output")
-		}
-		outputFile := os.Stdout
-		if *outputPath != "" {
-			var err error
-			outputFile, err = os.Create(*outputPath)
-			if err != nil {
-				return err
-			}
-		}
-		var err1 error
-		if *selfRefs {
-			err1 = runPackNARSelfRefs(cmd.Context(), outputFile, args[0])
-		} else {
-			err1 = nar.DumpPath(outputFile, args[0])
-		}
-		var err2 error
-		if *outputPath != "" {
-			err2 = outputFile.Close()
-		}
-		return cmp.Or(err1, err2)
+	return nil
+}
+
+func (c *packNARCommand) Run(ctx context.Context, k *kong.Kong) error {
+	outputFile, err := openOutputFile(c.OutputPath)
+	if err != nil {
+		return err
 	}
-	return c
+	if c.SelfReferences {
+		err = runPackNARSelfRefs(ctx, outputFile.(io.ReadWriteSeeker), c.InputPath)
+	} else {
+		err = nar.DumpPath(outputFile, c.InputPath)
+	}
+	err = errors.Join(err, outputFile.Close())
+	return err
 }
 
 func runPackNARSelfRefs(ctx context.Context, dst io.ReadWriteSeeker, path string) error {
