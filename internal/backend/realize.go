@@ -327,16 +327,6 @@ func (b *builder) lookup(ref zbstore.OutputReference) (_ zbstore.Path, ok bool) 
 	return r.path, ok
 }
 
-// allRealized reports whether all the given references have realizations.
-func (b *builder) allRealized(refs iter.Seq[zbstore.OutputReference]) bool {
-	for ref := range refs {
-		if _, ok := b.lookup(ref); !ok {
-			return false
-		}
-	}
-	return true
-}
-
 var errUnfinishedRealization = errors.New("realization did not complete")
 
 func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputReference], keepFailed bool) error {
