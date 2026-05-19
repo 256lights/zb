@@ -132,6 +132,8 @@ func mapStringSet(dc *kong.DecodeContext, target reflect.Value) error {
 }
 
 func mapPathMap(dc *kong.DecodeContext, target reflect.Value) error {
+	sep, _ := dc.Value.Tag.GetSep("sep", '=')
+
 	tp := target.Type()
 	if tp.Kind() != reflect.Map {
 		return fmt.Errorf("%v is not a map", tp)
@@ -151,7 +153,7 @@ func mapPathMap(dc *kong.DecodeContext, target reflect.Value) error {
 		target.Set(reflect.MakeMap(tp))
 	}
 	for word := range strings.FieldsSeq(s) {
-		k, v, isMap := strings.Cut(word, string(dc.Value.Tag.Sep))
+		k, v, isMap := strings.Cut(word, string(sep))
 		if !isMap {
 			v = k
 		}
