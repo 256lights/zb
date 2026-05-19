@@ -4,7 +4,6 @@
 package zbstore
 
 import (
-	"bytes"
 	stdcmp "cmp"
 	"os"
 	"path/filepath"
@@ -259,23 +258,6 @@ func readTestdata(tb testing.TB, name string) []byte {
 		tb.Fatal(err)
 	}
 	return data
-}
-
-func singleFileNAR(tb testing.TB, data []byte) []byte {
-	tb.Helper()
-
-	buf := new(bytes.Buffer)
-	nw := nar.NewWriter(buf)
-	if err := nw.WriteHeader(&nar.Header{Size: int64(len(data))}); err != nil {
-		tb.Fatal(err)
-	}
-	if _, err := nw.Write(data); err != nil {
-		tb.Fatal(err)
-	}
-	if err := nw.Close(); err != nil {
-		tb.Fatal(err)
-	}
-	return buf.Bytes()
 }
 
 func hashString(typ nix.HashType, s string) nix.Hash {
