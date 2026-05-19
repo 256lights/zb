@@ -333,6 +333,8 @@ func recordRealizations(conn *sqlite.Conn, realizations iter.Seq2[zbstore.Realiz
 }
 
 // pathInfo returns basic information about an object in the store.
+// If there is no such object in the database,
+// then pathInfo returns an error that wraps [zbstore.ErrNotFound].
 func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *ObjectInfo, err error) {
 	defer sqlitex.Save(conn)(&err)
 
@@ -359,7 +361,7 @@ func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *ObjectInfo, err error) {
 		return nil, fmt.Errorf("path info for %s: %v", path, err)
 	}
 	if info == nil {
-		return nil, fmt.Errorf("path info for %s: %w", path, errObjectNotExist)
+		return nil, fmt.Errorf("path info for %s: %w", path, zbstore.ErrNotFound)
 	}
 
 	info.References, err = listReferences(conn, path)
@@ -389,8 +391,6 @@ func listReferences(conn *sqlite.Conn, path zbstore.Path) (sets.Sorted[zbstore.P
 	return references, nil
 }
 
-var errObjectNotExist = errors.New("object not in store")
-
 // closurePaths finds all store paths that the given path transitively refers to
 // and calls the yield function with each path,
 // including the original path itself.
@@ -400,6 +400,8 @@ var errObjectNotExist = errors.New("object not in store")
 // during evaluation of the given equivalence class.
 // If closurePaths does not return an error,
 // closurePaths is guaranteed to have called yield at least once.
+// If the path is not found in the database,
+// then closurePaths returns an error that wraps [zbstore.ErrNotFound].
 //
 // closurePaths uses information from both the references table and the reference classes table.
 // closurePaths may return an incomplete closure for paths that don't exist on the disk.
@@ -464,7 +466,7 @@ func closurePaths(conn *sqlite.Conn, pe pathAndEquivalenceClass, yield func(path
 		return fmt.Errorf("find closure of %s: %v", pe.path, err)
 	}
 	if !calledYield {
-		return fmt.Errorf("find closure of %s: %w", pe.path, errObjectNotExist)
+		return fmt.Errorf("find closure of %s: %w", pe.path, zbstore.ErrNotFound)
 	}
 	return nil
 }

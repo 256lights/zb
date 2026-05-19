@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"zb.256lights.llc/pkg/bytebuffer"
@@ -189,69 +190,41 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 // If the content address is the zero value,
 // then the content address is computed as a "source" store object.
 func verifyContentAddress(ctx context.Context, path zbstore.Path, narContent io.Reader, refs *sets.Sorted[zbstore.Path], ca nix.ContentAddress, createTemp bytebuffer.Creator) (nix.ContentAddress, error) {
-	storeRefs := zbstore.MakeReferences(path, refs)
 	if !ca.IsZero() {
-		if err := zbstore.ValidateContentAddress(ca, storeRefs); err != nil {
-			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)
+		obj := &fakeObject{
+			narContent: narContent,
+			trailer: zbstore.ExportTrailer{
+				StorePath:      path,
+				ContentAddress: ca,
+			},
 		}
-	}
-
-	var computed nix.ContentAddress
-	switch {
-	case ca.IsZero() || zbstore.IsSourceContentAddress(ca) && ca.Hash().Type() == nix.SHA256:
-		var digest string
-		if storeRefs.Self {
-			digest = path.Digest()
+		if refs != nil {
+			obj.trailer.References = *refs
 		}
-		var err error
-		computed, _, err = zbstore.SourceSHA256ContentAddress(narContent, &zbstore.ContentAddressOptions{
-			Digest:     digest,
+		opts := &zbstore.ContentAddressOptions{
 			CreateTemp: createTemp,
 			Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
-		})
-		if err != nil {
-			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)
 		}
-	case zbstore.IsSourceContentAddress(ca):
-		// Future-proofing in case we add new algorithms but don't update backends.
-		return nix.ContentAddress{}, fmt.Errorf("verify %s content address: unsupported source content address %v", path, ca.Hash().Type())
-	case ca.IsRecursiveFile():
-		h := nix.NewHasher(ca.Hash().Type())
-		if _, err := io.Copy(h, narContent); err != nil {
-			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)
+		if err := zbstore.VerifyObject(ctx, obj, opts); err != nil {
+			return nix.ContentAddress{}, err
 		}
-		computed = nix.RecursiveFileContentAddress(h.SumHash())
-	default:
-		nr := nar.NewReader(narContent)
-		hdr, err := nr.Next()
-		if err != nil {
-			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)
-		}
-		if !hdr.Mode.IsRegular() {
-			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: not a flat file", path)
-		}
-		if hdr.Mode&0o111 != 0 {
-			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: must not be executable", path)
-		}
-		h := nix.NewHasher(ca.Hash().Type())
-		if _, err := io.Copy(h, nr); err != nil {
-			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)
-		}
-		if ca.IsText() {
-			computed = nix.TextContentAddress(h.SumHash())
-		} else {
-			computed = nix.FlatFileContentAddress(h.SumHash())
-		}
-		if _, err := nr.Next(); err == nil {
-			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: more than a single file (bug in NAR reader?)", path)
-		} else if err != io.EOF {
-			return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)
-		}
+		return ca, nil
 	}
 
-	if !ca.IsZero() && !ca.Equal(computed) {
-		return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v does not match content (computed %v)", path, ca, computed)
+	storeRefs := zbstore.MakeReferences(path, refs)
+	var digest string
+	if storeRefs.Self {
+		digest = path.Digest()
 	}
+	computed, _, err := zbstore.SourceSHA256ContentAddress(narContent, &zbstore.ContentAddressOptions{
+		Digest:     digest,
+		CreateTemp: createTemp,
+		Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
+	})
+	if err != nil {
+		return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)
+	}
+
 	computedPath, err := zbstore.FixedCAOutputPath(path.Dir(), path.Name(), computed, storeRefs)
 	if err != nil {
 		return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)
@@ -262,6 +235,27 @@ func verifyContentAddress(ctx context.Context, path zbstore.Path, narContent io.
 
 	return computed, nil
 }
+
+type fakeObject struct {
+	trailer zbstore.ExportTrailer
+
+	contentWrite sync.Once
+	narContent   io.Reader
+}
+
+func (obj *fakeObject) Trailer() *zbstore.ExportTrailer {
+	return &obj.trailer
+}
+
+func (obj *fakeObject) WriteNAR(ctx context.Context, w io.Writer) error {
+	err := errMultipleReads
+	obj.contentWrite.Do(func() {
+		_, err = io.Copy(w, obj.narContent)
+	})
+	return err
+}
+
+var errMultipleReads = errors.New("object cannot be read more than once")
 
 // extractNAR extracts a NAR file to the local filesystem at the given path.
 func extractNAR(dst string, r io.Reader) error {

@@ -21,9 +21,10 @@ A clear and concise description of what you expected to happen after following t
 A clear and concise description of what happens after you follow the steps to reproduce.
 
 ## Version information
-- zb version:
-- Operating System and Version:
-- CPU architecture:
+
+```plain
+Paste zb version output here
+```
 
 ## Additional context
 Anything else we should know. Feel free to delete this section if not applicable.
