@@ -315,7 +315,7 @@ func (s *Server) info(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Respo
 
 	log.Debugf(ctx, "Looking up path info for %s...", args.Path)
 	info, err := pathInfo(conn, args.Path)
-	if errors.Is(err, errObjectNotExist) {
+	if errors.Is(err, zbstore.ErrNotFound) {
 		return marshalResponse(&zbstorerpc.InfoResponse{})
 	}
 	return marshalResponse(&zbstorerpc.InfoResponse{
@@ -709,7 +709,7 @@ func (s *Server) delete(ctx context.Context, paths sets.Set[zbstore.Path], recur
 			if exists, err := objectExists(conn, path); err != nil {
 				return err
 			} else if !exists {
-				return fmt.Errorf("%s: %w", path, errObjectNotExist)
+				return fmt.Errorf("%s: %w", path, zbstore.ErrNotFound)
 			}
 
 			insertStmt.SetText(":path", string(path))

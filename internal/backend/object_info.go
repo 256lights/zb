@@ -282,7 +282,7 @@ func (s *Server) Register(ctx context.Context, info *ObjectInfo) error {
 		}
 		return nil
 	}
-	if !errors.Is(err, errObjectNotExist) {
+	if !errors.Is(err, zbstore.ErrNotFound) {
 		return fmt.Errorf("register %s: %v", info.StorePath, err)
 	}
 
