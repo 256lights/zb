@@ -424,10 +424,10 @@ func (b *builder) gatherRealizations(ctx context.Context, graph *dependencyGraph
 	for it := graph.iterator(); ; {
 		curr, err := it.next(ctx)
 		if err != nil {
-			if err != errEndIteration {
-				return err
+			if err == errEndIteration {
+				err = nil
 			}
-			break
+			return err
 		}
 		log.Debugf(ctx, "Reached %v in gather", curr)
 		node := graph.nodes[curr]
@@ -445,7 +445,6 @@ func (b *builder) gatherRealizations(ctx context.Context, graph *dependencyGraph
 		}
 		it.finish(curr, true)
 	}
-	return nil
 }
 
 func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbstore.Path, node *dependencyGraphNode) (err error) {
