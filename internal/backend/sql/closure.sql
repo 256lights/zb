@@ -2,6 +2,8 @@ with
   "valid_objects"("id") as (
     select "id" from "objects"
     union
+    select "output_path" from "realizations"
+    union
     select "referrer" from "reference_classes"
   ),
   "normalized_references"("referrer", "referrer_drv_hash", "referrer_output_name", "reference", "reference_drv_hash", "reference_output_name") as (
