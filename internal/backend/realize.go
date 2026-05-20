@@ -111,6 +111,9 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 		}
 		b := s.newBuilder(buildID, drvCache, args.Reuse)
 		realizeError := b.realize(buildCtx, wantOutputs, args.KeepFailed)
+		if realizeError != nil && !errors.Is(realizeError, errUnfinishedRealization) {
+			log.Errorf(buildCtx, "Realize internal error: %v", realizeError)
+		}
 
 		recordCtx, cancel := xcontext.KeepAlive(buildCtx, 30*time.Second)
 		defer cancel()
@@ -189,6 +192,9 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 
 		b := s.newBuilder(buildID, drvCache, args.Reuse)
 		realizeError := b.realize(buildCtx, inputs, false)
+		if realizeError != nil && !errors.Is(realizeError, errUnfinishedRealization) {
+			log.Errorf(buildCtx, "Realize internal error: %v", realizeError)
+		}
 
 		recordCtx, cancel := xcontext.KeepAlive(buildCtx, 30*time.Second)
 		defer cancel()
@@ -510,7 +516,7 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 		p := b.newPlanner()
 		p.planSeq(ctx, conn, wantEqClasses)
 		if p.error != nil {
-			return fmt.Errorf("realize %s: %w", curr, err)
+			return fmt.Errorf("realize %s: %w", curr, p.error)
 		}
 		p.commit()
 	case err != nil:
@@ -1180,11 +1186,25 @@ func buildResultOutputsFromPlanner(state *derivationBuildState, p *realizationPl
 func (b *builder) fetchRealizationsFromFallback(ctx context.Context, drvHash nix.Hash) zbstore.RealizationMap {
 	if b.reusePolicy.IsZero() {
 		// If our reuse policy won't permit any realizations, there's no point.
+		log.Debugf(ctx, "Skipping fallback store for %v (build does not allow reuse)", drvHash)
 		return zbstore.RealizationMap{DerivationHash: drvHash}
 	}
+	log.Debugf(ctx, "Fetching realizations for %v from fallback store...", drvHash)
 	realizations, err := b.server.fallback.FetchRealizations(ctx, drvHash)
 	if err != nil {
 		log.Warnf(ctx, "Failed to fetch realizations: %v", err)
+	}
+	if log.IsEnabled(log.Debug) {
+		for outputName, realizationList := range realizations.Realizations {
+			if len(realizationList) == 0 {
+				continue
+			}
+			ref := zbstore.RealizationOutputReference{
+				DerivationHash: drvHash,
+				OutputName:     outputName,
+			}
+			log.Debugf(ctx, "Found %d realizations for %v from fallback store", len(realizationList), ref)
+		}
 	}
 	return realizations
 }
