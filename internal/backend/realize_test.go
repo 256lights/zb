@@ -1362,6 +1362,113 @@ func TestRealizeSignature(t *testing.T) {
 	}
 }
 
+func TestRealizeSingleDerivationFallback(t *testing.T) {
+	ctx := testcontext.New(t)
+	dir := backendtest.NewStoreDirectory(t)
+
+	const inputContent = "Hello, World!\n"
+	localExportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExportWriter(localExportBuffer)
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
+		Name:      "hello.txt",
+		Directory: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantOutputName = "hello2.txt"
+	drvContent := &zbstore.Derivation{
+		Name:    wantOutputName,
+		Dir:     dir,
+		Builder: "false", // Ensure can't run as-is.
+		System:  system.Current().String(),
+		Env: map[string]string{
+			"in":  string(inputFilePath),
+			"out": zbstore.HashPlaceholder(zbstore.DefaultDerivationOutputName),
+		},
+		InputSources: *sets.NewSorted(
+			inputFilePath,
+		),
+		Outputs: map[string]*zbstore.DerivationOutputType{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	drvHash, err := drvContent.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
+		return "", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fallbackExportBuffer := new(bytes.Buffer)
+	exporter = zbstore.NewExportWriter(fallbackExportBuffer)
+	const wantOutputContent = "Hello, World!\nHello, World!\n"
+	wantOutputPath, _, err := storetest.ExportSourceFile(exporter, []byte(wantOutputContent), storetest.SourceExportOptions{
+		Name:      wantOutputName,
+		Directory: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fallbackStore := new(storetest.Store)
+	if err := fallbackStore.StoreImport(ctx, fallbackExportBuffer); err != nil {
+		t.Fatal(err)
+	}
+	ref := zbstore.RealizationOutputReference{
+		DerivationHash: drvHash,
+		OutputName:     zbstore.DefaultDerivationOutputName,
+	}
+	fallbackStore.AddRealization(ref, &zbstore.Realization{
+		OutputPath: wantOutputPath,
+	})
+
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir: t.TempDir(),
+		Options: Options{
+			Fallback: fallbackStore,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(nil, localExportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
+		Reuse:    &zbstorerpc.ReusePolicy{All: true},
+	})
+	if err != nil {
+		t.Fatal("RPC error:", err)
+	}
+
+	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+	if err != nil {
+		gotLog, _ := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvPath)
+		t.Fatalf("build drv: %v\nlog:\n%s", err, gotLog)
+	}
+
+	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(wantOutputContent), got)
+}
+
 var buildResultOption = cmp.Options{
 	cmp.FilterPath(func(p cmp.Path) bool {
 		return isFieldAnyOf[zbstorerpc.BuildResult](p, "LogSize")
