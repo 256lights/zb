@@ -108,9 +108,11 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 	} else {
 		webHandler.staticAssets = ui.StaticAssets()
 	}
-	log.Infof(ctx, "Cleaning up existing store on %s", g.StoreSocket)
-	if err = os.Remove(g.StoreSocket); err != nil && ! errors.Is(err, os.ErrNotExist) {
+
+	if err := os.Remove(g.StoreSocket); err != nil && ! errors.Is(err, os.ErrNotExist) {
 		return err
+	} else if err == nil {
+		log.Infof(ctx, "Cleaned up existing socket at %s", g.StoreSocket)
 	}
 
 	var l net.Listener
