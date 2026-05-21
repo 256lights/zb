@@ -360,11 +360,11 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 	it := newDependencyOrderIterator(graph, buildRoots.All())
 	for {
 		curr, err := it.next(ctx)
+		if err == errEndIteration {
+			return nil
+		}
 		if err != nil {
-			if err != errEndIteration {
-				return err
-			}
-			break
+			return err
 		}
 
 		drv := b.derivations[curr]
@@ -401,8 +401,6 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 		// Queue up new work.
 		it.finish(curr, true)
 	}
-
-	return nil
 }
 
 func (b *builder) expand(drvPath zbstore.Path, drv *zbstore.Derivation, temporaryDirectory string) (*zbstore.Derivation, error) {
@@ -429,10 +427,10 @@ func (b *builder) expand(drvPath zbstore.Path, drv *zbstore.Derivation, temporar
 func (b *builder) gatherRealizations(ctx context.Context, graph *dependencyGraph) error {
 	for it := graph.iterator(); ; {
 		curr, err := it.next(ctx)
+		if err == errEndIteration {
+			return nil
+		}
 		if err != nil {
-			if err == errEndIteration {
-				err = nil
-			}
 			return err
 		}
 		log.Debugf(ctx, "Reached %v in gather", curr)
@@ -534,11 +532,11 @@ func (b *builder) obtainBuildRoots(ctx context.Context, graph *dependencyGraph, 
 	roots = make(sets.Set[zbstore.Path])
 	for it := graph.iterator(); ; {
 		curr, err := it.next(ctx)
+		if err == errEndIteration {
+			return roots, nil
+		}
 		if err != nil {
-			if err != errEndIteration {
-				return nil, err
-			}
-			break
+			return nil, err
 		}
 		log.Debugf(ctx, "Reached %v while obtaining build roots", curr)
 		node := graph.nodes[curr]
@@ -565,8 +563,6 @@ func (b *builder) obtainBuildRoots(ctx context.Context, graph *dependencyGraph, 
 
 		it.finish(curr, processDependents)
 	}
-
-	return roots, nil
 }
 
 // obtainBuildRootsForDerivation will walk the derivation at drvPath
