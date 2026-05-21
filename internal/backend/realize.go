@@ -550,6 +550,11 @@ func (b *builder) obtainBuildRoots(ctx context.Context, graph *dependencyGraph, 
 				DrvPath:    curr,
 				OutputName: outputName.Value(),
 			}
+			// If this is one of the requested outputs, then we want to ensure the store objects exist locally
+			// or that we can get dependencies as close as possible.
+			// If we haven't recorded realizations for all of the outputs we need for the build,
+			// then we'll get dependencies as close as possible.
+			// (obtainBuildRootsForDerivation will start a BFS on the first iteration in this case.)
 			_, hasRealization := b.lookup(ref)
 			if want.Has(ref) || !hasRealization {
 				var err error
