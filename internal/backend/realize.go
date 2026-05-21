@@ -592,27 +592,43 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 		if drvHash.IsZero() {
 			return false, fmt.Errorf("obtain build roots for %s: %s: missing hash", drvPath, curr)
 		}
-
 		drvHashKey := makeHashKey(drvHash)
-		err := b.copyFromFallback(ctx, conn, func(yield func(equivalenceClass) bool) {
-			for handle := range node.usedOutputs {
-				eqClass := equivalenceClass{
-					drvHashKey: drvHashKey,
-					outputName: handle,
-				}
-				if !yield(eqClass) {
-					return
-				}
+		paths := make(map[zbstore.Path]sets.Set[equivalenceClass])
+		for handle := range node.usedOutputs {
+			eqClass := equivalenceClass{
+				drvHashKey: drvHashKey,
+				outputName: handle,
 			}
-		})
-		if err == nil {
-			roots.Add(curr)
-			if curr == drvPath {
-				return true, nil
+			r, ok := b.realizations[eqClass]
+			if !ok {
+				// If we don't have a realization for any used output,
+				// then we cannot use this as a build root.
+				goto descend
 			}
-			continue
+			addToMultiMap(paths, r.path, eqClass)
 		}
-		log.Debugf(ctx, "Obtain build roots for %s: %v", curr, err)
+
+		{
+			err := b.server.copyFromFallback(ctx, conn, func(yield func(zbstore.Path, equivalenceClass) bool) {
+				for path, eqClassesForPath := range paths {
+					for eqClass := range eqClassesForPath.All() {
+						if !yield(path, eqClass) {
+							return
+						}
+					}
+				}
+			})
+			if err == nil {
+				roots.Add(curr)
+				if curr == drvPath {
+					return true, nil
+				}
+				continue
+			}
+			log.Debugf(ctx, "Use %s as build root: %v", curr, err)
+		}
+
+	descend:
 		b.ignoreRealizations(graph, roots, curr)
 		if len(node.derivation.InputDerivations) == 0 {
 			roots.Add(curr)
@@ -624,10 +640,13 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 	return false, nil
 }
 
-// copyFromFallback imports any store objects identified by the paths
-// from the fallback store
-// that are not present in the store directory.
-func (b *builder) copyFromFallback(ctx context.Context, conn *sqlite.Conn, eqClasses iter.Seq[equivalenceClass]) (err error) {
+// copyFromFallback imports any store objects identified by paths
+// that are not present in the store directory
+// from the fallback store.
+// The [equivalenceClass] values are used in error messages.
+// If any of the store objects could not be downloaded, then copyFromFallback will return an error.
+// If copyFromFallback returns an error, it will always be a [copyFromFallbackError].
+func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths iter.Seq2[zbstore.Path, equivalenceClass]) (err error) {
 	defer func() {
 		if err != nil {
 			err = copyFromFallbackError{err}
@@ -635,22 +654,37 @@ func (b *builder) copyFromFallback(ctx context.Context, conn *sqlite.Conn, eqCla
 	}()
 
 	storePathsToDownload := make(map[zbstore.Path]sets.Set[equivalenceClass])
-	for eqClass := range eqClasses {
-		r, ok := b.realizations[eqClass]
-		if !ok {
-			return fmt.Errorf("missing realization for %v", eqClass)
+	exists := make(sets.Set[zbstore.Path])
+	for outputPath, eqClass := range paths {
+		if exists.Has(outputPath) {
+			continue
 		}
-		outputPath := r.path
+		if eqClassSet, ok := storePathsToDownload[outputPath]; ok {
+			if !eqClass.isZero() {
+				if eqClassSet == nil {
+					eqClassSet = make(sets.Set[equivalenceClass])
+					storePathsToDownload[outputPath] = eqClassSet
+				}
+				eqClassSet.Add(eqClass)
+			}
+			continue
+		}
 
-		log.Debugf(ctx, "Waiting for lock on %s (%v)...", outputPath, eqClass)
-		unlockInput, err := b.server.writing.lock(ctx, outputPath)
+		log.Debugf(ctx, "Waiting for lock on %s (output of %v)...", outputPath, eqClass)
+		unlockInput, err := s.writing.lock(ctx, outputPath)
 		if err != nil {
-			return fmt.Errorf("download %s (output of %v): %w", outputPath, eqClass, err)
+			return err
 		}
-		_, err = os.Lstat(b.server.realPath(outputPath))
+		_, err = os.Lstat(s.realPath(outputPath))
 		unlockInput()
 		log.Debugf(ctx, "%s exists=%t (output of %v)", outputPath, err == nil, eqClass)
-		if err != nil {
+		if err == nil {
+			exists.Add(outputPath)
+		} else if eqClass.isZero() {
+			if _, ok := storePathsToDownload[outputPath]; !ok {
+				storePathsToDownload[outputPath] = nil
+			}
+		} else {
 			addToMultiMap(storePathsToDownload, outputPath, eqClass)
 		}
 	}
@@ -662,41 +696,59 @@ func (b *builder) copyFromFallback(ctx context.Context, conn *sqlite.Conn, eqCla
 	pr, pw := io.Pipe()
 	exportFinished := make(chan error)
 	go func() {
-		err := zbstore.Export(ctx, b.server.fallback, pw, sets.Collect(maps.Keys(storePathsToDownload)), nil)
+		err := zbstore.Export(ctx, s.fallback, pw, sets.Collect(maps.Keys(storePathsToDownload)), nil)
 		pw.CloseWithError(err)
 		exportFinished <- err
 	}()
 
-	recv := b.server.newNARReceiver(ctx, b.server.caCreateTemp, &singleConnectionGetter{
+	recv := s.newNARReceiver(ctx, s.caCreateTemp, &singleConnectionGetter{
 		conn: conn,
 	})
-	defer recv.Cleanup(ctx)
 	pathRecorder := &pathRecorderReceiver{receiver: recv}
 	receiveError := zbstore.ReceiveExport(pathRecorder, pr)
+	recv.Cleanup(ctx)
 	pr.CloseWithError(receiveError)
 	exportError := <-exportFinished
 	if exportError != nil {
-		return exportError
+		return fmt.Errorf("failed to copy from fallback store: %v", exportError)
 	}
 	if receiveError != nil {
-		return receiveError
+		return fmt.Errorf("failed to copy from fallback store: %v", receiveError)
 	}
 
-	errorMessage := new(strings.Builder)
+	var finalError error
 	for path, eqClassesForPath := range storePathsToDownload {
 		if !pathRecorder.paths.Has(path) {
-			if errorMessage.Len() == 0 {
-				errorMessage.WriteString("missing ")
+			var err error
+			if eqClassesForPath.Len() > 0 {
+				err = fmt.Errorf("fallback store did not export %s (output of %v)", path, eqClassesForPath)
 			} else {
-				errorMessage.WriteString(", ")
+				err = fmt.Errorf("fallback store did not export %s", path)
 			}
-			fmt.Fprintf(errorMessage, "%s (output of %v)", path, eqClassesForPath)
+			finalError = errors.Join(finalError, err)
+			continue
+		}
+
+		log.Debugf(ctx, "Waiting for lock on %s (%v)...", path, eqClassesForPath)
+		unlockInput, err := s.writing.lock(ctx, path)
+		if err != nil {
+			return err
+		}
+		_, err = os.Lstat(s.realPath(path))
+		unlockInput()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				if eqClassesForPath.Len() > 0 {
+					err = fmt.Errorf("failed to import %s (output of %v) from fallback store", path, eqClassesForPath)
+				} else {
+					err = fmt.Errorf("failed to import %s from fallback store", path)
+				}
+			}
+			finalError = errors.Join(finalError, err)
 		}
 	}
-	if errorMessage.Len() > 0 {
-		return errors.New(errorMessage.String())
-	}
-	return nil
+
+	return finalError
 }
 
 func (b *builder) ignoreRealizations(graph *dependencyGraph, roots sets.Set[zbstore.Path], drvPath zbstore.Path) {
@@ -1076,6 +1128,7 @@ func (b *builder) reuseRealizations(ctx context.Context, conn *sqlite.Conn, stat
 			if isCopyFromFallbackError(err) {
 				// If downloading store objects from the fallback fails,
 				// then we can treat this case like not finding a realization.
+				log.Debugf(ctx, "build %s: %v", state.drvPath, err)
 				err = fmt.Errorf("build %s: %w", state.drvPath, errRealizationNotFound)
 			}
 			return err
@@ -1145,7 +1198,15 @@ func (b *builder) planRealizationsAndFinalizeBuildResult(ctx context.Context, co
 // Callers can use [isCopyFromFallbackError] to determine whether any error returned from this function
 // indicates a failure to copy the absent store objects from the fallback store.
 func (b *builder) copyFromFallbackAndFinalizeBuildResult(ctx context.Context, conn *sqlite.Conn, state *derivationBuildState, p *realizationPlanner) error {
-	if err := b.copyFromFallback(ctx, conn, p.absent.All()); err != nil {
+	err := b.server.copyFromFallback(ctx, conn, func(yield func(zbstore.Path, equivalenceClass) bool) {
+		for eqClass := range p.absent.All() {
+			r := p.planned[eqClass] // Always present: p.absent is a set of keys in p.planned.
+			if !yield(r.path, eqClass) {
+				return
+			}
+		}
+	})
+	if err != nil {
 		return err
 	}
 	endTime := time.Now()
@@ -2068,7 +2129,7 @@ func isBuilderFailure(err error) bool {
 	return ok
 }
 
-// copyFromFallbackError is an error returned by [*builder.copyFromFallback].
+// copyFromFallbackError is an error returned by [*Server.copyFromFallback].
 type copyFromFallbackError struct {
 	err error
 }

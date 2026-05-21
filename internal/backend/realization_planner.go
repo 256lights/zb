@@ -145,7 +145,6 @@ func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClas
 
 	// Now that we selected our realization, fill out the closures.
 	log.Debugf(ctx, "Using sole viable candidate %s for %v", r.path, eqClass)
-	p.planned[eqClass] = r
 	for refPath, eqClasses := range r.closure {
 		refPathExists := true
 		if !present {
