@@ -2,6 +2,8 @@ with
   "valid_objects"("id") as (
     select "id" from "objects"
     union
+    select "output_path" from "realizations"
+    union
     select "referrer" from "reference_classes"
   ),
   "normalized_references"("referrer", "referrer_drv_hash", "referrer_output_name", "reference", "reference_drv_hash", "reference_output_name") as (
@@ -23,17 +25,11 @@ with
       "reference_output_name"
     from "reference_classes"
   ),
-  "closure"("path_id", "drv_hash_id", "output_name") as (
+  "closure"("path_id", "drv_hash_algorithm", "drv_hash_bits", "output_name") as (
     select
         "paths"."id",
-        iif(
-          :drv_hash_algorithm is not null and
-          length(:drv_hash_algorithm) > 0 and
-          :drv_hash_bits is not null and
-          length(:drv_hash_bits) > 0,
-          (select "id" from "drv_hashes" where
-            ("algorithm", "bits") = (:drv_hash_algorithm, :drv_hash_bits)),
-          null),
+        :drv_hash_algorithm,
+        :drv_hash_bits,
         nullif(:output_name, '')
       from
         "paths"
@@ -43,22 +39,23 @@ with
     union
       select
         r."reference",
-        r."reference_drv_hash",
+        "drv_hashes"."algorithm",
+        "drv_hashes"."bits",
         r."reference_output_name"
       from
         "normalized_references" as r
         join "closure" on "closure"."path_id" = r."referrer"
+        left join "drv_hashes" on r."reference_drv_hash" = "drv_hashes"."id"
       where
         r."referrer" <> r."reference"
   )
 
 select
   "paths"."path" as "path",
-  "drv_hashes"."algorithm" as "drv_hash_algorithm",
-  "drv_hashes"."bits" as "drv_hash_bits",
+  "drv_hash_algorithm" as "drv_hash_algorithm",
+  "drv_hash_bits" as "drv_hash_bits",
   "output_name" as "output_name"
 from
   "closure"
   join "paths" on "closure"."path_id" = "paths"."id"
-  left join "drv_hashes" on "closure"."drv_hash_id" = "drv_hashes"."id"
 order by 1, 2, 3, 4;

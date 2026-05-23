@@ -4,8 +4,12 @@
 package backend
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"iter"
 	"slices"
+	"sync"
 	"unique"
 
 	"zb.256lights.llc/pkg/internal/xslices"
@@ -30,6 +34,17 @@ func (graph *dependencyGraph) get(path zbstore.Path, drv *zbstore.Derivation) *d
 		graph.nodes[path] = node
 	}
 	return node
+}
+
+// iterator returns a [*dependencyOrderIterator] over all the nodes in the graph.
+func (graph *dependencyGraph) iterator() *dependencyOrderIterator {
+	// We assume that graph.roots has been filled in properly,
+	// so we can skip the complexity in [newDependencyOrderIterator].
+	return &dependencyOrderIterator{
+		graph:    graph,
+		stack:    slices.AppendSeq(make([]zbstore.Path, 0, graph.roots.Len()), graph.roots.All()),
+		finished: make(map[zbstore.Path]bool),
+	}
 }
 
 // dependencyGraphNode stores auxiliary information about a [*zbstore.Derivation].
@@ -121,4 +136,181 @@ func addToMultiMap[K comparable, V comparable, M ~map[K]sets.Set[V]](m M, k K, v
 		m[k] = dst
 	}
 	dst.Add(v)
+}
+
+// dependencyOrderIterator walks a [dependencyGraph] in dependency order
+// (i.e. derivations are returned after all their input derivations are processed).
+type dependencyOrderIterator struct {
+	graph *dependencyGraph
+
+	mu       sync.Mutex
+	stack    []zbstore.Path
+	finished map[zbstore.Path]bool
+	pending  int
+	waiting  chan struct{}
+}
+
+// newDependencyOrderIterator returns a new [*dependencyOrderIterator]
+// that starts at the given paths.
+// Any input derivations for the derivations in roots
+// are treated as if they've already been processed,
+// as long as they do not depend on other derivations in roots.
+func newDependencyOrderIterator(g *dependencyGraph, roots iter.Seq[zbstore.Path]) *dependencyOrderIterator {
+	type stackEntry struct {
+		path     zbstore.Path
+		fromRoot zbstore.Path
+	}
+
+	rootSet := make(sets.Set[zbstore.Path])
+	var rootList []zbstore.Path
+	for root := range roots {
+		if !rootSet.Has(root) {
+			rootList = append(rootList, root)
+			rootSet.Add(root)
+		}
+	}
+
+	// Prune any roots that depend on other paths in rootSet.
+	var stack []stackEntry
+	for _, root := range rootList {
+		if !rootSet.Has(root) {
+			continue
+		}
+		node := g.nodes[root]
+		if node == nil {
+			rootSet.Delete(root)
+			continue
+		}
+
+		stack = slices.Grow(stack, len(node.derivation.InputDerivations))
+		for drvPath := range node.derivation.InputDerivations {
+			stack = append(stack, stackEntry{
+				fromRoot: root,
+				path:     drvPath,
+			})
+		}
+		for len(stack) > 0 {
+			curr := xslices.Last(stack)
+			stack = xslices.Pop(stack, 1)
+
+			nextRoot := curr.fromRoot
+			if rootSet.Has(curr.path) {
+				rootSet.Delete(curr.fromRoot)
+				nextRoot = curr.path
+			}
+			if node := g.nodes[curr.path]; node != nil {
+				stack = slices.Grow(stack, len(node.derivation.InputDerivations))
+				for drvPath := range node.derivation.InputDerivations {
+					stack = append(stack, stackEntry{
+						fromRoot: nextRoot,
+						path:     drvPath,
+					})
+				}
+			}
+		}
+	}
+	rootList = xslices.Filter(rootList, rootSet.Has)
+
+	// Mark any dependencies of the roots as visited.
+	finished := make(map[zbstore.Path]bool)
+	for _, root := range rootList {
+		stack = append(stack, stackEntry{path: root})
+		for len(stack) > 0 {
+			curr := xslices.Last(stack)
+			stack = xslices.Pop(stack, 1)
+
+			if curr.path != root {
+				finished[curr.path] = true
+			}
+			if node := g.nodes[curr.path]; node != nil {
+				stack = slices.Grow(stack, len(node.derivation.InputDerivations))
+				for drvPath := range node.derivation.InputDerivations {
+					stack = append(stack, stackEntry{path: drvPath})
+				}
+			}
+		}
+	}
+
+	return &dependencyOrderIterator{
+		graph:    g,
+		stack:    rootList,
+		finished: finished,
+	}
+}
+
+// next returns the next derivation path in dependency order.
+// It is the caller's responsibility to call [*dependencyOrderIterator.finish]
+// on the returned path when the path has been processed.
+// next will block until there is at least one derivation
+// whose input derivations all have been marked with [*dependencyOrderIterator.finish].
+// If there are no more derivations to visit, next returns ("", [errEndIteration]).
+func (it *dependencyOrderIterator) next(ctx context.Context) (zbstore.Path, error) {
+	it.mu.Lock()
+	for len(it.stack) == 0 {
+		if it.pending <= 0 {
+			it.mu.Unlock()
+			return "", errEndIteration
+		}
+		waiting := it.waiting
+		if waiting == nil {
+			waiting = make(chan struct{})
+			it.waiting = waiting
+		}
+		it.mu.Unlock()
+
+		select {
+		case <-waiting:
+			it.mu.Lock()
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	p := xslices.Last(it.stack)
+	it.stack = xslices.Pop(it.stack, 1)
+	it.pending++
+	it.mu.Unlock()
+	return p, nil
+}
+
+var errEndIteration = errors.New("end iteration")
+
+// finish marks the derivation with the given path as having finished processing,
+// optionally allowing the derivation's dependents to be returned by next.
+func (it *dependencyOrderIterator) finish(path zbstore.Path, processDependents bool) {
+	node := it.graph.nodes[path]
+	if node == nil {
+		return
+	}
+
+	it.mu.Lock()
+	defer it.mu.Unlock()
+	if _, hasKey := it.finished[path]; hasKey {
+		return
+	}
+	it.finished[path] = processDependents
+	it.pending--
+
+	if processDependents {
+		for possible := range node.dependents {
+			canAdd := true
+			for input := range it.graph.nodes[possible].derivation.InputDerivations {
+				if !it.finished[input] {
+					canAdd = false
+					break
+				}
+			}
+			if canAdd {
+				it.stack = append(it.stack, possible)
+				if it.waiting != nil {
+					close(it.waiting)
+					it.waiting = nil
+				}
+			}
+		}
+	}
+
+	if it.pending <= 0 && len(it.stack) == 0 && it.waiting != nil {
+		close(it.waiting)
+		it.waiting = nil
+	}
 }

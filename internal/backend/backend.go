@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"maps"
 	"os"
 	"path/filepath"
@@ -37,6 +38,12 @@ import (
 // for the users that execute builders on behalf of the daemon.
 const DefaultBuildUsersGroup = "zbld"
 
+// Store combines the [zbstore.Store] and [zbstore.RealizationFetcher] interfaces.
+type Store interface {
+	zbstore.Store
+	zbstore.RealizationFetcher
+}
+
 // Options is the set of optional parameters to [NewServer].
 type Options struct {
 	// RealStoreDirectory is where the store objects are located physically on disk.
@@ -51,6 +58,10 @@ type Options struct {
 	// ContentAddressBufferCreator is used to create buffers for content addressing analysis.
 	// If nil, then in-memory byte slices are used with reasonable limits.
 	ContentAddressBufferCreator bytebuffer.Creator
+
+	// Fallback is used to obtain objects and realizations
+	// that don't exist in the server's store directory.
+	Fallback Store
 
 	// DatabasePoolSize is the maximum permitted number of concurrent connections to the database.
 	// If less than 1, a reasonable default is used.
@@ -134,6 +145,7 @@ type Server struct {
 	allowKeepFailed bool
 	buildContext    func(context.Context, string) context.Context
 	keyring         *Keyring
+	fallback        Store
 
 	sandbox      bool
 	sandboxPaths map[string]SandboxPath
@@ -176,6 +188,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		activeBuilds:    make(map[uuid.UUID]context.CancelFunc),
 		buildContext:    opts.BuildContext,
 		keyring:         opts.Keyring.Clone(),
+		fallback:        opts.Fallback,
 
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
@@ -214,6 +227,9 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		srv.buildContext = func(_ context.Context, _ string) context.Context {
 			return context.Background()
 		}
+	}
+	if srv.fallback == nil {
+		srv.fallback = zbstore.Null{}
 	}
 	var bgCtx context.Context
 	bgCtx, srv.cancelBackground = context.WithCancel(context.Background())
@@ -831,6 +847,117 @@ func (s *Server) delete(ctx context.Context, paths sets.Set[zbstore.Path], recur
 	return nil
 }
 
+// copyFromFallback imports any store objects identified by paths
+// that are not present in the store directory
+// from the fallback store.
+// The [equivalenceClass] values are used in error messages.
+// If any of the store objects could not be downloaded, then copyFromFallback will return an error.
+// If copyFromFallback returns an error, it will always be a [copyFromFallbackError].
+func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths iter.Seq2[zbstore.Path, equivalenceClass]) (err error) {
+	defer func() {
+		if err != nil {
+			err = copyFromFallbackError{err}
+		}
+	}()
+
+	storePathsToDownload := make(map[zbstore.Path]sets.Set[equivalenceClass])
+	exists := make(sets.Set[zbstore.Path])
+	for outputPath, eqClass := range paths {
+		if exists.Has(outputPath) {
+			continue
+		}
+		if eqClassSet, ok := storePathsToDownload[outputPath]; ok {
+			if !eqClass.isZero() {
+				if eqClassSet == nil {
+					eqClassSet = make(sets.Set[equivalenceClass])
+					storePathsToDownload[outputPath] = eqClassSet
+				}
+				eqClassSet.Add(eqClass)
+			}
+			continue
+		}
+
+		log.Debugf(ctx, "Waiting for lock on %s (output of %v)...", outputPath, eqClass)
+		unlockInput, err := s.writing.lock(ctx, outputPath)
+		if err != nil {
+			return err
+		}
+		_, err = os.Lstat(s.realPath(outputPath))
+		unlockInput()
+		log.Debugf(ctx, "%s exists=%t (output of %v)", outputPath, err == nil, eqClass)
+		if err == nil {
+			exists.Add(outputPath)
+		} else if eqClass.isZero() {
+			if _, ok := storePathsToDownload[outputPath]; !ok {
+				storePathsToDownload[outputPath] = nil
+			}
+		} else {
+			addToMultiMap(storePathsToDownload, outputPath, eqClass)
+		}
+	}
+
+	if len(storePathsToDownload) == 0 {
+		return nil
+	}
+
+	pr, pw := io.Pipe()
+	exportFinished := make(chan error)
+	go func() {
+		err := zbstore.Export(ctx, s.fallback, pw, sets.Collect(maps.Keys(storePathsToDownload)), nil)
+		pw.CloseWithError(err)
+		exportFinished <- err
+	}()
+
+	recv := s.newNARReceiver(ctx, s.caCreateTemp, &singleConnectionGetter{
+		conn: conn,
+	})
+	pathRecorder := &pathRecorderReceiver{receiver: recv}
+	receiveError := zbstore.ReceiveExport(pathRecorder, pr)
+	recv.Cleanup(ctx)
+	pr.CloseWithError(receiveError)
+	exportError := <-exportFinished
+	if exportError != nil {
+		return fmt.Errorf("failed to copy from fallback store: %v", exportError)
+	}
+	if receiveError != nil {
+		return fmt.Errorf("failed to copy from fallback store: %v", receiveError)
+	}
+
+	var finalError error
+	for path, eqClassesForPath := range storePathsToDownload {
+		if !pathRecorder.paths.Has(path) {
+			var err error
+			if eqClassesForPath.Len() > 0 {
+				err = fmt.Errorf("fallback store did not export %s (output of %v)", path, eqClassesForPath)
+			} else {
+				err = fmt.Errorf("fallback store did not export %s", path)
+			}
+			finalError = errors.Join(finalError, err)
+			continue
+		}
+
+		log.Debugf(ctx, "Waiting for lock on %s (%v)...", path, eqClassesForPath)
+		unlockInput, err := s.writing.lock(ctx, path)
+		if err != nil {
+			return err
+		}
+		_, err = os.Lstat(s.realPath(path))
+		unlockInput()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				if eqClassesForPath.Len() > 0 {
+					err = fmt.Errorf("failed to import %s (output of %v) from fallback store", path, eqClassesForPath)
+				} else {
+					err = fmt.Errorf("failed to import %s from fallback store", path)
+				}
+			}
+			finalError = errors.Join(finalError, err)
+		}
+	}
+
+	return finalError
+}
+
 func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
 	ticker := time.NewTicker(min(5*time.Minute, window))
 	defer ticker.Stop()
@@ -957,3 +1084,16 @@ func marshalResponse(data any, opts ...jsonv2.Options) (*jsonrpc.Response, error
 	}
 	return &jsonrpc.Response{Result: jsonData}, nil
 }
+
+// copyFromFallbackError is an error returned by [*Server.copyFromFallback].
+type copyFromFallbackError struct {
+	err error
+}
+
+func isCopyFromFallbackError(err error) bool {
+	_, ok := errors.AsType[copyFromFallbackError](err)
+	return ok
+}
+
+func (e copyFromFallbackError) Error() string { return e.err.Error() }
+func (e copyFromFallbackError) Unwrap() error { return e.err }

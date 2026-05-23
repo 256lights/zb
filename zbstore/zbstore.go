@@ -268,6 +268,16 @@ type RealizationMap struct {
 	Realizations   map[string][]*Realization
 }
 
+// IsEmpty reports whether m is an empty map.
+func (m RealizationMap) IsEmpty() bool {
+	for _, slice := range m.Realizations {
+		if len(slice) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // All returns an iterator over all the realizations in the map.
 func (m RealizationMap) All() iter.Seq2[RealizationOutputReference, *Realization] {
 	return func(yield func(RealizationOutputReference, *Realization) bool) {
