@@ -37,6 +37,10 @@ import (
 
 const contentAddressTempFilePattern = "zb-ca-*"
 
+type serverConfig struct {
+	Download *storeConfig `json:"download"`
+}
+
 type serveCommand struct {
 	storeDatabaseFlags `kong:"embed"`
 
@@ -89,6 +93,14 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 		return err
 	}
 	// TODO(someday): Properly set permissions on the created database.
+
+	configStoreDeps, cleanupStoreDeps := g.storeDeps()
+	defer cleanupStoreDeps()
+	fallbackStore, err := g.Server.Download.toStore(configStoreDeps)
+	if err != nil {
+		return err
+	}
+
 	webHandler := new(webServer)
 	if c.TemplatesDirectory != "" {
 		root, err := os.OpenRoot(c.TemplatesDirectory)
@@ -172,6 +184,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 		CoresPerBuild:               c.CoresPerBuild,
 		BuildLogRetention:           c.BuildLogRetention,
 		Keyring:                     keyring,
+		Fallback:                    fallbackStore,
 	})
 	defer func() {
 		if err := backendServer.Close(); err != nil {
