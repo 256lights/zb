@@ -161,6 +161,9 @@ type Server struct {
 	activeBuildsMu sync.Mutex
 	activeBuilds   map[uuid.UUID]context.CancelFunc
 	draining       bool
+
+	initialHealthCheckDone chan struct{}
+	initialHealthCheck     int
 }
 
 // NewServer returns a new [Server] for the given store directory and database path.
@@ -206,6 +209,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 				log.Errorf(ctx, "Migration: %v", err)
 			},
 		}),
+		initialHealthCheckDone: make(chan struct{}),
 	}
 	if srv.coresPerBuild <= 0 {
 		srv.coresPerBuild = max(1, runtime.NumCPU())
@@ -232,8 +236,13 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	}
 	var bgCtx context.Context
 	bgCtx, srv.cancelBackground = context.WithCancel(context.Background())
+
 	srv.background.Go(func() {
 		srv.optimizeDatabase(bgCtx)
+	})
+
+	srv.background.Go(func() {
+		srv.serverTTL(bgCtx)
 	})
 	if opts.BuildLogRetention > 0 {
 		srv.background.Go(func() {
@@ -261,6 +270,10 @@ func (s *Server) Close() error {
 // JSONRPC implements the [jsonrpc.Handler] interface
 // and serves the [zbstorerpc] API.
 func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	if err := s.WaitForHealthcheck(ctx); err != nil {
+		return nil, err
+	}
+
 	return jsonrpc.ServeMux{
 		zbstorerpc.ExistsMethod:         jsonrpc.HandlerFunc(s.exists),
 		zbstorerpc.InfoMethod:           jsonrpc.HandlerFunc(s.info),
@@ -993,6 +1006,90 @@ func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
 
 		select {
 		case t = <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *Server) WaitForHealthcheck(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.initialHealthCheckDone:
+		if s.initialHealthCheck < 0 {
+			return fmt.Errorf("Unable to lock database")
+		}
+		return nil
+	}
+}
+
+func (s *Server) serverTTL(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	conn, err := s.db.Get(ctx)
+	if err != nil {
+		// Likely means context was canceled.
+		log.Debugf(ctx, "Exiting server ttl due to: %v", err)
+		return
+	}
+	errNotLeader := errors.New("another heartbeat detected")
+	err = func() (err error) {
+		endFn, err := sqlitex.ImmediateTransaction(conn)
+		if err != nil {
+			return err
+		}
+		defer endFn(&err)
+
+		lastHeartbeat, err := getLastHeartbeat(conn)
+		if err != nil {
+			return err
+		}
+		if time.Since(lastHeartbeat) < time.Second*30 {
+			return errNotLeader
+		}
+
+		if err := updateHeartbeat(conn); err != nil {
+			log.Errorf(ctx, "%v", err)
+		}
+		return nil
+	}()
+
+	s.db.Put(conn)
+	if err != nil {
+		s.initialHealthCheck = -1
+		close(s.initialHealthCheckDone)
+		return
+	}
+	s.initialHealthCheck = 1
+	close(s.initialHealthCheckDone)
+
+	for {
+		conn, err := s.db.Get(ctx)
+		if err != nil {
+			// Likely means context was canceled.
+			log.Debugf(ctx, "Exiting server ttl due to: %v", err)
+			return
+		}
+		err = func() (err error) {
+			endFn, err := sqlitex.ImmediateTransaction(conn)
+			if err != nil {
+				return err
+			}
+			defer endFn(&err)
+
+			return updateHeartbeat(conn)
+		}()
+		if err != nil {
+			log.Warnf(ctx, "Failed to update server ttl: %v", err)
+		} else {
+			log.Infof(ctx, "Updated server ttl")
+		}
+		s.db.Put(conn)
+
+		select {
+		case <-ticker.C:
 		case <-ctx.Done():
 			return
 		}
