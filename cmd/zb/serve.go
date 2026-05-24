@@ -121,58 +121,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 		webHandler.staticAssets = ui.StaticAssets()
 	}
 
-	var l net.Listener
-	if runtime.GOOS == "linux" && c.SystemdSocket {
-		listeners, err := activation.Listeners()
-		if err != nil {
-			return err
-		}
-		if len(listeners) != 1 {
-			return fmt.Errorf("systemd passed in %d sockets (want 1)", len(listeners))
-		}
-		l = listeners[0]
-	} else {
-		if err := os.Remove(g.StoreSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		} else if err == nil {
-			log.Infof(ctx, "Cleaned up existing socket at %s", g.StoreSocket)
-		}
-
-		var err error
-		l, err = listenUnix(g.StoreSocket)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err := os.Remove(g.StoreSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
-				log.Warnf(ctx, "Failed to clean up socket: %v", err)
-			}
-		}()
-	}
-
 	grp, grpCtx := errgroup.WithContext(ctx)
-
-	openConns := make(sets.Set[net.Conn])
-	var openConnsMu sync.Mutex
-	grp.Go(func() error {
-		// Once the context is Done, refuse new connections and RPCs.
-		<-grpCtx.Done()
-		log.Infof(grpCtx, "Shutting down (signal received)...")
-
-		if err := l.Close(); err != nil {
-			log.Errorf(grpCtx, "Closing Unix socket: %v", err)
-		}
-		openConnsMu.Lock()
-		for conn := range openConns.All() {
-			if err := closeRead(conn); err != nil {
-				log.Errorf(grpCtx, "Closing Unix socket: %v", err)
-			}
-		}
-		openConnsMu.Unlock()
-		return nil
-	})
-
-	log.Infof(ctx, "Listening on %s", g.StoreSocket)
 	backendServer := backend.NewServer(g.Directory, c.DBPath, &backend.Options{
 		BuildDirectory:              c.BuildDir,
 		LogDirectory:                c.LogDirectory,
@@ -194,6 +143,54 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 	webHandler.backend = backendServer
 
 	grp.Go(func() error {
+		if err := backendServer.WaitForHealthcheck(ctx); err != nil {
+			return err
+		}
+
+		var l net.Listener
+		if runtime.GOOS == "linux" && c.SystemdSocket {
+			listeners, err := activation.Listeners()
+			if err != nil {
+				return err
+			}
+			if len(listeners) != 1 {
+				return fmt.Errorf("systemd passed in %d sockets (want 1)", len(listeners))
+			}
+			l = listeners[0]
+		} else {
+			var err error
+			l, err = listenUnix(g.StoreSocket)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if err := os.Remove(g.StoreSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
+					log.Warnf(ctx, "Failed to clean up socket: %v", err)
+				}
+			}()
+		}
+
+		openConns := make(sets.Set[net.Conn])
+		var openConnsMu sync.Mutex
+		grp.Go(func() error {
+			// Once the context is Done, refuse new connections and RPCs.
+			<-grpCtx.Done()
+			log.Infof(grpCtx, "Shutting down (signal received)...")
+
+			if err := l.Close(); err != nil {
+				log.Errorf(grpCtx, "Closing Unix socket: %v", err)
+			}
+			openConnsMu.Lock()
+			for conn := range openConns.All() {
+				if err := closeRead(conn); err != nil {
+					log.Errorf(grpCtx, "Closing Unix socket: %v", err)
+				}
+			}
+			openConnsMu.Unlock()
+			return nil
+		})
+		log.Infof(ctx, "Listening on %s", g.StoreSocket)
+
 		for {
 			conn, err := l.Accept()
 			if errors.Is(err, net.ErrClosed) {
