@@ -1115,6 +1115,7 @@ func prepareConn(conn *sqlite.Conn) error {
 //go:embed sql/build/*.sql
 //go:embed sql/delete/*.sql
 //go:embed sql/realizations/*.sql
+//go:embed sql/server_ttl/*.sql
 //go:embed sql/schema/*.sql
 var rawSQLFiles embed.FS
 
@@ -1249,4 +1250,34 @@ func readonlySavepoint(conn *sqlite.Conn) (rollbackFunc func(), err error) {
 	}
 
 	return rollbackFunc, nil
+}
+
+func updateHeartbeat(conn *sqlite.Conn) error {
+	now := time.Now()
+	err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "server_ttl/tick_ttl.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":now": now.UnixMilli(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("update server ttl: %v", err)
+	}
+	return nil
+}
+
+func getLastHeartbeat(conn *sqlite.Conn) (time.Time, error) {
+	var lastHeartbeat time.Time
+	err := sqlitex.ExecuteFS(conn, sqlFiles(), "server_ttl/get.sql", &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			lastHeartbeat = time.UnixMilli(stmt.GetInt64("ttl_logged_at"))
+
+			return nil
+		},
+	})
+
+	if err != nil {
+		return time.Time{}, fmt.Errorf("get last heartbeat: %v", err)
+	}
+
+	return lastHeartbeat, nil
 }
