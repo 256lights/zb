@@ -143,7 +143,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 	webHandler.backend = backendServer
 
 	grp.Go(func() error {
-		if err := backendServer.WaitForHealthcheck(ctx); err != nil {
+		if err := backendServer.WaitForHealthcheck(grpCtx); err != nil {
 			return err
 		}
 
