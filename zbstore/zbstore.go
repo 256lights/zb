@@ -253,6 +253,7 @@ func ObjectBatch(ctx context.Context, store Store, storePaths sets.Set[Path], ma
 
 // A RealizationFetcher lists known [Realization] values for a derivation.
 // The argument to FetchRealizations is a [derivation hash].
+// FetchRealizations may return a non-empty [RealizationMap] in addition to an error.
 //
 // FetchRealizations must be safe to call concurrently from multiple goroutines simultaneously.
 //
