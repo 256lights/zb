@@ -1115,7 +1115,7 @@ func prepareConn(conn *sqlite.Conn) error {
 //go:embed sql/build/*.sql
 //go:embed sql/delete/*.sql
 //go:embed sql/realizations/*.sql
-//go:embed sql/server_ttl/*.sql
+//go:embed sql/running_server/*.sql
 //go:embed sql/schema/*.sql
 var rawSQLFiles embed.FS
 
