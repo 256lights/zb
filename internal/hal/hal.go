@@ -262,6 +262,7 @@ type Link struct {
 
 // Expand expands the link's URI with the given template parameters.
 // If the link is not templated, then the template parameters are ignored.
+// The data argument is interpreted with [uritemplate.Expand].
 func (l *Link) Expand(data any) (*url.URL, error) {
 	href := l.HRef
 	if l.Templated {

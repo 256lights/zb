@@ -20,11 +20,21 @@ import (
 	"zb.256lights.llc/pkg/internal/hal"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
+	"zombiezen.com/go/nix"
 )
 
-var _ zbstore.Store = (*HTTPStore)(nil)
+var _ interface {
+	zbstore.Store
+	zbstore.RealizationFetcher
+} = (*HTTPStore)(nil)
 
-// An HTTPStore implements [zbstore.Store] by using the [Binary Cache Protocol].
+const (
+	narInfoRelation     = "https://zb-build.dev/api/rel/narinfo"
+	realizationRelation = "https://zb-build.dev/api/rel/realization"
+)
+
+// An HTTPStore implements [zbstore.Store] and [zbstore.RealizationFetcher]
+// using the [Binary Cache Protocol].
 //
 // [Binary Cache Protocol]: https://zb.256lights.llc/binary-cache/
 type HTTPStore struct {
@@ -59,8 +69,6 @@ func (s *HTTPStore) discover(ctx context.Context) (*hal.Resource, error) {
 	}
 	return hr, nil
 }
-
-const narInfoRelation = "https://zb-build.dev/api/rel/narinfo"
 
 // Object fetches the .narinfo resource for the store object at the given path.
 func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, error) {
@@ -122,6 +130,90 @@ func fetchNARInfo(ctx context.Context, client *http.Client, u *url.URL) (*NARInf
 		return nil, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
 	}
 	return result, nil
+}
+
+// FetchRealizations implements [zbstore.RealizationFetcher]
+// by fetching the realization document(s) for the given [derivation hash].
+//
+// [derivation hash]: https://zb.256lights.llc/binary-cache/realizations#derivation-hashes
+func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zbstore.RealizationMap, error) {
+	result := zbstore.RealizationMap{DerivationHash: drvHash}
+
+	hr, err := s.discover(ctx)
+	if err != nil {
+		return result, fmt.Errorf("fetch realizations for %v: %v", drvHash, err)
+	}
+	infoLinks := hr.Links[realizationRelation]
+	if infoLinks.Single {
+		return result, fmt.Errorf("fetch realizations for %v: %v: link relation %s is not an array", drvHash, s.URL.Redacted(), realizationRelation)
+	}
+	var resultError error
+	for _, link := range infoLinks.Objects {
+		if !link.Templated {
+			err := fmt.Errorf("fetch realizations for %v: %v: link relation %s: not all links are templated",
+				drvHash, s.URL.Redacted(), realizationRelation)
+			resultError = errors.Join(resultError, err)
+			break
+		}
+	}
+
+	params := struct {
+		HashAlgorithm string
+		HashDigest    string
+	}{
+		HashAlgorithm: drvHash.Type().String(),
+		HashDigest:    drvHash.RawBase16(),
+	}
+	for _, link := range infoLinks.Objects {
+		if !link.Templated {
+			continue
+		}
+		u, err := link.Expand(params)
+		if err != nil {
+			err := fmt.Errorf("fetch realizations for %v: %v: link relation %s: %v",
+				drvHash, s.URL.Redacted(), realizationRelation, err)
+			resultError = errors.Join(resultError, err)
+			continue
+		}
+		u = s.URL.ResolveReference(u)
+		if err := s.addRealizations(ctx, &result, u); err != nil {
+			if code, _ := errorStatusCode(err); code != http.StatusNotFound {
+				resultError = errors.Join(resultError, err)
+			}
+			continue
+		}
+	}
+
+	return result, resultError
+}
+
+func (s *HTTPStore) addRealizations(ctx context.Context, dst *zbstore.RealizationMap, u *url.URL) error {
+	docData, err := fetch(ctx, s.client(), u, "application/json,text/*;q=0.9,*/*;q=0.8")
+	if err != nil {
+		return fmt.Errorf("fetch realizations for %v: %w", dst.DerivationHash, err)
+	}
+	doc := new(zbstore.RealizationMap)
+	unmarshalers := jsonv2.UnmarshalFromFunc(zbstore.UnmarshalHashJSONFrom)
+	if err := jsonv2.Unmarshal(docData, doc, jsonv2.WithUnmarshalers(unmarshalers)); err != nil {
+		return fmt.Errorf("fetch realizations for %v: %v: %v", dst.DerivationHash, u.Redacted(), err)
+	}
+	if !doc.DerivationHash.Equal(dst.DerivationHash) {
+		return fmt.Errorf("fetch realizations for %v: %v: mismatched hash %v", dst.DerivationHash, u.Redacted(), doc.DerivationHash)
+	}
+	if dst.Realizations == nil {
+		dst.Realizations = doc.Realizations
+		return nil
+	}
+	for outputName, realizations := range doc.Realizations {
+		if len(realizations) == 0 {
+			continue
+		}
+		if dst.Realizations == nil {
+			dst.Realizations = make(map[string][]*zbstore.Realization)
+		}
+		dst.Realizations[outputName] = append(dst.Realizations[outputName], realizations...)
+	}
+	return nil
 }
 
 func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) ([]byte, error) {
