@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"iter"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/tailscale/hujson"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/netrc"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
 )
@@ -26,6 +28,7 @@ type globalConfig struct {
 	Debug             bool                            `json:"debug" kong:"help=Show debugging output."`
 	Directory         zbstore.Directory               `json:"storeDirectory" kong:"name=store,default=${default_store_dir},help=Store directory"`
 	StoreSocket       string                          `json:"storeSocket" kong:"default=${default_store_socket},help=Server socket"`
+	NetrcPath         string                          `json:"netrcFile,omitempty" kong:"name=netrc-file,default=${netrc},help=Use HTTP credentials from the given path."`
 	CacheDB           string                          `json:"cacheDB" kong:"name=cache,default=${cache_db},help=Cache database"`
 	AllowEnv          stringAllowList                 `json:"allowEnvironment" kong:"-"`
 	TrustedPublicKeys []*zbstore.RealizationPublicKey `json:"trustedPublicKeys" kong:"-"`
@@ -37,6 +40,9 @@ func defaultGlobalConfig() *globalConfig {
 	g := &globalConfig{
 		Directory:   zbstore.DefaultDirectory(),
 		StoreSocket: filepath.Join(defaultVarDir(), "server.sock"),
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		g.NetrcPath = filepath.Join(home, ".netrc")
 	}
 	if cd := cacheDir(); cd != "" {
 		g.CacheDB = filepath.Join(cd, "zb", "cache.db")
@@ -56,6 +62,10 @@ func (g *globalConfig) mergeEnvironment() error {
 
 	if path := os.Getenv("ZB_STORE_SOCKET"); path != "" {
 		g.StoreSocket = path
+	}
+
+	if path := os.Getenv("NETRC"); path != "" {
+		g.NetrcPath = path
 	}
 
 	return nil
@@ -99,6 +109,9 @@ func (g *globalConfig) resolveRelativePaths(dir string, prev *globalConfig) {
 	}
 	if prev == nil || g.CacheDB != prev.CacheDB {
 		g.CacheDB = resolve(g.CacheDB)
+	}
+	if prev == nil || g.NetrcPath != prev.NetrcPath {
+		g.NetrcPath = resolve(g.NetrcPath)
 	}
 }
 
@@ -156,6 +169,10 @@ func (g *globalConfig) UnmarshalJSONFrom(in *jsontext.Decoder) error {
 				return fmt.Errorf("unmarshal config.trustedPublicKeys: %w", err)
 			}
 			g.TrustedPublicKeys = append(g.TrustedPublicKeys, newKeys...)
+		case "netrcFile":
+			if err := jsonv2.UnmarshalDecode(in, &g.NetrcPath); err != nil {
+				return fmt.Errorf("unmarshal config.netrcFile: %w", err)
+			}
 		default:
 			if reject, _ := jsonv2.GetOption(in.Options(), jsonv2.RejectUnknownMembers); reject {
 				return fmt.Errorf("unmarshal config: unknown field %q", k)
@@ -187,6 +204,25 @@ func (g *globalConfig) reusePolicy() *zbstorerpc.ReusePolicy {
 		return &zbstorerpc.ReusePolicy{All: true}
 	}
 	return &zbstorerpc.ReusePolicy{PublicKeys: g.TrustedPublicKeys}
+}
+
+func (g *globalConfig) newHTTPClient() (*http.Client, error) {
+	if g.NetrcPath == "" {
+		return http.DefaultClient, nil
+	}
+	netrcData, err := os.ReadFile(g.NetrcPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return http.DefaultClient, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open netrc file: %v", err)
+	}
+	return &http.Client{
+		Transport: &netrc.Transport{
+			Netrc:        netrcData,
+			RoundTripper: http.DefaultTransport,
+		},
+	}, nil
 }
 
 func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) *jsonrpc.Client {
