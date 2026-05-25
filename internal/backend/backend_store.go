@@ -1254,22 +1254,22 @@ func readonlySavepoint(conn *sqlite.Conn) (rollbackFunc func(), err error) {
 
 func updateHeartbeat(conn *sqlite.Conn) error {
 	now := time.Now()
-	err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "server_ttl/tick_ttl.sql", &sqlitex.ExecOptions{
+	err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "running_server/tick_ttl.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":now": now.UnixMilli(),
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("update server ttl: %v", err)
+		return fmt.Errorf("update running server: %v", err)
 	}
 	return nil
 }
 
 func getLastHeartbeat(conn *sqlite.Conn) (time.Time, error) {
 	var lastHeartbeat time.Time
-	err := sqlitex.ExecuteFS(conn, sqlFiles(), "server_ttl/get.sql", &sqlitex.ExecOptions{
+	err := sqlitex.ExecuteFS(conn, sqlFiles(), "running_server/get.sql", &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			lastHeartbeat = time.UnixMilli(stmt.GetInt64("ttl_logged_at"))
+			lastHeartbeat = time.UnixMilli(stmt.GetInt64("running_as_of"))
 
 			return nil
 		},
