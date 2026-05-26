@@ -1265,6 +1265,15 @@ func updateHeartbeat(conn *sqlite.Conn) error {
 	return nil
 }
 
+func clearHeartbeat(conn *sqlite.Conn) error {
+	err := sqlitex.ExecuteFS(conn, sqlFiles(), "running_server/clear.sql", nil)
+	if err != nil {
+		return fmt.Errorf("update running server: %v", err)
+	}
+
+	return nil
+}
+
 func getLastHeartbeat(conn *sqlite.Conn) (time.Time, error) {
 	var lastHeartbeat time.Time
 	err := sqlitex.ExecuteFS(conn, sqlFiles(), "running_server/get.sql", &sqlitex.ExecOptions{

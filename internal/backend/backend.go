@@ -245,7 +245,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	})
 
 	srv.background.Go(func() {
-		srv.serverTTL(bgCtx)
+		srv.writeHeartbeat(bgCtx)
 	})
 	if opts.BuildLogRetention > 0 {
 		srv.background.Go(func() {
@@ -1030,18 +1030,16 @@ func (s *Server) LaunchCheck(ctx context.Context) error {
 	}
 }
 
-func (s *Server) serverTTL(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+func (s *Server) writeHeartbeat(ctx context.Context) {
+	err := func() (err error) {
+		conn, err := s.db.Get(ctx)
+		if err != nil {
+			// Likely means context was canceled.
+			log.Debugf(ctx, "Exiting server heartbeat due to: %v", err)
+			return
+		}
+		defer s.db.Put(conn)
 
-	conn, err := s.db.Get(ctx)
-	if err != nil {
-		// Likely means context was canceled.
-		log.Debugf(ctx, "Exiting server ttl due to: %v", err)
-		return
-	}
-	errNotLeader := errors.New("another heartbeat detected")
-	err = func() (err error) {
 		endFn, err := sqlitex.ImmediateTransaction(conn)
 		if err != nil {
 			return err
@@ -1052,8 +1050,8 @@ func (s *Server) serverTTL(ctx context.Context) {
 		if err != nil {
 			return err
 		}
-		if time.Since(lastHeartbeat) < time.Second*30 {
-			return errNotLeader
+		if time.Since(lastHeartbeat) < time.Second*10 {
+			return 	fmt.Errorf("another heartbeat detected")
 		}
 
 		if err := updateHeartbeat(conn); err != nil {
@@ -1062,7 +1060,6 @@ func (s *Server) serverTTL(ctx context.Context) {
 		return nil
 	}()
 
-	s.db.Put(conn)
 	if err != nil {
 		s.launchCheckError = fmt.Errorf("Unable to lock database")
 		close(s.launchCheckDone)
@@ -1070,14 +1067,40 @@ func (s *Server) serverTTL(ctx context.Context) {
 	}
 	close(s.launchCheckDone)
 
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 	for {
-		conn, err := s.db.Get(ctx)
-		if err != nil {
-			// Likely means context was canceled.
-			log.Debugf(ctx, "Exiting server ttl due to: %v", err)
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			err := func() (err error) {
+				bgCtx := context.Background()
+				conn, err := s.db.Get(bgCtx)
+				if err != nil {
+					// Likely means context was canceled.
+					log.Debugf(bgCtx, "Exiting server heartbeat due to: %v", err)
+					return
+				}
+				defer s.db.Put(conn)
+
+				return clearHeartbeat(conn)
+			}()
+			if err != nil {
+				log.Warnf(ctx, "Failed to clear server heartbeat: %v", err)
+			}
+			log.Debugf(ctx, "Cleared server heartbeat.")
 			return
 		}
+
 		err = func() (err error) {
+			conn, err := s.db.Get(ctx)
+			if err != nil {
+				// Likely means context was canceled.
+				log.Debugf(ctx, "Exiting server heartbeat due to: %v", err)
+				return
+			}
+			defer s.db.Put(conn)
+
 			endFn, err := sqlitex.ImmediateTransaction(conn)
 			if err != nil {
 				return err
@@ -1087,16 +1110,9 @@ func (s *Server) serverTTL(ctx context.Context) {
 			return updateHeartbeat(conn)
 		}()
 		if err != nil {
-			log.Warnf(ctx, "Failed to update server ttl: %v", err)
+			log.Warnf(ctx, "Failed to update server heartbeat: %v", err)
 		} else {
-			log.Infof(ctx, "Updated server ttl")
-		}
-		s.db.Put(conn)
-
-		select {
-		case <-ticker.C:
-		case <-ctx.Done():
-			return
+			log.Infof(ctx, "Updated server heartbeat")
 		}
 	}
 }
