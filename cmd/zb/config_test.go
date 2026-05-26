@@ -23,7 +23,7 @@ func TestDefaultGlobalConfig(t *testing.T) {
 		t.Errorf("defaultGlobalConfig().Directory is empty")
 	}
 	if got.StoreSocket == "" {
-		t.Errorf("defaultGlobalConfig().Directory is empty")
+		t.Errorf("defaultGlobalConfig().StoreSocket is empty")
 	}
 }
 

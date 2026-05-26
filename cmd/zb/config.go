@@ -26,18 +26,22 @@ type globalConfig struct {
 	Debug             bool                            `json:"debug" kong:"help=Show debugging output."`
 	Directory         zbstore.Directory               `json:"storeDirectory" kong:"name=store,default=${default_store_dir},help=Store directory"`
 	StoreSocket       string                          `json:"storeSocket" kong:"default=${default_store_socket},help=Server socket"`
-	CacheDB           string                          `json:"cacheDB" kong:"name=cache,placeholder=path,help=Cache database"`
+	CacheDB           string                          `json:"cacheDB" kong:"name=cache,default=${cache_db},help=Cache database"`
 	AllowEnv          stringAllowList                 `json:"allowEnvironment" kong:"-"`
 	TrustedPublicKeys []*zbstore.RealizationPublicKey `json:"trustedPublicKeys" kong:"-"`
 }
 
-// defaultGlobalConfig returns a [globalConfig] populated with default values based on OS,
-// but does not reference any environment variables.
+// defaultGlobalConfig returns a [globalConfig] populated with values
+// based on OS and generic environment variables (e.g. $HOME, $XDG_CACHE_HOME, etc.).
 func defaultGlobalConfig() *globalConfig {
-	return &globalConfig{
+	g := &globalConfig{
 		Directory:   zbstore.DefaultDirectory(),
 		StoreSocket: filepath.Join(defaultVarDir(), "server.sock"),
 	}
+	if cd := cacheDir(); cd != "" {
+		g.CacheDB = filepath.Join(cd, "zb", "cache.db")
+	}
+	return g
 }
 
 // mergeEnvironment copies environment variable values to [globalConfig] fields.
@@ -52,10 +56,6 @@ func (g *globalConfig) mergeEnvironment() error {
 
 	if path := os.Getenv("ZB_STORE_SOCKET"); path != "" {
 		g.StoreSocket = path
-	}
-
-	if cd := cacheDir(); cd != "" {
-		g.CacheDB = filepath.Join(cd, "zb", "cache.db")
 	}
 
 	return nil

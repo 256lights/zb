@@ -114,9 +114,11 @@ func zbKongOption() kong.Option {
 		if !yield(kong.NamedMapper("nativeStorePath", kong.MapperFunc(mapNativeStorePath))) {
 			return
 		}
+		g := defaultGlobalConfig()
 		vars := kong.Vars{
-			"default_store_dir":         string(defaultGlobalConfig().Directory),
-			"default_store_socket":      string(defaultGlobalConfig().StoreSocket),
+			"default_store_dir":         string(g.Directory),
+			"default_store_socket":      g.StoreSocket,
+			"cache_db":                  g.CacheDB,
 			"default_store_db":          filepath.Join(defaultVarDir(), "db.sqlite"),
 			"build_users_group":         defaultBuildUsersGroup,
 			"default_build_users_group": backend.DefaultBuildUsersGroup,
