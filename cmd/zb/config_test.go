@@ -128,6 +128,7 @@ func FuzzConfigMarshal(f *testing.F) {
 	f.Add([]byte(`{"trustedPublicKeys": []}` + "\n"))
 	f.Add([]byte(`{"trustedPublicKeys": [{"format": "ed25519", "publicKey": "+NMDNfvjCmdT9mLr9zadYQXwF/mPLsToMw36yX7w6HCVCSK9J2WsMGPCAT9U2Y959NFgAfdiSWGRvWbXYlGUcA=="}]}` + "\n"))
 	f.Add([]byte(`{"trustedPublicKeys": [{"format": "foo", "publicKey": "YmFy"}]}`))
+	f.Add([]byte(`{"netrcFile": "/etc/netrc"}` + "\n"))
 
 	f.Fuzz(func(t *testing.T, in []byte) {
 		init := defaultGlobalConfig()

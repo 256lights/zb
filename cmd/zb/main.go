@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -119,6 +120,7 @@ func zbKongOption() kong.Option {
 			"default_store_dir":         string(g.Directory),
 			"default_store_socket":      g.StoreSocket,
 			"cache_db":                  g.CacheDB,
+			"netrc":                     g.NetrcPath,
 			"default_store_db":          filepath.Join(defaultVarDir(), "db.sqlite"),
 			"build_users_group":         defaultBuildUsersGroup,
 			"default_build_users_group": backend.DefaultBuildUsersGroup,
@@ -205,7 +207,7 @@ func (opts *evalOptions) Validate() error {
 	return nil
 }
 
-func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client, di *zbstorerpc.DeferredImporter) (*frontend.Eval, error) {
+func (opts *evalOptions) newEval(g *globalConfig, httpClient *http.Client, storeClient *jsonrpc.Client, di *zbstorerpc.DeferredImporter) (*frontend.Eval, error) {
 	store := &rpcStore{
 		dir:        g.Directory,
 		keepFailed: opts.KeepFailed,
@@ -219,6 +221,7 @@ func (opts *evalOptions) newEval(g *globalConfig, storeClient *jsonrpc.Client, d
 		Store:          store,
 		StoreDirectory: g.Directory,
 		CacheDBPath:    g.CacheDB,
+		HTTPClient:     httpClient,
 		LookupEnv: func(ctx context.Context, key string) (string, bool) {
 			if !g.AllowEnv.Has(key) {
 				log.Warnf(ctx, "os.getenv(%s) not permitted (use --allow-env=%s if this is intentional)", lualex.Quote(key), key)
@@ -248,12 +251,17 @@ func (c *evalCommand) Signature() string {
 }
 
 func (c *evalCommand) Run(ctx context.Context, g *globalConfig) error {
+	httpClient, err := g.newHTTPClient()
+	if err != nil {
+		return err
+	}
+	defer httpClient.CloseIdleConnections()
 	di := new(zbstorerpc.DeferredImporter)
 	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: di,
 	})
 	defer storeClient.Close()
-	eval, err := c.newEval(g, storeClient, di)
+	eval, err := c.newEval(g, httpClient, storeClient, di)
 	if err != nil {
 		return err
 	}
@@ -291,12 +299,17 @@ func (c *buildCommand) Signature() string {
 }
 
 func (c *buildCommand) Run(ctx context.Context, g *globalConfig) error {
+	httpClient, err := g.newHTTPClient()
+	if err != nil {
+		return err
+	}
+	defer httpClient.CloseIdleConnections()
 	di := new(zbstorerpc.DeferredImporter)
 	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: di,
 	})
 	defer storeClient.Close()
-	eval, err := c.newEval(g, storeClient, di)
+	eval, err := c.newEval(g, httpClient, storeClient, di)
 	if err != nil {
 		return err
 	}
