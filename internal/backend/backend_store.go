@@ -1274,6 +1274,8 @@ func clearHeartbeat(conn *sqlite.Conn) error {
 	return nil
 }
 
+// lastHeartbeat reads the last time [updateHeartbeat] was called on the database.
+// If there is no heartbeat, then lastHeartbeat returns the zero time.
 func lastHeartbeat(conn *sqlite.Conn) (time.Time, error) {
 	var lastHeartbeat time.Time
 	err := sqlitex.ExecuteFS(conn, sqlFiles(), "running_server/get.sql", &sqlitex.ExecOptions{
