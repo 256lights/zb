@@ -162,8 +162,11 @@ type Server struct {
 	activeBuilds   map[uuid.UUID]context.CancelFunc
 	draining       bool
 
-	initialHealthCheckDone chan struct{}
-	initialHealthCheck     int
+	// launchCheckDone is closed after launchCheckError is set.
+	launchCheckDone chan struct{}
+	// launchCheckError is the error encountered when checking if there's another server operating on the database.
+	// launchCheckError is nil if this server has been confirmed to be the only running server.
+	launchCheckError error
 }
 
 // NewServer returns a new [Server] for the given store directory and database path.
@@ -209,7 +212,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 				log.Errorf(ctx, "Migration: %v", err)
 			},
 		}),
-		initialHealthCheckDone: make(chan struct{}),
+		launchCheckDone: make(chan struct{}),
 	}
 	if srv.coresPerBuild <= 0 {
 		srv.coresPerBuild = max(1, runtime.NumCPU())
@@ -270,7 +273,7 @@ func (s *Server) Close() error {
 // JSONRPC implements the [jsonrpc.Handler] interface
 // and serves the [zbstorerpc] API.
 func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	if err := s.WaitForHealthcheck(ctx); err != nil {
+	if err := s.LaunchCheck(ctx); err != nil {
 		return nil, err
 	}
 
@@ -1012,13 +1015,16 @@ func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
 	}
 }
 
-func (s *Server) WaitForHealthcheck(ctx context.Context) error {
+// LaunchCheck waits until the [Server] has verified that it is the only one operating on its database
+// or the ctx.Done() channel is closed,
+// whichever comes first.
+func (s *Server) LaunchCheck(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-s.initialHealthCheckDone:
-		if s.initialHealthCheck < 0 {
-			return fmt.Errorf("Unable to lock database")
+	case <-s.launchCheckDone:
+		if s.launchCheckError != nil {
+			return s.launchCheckError
 		}
 		return nil
 	}
@@ -1058,12 +1064,11 @@ func (s *Server) serverTTL(ctx context.Context) {
 
 	s.db.Put(conn)
 	if err != nil {
-		s.initialHealthCheck = -1
-		close(s.initialHealthCheckDone)
+		s.launchCheckError = fmt.Errorf("Unable to lock database")
+		close(s.launchCheckDone)
 		return
 	}
-	s.initialHealthCheck = 1
-	close(s.initialHealthCheckDone)
+	close(s.launchCheckDone)
 
 	for {
 		conn, err := s.db.Get(ctx)

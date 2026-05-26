@@ -194,7 +194,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 }
 
 func startSocketListener(ctx context.Context, grp *errgroup.Group, server *backend.Server, c *serveCommand, g *globalConfig) error {
-	if err := server.WaitForHealthcheck(ctx); err != nil {
+	if err := server.LaunchCheck(ctx); err != nil {
 		return err
 	}
 
