@@ -1049,7 +1049,7 @@ func (s *Server) writeHeartbeat(ctx context.Context) {
 		}
 		defer endFn(&err)
 
-		lastHeartbeat, err := getLastHeartbeat(conn)
+		lastHeartbeat, err := lastHeartbeat(conn)
 		if err != nil {
 			return err
 		}
