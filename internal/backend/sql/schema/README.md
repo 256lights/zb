@@ -18,7 +18,8 @@ The database is used to store the following:
   If the database has a record of a build that has not finished
   but the backend process does not have a record of such a build,
   then the backend process assumes that such a build is orphaned from a previous backend process (likely a crash).
-- Server TTL to avoid multiple zb server instances from overwritting the socket.
+- Running server information.
+  This data is used to avoid multiple zb server processes from operating on the same store directory.
 
 This document's purpose is to describe the scope of the backend database
 and how its data is structured.
