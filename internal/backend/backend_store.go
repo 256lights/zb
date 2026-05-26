@@ -1260,7 +1260,7 @@ func updateHeartbeat(conn *sqlite.Conn) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("update running server: %v", err)
+		return fmt.Errorf("update server heartbeat: %v", err)
 	}
 	return nil
 }
@@ -1268,7 +1268,7 @@ func updateHeartbeat(conn *sqlite.Conn) error {
 func clearHeartbeat(conn *sqlite.Conn) error {
 	err := sqlitex.ExecuteFS(conn, sqlFiles(), "running_server/clear.sql", nil)
 	if err != nil {
-		return fmt.Errorf("update running server: %v", err)
+		return fmt.Errorf("clear server heartbeat: %v", err)
 	}
 
 	return nil
@@ -1287,7 +1287,7 @@ func lastHeartbeat(conn *sqlite.Conn) (time.Time, error) {
 	})
 
 	if err != nil {
-		return time.Time{}, fmt.Errorf("get last heartbeat: %v", err)
+		return time.Time{}, fmt.Errorf("get last server heartbeat: %v", err)
 	}
 
 	return lastHeartbeat, nil
