@@ -1058,6 +1058,7 @@ func (s *Server) writeHeartbeat(ctx context.Context) {
 		}
 
 		if err := updateHeartbeat(conn); err != nil {
+			// Launch check shouldn't fail from being unable ot write the first heartebeat
 			log.Errorf(ctx, "%v", err)
 		}
 		return nil

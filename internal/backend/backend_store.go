@@ -1252,6 +1252,7 @@ func readonlySavepoint(conn *sqlite.Conn) (rollbackFunc func(), err error) {
 	return rollbackFunc, nil
 }
 
+// updateHeartbeat writes the current time to the running server state in the database.
 func updateHeartbeat(conn *sqlite.Conn) error {
 	now := time.Now()
 	err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "running_server/tick_ttl.sql", &sqlitex.ExecOptions{
