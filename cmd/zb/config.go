@@ -77,12 +77,29 @@ func (g *globalConfig) mergeFiles(paths iter.Seq[string]) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %v", path, err)
 		}
+		prev := new(*g)
 		if err := jsonv2.Unmarshal(jsonData, g, jsonv2.RejectUnknownMembers(false)); err != nil {
 			return fmt.Errorf("read %s: %v", path, err)
 		}
+		g.resolveRelativePaths(filepath.Dir(path), prev)
 	}
 
 	return nil
+}
+
+func (g *globalConfig) resolveRelativePaths(dir string, prev *globalConfig) {
+	resolve := func(path string) string {
+		if !filepath.IsAbs(path) {
+			return filepath.Join(dir, path)
+		}
+		return path
+	}
+	if prev == nil || g.StoreSocket != prev.StoreSocket {
+		g.StoreSocket = resolve(g.StoreSocket)
+	}
+	if prev == nil || g.CacheDB != prev.CacheDB {
+		g.CacheDB = resolve(g.CacheDB)
+	}
 }
 
 // UnmarshalJSONFrom unmarshals the configuration object from the JSON decoder,
