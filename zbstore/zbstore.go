@@ -264,9 +264,12 @@ type RealizationFetcher interface {
 
 // A RealizationMap is a multi-map of [RealizationOutputReference] to [*Realization].
 // The zero value is an empty map.
+// RealizationMap is equivalent to a [realization document].
+//
+// [realization document]: https://zb.256lights.llc/binary-cache/realizations
 type RealizationMap struct {
-	DerivationHash nix.Hash
-	Realizations   map[string][]*Realization
+	DerivationHash nix.Hash                  `json:"derivationHash"`
+	Realizations   map[string][]*Realization `json:"realizations"`
 }
 
 // IsEmpty reports whether m is an empty map.
@@ -450,20 +453,21 @@ func MarshalHashJSONTo(enc *jsontext.Encoder, hash nix.Hash) error {
 // [realization format]: https://zb.256lights.llc/binary-cache/realizations
 func UnmarshalHashJSONFrom(dec *jsontext.Decoder, hash *nix.Hash) error {
 	var parsed struct {
-		Type nix.HashType `json:"algorithm"`
-		Bits []byte       `json:"digest,format:base64"`
+		Type string `json:"algorithm"`
+		Bits []byte `json:"digest,format:base64"`
 	}
 	if err := jsonv2.UnmarshalDecode(dec, &parsed, jsonv2.RejectUnknownMembers(true)); err != nil {
 		return fmt.Errorf("unmarshal hash: %v", err)
 	}
-	if !parsed.Type.IsValid() {
-		return fmt.Errorf("unmarshal hash: unsupported algorithm %q", parsed.Type)
+	ht, err := nix.ParseHashType(parsed.Type)
+	if err != nil {
+		return fmt.Errorf("unmarshal hash: %v", err)
 	}
-	if got, want := len(parsed.Bits), parsed.Type.Size(); got != want {
+	if got, want := len(parsed.Bits), ht.Size(); got != want {
 		return fmt.Errorf("unmarshal hash: digest is incorrect size (%d instead of %d) for %s",
 			got, want, parsed.Type)
 	}
-	*hash = nix.NewHash(parsed.Type, parsed.Bits)
+	*hash = nix.NewHash(ht, parsed.Bits)
 	return nil
 }
 
