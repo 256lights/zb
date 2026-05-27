@@ -1150,76 +1150,142 @@ func TestRealizeCores(t *testing.T) {
 }
 
 func TestRealizeFetchURL(t *testing.T) {
-	ctx := testcontext.New(t)
-	dir := backendtest.NewStoreDirectory(t)
-
-	const fileContent = "Hello, World!\n"
-	mux := http.NewServeMux()
-	mux.HandleFunc("/hello.txt", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeContent(w, r, "hello.txt", time.Time{}, strings.NewReader(fileContent))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExportWriter(exportBuffer)
-	const wantOutputName = "hello.txt"
-	wantOutputCA := nix.FlatFileContentAddress(mustParseHash(t, "sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31"))
-	drvContent := &zbstore.Derivation{
-		Name:    wantOutputName,
-		Dir:     dir,
-		Builder: "builtin:fetchurl",
-		System:  "builtin",
-		Env: map[string]string{
-			"url": string(srv.URL + "/hello.txt"),
-			"out": zbstore.HashPlaceholder("out"),
+	tests := []struct {
+		name            string
+		env             func(string) map[string]string
+		wantOutputCA    nix.ContentAddress
+		wantOutputName  string
+		fileContent     string
+		expectBuildFail bool
+	}{
+		{
+			name: "Fetch singular url",
+			env: func(urlBase string) map[string]string {
+				return map[string]string{
+					"url": urlBase + "/hello.txt",
+					"out": zbstore.HashPlaceholder("out"),
+				}
+			},
+			wantOutputCA:   nix.FlatFileContentAddress(mustParseHash(t, "sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")),
+			wantOutputName: "hello.txt",
+			fileContent:    "Hello, World!\n",
 		},
-		Outputs: map[string]*zbstore.DerivationOutputType{
-			zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(wantOutputCA),
+		{
+			name: "Fetch broken urls",
+			env: func(urlBase string) map[string]string {
+				return map[string]string{
+					"urls": "http://broken/hello.txt",
+					"out":  zbstore.HashPlaceholder("out"),
+				}
+			},
+			wantOutputCA:    nix.FlatFileContentAddress(mustParseHash(t, "sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")),
+			wantOutputName:  "hello.txt",
+			fileContent:     "Hello, World!\n",
+			expectBuildFail: true,
+		},
+		{
+			name: "Fetch no url(s)",
+			env: func(urlBase string) map[string]string {
+				return map[string]string{}
+			},
+			wantOutputCA:    nix.FlatFileContentAddress(mustParseHash(t, "sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")),
+			wantOutputName:  "hello.txt",
+			fileContent:     "Hello, World!\n",
+			expectBuildFail: true,
+		},
+		{
+			name: "Fetch from a list of urls",
+			env: func(urlBase string) map[string]string {
+				return map[string]string{
+					"urls": fmt.Sprintf("http://broken/hello.txt, %s", urlBase+"/hello.txt"),
+					"out":  zbstore.HashPlaceholder("out"),
+				}
+			},
+			wantOutputCA:   nix.FlatFileContentAddress(mustParseHash(t, "sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")),
+			wantOutputName: "hello.txt",
+			fileContent:    "Hello, World!\n",
 		},
 	}
-	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := exporter.Close(); err != nil {
-		t.Fatal(err)
-	}
 
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-		TempDir: t.TempDir(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	codec, releaseCodec, err := storeCodec(ctx, client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = codec.Export(nil, exportBuffer)
-	releaseCodec()
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := testcontext.New(t)
+			dir := backendtest.NewStoreDirectory(t)
 
-	realizeResponse := new(zbstorerpc.RealizeResponse)
-	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
-		DrvPaths: []zbstore.Path{drvPath},
-	})
-	if err != nil {
-		t.Fatal("build drv:", err)
-	}
-	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
-	if err != nil {
-		gotLog, _ := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvPath)
-		t.Fatalf("build drv: %v\nlog:\n%s", err, gotLog)
-	}
+			mux := http.NewServeMux()
+			mux.HandleFunc(
+				"/hello.txt",
+				func(w http.ResponseWriter, r *http.Request) {
+					http.ServeContent(
+						w,
+						r,
+						"hello.txt",
+						time.Time{},
+						strings.NewReader(test.fileContent))
+				})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
 
-	wantOutputPath, err := zbstore.FixedCAOutputPath(dir, wantOutputName, wantOutputCA, zbstore.References{})
-	if err != nil {
-		t.Fatal(err)
+			exportBuffer := new(bytes.Buffer)
+			exporter := zbstore.NewExportWriter(exportBuffer)
+			drvContent := &zbstore.Derivation{
+				Name:    test.wantOutputName,
+				Dir:     dir,
+				Builder: "builtin:fetchurl",
+				System:  "builtin",
+				Env:     test.env(srv.URL),
+				Outputs: map[string]*zbstore.DerivationOutputType{
+					zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(test.wantOutputCA),
+				},
+			}
+			drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := exporter.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+				TempDir: t.TempDir(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			codec, releaseCodec, err := storeCodec(ctx, client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = codec.Export(nil, exportBuffer)
+			releaseCodec()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			realizeResponse := new(zbstorerpc.RealizeResponse)
+			err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+				DrvPaths: []zbstore.Path{drvPath},
+			})
+			if err != nil {
+				t.Fatal("build drv:", err)
+			}
+			// expect build to fail
+			got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+			if err != nil && test.expectBuildFail {
+				return
+			}
+			if err != nil {
+				gotLog, _ := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvPath)
+				t.Fatalf("build drv: %v\nlog:\n%s", err, gotLog)
+			}
+
+			wantOutputPath, err := zbstore.FixedCAOutputPath(dir, test.wantOutputName, test.wantOutputCA, zbstore.References{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(test.fileContent), got)
+		})
 	}
-	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(fileContent), got)
 }
 
 func TestRealizeSignature(t *testing.T) {

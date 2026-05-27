@@ -50,7 +50,7 @@ function storePath(path) end
 function toFile(name, s) end
 
 ---Create a derivation that downloads a URL.
----@param args {url: string, hash: string, name: string?, executable: boolean?}
+---@param args {hash: string, name: string?, executable: boolean?, url: string?, urls: string[]?}
 ---@return derivation
 function fetchurl(args) end
 
