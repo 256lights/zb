@@ -35,7 +35,7 @@ The canonical build process for zb is specified in [build.lua](build.lua).
 To build zb without an existing zb installation, you will need:
 
 - Knowledge of using the command-line for your OS (e.g. Terminal.app, Command Prompt, etc.)
-- [Go](https://go.dev/dl/) 1.24.0 or later.
+- [Go](https://go.dev/dl/) 1.26.0 or later.
 - [Node.js](https://nodejs.org/) 22.
 
 After that, the build process is:
