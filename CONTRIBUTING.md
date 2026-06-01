@@ -29,6 +29,11 @@ Assisted-by: GLM 4.6 via Claude Code
 
 [commit trailer]: https://git-scm.com/docs/git-interpret-trailers
 
+## Developing using Visual Studio Code
+
+If you're using Visual Studio Code,
+`zb.code-workspace` is the canonical set of settings for the project.
+
 ## Building from source
 
 The canonical build process for zb is specified in [build.lua](build.lua).
@@ -44,19 +49,88 @@ After that, the build process is:
 go build zb.256lights.llc/cmd/zb
 ```
 
+If you are running on Windows, you must be running Windows 10 or later,
+since zb depends on Windows support for Unix sockets.
+
+## Running a development server
+
+If you are working on the `internal/backend` package and want to conduct manual tests,
+you will likely want to run `zb serve` from a local build.
+In our experience, it's often easier (and safer) to develop `zb serve`
+in a separate virtual machine than your normal development machine
+for a few reasons:
+
+- It is frequently useful to delete the store directory
+  when reproducing issues.
+- Sandbox bugs can cause data loss problems.
+- You won't have an existing zb installation to conflict with.
+  If you installed zb with the installer,
+  you will need to disable any running systemd units or launchd daemons
+  to avoid conflicting with the default server.
+
+### Running a development server on Linux
+
+If you are developing with the sandbox,
+you will need to ensure there's a version of `/bin/sh` available.
+You can use the installer from the [latest release][]
+to install the standard library dependencies
+and set up build groups.
+
+```shell
+sudo ${PATH_TO?}/zb-v0.1.0-x86_64-unknown-linux/install \
+  --no-systemd \
+  --no-launchd \
+  --bin '' &&
+go build zb.256lights.llc/cmd/zb &&
+sudo ./zb serve \
+  --debug \
+  --sandbox \
+  --sandbox-path /bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/busybox \
+  --implicit-system-dep /bin/sh
+```
+
+[latest release]: https://github.com/256lights/zb/releases/latest
+
+### Running a development server on WSL2
+
+If you're using the Windows Subsystem for Linux,
+the default `/etc/resolv.conf` is a symlink,
+so you will need to set up the sandbox like this:
+
+```shell
+sudo ./zb serve \
+  --debug \
+  --sandbox \
+  --sandbox-path /bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/busybox \
+  --implicit-system-dep /bin/sh \
+  --sandbox-path /mnt/wsl/resolv.conf \
+  --implicit-system-dep /mnt/wsl/resolv.conf
+```
+
+### Running a development server on other platforms
+
+```shell
+go build zb.256lights.llc/cmd/zb &&
+./zb serve --debug
+```
+
+### Developing the web UI
+
 If you change the code inside `internal/ui`:
 
 ```shell
 go generate zb.256lights.llc/internal/ui
 ```
 
-If you are running on Windows, you must be running Windows 10 or later,
-since zb depends on Windows support for Unix sockets.
+For convenience, you can run `zb serve` with some hidden development options
+to avoid having to restart the server on every template change:
 
-## Developing using Visual Studio Code
-
-If you're using Visual Studio Code,
-`zb.code-workspace` is the canonical set of settings for the project.
+```shell
+./zb serve \
+  --ui=:8080 \
+  --dev-templates=internal/ui/templates \
+  --dev-static=internal/ui/public
+```
 
 ## Contributing Code
 
