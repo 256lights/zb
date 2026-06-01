@@ -10,14 +10,17 @@ import (
 	"iter"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/tailscale/hujson"
+	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/netrc"
+	"zb.256lights.llc/pkg/internal/remotestore"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
 )
@@ -32,6 +35,7 @@ type globalConfig struct {
 	CacheDB           string                          `json:"cacheDB" kong:"name=cache,default=${cache_db},help=Cache database"`
 	AllowEnv          stringAllowList                 `json:"allowEnvironment" kong:"-"`
 	TrustedPublicKeys []*zbstore.RealizationPublicKey `json:"trustedPublicKeys" kong:"-"`
+	Server            serverConfig                    `json:"server,omitzero" kong:"-"`
 }
 
 // defaultGlobalConfig returns a [globalConfig] populated with values
@@ -173,6 +177,10 @@ func (g *globalConfig) UnmarshalJSONFrom(in *jsontext.Decoder) error {
 			if err := jsonv2.UnmarshalDecode(in, &g.NetrcPath); err != nil {
 				return fmt.Errorf("unmarshal config.netrcFile: %w", err)
 			}
+		case "server":
+			if err := jsonv2.UnmarshalDecode(in, &g.Server); err != nil {
+				return fmt.Errorf("unmarshal config.server: %w", err)
+			}
 		default:
 			if reject, _ := jsonv2.GetOption(in.Options(), jsonv2.RejectUnknownMembers); reject {
 				return fmt.Errorf("unmarshal config: unknown field %q", k)
@@ -233,6 +241,71 @@ func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) *jsonrpc.Clien
 		}
 		return zbstorerpc.NewCodec(conn, opts), nil
 	})
+}
+
+func (g *globalConfig) storeDeps() (_ *storeDeps, cleanup func()) {
+	var state struct {
+		client *http.Client
+	}
+
+	deps := &storeDeps{
+		httpClientProvider: func() (*http.Client, error) {
+			if state.client == nil {
+				var err error
+				state.client, err = g.newHTTPClient()
+				if err != nil {
+					return state.client, err
+				}
+			}
+			return state.client, nil
+		},
+	}
+	cleanup = func() {
+		if state.client != nil {
+			state.client.CloseIdleConnections()
+		}
+	}
+	return deps, cleanup
+}
+
+type storeDeps struct {
+	httpClientProvider func() (*http.Client, error)
+}
+
+type storeConfig struct {
+	Type       string         `json:"type"`
+	Properties jsontext.Value `json:",inline"`
+}
+
+func (sc *storeConfig) toStore(deps *storeDeps) (backend.Store, error) {
+	if sc == nil {
+		return zbstore.Null{}, nil
+	}
+	switch sc.Type {
+	case "null":
+		return zbstore.Null{}, nil
+	case "http":
+		var props struct {
+			URL string `json:"url"`
+		}
+		if err := jsonv2.Unmarshal(sc.Properties, &props); err != nil {
+			return nil, fmt.Errorf("unmarshal http store configuration: %v", err)
+		}
+		client, err := deps.httpClientProvider()
+		if err != nil {
+			return nil, err
+		}
+		store := &remotestore.HTTPStore{
+			HTTPClient: client,
+		}
+		store.URL, err = url.Parse(props.URL)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal http store configuration: url: %v", err)
+		}
+		return store, nil
+	default:
+		return nil, fmt.Errorf("unmarshal store configuration: unknown type %q", sc.Type)
+	}
 }
 
 // defaultVarDir returns "/opt/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
