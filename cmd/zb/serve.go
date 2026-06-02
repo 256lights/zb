@@ -142,7 +142,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 	}()
 	webHandler.backend = backendServer
 
-	grp.Go(func() error { return startSocketListener(grpCtx, grp, backendServer, c, g) })
+	grp.Go(func() error { return c.listenRPC(grpCtx, backendServer, g) })
 
 	if c.WebListenAddress != "" {
 		grp.Go(func() error {
@@ -193,10 +193,12 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 	return waitError
 }
 
-func startSocketListener(ctx context.Context, grp *errgroup.Group, server *backend.Server, c *serveCommand, g *globalConfig) error {
+func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g *globalConfig) error {
 	if err := server.LaunchCheck(ctx); err != nil {
 		return err
 	}
+
+	grp, grpCtx := errgroup.WithContext(ctx)
 
 	var l net.Listener
 	if runtime.GOOS == "linux" && c.SystemdSocket {
@@ -225,22 +227,22 @@ func startSocketListener(ctx context.Context, grp *errgroup.Group, server *backe
 	var openConnsMu sync.Mutex
 	grp.Go(func() error {
 		// Once the context is Done, refuse new connections and RPCs.
-		<-ctx.Done()
-		log.Infof(ctx, "Shutting down (signal received)...")
+		<-grpCtx.Done()
+		log.Infof(grpCtx, "Shutting down (signal received)...")
 
 		if err := l.Close(); err != nil {
-			log.Errorf(ctx, "Closing Unix socket: %v", err)
+			log.Errorf(grpCtx, "Closing Unix socket: %v", err)
 		}
 		openConnsMu.Lock()
 		for conn := range openConns.All() {
 			if err := closeRead(conn); err != nil {
-				log.Errorf(ctx, "Closing Unix socket: %v", err)
+				log.Errorf(grpCtx, "Closing Unix socket: %v", err)
 			}
 		}
 		openConnsMu.Unlock()
 		return nil
 	})
-	log.Infof(ctx, "Listening on %s", g.StoreSocket)
+	log.Infof(grpCtx, "Listening on %s", g.StoreSocket)
 
 	for {
 		conn, err := l.Accept()
@@ -255,15 +257,15 @@ func startSocketListener(ctx context.Context, grp *errgroup.Group, server *backe
 		openConnsMu.Unlock()
 
 		grp.Go(func() error {
-			recv := server.NewNARReceiver(ctx, bytebuffer.TempFileCreator{
+			recv := server.NewNARReceiver(grpCtx, bytebuffer.TempFileCreator{
 				Pattern: "zb-serve-receive-*.nar",
 			})
-			defer recv.Cleanup(ctx)
+			defer recv.Cleanup(grpCtx)
 
 			codec := zbstorerpc.NewCodec(nopCloser{conn}, &zbstorerpc.CodecOptions{
 				Importer: zbstorerpc.NewReceiverImporter(recv),
 			})
-			jsonrpc.Serve(backend.WithExporter(ctx, codec), codec, server)
+			jsonrpc.Serve(backend.WithExporter(grpCtx, codec), codec, server)
 			codec.Close()
 
 			openConnsMu.Lock()
@@ -271,7 +273,7 @@ func startSocketListener(ctx context.Context, grp *errgroup.Group, server *backe
 			openConnsMu.Unlock()
 
 			if err := conn.Close(); err != nil {
-				log.Errorf(ctx, "%v", err)
+				log.Errorf(grpCtx, "%v", err)
 			}
 			return nil
 		})
