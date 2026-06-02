@@ -31,6 +31,7 @@ import (
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 	"zombiezen.com/go/sqlite/sqlitex"
+	"zombiezen.com/go/xcontext"
 )
 
 // DefaultBuildUsersGroup is the conventional name of the Unix group
@@ -1072,7 +1073,9 @@ func (s *Server) writeHeartbeat(ctx context.Context) {
 		case <-ticker.C:
 		case <-ctx.Done():
 			err := func() (err error) {
-				bgCtx := context.Background()
+				bgCtx, cancel := xcontext.KeepAlive(ctx, 30 * time.Second)
+				defer cancel()
+
 				conn, err := s.db.Get(bgCtx)
 				if err != nil {
 					// Likely means context was canceled.
