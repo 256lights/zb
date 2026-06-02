@@ -1033,9 +1033,7 @@ func (s *Server) writeHeartbeat(ctx context.Context) {
 	err := func() (err error) {
 		conn, err := s.db.Get(ctx)
 		if err != nil {
-			// Likely means context was canceled.
-			log.Debugf(ctx, "Exiting server heartbeat due to: %v", err)
-			return
+			return err
 		}
 		defer s.db.Put(conn)
 
