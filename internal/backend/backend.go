@@ -1048,8 +1048,8 @@ func (s *Server) writeHeartbeat(ctx context.Context) {
 		if err != nil {
 			return err
 		}
-		if time.Since(lastHeartbeat) < 2 * heartRate {
-			return 	fmt.Errorf("another heartbeat detected")
+		if time.Since(lastHeartbeat) < 2*heartRate {
+			return fmt.Errorf("another heartbeat detected")
 		}
 
 		if err := updateHeartbeat(conn); err != nil {
@@ -1073,14 +1073,12 @@ func (s *Server) writeHeartbeat(ctx context.Context) {
 		case <-ticker.C:
 		case <-ctx.Done():
 			err := func() (err error) {
-				bgCtx, cancel := xcontext.KeepAlive(ctx, 30 * time.Second)
+				bgCtx, cancel := xcontext.KeepAlive(ctx, 30*time.Second)
 				defer cancel()
 
 				conn, err := s.db.Get(bgCtx)
 				if err != nil {
-					// Likely means context was canceled.
-					log.Debugf(bgCtx, "Exiting server heartbeat due to: %v", err)
-					return
+					return err
 				}
 				defer s.db.Put(conn)
 
