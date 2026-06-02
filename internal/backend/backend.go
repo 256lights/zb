@@ -1082,7 +1082,7 @@ func (s *Server) writeHeartbeat(ctx context.Context) {
 				}
 				defer s.db.Put(conn)
 
-				return clearHeartbeat(conn)
+				return clearServerState(conn)
 			}()
 			if err != nil {
 				log.Warnf(ctx, "Failed to clear server heartbeat: %v", err)
