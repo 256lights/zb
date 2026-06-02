@@ -1025,10 +1025,7 @@ func (s *Server) LaunchCheck(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-s.launchCheckDone:
-		if s.launchCheckError != nil {
-			return s.launchCheckError
-		}
-		return nil
+		return s.launchCheckError
 	}
 }
 
