@@ -1269,7 +1269,7 @@ func updateHeartbeat(conn *sqlite.Conn) error {
 func clearServerState(conn *sqlite.Conn) error {
 	err := sqlitex.ExecuteFS(conn, sqlFiles(), "running_server/clear.sql", nil)
 	if err != nil {
-		return fmt.Errorf("clear server heartbeat: %v", err)
+		return fmt.Errorf("clear server state: %v", err)
 	}
 
 	return nil
