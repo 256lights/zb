@@ -1059,7 +1059,7 @@ func (s *Server) writeHeartbeat(ctx context.Context) {
 	}()
 
 	if err != nil {
-		s.launchCheckError = fmt.Errorf("Unable to lock database")
+		s.launchCheckError = fmt.Errorf("check for other running servers: %v", err)
 		close(s.launchCheckDone)
 		return
 	}
