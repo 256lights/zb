@@ -35,10 +35,9 @@ import (
 
 // DefaultBuildUsersGroup is the conventional name of the Unix group
 // for the users that execute builders on behalf of the daemon.
-const (
-	DefaultBuildUsersGroup = "zbld"
-	HeartRate = 5 * time.Second
-)
+const DefaultBuildUsersGroup = "zbld"
+
+const heartRate = 5 * time.Second
 
 // Store combines the [zbstore.Store] and [zbstore.RealizationFetcher] interfaces.
 type Store interface {
@@ -1053,7 +1052,7 @@ func (s *Server) writeHeartbeat(ctx context.Context) {
 		if err != nil {
 			return err
 		}
-		if time.Since(lastHeartbeat) < 2 * HeartRate {
+		if time.Since(lastHeartbeat) < 2 * heartRate {
 			return 	fmt.Errorf("another heartbeat detected")
 		}
 
@@ -1071,7 +1070,7 @@ func (s *Server) writeHeartbeat(ctx context.Context) {
 	}
 	close(s.launchCheckDone)
 
-	ticker := time.NewTicker(HeartRate)
+	ticker := time.NewTicker(heartRate)
 	defer ticker.Stop()
 	for {
 		select {
