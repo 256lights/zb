@@ -1111,7 +1111,7 @@ func (s *Server) writeHeartbeat(ctx context.Context) {
 		if err != nil {
 			log.Warnf(ctx, "Failed to update server heartbeat: %v", err)
 		} else {
-			log.Infof(ctx, "Updated server heartbeat")
+			log.Debugf(ctx, "Updated server heartbeat")
 		}
 	}
 }
