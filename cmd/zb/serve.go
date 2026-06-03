@@ -229,25 +229,29 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 
 	openConns := make(sets.Set[net.Conn])
 	var openConnsMu sync.Mutex
-	grp, grpCtx := errgroup.WithContext(ctx)
-	grp.Go(func() error {
+	ctx, cancel := context.WithCancel(ctx)
+	var grp sync.WaitGroup
+	defer func() {
+		cancel()
+		grp.Wait()
+	}()
+	grp.Go(func() {
 		// Once the context is Done, refuse new connections and RPCs.
-		<-grpCtx.Done()
-		log.Infof(grpCtx, "Shutting down (signal received)...")
+		<-ctx.Done()
+		log.Infof(ctx, "Shutting down (signal received)...")
 
 		if err := l.Close(); err != nil {
-			log.Errorf(grpCtx, "Closing Unix socket: %v", err)
+			log.Errorf(ctx, "Closing Unix socket: %v", err)
 		}
 		openConnsMu.Lock()
 		for conn := range openConns.All() {
 			if err := closeRead(conn); err != nil {
-				log.Errorf(grpCtx, "Closing Unix socket: %v", err)
+				log.Errorf(ctx, "Closing Unix socket: %v", err)
 			}
 		}
 		openConnsMu.Unlock()
-		return nil
 	})
-	log.Infof(grpCtx, "Listening on %s", g.StoreSocket)
+	log.Infof(ctx, "Listening on %s", g.StoreSocket)
 
 	for {
 		conn, err := l.Accept()
@@ -261,16 +265,16 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 		openConns.Add(conn)
 		openConnsMu.Unlock()
 
-		grp.Go(func() error {
-			recv := server.NewNARReceiver(grpCtx, bytebuffer.TempFileCreator{
+		grp.Go(func() {
+			recv := server.NewNARReceiver(ctx, bytebuffer.TempFileCreator{
 				Pattern: "zb-serve-receive-*.nar",
 			})
-			defer recv.Cleanup(grpCtx)
+			defer recv.Cleanup(ctx)
 
 			codec := zbstorerpc.NewCodec(nopCloser{conn}, &zbstorerpc.CodecOptions{
 				Importer: zbstorerpc.NewReceiverImporter(recv),
 			})
-			jsonrpc.Serve(backend.WithExporter(grpCtx, codec), codec, server)
+			jsonrpc.Serve(backend.WithExporter(ctx, codec), codec, server)
 			codec.Close()
 
 			openConnsMu.Lock()
@@ -278,9 +282,8 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 			openConnsMu.Unlock()
 
 			if err := conn.Close(); err != nil {
-				log.Errorf(grpCtx, "%v", err)
+				log.Errorf(ctx, "%v", err)
 			}
-			return nil
 		})
 	}
 }
