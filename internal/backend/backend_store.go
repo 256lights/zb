@@ -1115,6 +1115,7 @@ func prepareConn(conn *sqlite.Conn) error {
 //go:embed sql/build/*.sql
 //go:embed sql/delete/*.sql
 //go:embed sql/realizations/*.sql
+//go:embed sql/running_server/*.sql
 //go:embed sql/schema/*.sql
 var rawSQLFiles embed.FS
 
@@ -1249,4 +1250,46 @@ func readonlySavepoint(conn *sqlite.Conn) (rollbackFunc func(), err error) {
 	}
 
 	return rollbackFunc, nil
+}
+
+// updateHeartbeat writes the current time to the running server state in the database.
+func updateHeartbeat(conn *sqlite.Conn) error {
+	now := time.Now()
+	err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "running_server/tick_ttl.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":now": now.UnixMilli(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("update server heartbeat: %v", err)
+	}
+	return nil
+}
+
+func clearServerState(conn *sqlite.Conn) error {
+	err := sqlitex.ExecuteFS(conn, sqlFiles(), "running_server/clear.sql", nil)
+	if err != nil {
+		return fmt.Errorf("clear server state: %v", err)
+	}
+
+	return nil
+}
+
+// lastHeartbeat reads the last time [updateHeartbeat] was called on the database.
+// If there is no heartbeat, then lastHeartbeat returns the zero time.
+func lastHeartbeat(conn *sqlite.Conn) (time.Time, error) {
+	var lastHeartbeat time.Time
+	err := sqlitex.ExecuteFS(conn, sqlFiles(), "running_server/get.sql", &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			lastHeartbeat = time.UnixMilli(stmt.GetInt64("running_as_of"))
+
+			return nil
+		},
+	})
+
+	if err != nil {
+		return time.Time{}, fmt.Errorf("get last server heartbeat: %v", err)
+	}
+
+	return lastHeartbeat, nil
 }

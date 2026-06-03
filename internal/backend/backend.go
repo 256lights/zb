@@ -31,11 +31,14 @@ import (
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 	"zombiezen.com/go/sqlite/sqlitex"
+	"zombiezen.com/go/xcontext"
 )
 
 // DefaultBuildUsersGroup is the conventional name of the Unix group
 // for the users that execute builders on behalf of the daemon.
 const DefaultBuildUsersGroup = "zbld"
+
+const heartRate = 5 * time.Second
 
 // Store combines the [zbstore.Store] and [zbstore.RealizationFetcher] interfaces.
 type Store interface {
@@ -161,6 +164,12 @@ type Server struct {
 	activeBuildsMu sync.Mutex
 	activeBuilds   map[uuid.UUID]context.CancelFunc
 	draining       bool
+
+	// launchCheckDone is closed after launchCheckError is set.
+	launchCheckDone chan struct{}
+	// launchCheckError is the error encountered when checking if there's another server operating on the database.
+	// launchCheckError is nil if this server has been confirmed to be the only running server.
+	launchCheckError error
 }
 
 // NewServer returns a new [Server] for the given store directory and database path.
@@ -206,6 +215,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 				log.Errorf(ctx, "Migration: %v", err)
 			},
 		}),
+		launchCheckDone: make(chan struct{}),
 	}
 	if srv.coresPerBuild <= 0 {
 		srv.coresPerBuild = max(1, runtime.NumCPU())
@@ -232,8 +242,13 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	}
 	var bgCtx context.Context
 	bgCtx, srv.cancelBackground = context.WithCancel(context.Background())
+
 	srv.background.Go(func() {
 		srv.optimizeDatabase(bgCtx)
+	})
+
+	srv.background.Go(func() {
+		srv.writeHeartbeat(bgCtx)
 	})
 	if opts.BuildLogRetention > 0 {
 		srv.background.Go(func() {
@@ -261,6 +276,10 @@ func (s *Server) Close() error {
 // JSONRPC implements the [jsonrpc.Handler] interface
 // and serves the [zbstorerpc] API.
 func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	if err := s.LaunchCheck(ctx); err != nil {
+		return nil, err
+	}
+
 	return jsonrpc.ServeMux{
 		zbstorerpc.ExistsMethod:         jsonrpc.HandlerFunc(s.exists),
 		zbstorerpc.InfoMethod:           jsonrpc.HandlerFunc(s.info),
@@ -995,6 +1014,103 @@ func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
 		case t = <-ticker.C:
 		case <-ctx.Done():
 			return
+		}
+	}
+}
+
+// LaunchCheck waits until the [Server] has verified that it is the only one operating on its database
+// or the ctx.Done() channel is closed,
+// whichever comes first.
+func (s *Server) LaunchCheck(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.launchCheckDone:
+		return s.launchCheckError
+	}
+}
+
+func (s *Server) writeHeartbeat(ctx context.Context) {
+	err := func() (err error) {
+		conn, err := s.db.Get(ctx)
+		if err != nil {
+			return err
+		}
+		defer s.db.Put(conn)
+
+		endFn, err := sqlitex.ImmediateTransaction(conn)
+		if err != nil {
+			return err
+		}
+		defer endFn(&err)
+
+		lastHeartbeat, err := lastHeartbeat(conn)
+		if err != nil {
+			return err
+		}
+		if time.Since(lastHeartbeat) < 2*heartRate {
+			return fmt.Errorf("another heartbeat detected")
+		}
+
+		if err := updateHeartbeat(conn); err != nil {
+			// Failing to write the first heartbeat shouldn't fail the launch check.
+			log.Errorf(ctx, "%v", err)
+		}
+		return nil
+	}()
+
+	if err != nil {
+		s.launchCheckError = fmt.Errorf("check for other running servers: %v", err)
+		close(s.launchCheckDone)
+		return
+	}
+	close(s.launchCheckDone)
+
+	ticker := time.NewTicker(heartRate)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			err := func() (err error) {
+				bgCtx, cancel := xcontext.KeepAlive(ctx, 30*time.Second)
+				defer cancel()
+
+				conn, err := s.db.Get(bgCtx)
+				if err != nil {
+					return err
+				}
+				defer s.db.Put(conn)
+
+				return clearServerState(conn)
+			}()
+			if err != nil {
+				log.Warnf(ctx, "Failed to clear server heartbeat: %v", err)
+			} else {
+				log.Debugf(ctx, "Cleared server heartbeat.")
+			}
+			return
+		}
+
+		err = func() (err error) {
+			conn, err := s.db.Get(ctx)
+			if err != nil {
+				return err
+			}
+			defer s.db.Put(conn)
+
+			endFn, err := sqlitex.ImmediateTransaction(conn)
+			if err != nil {
+				return err
+			}
+			defer endFn(&err)
+
+			return updateHeartbeat(conn)
+		}()
+		if err != nil {
+			log.Warnf(ctx, "Failed to update server heartbeat: %v", err)
+		} else {
+			log.Debugf(ctx, "Updated server heartbeat")
 		}
 	}
 }
