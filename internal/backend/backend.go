@@ -1086,8 +1086,9 @@ func (s *Server) writeHeartbeat(ctx context.Context) {
 			}()
 			if err != nil {
 				log.Warnf(ctx, "Failed to clear server heartbeat: %v", err)
+			} else {
+				log.Debugf(ctx, "Cleared server heartbeat.")
 			}
-			log.Debugf(ctx, "Cleared server heartbeat.")
 			return
 		}
 
