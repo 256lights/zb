@@ -198,8 +198,6 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 		return err
 	}
 
-	grp, grpCtx := errgroup.WithContext(ctx)
-
 	var l net.Listener
 	if runtime.GOOS == "linux" && c.SystemdSocket {
 		listeners, err := activation.Listeners()
@@ -231,6 +229,7 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 
 	openConns := make(sets.Set[net.Conn])
 	var openConnsMu sync.Mutex
+	grp, grpCtx := errgroup.WithContext(ctx)
 	grp.Go(func() error {
 		// Once the context is Done, refuse new connections and RPCs.
 		<-grpCtx.Done()
