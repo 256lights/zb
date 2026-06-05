@@ -292,6 +292,86 @@ func TestRoundTripper(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "InvalidationViaPost",
+			cacheRequests: []*cacheInteraction{
+				{
+					testRequestResponse: testRequestResponse{
+						url: "http://www.example.com/foo",
+						responseHeaders: http.Header{
+							"Content-Type":  {plainMediaType},
+							"Date":          {initialTime.Format(http.TimeFormat)},
+							"Cache-Control": {"max-age=604800"},
+						},
+						responseBody: "Hello, World!\n",
+					},
+					sleep: 1 * time.Second,
+				},
+				{
+					testRequestResponse: testRequestResponse{
+						method: http.MethodPost,
+						url:    "http://www.example.com/foo",
+						requestHeaders: http.Header{
+							"Content-Length": {"0"},
+						},
+						statusCode: http.StatusNoContent,
+						responseHeaders: http.Header{
+							"Date": {initialTime.Add(1 * time.Second).Format(http.TimeFormat)},
+						},
+					},
+					sleep: 1 * time.Second,
+				},
+				{
+					testRequestResponse: testRequestResponse{
+						url: "http://www.example.com/foo",
+						responseHeaders: http.Header{
+							"Content-Type":  {plainMediaType},
+							"Date":          {initialTime.Add(2 * time.Second).Format(http.TimeFormat)},
+							"Cache-Control": {"max-age=604800"},
+						},
+						responseBody: "Hello, World! I've been changed!\n",
+					},
+				},
+			},
+			serverRequests: []*testRequestResponse{
+				{
+					url: "http://www.example.com/foo",
+					requestHeaders: http.Header{
+						"Host": {"www.example.com"},
+					},
+					responseHeaders: http.Header{
+						"Content-Type":  {plainMediaType},
+						"Cache-Control": {"max-age=604800"},
+						"Date":          {initialTime.Format(http.TimeFormat)},
+					},
+					responseBody: "Hello, World!\n",
+				},
+				{
+					method: http.MethodPost,
+					url:    "http://www.example.com/foo",
+					requestHeaders: http.Header{
+						"Host":           {"www.example.com"},
+						"Content-Length": {"0"},
+					},
+					statusCode: http.StatusNoContent,
+					responseHeaders: http.Header{
+						"Date": {initialTime.Add(1 * time.Second).Format(http.TimeFormat)},
+					},
+				},
+				{
+					url: "http://www.example.com/foo",
+					requestHeaders: http.Header{
+						"Host": {"www.example.com"},
+					},
+					responseHeaders: http.Header{
+						"Content-Type":  {plainMediaType},
+						"Cache-Control": {"max-age=604800"},
+						"Date":          {initialTime.Add(2 * time.Second).Format(http.TimeFormat)},
+					},
+					responseBody: "Hello, World! I've been changed!\n",
+				},
+			},
+		},
 	}
 
 	for _, test := range tests {

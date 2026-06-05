@@ -62,12 +62,30 @@ func (rt *RoundTripper) CloseIdleConnections() {
 }
 
 func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	ctx := req.Context()
+
 	if !isCacheableMethod(req) {
-		// TODO(soon): Invalidate cache if successful and unsafe.
-		return rt.roundTripper.RoundTrip(req)
+		resp, err := rt.roundTripper.RoundTrip(req)
+		if err == nil && !isSafeMethod(req) && 200 <= resp.StatusCode && resp.StatusCode < 400 {
+			// Unsafe request succeeded: invalidate cache.
+			// TODO(soon): Log failure.
+			defer func() (err error) {
+				conn, err := rt.db.Get(ctx)
+				if err != nil {
+					return err
+				}
+				defer rt.db.Put(conn)
+				endFn, err := sqlitex.ImmediateTransaction(conn)
+				if err != nil {
+					return err
+				}
+				defer endFn(&err)
+				return clearURL(conn, req.URL.String())
+			}()
+		}
+		return resp, err
 	}
 
-	ctx := req.Context()
 	conn, err := rt.db.Get(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("http cache: %v", err)
@@ -373,6 +391,37 @@ func responseHeadersToStore(header http.Header) iter.Seq2[string, []string] {
 	}
 }
 
+func clearURL(conn *sqlite.Conn, urlstr string) (err error) {
+	defer func() {
+		if err != nil {
+			redactedURL := urlstr
+			if u, parseError := url.Parse(urlstr); parseError == nil {
+				redactedURL = u.Redacted()
+			}
+			err = fmt.Errorf("remove %s from cache: %w", redactedURL, err)
+		}
+	}()
+	defer sqlitex.Save(conn)(&err)
+
+	stmt := prepareQuery(conn, "resources/clear_url.sql")
+	stmt.SetText(":url", urlstr)
+	if err := runStatement(stmt); err != nil {
+		return err
+	}
+	if err := gcHeaders(conn); err != nil {
+		return err
+	}
+	return nil
+}
+
+func gcHeaders(conn *sqlite.Conn) error {
+	stmt := prepareQuery(conn, "headers/gc.sql")
+	if err := runStatement(stmt); err != nil {
+		return fmt.Errorf("expunge unused headers: %w", err)
+	}
+	return nil
+}
+
 type headerUpserter struct {
 	conn       *sqlite.Conn
 	findStmt   *sqlite.Stmt
@@ -518,6 +567,18 @@ func setQueryHeaders(conn *sqlite.Conn, header http.Header) (err error) {
 
 func isCacheableMethod(req *http.Request) bool {
 	return req.Method == "" || req.Method == http.MethodGet || req.Method == http.MethodHead
+}
+
+// isSafeMethod reports whether the request method's semantics are read-only
+// according to [Section 9.2.1 of RFC 9110].
+//
+// [Section 9.2.1 of RFC 9110]: https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.1
+func isSafeMethod(req *http.Request) bool {
+	return req.Method == "" ||
+		req.Method == http.MethodGet ||
+		req.Method == http.MethodHead ||
+		req.Method == http.MethodOptions ||
+		req.Method == http.MethodTrace
 }
 
 //go:embed sql
