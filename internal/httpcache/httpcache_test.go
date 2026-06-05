@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/textproto"
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -557,4 +559,72 @@ func effectiveRequestHeaders(req *http.Request) (http.Header, error) {
 		return nil, err
 	}
 	return http.Header(header), nil
+}
+
+func BenchmarkRoundTripper(b *testing.B) {
+	const content = "Hello, World!\n"
+	const entityTag = `"hello"`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Header().Set("ETag", entityTag)
+
+		for _, value := range r.Header.Values("If-None-Match") {
+			for elem := range splitList(value) {
+				if elem == entityTag {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+			}
+		}
+
+		io.WriteString(w, content)
+	}))
+	b.Cleanup(srv.Close)
+
+	cache := Open(filepath.Join(b.TempDir(), "http-cache.sqlite"), srv.Client().Transport)
+	defer func() {
+		if err := cache.Close(); err != nil {
+			b.Error("cache.Close:", err)
+		}
+	}()
+	client := &http.Client{Transport: cache}
+
+	// Warm cache.
+	resp, err := client.Get(srv.URL)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		b.Errorf("status code = %d; want %d", resp.StatusCode, http.StatusOK)
+	}
+	if gotBody, err := io.ReadAll(resp.Body); err != nil {
+		b.Error("Read body:", err)
+	} else if string(gotBody) != content {
+		b.Errorf("body = %q; want %q", gotBody, content)
+	}
+	resp.Body.Close()
+
+	for b.Loop() {
+		resp, err := client.Get(srv.URL)
+		if err != nil {
+			b.Error(err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			b.Errorf("status code = %d; want %d", resp.StatusCode, http.StatusOK)
+		}
+		if resp.Header.Get("Age") == "" {
+			b.Error("missing Age header")
+		}
+		if gotBody, err := io.ReadAll(resp.Body); err != nil {
+			b.Error("Read body:", err)
+		} else if string(gotBody) != content {
+			b.Errorf("body = %q; want %q", gotBody, content)
+		}
+		resp.Body.Close()
+	}
 }
