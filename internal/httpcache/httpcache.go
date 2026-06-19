@@ -15,7 +15,6 @@ import (
 	"io"
 	"io/fs"
 	"iter"
-	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -120,11 +119,8 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	// Only stale responses.
 	responses = xslices.Filter(responses, (*storedResponse).responseReceived)
-	newRequest := rewriteRequestForValidation(req, responses)
-	validating := newRequest != req
-	req = newRequest
 
-	requestedAt := time.Now()
+	startedAt := time.Now()
 	ch := make(chan allocateResourceResult)
 	go func() {
 		// Write a placeholder resource concurrently with the request.
@@ -135,58 +131,43 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 				return err
 			}
 			defer endFn(&err)
-			id, err = allocateResource(conn, req.URL, requestedAt)
+			id, err = allocateResource(conn, req.URL, startedAt)
 			return err
 		}()
 		ch <- allocateResourceResult{id, err}
 	}()
 
-	resp, roundTripError := rt.roundTripper.RoundTrip(req)
-	receivedAt := time.Now()
+	result, forwardError := forward(rt.roundTripper, req, responses)
 	idResult := <-ch
-	// TODO(soon): Use stale response on server error.
-	if roundTripError != nil || idResult.error != nil || !canStoreResponse(resp.StatusCode, resp.Header) {
-		if idResult.error == nil {
+	if forwardError != nil || idResult.error != nil || result.serveBodyFromCache || !result.canStore() {
+		if idResult.error == nil || result != nil && len(result.freshenResponses) > 0 {
 			// TODO(soon): Log failure.
-			deleteResource(conn, idResult.id)
-		}
-		rt.db.Put(conn)
-		return resp, roundTripError
-	}
-
-	if validating && resp.StatusCode == http.StatusNotModified {
-		newValidators := extractValidatorFields(resp.Header)
-		storedResponseToUse := selectResponseForNotModified(responses, newValidators)
-		if storedResponseToUse == nil {
-			rt.db.Put(conn)
-			return resp, nil
-		}
-		storedResponseToUse.header = resp.Header
-
-		// Freshen!
-		responses = filterResponsesToFreshen(responses, newValidators)
-		// TODO(soon): Log freshen failure.
-		func() (err error) {
-			endFn, err := sqlitex.ImmediateTransaction(conn)
-			if err != nil {
-				return err
-			}
-			defer endFn(&err)
-			for _, stored := range responses {
-				stored.header = resp.Header
-				if err := updateCache(conn, stored); err != nil {
+			func() (err error) {
+				endFn, err := sqlitex.ImmediateTransaction(conn)
+				if err != nil {
 					return err
 				}
-			}
-			return nil
-		}()
-		// TODO(soon): Log deleteResource failure.
-		deleteResource(conn, idResult.id)
-
-		resp.Body.Close()
-		resp.Body = rt.newStoredResponseBody(conn, storedResponseToUse.id)
-		resp.StatusCode = storedResponseToUse.statusCode
-		return resp, nil
+				defer endFn(&err)
+				if idResult.error == nil {
+					deleteResource(conn, idResult.id)
+				}
+				if result != nil {
+					for _, stored := range result.freshenResponses {
+						stored.header = result.response.Header
+						if err := updateCache(conn, stored); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			}()
+		}
+		if result != nil && result.serveBodyFromCache {
+			result.response.Body = rt.newStoredResponseBody(conn, result.storedResponseID)
+		} else {
+			rt.db.Put(conn)
+		}
+		return result.response, forwardError
 	}
 
 	// TODO(soon): Size limit?
@@ -195,18 +176,17 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		// TODO(soon): Log failure.
 		deleteResource(conn, idResult.id)
 		rt.db.Put(conn)
-		return resp, nil
+		return result.response, nil
 	}
-	if _, err := io.Copy(bodyBuffer, resp.Body); err != nil {
+	if _, err := io.Copy(bodyBuffer, result.response.Body); err != nil {
 		// TODO(soon): Return response with partial body from database.
 		// TODO(soon): Log deleteResource failure.
 		deleteResource(conn, idResult.id)
 		bodyBuffer.Close()
 		rt.db.Put(conn)
-		resp.Body.Close()
+		result.response.Body.Close()
 		return nil, fmt.Errorf("cache response body: %v", err)
 	}
-	ensureDateHeader(resp.Header, receivedAt)
 	err = func() (err error) {
 		endFn, err := sqlitex.ImmediateTransaction(conn)
 		if err != nil {
@@ -214,14 +194,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		defer endFn(&err)
 
-		err = writeCache(conn, req.Header, &storedResponse{
-			id:                 idResult.id,
-			statusCode:         resp.StatusCode,
-			header:             resp.Header,
-			requestedAt:        requestedAt,
-			responseReceivedAt: receivedAt,
-			responseBodySize:   bodyBuffer.Len(),
-		}, bodyBuffer)
+		err = writeCache(conn, req.Header, result.newStoredResponse(idResult.id, bodyBuffer.Len()), bodyBuffer)
 		if err != nil {
 			// TODO(soon): Log deleteResource failure.
 			deleteResource(conn, idResult.id)
@@ -232,61 +205,13 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	bodyBuffer.Close()
 	if err != nil {
 		rt.db.Put(conn)
-		resp.Body.Close()
+		result.response.Body.Close()
 		return nil, err
 	}
 
-	resp.Body.Close()
-	resp.Body = rt.newStoredResponseBody(conn, idResult.id)
-	return resp, nil
-}
-
-func rewriteRequestForValidation(req *http.Request, responses []*storedResponse) *http.Request {
-	ifNoneMatch := new(strings.Builder)
-	var soleResponse *storedResponse
-	multipleResponses := false
-	for _, resp := range responses {
-		if !resp.responseReceived() {
-			continue
-		}
-		if etag, ok := resp.entityTag(); ok {
-			if ifNoneMatch.Len() > 0 {
-				const sep = ","
-				ifNoneMatch.Grow(len(sep) + len(etag))
-				ifNoneMatch.WriteString(sep)
-			}
-			ifNoneMatch.WriteString(string(etag))
-		}
-		if !multipleResponses {
-			if soleResponse == nil {
-				soleResponse = resp
-			} else {
-				soleResponse = nil
-				multipleResponses = true
-			}
-		}
-	}
-	var lastModified []string
-	if soleResponse != nil {
-		lastModified = soleResponse.header["Last-Modified"]
-	}
-	if ifNoneMatch.Len() == 0 && len(lastModified) == 0 {
-		return req
-	}
-	req = new(*req)
-	if req.Header == nil {
-		req.Header = make(http.Header)
-	} else {
-		req.Header = maps.Clone(req.Header)
-	}
-	if ifNoneMatch.Len() > 0 {
-		// TODO(maybe): What if there are already headers?
-		req.Header["If-None-Match"] = []string{ifNoneMatch.String()}
-	}
-	if len(lastModified) > 0 {
-		req.Header["Last-Modified"] = lastModified[:1:1]
-	}
-	return req
+	result.response.Body.Close()
+	result.response.Body = rt.newStoredResponseBody(conn, idResult.id)
+	return result.response, nil
 }
 
 // canStoreResponse reports whether a private cache
@@ -394,13 +319,8 @@ func writeCache(conn *sqlite.Conn, requestHeader http.Header, resp *storedRespon
 	}()
 	defer sqlitex.Save(conn)(&err)
 
-	prepStmt := prepareQuery(conn, "resources/prepare_response.sql")
-	prepStmt.SetInt64(":id", resp.id)
-	prepStmt.SetInt64(":received_at", resp.responseReceivedAt.UnixMilli())
-	prepStmt.SetInt64(":status_code", int64(resp.statusCode))
-	prepStmt.SetInt64(":body_size", resp.responseBodySize)
-	if err := runStatement(prepStmt); err != nil {
-		return fmt.Errorf("response metadata: %v", err)
+	if err := prepareCacheResponse(conn, resp); err != nil {
+		return err
 	}
 
 	hu := prepareHeaderUpserter(conn)
@@ -442,6 +362,10 @@ func updateCache(conn *sqlite.Conn, resp *storedResponse) (err error) {
 	}()
 	defer sqlitex.Save(conn)(&err)
 
+	if err := prepareCacheResponse(conn, resp); err != nil {
+		return err
+	}
+
 	// Delete headers first.
 	// There's a high likelihood we'll see the same headers again,
 	// so then we'll clear everything and reset the index counter.
@@ -473,6 +397,20 @@ func updateCache(conn *sqlite.Conn, resp *storedResponse) (err error) {
 
 	if err := gcHeaders(conn); err != nil {
 		return err
+	}
+	return nil
+}
+
+// prepareCacheResponse updates the metadata for the response.
+func prepareCacheResponse(conn *sqlite.Conn, resp *storedResponse) error {
+	stmt := prepareQuery(conn, "resources/prepare_response.sql")
+	stmt.SetInt64(":id", resp.id)
+	stmt.SetInt64(":requested_at", resp.requestedAt.UnixMilli())
+	stmt.SetInt64(":received_at", resp.responseReceivedAt.UnixMilli())
+	stmt.SetInt64(":status_code", int64(resp.statusCode))
+	stmt.SetInt64(":body_size", resp.responseBodySize)
+	if err := runStatement(stmt); err != nil {
+		return fmt.Errorf("response metadata: %v", err)
 	}
 	return nil
 }

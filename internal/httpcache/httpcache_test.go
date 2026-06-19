@@ -266,6 +266,81 @@ func TestRoundTripper(t *testing.T) {
 			},
 		},
 		{
+			name: "DifferingContentLengthOnValidation",
+			cacheRequests: []*cacheInteraction{
+				{
+					testRequestResponse: testRequestResponse{
+						url: "http://www.example.com/foo",
+						responseHeaders: http.Header{
+							"Content-Type":  {plainMediaType},
+							"Cache-Control": {"max-age=60"},
+							"Date":          {initialTime.Format(http.TimeFormat)},
+							"ETag":          {`"xyzzy"`},
+						},
+						responseBody: "Hello, World!\n",
+					},
+					sleep: 90 * time.Second,
+				},
+				{
+					testRequestResponse: testRequestResponse{
+						url: "http://www.example.com/foo",
+						responseHeaders: http.Header{
+							"Content-Type":   {plainMediaType},
+							"Cache-Control":  {"max-age=60"},
+							"Content-Length": {"17"},
+							"Date":           {initialTime.Add(90 * time.Second).Format(http.TimeFormat)},
+							"ETag":           {`"xyzzy"`},
+						},
+						responseBody: "Hello, World!\nfoo",
+					},
+				},
+			},
+			serverRequests: []*testRequestResponse{
+				{
+					url: "http://www.example.com/foo",
+					requestHeaders: http.Header{
+						"Host": {"www.example.com"},
+					},
+					responseHeaders: http.Header{
+						"Content-Type":  {plainMediaType},
+						"Cache-Control": {"max-age=60"},
+						"Date":          {initialTime.Format(http.TimeFormat)},
+						"ETag":          {`"xyzzy"`},
+					},
+					responseBody: "Hello, World!\n",
+				},
+				{
+					url: "http://www.example.com/foo",
+					requestHeaders: http.Header{
+						"Host":          {"www.example.com"},
+						"If-None-Match": {`"xyzzy"`},
+					},
+					statusCode: http.StatusNotModified,
+					responseHeaders: http.Header{
+						"Content-Type":   {plainMediaType},
+						"Content-Length": {"17"},
+						"Cache-Control":  {"max-age=60"},
+						"Date":           {initialTime.Add(90 * time.Second).Format(http.TimeFormat)},
+						"ETag":           {`"xyzzy"`},
+					},
+				},
+				{
+					url: "http://www.example.com/foo",
+					requestHeaders: http.Header{
+						"Host": {"www.example.com"},
+					},
+					responseHeaders: http.Header{
+						"Content-Type":   {plainMediaType},
+						"Content-Length": {"17"},
+						"Cache-Control":  {"max-age=60"},
+						"Date":           {initialTime.Add(90 * time.Second).Format(http.TimeFormat)},
+						"ETag":           {`"xyzzy"`},
+					},
+					responseBody: "Hello, World!\nfoo",
+				},
+			},
+		},
+		{
 			name: "StripUpgrade",
 			cacheRequests: []*cacheInteraction{
 				{
@@ -565,6 +640,9 @@ func (rt *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		Body:       io.NopCloser(strings.NewReader(want.responseBody)),
 	}
 	resp.Status = http.StatusText(resp.StatusCode)
+	if gotMethod == http.MethodHead || resp.StatusCode != http.StatusNotModified {
+		resp.ContentLength, _ = contentLength(want.responseHeaders)
+	}
 	return resp, nil
 }
 

@@ -115,64 +115,6 @@ func (resp *storedResponse) entityTag() (_ entityTag, ok bool) {
 	return entityTagFromHeader(resp.header)
 }
 
-func selectResponseForNotModified(responses []*storedResponse, newValidators validatorFields) *storedResponse {
-	switch {
-	case newValidators.hasStrong():
-		for _, resp := range responses {
-			if extractValidatorFields(resp.header).hasAnyStrongFrom(newValidators) {
-				return resp
-			}
-		}
-	case newValidators.hasWeak():
-		for _, resp := range responses {
-			if extractValidatorFields(resp.header).hasAnyFrom(newValidators) {
-				return resp
-			}
-		}
-	case len(responses) > 0:
-		return responses[0]
-	}
-
-	return nil
-}
-
-// filterResponsesToFreshen removes responses from the given slice that should not be updated
-// based on the validators of the response with a 304 Not Modified status code
-// and returns the modified slice.
-// responses must be in descending order of recency.
-// See [Section 4.3.4 of RFC 9111] for a description.
-//
-// [Section 4.3.4 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-4.3.4
-func filterResponsesToFreshen(responses []*storedResponse, newValidators validatorFields) []*storedResponse {
-	switch {
-	case newValidators.hasStrong():
-		n := 0
-		for _, resp := range responses {
-			if extractValidatorFields(resp.header).hasAnyStrongFrom(newValidators) {
-				responses[n] = resp
-				n++
-			}
-		}
-		clear(responses[n:])
-		return responses[:n]
-	case newValidators.hasWeak():
-		for _, resp := range responses {
-			if extractValidatorFields(resp.header).hasAnyFrom(newValidators) {
-				// Only the most recent allowed.
-				responses[0] = resp
-				clear(responses[1:])
-				return responses[:1]
-			}
-		}
-		return responses
-	case newValidators.IsZero() && len(responses) == 1 && extractValidatorFields(responses[0].header).IsZero():
-		return responses
-	default:
-		clear(responses)
-		return responses[:0]
-	}
-}
-
 // headerValue is equivalent to [http.Header.Get],
 // but skips the overhead of calling [http.CanonicalHeaderKey].
 // Its key parameter should always be a constant string.
