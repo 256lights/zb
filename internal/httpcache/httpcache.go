@@ -15,12 +15,14 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"zb.256lights.llc/pkg/internal/xslices"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitefile"
 	"zombiezen.com/go/sqlite/sqlitemigration"
@@ -64,7 +66,8 @@ func (rt *RoundTripper) CloseIdleConnections() {
 func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
 
-	if !isCacheableMethod(req) {
+	// TODO(someday): Handle Range requests.
+	if !isCacheableMethod(req) || len(req.Header["Range"]) > 0 {
 		resp, err := rt.roundTripper.RoundTrip(req)
 		if err == nil && !isSafeMethod(req) && 200 <= resp.StatusCode && resp.StatusCode < 400 {
 			// Unsafe request succeeded: invalidate cache.
@@ -100,24 +103,26 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	// Find a fresh response.
-	now := time.Now()
+	cacheCheckTime := time.Now()
 	for _, resp := range responses {
 		if !resp.responseReceived() && hasNoCacheDirective(cacheControlDirectives(resp.header)) {
 			continue
 		}
-		date := resp.date()
-		if date.IsZero() {
-			continue
-		}
-		if !now.After(date.Add(resp.freshnessLifetime())) {
+		if !cacheCheckTime.After(resp.date().Add(resp.freshnessLifetime())) {
 			// No rt.db.Put: database connection will stay open until body is closed.
 			hr := resp.toResponse(rt.newStoredResponseBody(conn, resp.id))
-			hr.Header.Set("Age", formatDeltaSeconds(resp.ageAt(now)))
+			hr.Header.Set("Age", formatDeltaSeconds(resp.ageAt(cacheCheckTime)))
 			return hr, nil
 		}
 	}
 
-	// TODO(soon): Validate stale responses.
+	// TODO(soon): If there are placeholders, then block.
+
+	// Only stale responses.
+	responses = xslices.Filter(responses, (*storedResponse).responseReceived)
+	newRequest := rewriteRequestForValidation(req, responses)
+	validating := newRequest != req
+	req = newRequest
 
 	requestedAt := time.Now()
 	ch := make(chan allocateResourceResult)
@@ -148,6 +153,42 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		rt.db.Put(conn)
 		return resp, roundTripError
 	}
+
+	if validating && resp.StatusCode == http.StatusNotModified {
+		newValidators := extractValidatorFields(resp.Header)
+		storedResponseToUse := selectResponseForNotModified(responses, newValidators)
+		if storedResponseToUse == nil {
+			rt.db.Put(conn)
+			return resp, nil
+		}
+		storedResponseToUse.header = resp.Header
+
+		// Freshen!
+		responses = filterResponsesToFreshen(responses, newValidators)
+		// TODO(soon): Log freshen failure.
+		func() (err error) {
+			endFn, err := sqlitex.ImmediateTransaction(conn)
+			if err != nil {
+				return err
+			}
+			defer endFn(&err)
+			for _, stored := range responses {
+				stored.header = resp.Header
+				if err := updateCache(conn, stored); err != nil {
+					return err
+				}
+			}
+			return nil
+		}()
+		// TODO(soon): Log deleteResource failure.
+		deleteResource(conn, idResult.id)
+
+		resp.Body.Close()
+		resp.Body = rt.newStoredResponseBody(conn, storedResponseToUse.id)
+		resp.StatusCode = storedResponseToUse.statusCode
+		return resp, nil
+	}
+
 	// TODO(soon): Size limit?
 	bodyBuffer, err := sqlitefile.NewBuffer(conn)
 	if err != nil {
@@ -198,6 +239,54 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp.Body.Close()
 	resp.Body = rt.newStoredResponseBody(conn, idResult.id)
 	return resp, nil
+}
+
+func rewriteRequestForValidation(req *http.Request, responses []*storedResponse) *http.Request {
+	ifNoneMatch := new(strings.Builder)
+	var soleResponse *storedResponse
+	multipleResponses := false
+	for _, resp := range responses {
+		if !resp.responseReceived() {
+			continue
+		}
+		if etag, ok := resp.entityTag(); ok {
+			if ifNoneMatch.Len() > 0 {
+				const sep = ","
+				ifNoneMatch.Grow(len(sep) + len(etag))
+				ifNoneMatch.WriteString(sep)
+			}
+			ifNoneMatch.WriteString(string(etag))
+		}
+		if !multipleResponses {
+			if soleResponse == nil {
+				soleResponse = resp
+			} else {
+				soleResponse = nil
+				multipleResponses = true
+			}
+		}
+	}
+	var lastModified []string
+	if soleResponse != nil {
+		lastModified = soleResponse.header["Last-Modified"]
+	}
+	if ifNoneMatch.Len() == 0 && len(lastModified) == 0 {
+		return req
+	}
+	req = new(*req)
+	if req.Header == nil {
+		req.Header = make(http.Header)
+	} else {
+		req.Header = maps.Clone(req.Header)
+	}
+	if ifNoneMatch.Len() > 0 {
+		// TODO(maybe): What if there are already headers?
+		req.Header["If-None-Match"] = []string{ifNoneMatch.String()}
+	}
+	if len(lastModified) > 0 {
+		req.Header["Last-Modified"] = lastModified[:1:1]
+	}
+	return req
 }
 
 // canStoreResponse reports whether a private cache
@@ -345,42 +434,106 @@ func writeCache(conn *sqlite.Conn, requestHeader http.Header, resp *storedRespon
 	return nil
 }
 
+func updateCache(conn *sqlite.Conn, resp *storedResponse) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("update cache: %v", err)
+		}
+	}()
+	defer sqlitex.Save(conn)(&err)
+
+	// Delete headers first.
+	// There's a high likelihood we'll see the same headers again,
+	// so then we'll clear everything and reset the index counter.
+	deleteHeadersStmt := prepareQuery(conn, "resources/delete_response_headers.sql")
+	deleteHeadersStmt.SetInt64(":id", resp.id)
+	headersToUpdate := responseHeadersToUpdate(resp.header)
+	for key := range headersToUpdate {
+		deleteHeadersStmt.SetText(":name", key)
+		if err := runStatement(deleteHeadersStmt); err != nil {
+			return fmt.Errorf("delete %s headers for resource id=%d: %v", key, resp.id, err)
+		}
+	}
+
+	hu := prepareHeaderUpserter(conn)
+	responseHeaderStmt := prepareQuery(conn, "resources/append_response_header.sql")
+	responseHeaderStmt.SetInt64(":id", resp.id)
+	for key, values := range headersToUpdate {
+		for _, value := range values {
+			headerID, err := hu.upsert(key, value)
+			if err != nil {
+				return err
+			}
+			responseHeaderStmt.SetInt64(":header_id", headerID)
+			if err := runStatement(responseHeaderStmt); err != nil {
+				return fmt.Errorf("insert %s response header: %v", key, err)
+			}
+		}
+	}
+
+	if err := gcHeaders(conn); err != nil {
+		return err
+	}
+	return nil
+}
+
 // responseHeadersToStore returns an iterator over the response headers
 // that should be stored according to [Section 3.1 of RFC 9111].
+// The returned iterator may be used multiple times,
+// but the set of headers to omit is computed before responseHeadersToStore returns.
 //
 // [Section 3.1 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-3.1
 func responseHeadersToStore(header http.Header) iter.Seq2[string, []string] {
-	return func(yield func(string, []string) bool) {
-		skip := map[string]struct{}{
-			"Connection":                {},
-			"Proxy-Connection":          {},
-			"Keep-Alive":                {},
-			"Te":                        {},
-			"Transfer-Encoding":         {},
-			"Upgrade":                   {},
-			"Proxy-Authenticate":        {},
-			"Proxy-Authentication-Info": {},
-			"Proxy-Authorization":       {},
-		}
-		for d := range cacheControlDirectives(header) {
-			if d.nameMatches("no-cache") {
-				if arg, ok := d.argument(); ok {
-					for name := range splitList(arg) {
-						if name != "" && tokenEnd(name) == len(name) {
-							skip[http.CanonicalHeaderKey(name)] = struct{}{}
-						}
+	return headersExcept(header, headersToNotStore(header))
+}
+
+// responseHeadersToStore returns an iterator over the response headers
+// that should be stored after a validation request according to [Section 3.2 of RFC 9111].
+// The returned iterator may be used multiple times,
+// but the set of headers to omit is computed before responseHeadersToStore returns.
+//
+// [Section 3.2 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-3.2
+func responseHeadersToUpdate(header http.Header) iter.Seq2[string, []string] {
+	skip := headersToNotStore(header)
+	skip["Content-Length"] = struct{}{}
+	return headersExcept(header, skip)
+}
+
+func headersToNotStore(header http.Header) map[string]struct{} {
+	skip := map[string]struct{}{
+		"Connection":                {},
+		"Proxy-Connection":          {},
+		"Keep-Alive":                {},
+		"Te":                        {},
+		"Transfer-Encoding":         {},
+		"Upgrade":                   {},
+		"Proxy-Authenticate":        {},
+		"Proxy-Authentication-Info": {},
+		"Proxy-Authorization":       {},
+	}
+	for d := range cacheControlDirectives(header) {
+		if d.nameMatches("no-cache") {
+			if arg, ok := d.argument(); ok {
+				for name := range splitList(arg) {
+					if name != "" && tokenEnd(name) == len(name) {
+						skip[http.CanonicalHeaderKey(name)] = struct{}{}
 					}
 				}
 			}
 		}
-		for _, value := range header["Connection"] {
-			for name := range splitList(value) {
-				if name != "" && tokenEnd(name) == len(name) {
-					skip[http.CanonicalHeaderKey(name)] = struct{}{}
-				}
+	}
+	for _, value := range header["Connection"] {
+		for name := range splitList(value) {
+			if name != "" && tokenEnd(name) == len(name) {
+				skip[http.CanonicalHeaderKey(name)] = struct{}{}
 			}
 		}
+	}
+	return skip
+}
 
+func headersExcept(header http.Header, skip map[string]struct{}) iter.Seq2[string, []string] {
+	return func(yield func(string, []string) bool) {
 		for key, values := range header {
 			if _, shouldSkip := skip[key]; !shouldSkip {
 				if !yield(key, values) {
