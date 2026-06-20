@@ -9,6 +9,7 @@ package httpcache
 
 import (
 	"cmp"
+	"context"
 	"embed"
 	"errors"
 	"fmt"
@@ -28,21 +29,42 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
+// Options contains optional arguments to [Open].
+// nil is treated the same as the zero value.
+type Options struct {
+	// ErrorLogger is the logger to be used when a failure is encountered
+	// that does not prevent a call to [*RoundTripper.RoundTrip] from succeeding.
+	// Such failures are typically errors in reading or writing from the database.
+	ErrorLogger ErrorReporter
+}
+
 type RoundTripper struct {
 	db           *sqlitemigration.Pool
 	roundTripper http.RoundTripper
+	errorLogger  ErrorReporter
 }
 
-func Open(dbPath string, roundTripper http.RoundTripper) *RoundTripper {
+func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTripper {
 	if roundTripper == nil {
 		panic("nil http.RoundTripper")
+	}
+
+	opts = cmp.Or(opts, new(Options))
+	var onDBError sqlitemigration.ReportFunc
+	if opts.ErrorLogger != nil {
+		errorLogger := opts.ErrorLogger
+		onDBError = func(err error) {
+			errorLogger.ReportError(context.Background(), nil, err)
+		}
 	}
 	return &RoundTripper{
 		roundTripper: roundTripper,
 		db: sqlitemigration.NewPool(dbPath, schema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenReadWrite | sqlite.OpenCreate,
 			PrepareConn: prepareConn,
+			OnError:     onDBError,
 		}),
+		errorLogger: opts.ErrorLogger,
 	}
 }
 
@@ -62,6 +84,13 @@ func (rt *RoundTripper) CloseIdleConnections() {
 	}
 }
 
+func (rt *RoundTripper) reportError(req *http.Request, err error) {
+	if err == nil || rt == nil || rt.errorLogger == nil {
+		return
+	}
+	rt.errorLogger.ReportError(req.Context(), newRequestInfo(req), err)
+}
+
 func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
 
@@ -70,8 +99,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp, err := rt.roundTripper.RoundTrip(req)
 		if err == nil && !isSafeMethod(req) && 200 <= resp.StatusCode && resp.StatusCode < 400 {
 			// Unsafe request succeeded: invalidate cache.
-			// TODO(soon): Log failure.
-			defer func() (err error) {
+			err := func() (err error) {
 				conn, err := rt.db.Get(ctx)
 				if err != nil {
 					return err
@@ -84,6 +112,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 				defer endFn(&err)
 				return clearURL(conn, req.URL.String())
 			}()
+			rt.reportError(req, err)
 		}
 		return resp, err
 	}
@@ -141,8 +170,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	idResult := <-ch
 	if forwardError != nil || idResult.error != nil || result.serveBodyFromCache || !result.canStore() {
 		if idResult.error == nil || result != nil && len(result.freshenResponses) > 0 {
-			// TODO(soon): Log failure.
-			func() (err error) {
+			err := func() (err error) {
 				endFn, err := sqlitex.ImmediateTransaction(conn)
 				if err != nil {
 					return err
@@ -161,6 +189,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 				}
 				return nil
 			}()
+			rt.reportError(req, err)
 		}
 		if result != nil && result.serveBodyFromCache {
 			result.response.Body = rt.newStoredResponseBody(conn, result.storedResponseID)
@@ -173,15 +202,13 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	// TODO(soon): Size limit?
 	bodyBuffer, err := sqlitefile.NewBuffer(conn)
 	if err != nil {
-		// TODO(soon): Log failure.
-		deleteResource(conn, idResult.id)
+		rt.reportError(req, deleteResource(conn, idResult.id))
 		rt.db.Put(conn)
 		return result.response, nil
 	}
 	if _, err := io.Copy(bodyBuffer, result.response.Body); err != nil {
 		// TODO(soon): Return response with partial body from database.
-		// TODO(soon): Log deleteResource failure.
-		deleteResource(conn, idResult.id)
+		rt.reportError(req, deleteResource(conn, idResult.id))
 		bodyBuffer.Close()
 		rt.db.Put(conn)
 		result.response.Body.Close()
@@ -196,8 +223,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 		err = writeCache(conn, req.Header, result.newStoredResponse(idResult.id, bodyBuffer.Len()), bodyBuffer)
 		if err != nil {
-			// TODO(soon): Log deleteResource failure.
-			deleteResource(conn, idResult.id)
+			rt.reportError(req, deleteResource(conn, idResult.id))
 			return err
 		}
 		return nil

@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"cmp"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -519,7 +520,15 @@ func TestRoundTripper(t *testing.T) {
 					tb:        t,
 					responses: test.serverRequests,
 				}
-				cache := Open(filepath.Join(t.TempDir(), "http-cache.sqlite"), mockServer)
+				cache := Open(filepath.Join(t.TempDir(), "http-cache.sqlite"), mockServer, &Options{
+					ErrorLogger: ErrorReporterFunc(func(ctx context.Context, info *RequestInfo, err error) {
+						if info != nil {
+							t.Errorf("Cache error on %s %v: %v", info.Method, info.URL, err)
+						} else {
+							t.Error("Cache error:", err)
+						}
+					}),
+				})
 				defer func() {
 					if err := cache.Close(); err != nil {
 						t.Error("cache.Close():", err)
@@ -584,11 +593,11 @@ func (trr *testRequestResponse) makeRequest(tb testing.TB) *http.Request {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	return &http.Request{
+	return (&http.Request{
 		Method: cmp.Or(trr.method, http.MethodGet),
 		URL:    u,
 		Header: trr.requestHeaders.Clone(),
-	}
+	}).WithContext(tb.Context())
 }
 
 type mockRoundTripper struct {
@@ -723,7 +732,7 @@ func BenchmarkRoundTripper(b *testing.B) {
 	}))
 	b.Cleanup(srv.Close)
 
-	cache := Open(filepath.Join(b.TempDir(), "http-cache.sqlite"), srv.Client().Transport)
+	cache := Open(filepath.Join(b.TempDir(), "http-cache.sqlite"), srv.Client().Transport, nil)
 	defer func() {
 		if err := cache.Close(); err != nil {
 			b.Error("cache.Close:", err)
