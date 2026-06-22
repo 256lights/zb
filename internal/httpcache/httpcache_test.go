@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -571,6 +572,14 @@ func TestRoundTripper(t *testing.T) {
 					if req.sleep > 0 {
 						time.Sleep(req.sleep)
 					}
+				}
+
+				mockServer.mu.Lock()
+				remainingResponses := slices.Clone(mockServer.responses)
+				mockServer.mu.Unlock()
+				for _, resp := range remainingResponses {
+					t.Errorf("Server did not receive request for %s %s %v",
+						cmp.Or(resp.method, http.MethodGet), resp.url, resp.requestHeaders)
 				}
 			})
 		})
