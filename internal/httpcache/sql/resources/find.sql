@@ -7,15 +7,7 @@ select
 from
   "resources"
 where
-  "url" = :url and
-  not exists (select 1
-    from
-      "request_headers"
-      join "headers" as h on "request_headers"."header_id" = h."id"
-      left join "mem"."query_headers" as qh on h."name" = qh."name"
-    where
-      "request_headers"."resource_id" = "resources"."id" and
-      h."value" is not qh."value")
+  "url" = :url
 order by
   coalesce(
     (

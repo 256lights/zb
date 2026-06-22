@@ -10,12 +10,35 @@ import (
 )
 
 type storedResponse struct {
-	id                 int64
+	id            int64
+	requestedAt   time.Time
+	requestHeader http.Header
+
 	statusCode         int
-	header             http.Header
-	requestedAt        time.Time
 	responseReceivedAt time.Time
+	responseHeader     http.Header
 	responseBodySize   int64
+}
+
+// matchesRequestHeader reports whether the stored request header fields
+// nominated by the Vary response header field
+// match those in the given request header.
+//
+// [Section 4.1 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-4.1
+func (resp *storedResponse) matchesRequestHeader(h http.Header) bool {
+	vary := varyHeader(resp.responseHeader)
+	if vary.IsZero() {
+		return true
+	}
+	if vary.hasWildcard() {
+		return false
+	}
+	for key := range vary.fieldNames() {
+		if !headerValuesEqual(resp.requestHeader[key], h[key]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (resp *storedResponse) toResponse(body io.ReadCloser) *http.Response {
@@ -23,7 +46,7 @@ func (resp *storedResponse) toResponse(body io.ReadCloser) *http.Response {
 		return nil
 	}
 
-	header := resp.header.Clone()
+	header := resp.responseHeader.Clone()
 	ensureDateHeader(header, resp.responseReceivedAt)
 
 	return &http.Response{
@@ -49,7 +72,7 @@ func (resp *storedResponse) date() time.Time {
 	if resp == nil {
 		return time.Time{}
 	}
-	if t, ok := dateHeader(resp.header, "Date"); ok {
+	if t, ok := dateHeader(resp.responseHeader, "Date"); ok {
 		return t
 	}
 	return resp.responseReceivedAt
@@ -60,7 +83,7 @@ func (resp *storedResponse) ageAt(t time.Time) time.Duration {
 		return 0
 	}
 	date := resp.date()
-	age, _ := parseDeltaSeconds(headerValue(resp.header, "Age"))
+	age, _ := parseDeltaSeconds(headerValue(resp.responseHeader, "Age"))
 	correctedInitialAge := max(0, resp.responseReceivedAt.Sub(date), age+resp.responseReceivedAt.Sub(resp.requestedAt))
 	residentTime := t.Sub(resp.responseReceivedAt)
 	return correctedInitialAge + residentTime
@@ -74,7 +97,7 @@ func (resp *storedResponse) freshnessLifetime() time.Duration {
 	found := false
 	canCache := false
 	var result time.Duration
-	for directive := range cacheControlDirectives(resp.header) {
+	for directive := range cacheControlDirectives(resp.responseHeader) {
 		switch {
 		case directive.nameMatches("max-age"):
 			arg, _ := directive.argument()
@@ -91,7 +114,7 @@ func (resp *storedResponse) freshnessLifetime() time.Duration {
 		return result
 	}
 
-	if expires, ok := dateHeader(resp.header, "Expires"); ok {
+	if expires, ok := dateHeader(resp.responseHeader, "Expires"); ok {
 		if date := resp.date(); !date.IsZero() {
 			return expires.Sub(date)
 		}
@@ -100,7 +123,7 @@ func (resp *storedResponse) freshnessLifetime() time.Duration {
 	if canCache || resp.responseReceived() && isCacheableStatusCode(resp.statusCode) {
 		// Heuristic freshness!
 		// https://www.rfc-editor.org/rfc/rfc9111.html#section-4.2.2
-		if lastModified, ok := dateHeader(resp.header, "Last-Modified"); ok {
+		if lastModified, ok := dateHeader(resp.responseHeader, "Last-Modified"); ok {
 			if date := resp.date(); !date.IsZero() {
 				return date.Sub(lastModified) / 10
 			}
@@ -112,7 +135,7 @@ func (resp *storedResponse) freshnessLifetime() time.Duration {
 }
 
 func (resp *storedResponse) entityTag() (_ entityTag, ok bool) {
-	return entityTagFromHeader(resp.header)
+	return entityTagFromHeader(resp.responseHeader)
 }
 
 // headerValue is equivalent to [http.Header.Get],

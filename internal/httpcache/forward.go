@@ -4,6 +4,7 @@
 package httpcache
 
 import (
+	"fmt"
 	"iter"
 	"maps"
 	"net/http"
@@ -15,7 +16,7 @@ import (
 // forwardResult is the result of a call to [forward].
 type forwardResult struct {
 	requestedAt        time.Time
-	requestHeaders     http.Header
+	requestHeader      http.Header
 	response           *http.Response
 	responseReceivedAt time.Time
 
@@ -28,23 +29,42 @@ type forwardResult struct {
 	storedResponseID int64
 }
 
-func (result *forwardResult) newStoredResponse(id int64, responseBodySize int64) *storedResponse {
-	return &storedResponse{
+// newStoredResponse returns a [*storedResponse] from a [forwardResult].
+// It returns an error if the response cannot be stored in a cache.
+func (result *forwardResult) newStoredResponse(id int64, responseBodySize int64) (*storedResponse, error) {
+	resp := &storedResponse{
 		id:                 id,
 		statusCode:         result.response.StatusCode,
-		header:             result.response.Header,
+		responseHeader:     result.response.Header,
 		requestedAt:        result.requestedAt,
 		responseReceivedAt: result.responseReceivedAt,
 		responseBodySize:   responseBodySize,
 	}
+	if vary := varyHeader(result.response.Header); !vary.hasWildcard() {
+		for key := range vary.fieldNames() {
+			values := result.requestHeader[key]
+			if len(values) == 0 {
+				continue
+			}
+			if !canStoreRequestHeader(key) {
+				return nil, fmt.Errorf("cannot cache request header %s from Vary", key)
+			}
+			if resp.requestHeader == nil {
+				resp.requestHeader = make(http.Header)
+			}
+			resp.requestHeader[key] = []string{strings.Join(values, headerFieldCombiner)}
+		}
+	}
+	return resp, nil
 }
 
 func (result *forwardResult) canStore() bool {
-	return result != nil && canStoreResponse(result.response.StatusCode, result.response.Header)
+	return result != nil && canStoreResponse(result.requestHeader, result.response.StatusCode, result.response.Header)
 }
 
-// forward forwards an incoming request to the [http.RoundTripper].
-// If there is at least one stored response that can be used to satisfy the request,
+// forward forwards an incoming request to the [http.RoundTripper]
+// given the set of stored responses for the request URI.
+// If there is at least one stored response that has validators,
 // then the request will be transformed into a [validation request]
 // before forwarding.
 //
@@ -52,8 +72,8 @@ func (result *forwardResult) canStore() bool {
 func forward(rt http.RoundTripper, req *http.Request, responses []*storedResponse) (*forwardResult, error) {
 	do := func(req *http.Request) (*forwardResult, error) {
 		result := &forwardResult{
-			requestHeaders: req.Header,
-			requestedAt:    time.Now(),
+			requestHeader: req.Header,
+			requestedAt:   time.Now(),
 		}
 		var err error
 		result.response, err = rt.RoundTrip(req)
@@ -89,10 +109,27 @@ func forward(rt http.RoundTripper, req *http.Request, responses []*storedRespons
 	result.serveBodyFromCache = true
 	result.storedResponseID = storedResponseToUse.id
 
-	result.freshenResponses = make([]*storedResponse, 0, len(responses))
-	for id := range responseIDsToFreshen(responses, newValidators) {
-		stored := result.newStoredResponse(id, storedResponseToUse.responseBodySize)
-		result.freshenResponses = append(result.freshenResponses, stored)
+	var matchingResponses iter.Seq[*storedResponse] = func(yield func(*storedResponse) bool) {
+		for _, resp := range responses {
+			if resp.matchesRequestHeader(req.Header) {
+				if !yield(resp) {
+					return
+				}
+			}
+		}
+	}
+	maxResponsesToFreshen := 0
+	for range matchingResponses {
+		maxResponsesToFreshen++
+	}
+	if maxResponsesToFreshen > 0 {
+		result.freshenResponses = make([]*storedResponse, 0, maxResponsesToFreshen)
+		for id := range responseIDsToFreshen(matchingResponses, newValidators) {
+			stored, err := result.newStoredResponse(id, storedResponseToUse.responseBodySize)
+			if err == nil {
+				result.freshenResponses = append(result.freshenResponses, stored)
+			}
+		}
 	}
 
 	return result, nil
@@ -125,7 +162,7 @@ func rewriteRequestForValidation(req *http.Request, responses []*storedResponse)
 	}
 	var lastModified []string
 	if soleResponse != nil {
-		lastModified = soleResponse.header["Last-Modified"]
+		lastModified = soleResponse.responseHeader["Last-Modified"]
 	}
 	if ifNoneMatch.Len() == 0 && len(lastModified) == 0 {
 		return req
@@ -153,13 +190,13 @@ func selectResponseForNotModified(responses []*storedResponse, newValidators val
 	switch {
 	case newValidators.hasStrong():
 		for _, resp := range responses {
-			if (contentLength < 0 || resp.responseBodySize == contentLength) && extractValidatorFields(resp.header).hasAnyStrongFrom(newValidators) {
+			if (contentLength < 0 || resp.responseBodySize == contentLength) && extractValidatorFields(resp.responseHeader).hasAnyStrongFrom(newValidators) {
 				return resp
 			}
 		}
 	case newValidators.hasWeak():
 		for _, resp := range responses {
-			if (contentLength < 0 || resp.responseBodySize == contentLength) && extractValidatorFields(resp.header).hasAnyFrom(newValidators) {
+			if (contentLength < 0 || resp.responseBodySize == contentLength) && extractValidatorFields(resp.responseHeader).hasAnyFrom(newValidators) {
 				return resp
 			}
 		}
@@ -176,12 +213,12 @@ func selectResponseForNotModified(responses []*storedResponse, newValidators val
 // See [Section 4.3.4 of RFC 9111] for a description.
 //
 // [Section 4.3.4 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-4.3.4
-func responseIDsToFreshen(responses []*storedResponse, newValidators validatorFields) iter.Seq[int64] {
+func responseIDsToFreshen(responses iter.Seq[*storedResponse], newValidators validatorFields) iter.Seq[int64] {
 	switch {
 	case newValidators.hasStrong():
 		return func(yield func(int64) bool) {
-			for _, resp := range responses {
-				if extractValidatorFields(resp.header).hasAnyStrongFrom(newValidators) {
+			for resp := range responses {
+				if extractValidatorFields(resp.responseHeader).hasAnyStrongFrom(newValidators) {
 					if !yield(resp.id) {
 						return
 					}
@@ -190,25 +227,37 @@ func responseIDsToFreshen(responses []*storedResponse, newValidators validatorFi
 		}
 	case newValidators.hasWeak():
 		return func(yield func(int64) bool) {
-			for _, resp := range responses {
-				if extractValidatorFields(resp.header).hasAnyFrom(newValidators) {
+			for resp := range responses {
+				if extractValidatorFields(resp.responseHeader).hasAnyFrom(newValidators) {
 					// Only the most recent allowed.
 					yield(resp.id)
 					return
 				}
 			}
-			for _, resp := range responses {
+			for resp := range responses {
 				if !yield(resp.id) {
 					return
 				}
 			}
 		}
-	case newValidators.IsZero() && len(responses) == 1 && extractValidatorFields(responses[0].header).IsZero():
-		return func(yield func(int64) bool) {
-			yield(responses[0].id)
-		}
-	default:
+	case !newValidators.IsZero():
 		return func(yield func(int64) bool) {}
+	}
+
+	return func(yield func(int64) bool) {
+		next, stop := iter.Pull(responses)
+		defer stop()
+
+		first, ok := next()
+		if !ok {
+			return
+		}
+		if _, hasMore := next(); hasMore {
+			return
+		}
+		if extractValidatorFields(first.responseHeader).IsZero() {
+			yield(first.id)
+		}
 	}
 }
 

@@ -123,7 +123,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	// TODO(soon): defer rt.db.Put(conn)
 
-	responses, err := readCache(conn, req)
+	responses, err := readCache(conn, req.URL)
 	if err != nil {
 		// TODO(soon): Cache response.
 		rt.db.Put(conn)
@@ -133,7 +133,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Find a fresh response.
 	cacheCheckTime := time.Now()
 	for _, resp := range responses {
-		if !resp.responseReceived() && hasNoCacheDirective(cacheControlDirectives(resp.header)) {
+		if !resp.responseReceived() || hasNoCacheDirective(cacheControlDirectives(resp.responseHeader)) || !resp.matchesRequestHeader(req.Header) {
 			continue
 		}
 		if !cacheCheckTime.After(resp.date().Add(resp.freshnessLifetime())) {
@@ -181,7 +181,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 				}
 				if result != nil {
 					for _, stored := range result.freshenResponses {
-						stored.header = result.response.Header
+						stored.responseHeader = result.response.Header
 						if err := updateCache(conn, stored); err != nil {
 							return err
 						}
@@ -221,7 +221,11 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		defer endFn(&err)
 
-		err = writeCache(conn, req.Header, result.newStoredResponse(idResult.id, bodyBuffer.Len()), bodyBuffer)
+		toWrite, err := result.newStoredResponse(idResult.id, bodyBuffer.Len())
+		if err != nil {
+			return err
+		}
+		err = writeCache(conn, toWrite, bodyBuffer)
 		if err != nil {
 			rt.reportError(req, deleteResource(conn, idResult.id))
 			return err
@@ -240,13 +244,27 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return result.response, nil
 }
 
+// canStoreRequestHeader reports whether a header field with the given canonical key
+// is allowed to be stored in the cache.
+func canStoreRequestHeader(key string) bool {
+	return key != "Authorization"
+}
+
 // canStoreResponse reports whether a private cache
 // can store a response with the given status code and headers.
 //
 // [Section 3 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-3
-func canStoreResponse(statusCode int, responseHeader http.Header) bool {
+func canStoreResponse(requestHeader http.Header, statusCode int, responseHeader http.Header) bool {
 	if !isFinalStatusCode(statusCode) {
 		return false
+	}
+	if vary := varyHeader(responseHeader); !vary.hasWildcard() {
+		// Additional requirement beyond RFC: must be able store request header from Vary key.
+		for key := range vary.fieldNames() {
+			if len(requestHeader[key]) > 0 && !canStoreRequestHeader(key) {
+				return false
+			}
+		}
 	}
 	// TODO(soon): Understand the status code?
 	canStore := isCacheableStatusCode(statusCode) || len(responseHeader["Expires"]) > 0
@@ -263,27 +281,19 @@ func canStoreResponse(statusCode int, responseHeader http.Header) bool {
 	return canStore
 }
 
-func readCache(conn *sqlite.Conn, req *http.Request) (result []*storedResponse, err error) {
+func readCache(conn *sqlite.Conn, u *url.URL) (result []*storedResponse, err error) {
 	defer func() {
 		if err != nil {
-			err = fmt.Errorf("request for %s %s: %v", req.Method, req.URL.Redacted(), err)
+			err = fmt.Errorf("read cache for %s: %v", u.Redacted(), err)
 		}
 	}()
-	if !isCacheableMethod(req) {
-		return nil, fmt.Errorf("not cacheable")
-	}
 
 	defer sqlitex.Save(conn)(&err)
-
-	if err := setQueryHeaders(conn, req.Header); err != nil {
-		return nil, err
-	}
-	defer setQueryHeaders(conn, nil)
 
 	stmt := prepareQuery(conn, "resources/find.sql")
 	responseReceivedAtColumn := stmt.ColumnIndex("response_received_at")
 	responseBodySizeColumn := stmt.ColumnIndex("response_body_size")
-	stmt.SetText(":url", req.URL.String())
+	stmt.SetText(":url", u.String())
 	for {
 		hasRow, err := stmt.Step()
 		if err != nil {
@@ -298,7 +308,11 @@ func readCache(conn *sqlite.Conn, req *http.Request) (result []*storedResponse, 
 			requestedAt:      time.UnixMilli(stmt.GetInt64("requested_at")),
 			responseBodySize: -1,
 		}
-		resp.header, err = fetchResponseHeaders(conn, resp.id)
+		resp.requestHeader, err = fetchRequestHeaders(conn, resp.id)
+		if err != nil {
+			return nil, err
+		}
+		resp.responseHeader, err = fetchResponseHeaders(conn, resp.id)
 		if err != nil {
 			return nil, err
 		}
@@ -337,7 +351,7 @@ func deleteResource(conn *sqlite.Conn, id int64) error {
 	return nil
 }
 
-func writeCache(conn *sqlite.Conn, requestHeader http.Header, resp *storedResponse, body io.Reader) (err error) {
+func writeCache(conn *sqlite.Conn, resp *storedResponse, body io.Reader) (err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("write cache: %v", err)
@@ -350,9 +364,31 @@ func writeCache(conn *sqlite.Conn, requestHeader http.Header, resp *storedRespon
 	}
 
 	hu := prepareHeaderUpserter(conn)
+	requestHeaderStmt := prepareQuery(conn, "resources/insert_request_header.sql")
+	requestHeaderStmt.SetInt64(":id", resp.id)
+	for key, values := range resp.requestHeader {
+		if len(values) == 0 {
+			continue
+		}
+		if !canStoreRequestHeader(key) {
+			return fmt.Errorf("insert %s request header: cannot store", key)
+		}
+		if len(values) > 1 {
+			return fmt.Errorf("insert %s request header: multiple values", key)
+		}
+		headerID, err := hu.upsert(key, values[0])
+		if err != nil {
+			return err
+		}
+		requestHeaderStmt.SetInt64(":header_id", headerID)
+		if err := runStatement(requestHeaderStmt); err != nil {
+			return fmt.Errorf("insert %s request header: %v", key, err)
+		}
+	}
+
 	responseHeaderStmt := prepareQuery(conn, "resources/append_response_header.sql")
 	responseHeaderStmt.SetInt64(":id", resp.id)
-	for key, values := range responseHeadersToStore(resp.header) {
+	for key, values := range responseHeadersToStore(resp.responseHeader) {
 		for _, value := range values {
 			headerID, err := hu.upsert(key, value)
 			if err != nil {
@@ -364,8 +400,6 @@ func writeCache(conn *sqlite.Conn, requestHeader http.Header, resp *storedRespon
 			}
 		}
 	}
-
-	// TODO(soon): Vary header.
 
 	blob, err := conn.OpenBlob("", "resources", "response_body", resp.id, true)
 	if err != nil {
@@ -397,7 +431,7 @@ func updateCache(conn *sqlite.Conn, resp *storedResponse) (err error) {
 	// so then we'll clear everything and reset the index counter.
 	deleteHeadersStmt := prepareQuery(conn, "resources/delete_response_headers.sql")
 	deleteHeadersStmt.SetInt64(":id", resp.id)
-	headersToUpdate := responseHeadersToUpdate(resp.header)
+	headersToUpdate := responseHeadersToUpdate(resp.responseHeader)
 	for key := range headersToUpdate {
 		deleteHeadersStmt.SetText(":name", key)
 		if err := runStatement(deleteHeadersStmt); err != nil {
@@ -628,6 +662,36 @@ func (body *storedResponseBody) Close() error {
 	return err
 }
 
+func fetchRequestHeaders(conn *sqlite.Conn, id int64) (http.Header, error) {
+	stmt := prepareQuery(conn, "request_headers.sql")
+	stmt.SetInt64(":id", id)
+	nameColumn := stmt.ColumnIndex("name")
+	valueColumn := stmt.ColumnIndex("value")
+	var result http.Header
+	for {
+		hasRow, err := stmt.Step()
+		if err != nil {
+			return nil, fmt.Errorf("read request id=%d headers from cache: %w", id, err)
+		}
+		if !hasRow {
+			return result, nil
+		}
+		if result == nil {
+			result = make(http.Header)
+		}
+		name := http.CanonicalHeaderKey(stmt.ColumnText(nameColumn))
+		value := stmt.ColumnText(valueColumn)
+		if v := result[name]; len(v) == 0 {
+			result[name] = []string{value}
+		} else {
+			// Generally, we don't serialize like this because it would lose order,
+			// but handle just in case.
+			v[0] += headerFieldCombiner + value
+			result[name] = v
+		}
+	}
+}
+
 func fetchResponseHeaders(conn *sqlite.Conn, id int64) (http.Header, error) {
 	stmt := prepareQuery(conn, "response_headers.sql")
 	stmt.SetInt64(":id", id)
@@ -647,39 +711,6 @@ func fetchResponseHeaders(conn *sqlite.Conn, id int64) (http.Header, error) {
 		}
 		result.Add(stmt.ColumnText(nameColumn), stmt.ColumnText(valueColumn))
 	}
-}
-
-func setQueryHeaders(conn *sqlite.Conn, header http.Header) (err error) {
-	defer func() {
-		if err != nil {
-			err = fmt.Errorf("copy query headers to sqlite: %w", err)
-		}
-	}()
-	defer sqlitex.Save(conn)(&err)
-
-	clearStmt := prepareQuery(conn, "query_headers/clear.sql")
-	if err := runStatement(clearStmt); err != nil {
-		return err
-	}
-
-	insertStmt := prepareQuery(conn, "query_headers/insert.sql")
-	for name, values := range header {
-		if http.CanonicalHeaderKey(name) == "Authorization" {
-			continue
-		}
-		insertStmt.SetText(":name", name)
-		switch {
-		case len(values) == 1:
-			insertStmt.SetText(":value", values[0])
-		case len(values) > 1:
-			insertStmt.SetNull(":value")
-		}
-		if err := runStatement(insertStmt); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func isCacheableMethod(req *http.Request) bool {
@@ -759,13 +790,6 @@ func prepareConn(conn *sqlite.Conn) error {
 		},
 	})
 	if err != nil {
-		return err
-	}
-
-	if err := sqlitex.ExecuteTransient(conn, `ATTACH DATABASE ':memory:' as "mem";`, nil); err != nil {
-		return fmt.Errorf("enable write-ahead logging: %v", err)
-	}
-	if err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "query_headers/create.sql", nil); err != nil {
 		return err
 	}
 
