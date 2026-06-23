@@ -401,6 +401,12 @@ func writeCache(conn *sqlite.Conn, resp *storedResponse, body io.Reader) (err er
 		}
 	}
 
+	initBodyStmt := prepareQuery(conn, "resources/init_body.sql")
+	initBodyStmt.SetInt64(":id", resp.id)
+	initBodyStmt.SetInt64(":size", resp.responseBodySize)
+	if err := runStatement(initBodyStmt); err != nil {
+		return fmt.Errorf("init body: %v", err)
+	}
 	blob, err := conn.OpenBlob("", "resources", "response_body", resp.id, true)
 	if err != nil {
 		return err
@@ -468,7 +474,6 @@ func prepareCacheResponse(conn *sqlite.Conn, resp *storedResponse) error {
 	stmt.SetInt64(":requested_at", resp.requestedAt.UnixMilli())
 	stmt.SetInt64(":received_at", resp.responseReceivedAt.UnixMilli())
 	stmt.SetInt64(":status_code", int64(resp.statusCode))
-	stmt.SetInt64(":body_size", resp.responseBodySize)
 	if err := runStatement(stmt); err != nil {
 		return fmt.Errorf("response metadata: %v", err)
 	}
