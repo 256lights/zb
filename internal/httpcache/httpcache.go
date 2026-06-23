@@ -196,7 +196,10 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		} else {
 			rt.db.Put(conn)
 		}
-		return result.response, forwardError
+		if result == nil {
+			return nil, forwardError
+		}
+		return result.response, nil
 	}
 
 	// TODO(soon): Size limit?

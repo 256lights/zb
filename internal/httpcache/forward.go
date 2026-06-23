@@ -77,7 +77,9 @@ func forward(rt http.RoundTripper, req *http.Request, responses []*storedRespons
 		var err error
 		result.response, err = rt.RoundTrip(req)
 		result.responseReceivedAt = time.Now()
-		ensureDateHeader(result.response.Header, result.responseReceivedAt)
+		if result.response != nil {
+			ensureDateHeader(result.response.Header, result.responseReceivedAt)
+		}
 		return result, err
 	}
 
