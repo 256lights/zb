@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/textproto"
 	"net/url"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -26,826 +27,50 @@ import (
 
 	googlecmp "github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"golang.org/x/tools/txtar"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
 func TestRoundTripper(t *testing.T) {
-	initialTime := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
-	const (
-		plainMediaType = "text/plain; charset=utf-8"
-		htmlMediaType  = "text/html; charset=utf-8"
-	)
-
-	type cacheInteraction struct {
-		testRequestResponse
-		sleep time.Duration
+	listing, err := os.ReadDir("testdata")
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	tests := []struct {
-		name           string
-		cacheRequests  []*cacheInteraction
-		serverRequests []*testRequestResponse
-	}{
-		{
-			name: "SingleRequest",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type": {plainMediaType},
-							"Date":         {initialTime.Format(http.TimeFormat)},
-						},
-						responseBody: "Hello, World!\n",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type": {plainMediaType},
-					},
-					responseBody: "Hello, World!\n",
-				},
-			},
-		},
-		{
-			name: "HeuristicCache",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type": {plainMediaType},
-							"Date":         {initialTime.Format(http.TimeFormat)},
-						},
-						responseBody: "Hello, World!\n",
-					},
-					sleep: 5 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type": {plainMediaType},
-							"Date":         {initialTime.Format(http.TimeFormat)},
-							"Age":          {"5"},
-						},
-						responseBody: "Hello, World!\n",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type": {plainMediaType},
-						"Date":         {initialTime.Format(http.TimeFormat)},
-					},
-					responseBody: "Hello, World!\n",
-				},
-			},
-		},
-		{
-			name: "ExplicitlyFresh",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-							"Cache-Control": {"max-age=604800"},
-						},
-						responseBody: "Hello, World!\n",
-					},
-					sleep: 5 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-							"Cache-Control": {"max-age=604800"},
-							"Age":           {"5"},
-						},
-						responseBody: "Hello, World!\n",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Cache-Control": {"max-age=604800"},
-						"Date":          {initialTime.Format(http.TimeFormat)},
-					},
-					responseBody: "Hello, World!\n",
-				},
-			},
-		},
-		{
-			name: "DifferentURL",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-							"Cache-Control": {"max-age=604800"},
-						},
-						responseBody: "Hello, World!\n",
-					},
-					sleep: 5 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/bar",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Date":          {initialTime.Add(5 * time.Second).Format(http.TimeFormat)},
-							"Cache-Control": {"max-age=604800"},
-						},
-						responseBody: "Hello, other URL!\n",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Cache-Control": {"max-age=604800"},
-						"Date":          {initialTime.Format(http.TimeFormat)},
-					},
-					responseBody: "Hello, World!\n",
-				},
-				{
-					url: "http://www.example.com/bar",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Cache-Control": {"max-age=604800"},
-						"Date":          {initialTime.Add(5 * time.Second).Format(http.TimeFormat)},
-					},
-					responseBody: "Hello, other URL!\n",
-				},
-			},
-		},
-		{
-			name: "ExplicitlyStale",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-							"Cache-Control": {"max-age=0"},
-						},
-						responseBody: "Hello, World!\n",
-					},
-					sleep: 5 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Cache-Control": {"max-age=0"},
-							"Date":          {initialTime.Add(5 * time.Second).Format(http.TimeFormat)},
-						},
-						responseBody: "Hello, World!\n",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Cache-Control": {"max-age=0"},
-						"Date":          {initialTime.Format(http.TimeFormat)},
-					},
-					responseBody: "Hello, World!\n",
-				},
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Cache-Control": {"max-age=0"},
-						"Date":          {initialTime.Add(5 * time.Second).Format(http.TimeFormat)},
-					},
-					responseBody: "Hello, World!\n",
-				},
-			},
-		},
-		{
-			name: "ValidateStale",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Cache-Control": {"max-age=60"},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-							"ETag":          {`"xyzzy"`},
-						},
-						responseBody: "Hello, World!\n",
-					},
-					sleep: 90 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Cache-Control": {"max-age=60"},
-							"Date":          {initialTime.Add(90 * time.Second).Format(http.TimeFormat)},
-							"ETag":          {`"xyzzy"`},
-							"X-Foo":         {"1"},
-						},
-						responseBody: "Hello, World!\n",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Cache-Control": {"max-age=60"},
-						"Date":          {initialTime.Format(http.TimeFormat)},
-						"ETag":          {`"xyzzy"`},
-					},
-					responseBody: "Hello, World!\n",
-				},
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host":          {"www.example.com"},
-						"If-None-Match": {`"xyzzy"`},
-					},
-					statusCode: http.StatusNotModified,
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Cache-Control": {"max-age=60"},
-						"Date":          {initialTime.Add(90 * time.Second).Format(http.TimeFormat)},
-						"ETag":          {`"xyzzy"`},
-						"X-Foo":         {"1"},
-					},
-				},
-			},
-		},
-		{
-			name: "DifferingContentLengthOnValidation",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Cache-Control": {"max-age=60"},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-							"ETag":          {`"xyzzy"`},
-						},
-						responseBody: "Hello, World!\n",
-					},
-					sleep: 90 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":   {plainMediaType},
-							"Cache-Control":  {"max-age=60"},
-							"Content-Length": {"17"},
-							"Date":           {initialTime.Add(90 * time.Second).Format(http.TimeFormat)},
-							"ETag":           {`"xyzzy"`},
-						},
-						responseBody: "Hello, World!\nfoo",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Cache-Control": {"max-age=60"},
-						"Date":          {initialTime.Format(http.TimeFormat)},
-						"ETag":          {`"xyzzy"`},
-					},
-					responseBody: "Hello, World!\n",
-				},
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host":          {"www.example.com"},
-						"If-None-Match": {`"xyzzy"`},
-					},
-					statusCode: http.StatusNotModified,
-					responseHeaders: http.Header{
-						"Content-Type":   {plainMediaType},
-						"Content-Length": {"17"},
-						"Cache-Control":  {"max-age=60"},
-						"Date":           {initialTime.Add(90 * time.Second).Format(http.TimeFormat)},
-						"ETag":           {`"xyzzy"`},
-					},
-				},
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":   {plainMediaType},
-						"Content-Length": {"17"},
-						"Cache-Control":  {"max-age=60"},
-						"Date":           {initialTime.Add(90 * time.Second).Format(http.TimeFormat)},
-						"ETag":           {`"xyzzy"`},
-					},
-					responseBody: "Hello, World!\nfoo",
-				},
-			},
-		},
-		{
-			name: "StripUpgrade",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type": {plainMediaType},
-							"Date":         {initialTime.Format(http.TimeFormat)},
-							"Upgrade":      {"foo"},
-						},
-						responseBody: "Hello, World!\n",
-					},
-					sleep: 5 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type": {plainMediaType},
-							"Date":         {initialTime.Format(http.TimeFormat)},
-							"Age":          {"5"},
-						},
-						responseBody: "Hello, World!\n",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type": {plainMediaType},
-						"Date":         {initialTime.Format(http.TimeFormat)},
-						"Upgrade":      {"foo"},
-					},
-					responseBody: "Hello, World!\n",
-				},
-			},
-		},
-		{
-			name: "NoCacheHeaders",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-							"Cache-Control": {`no-cache="X-Foo"`},
-							"X-Foo":         {"42"},
-							"X-Bar":         {"pi"},
-						},
-						responseBody: "Hello, World!\n",
-					},
-					sleep: 5 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-							"Cache-Control": {`no-cache="X-Foo"`},
-							"X-Bar":         {"pi"},
-							"Age":           {"5"},
-						},
-						responseBody: "Hello, World!\n",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Date":          {initialTime.Format(http.TimeFormat)},
-						"Cache-Control": {`no-cache="X-Foo"`},
-						"X-Foo":         {"42"},
-						"X-Bar":         {"pi"},
-					},
-					responseBody: "Hello, World!\n",
-				},
-			},
-		},
-		{
-			name: "InvalidationViaPost",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-							"Cache-Control": {"max-age=604800"},
-						},
-						responseBody: "Hello, World!\n",
-					},
-					sleep: 1 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						method: http.MethodPost,
-						url:    "http://www.example.com/foo",
-						requestHeaders: http.Header{
-							"Content-Length": {"0"},
-						},
-						statusCode: http.StatusNoContent,
-						responseHeaders: http.Header{
-							"Date": {initialTime.Add(1 * time.Second).Format(http.TimeFormat)},
-						},
-					},
-					sleep: 1 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Date":          {initialTime.Add(2 * time.Second).Format(http.TimeFormat)},
-							"Cache-Control": {"max-age=604800"},
-						},
-						responseBody: "Hello, World! I've been changed!\n",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Cache-Control": {"max-age=604800"},
-						"Date":          {initialTime.Format(http.TimeFormat)},
-					},
-					responseBody: "Hello, World!\n",
-				},
-				{
-					method: http.MethodPost,
-					url:    "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host":           {"www.example.com"},
-						"Content-Length": {"0"},
-					},
-					statusCode: http.StatusNoContent,
-					responseHeaders: http.Header{
-						"Date": {initialTime.Add(1 * time.Second).Format(http.TimeFormat)},
-					},
-				},
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host": {"www.example.com"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Cache-Control": {"max-age=604800"},
-						"Date":          {initialTime.Add(2 * time.Second).Format(http.TimeFormat)},
-					},
-					responseBody: "Hello, World! I've been changed!\n",
-				},
-			},
-		},
-		{
-			name: "VaryHeaderDiffer",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						requestHeaders: http.Header{
-							"Accept": {"text/html, text/*;q=0.9, */*;q=0.1"},
-						},
-						responseHeaders: http.Header{
-							"Content-Type":  {htmlMediaType},
-							"Vary":          {"Accept"},
-							"Cache-Control": {"max-age=604800"},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-						},
-						responseBody: "<!DOCTYPE html>\n<p>Hello, World!\n</p>",
-					},
-					sleep: 5 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						requestHeaders: http.Header{
-							"Accept": {"text/plain, text/*;q=0.9, */*;q=0.1"},
-						},
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Vary":          {"Accept"},
-							"Cache-Control": {"max-age=604800"},
-							"Date":          {initialTime.Add(5 * time.Second).Format(http.TimeFormat)},
-						},
-						responseBody: "Hello, World!\n",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host":   {"www.example.com"},
-						"Accept": {"text/html, text/*;q=0.9, */*;q=0.1"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {htmlMediaType},
-						"Vary":          {"Accept"},
-						"Cache-Control": {"max-age=604800"},
-						"Date":          {initialTime.Format(http.TimeFormat)},
-					},
-					responseBody: "<!DOCTYPE html>\n<p>Hello, World!\n</p>",
-				},
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host":   {"www.example.com"},
-						"Accept": {"text/plain, text/*;q=0.9, */*;q=0.1"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Vary":          {"Accept"},
-						"Cache-Control": {"max-age=604800"},
-						"Date":          {initialTime.Add(5 * time.Second).Format(http.TimeFormat)},
-					},
-					responseBody: "Hello, World!\n",
-				},
-			},
-		},
-		{
-			name: "VaryHeaderCaseFolding",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						requestHeaders: http.Header{
-							"Accept": {"text/html, text/*;q=0.9, */*;q=0.1"},
-						},
-						responseHeaders: http.Header{
-							"Content-Type":  {htmlMediaType},
-							"Vary":          {"accept"},
-							"Cache-Control": {"max-age=604800"},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-						},
-						responseBody: "<!DOCTYPE html>\n<p>Hello, World!\n</p>",
-					},
-					sleep: 5 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						requestHeaders: http.Header{
-							"Accept": {"text/plain, text/*;q=0.9, */*;q=0.1"},
-						},
-						responseHeaders: http.Header{
-							"Content-Type":  {plainMediaType},
-							"Vary":          {"accept"},
-							"Cache-Control": {"max-age=604800"},
-							"Date":          {initialTime.Add(5 * time.Second).Format(http.TimeFormat)},
-						},
-						responseBody: "Hello, World!\n",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host":   {"www.example.com"},
-						"Accept": {"text/html, text/*;q=0.9, */*;q=0.1"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {htmlMediaType},
-						"Vary":          {"accept"},
-						"Cache-Control": {"max-age=604800"},
-						"Date":          {initialTime.Format(http.TimeFormat)},
-					},
-					responseBody: "<!DOCTYPE html>\n<p>Hello, World!\n</p>",
-				},
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host":   {"www.example.com"},
-						"Accept": {"text/plain, text/*;q=0.9, */*;q=0.1"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {plainMediaType},
-						"Vary":          {"accept"},
-						"Cache-Control": {"max-age=604800"},
-						"Date":          {initialTime.Add(5 * time.Second).Format(http.TimeFormat)},
-					},
-					responseBody: "Hello, World!\n",
-				},
-			},
-		},
-		{
-			name: "VaryHeaderMatch",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						requestHeaders: http.Header{
-							"Accept": {"text/html, text/*;q=0.9, */*;q=0.1"},
-							"X-Foo":  {"123"},
-						},
-						responseHeaders: http.Header{
-							"Content-Type":  {htmlMediaType},
-							"Vary":          {"Accept"},
-							"Cache-Control": {"max-age=604800"},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-						},
-						responseBody: "<!DOCTYPE html>\n<p>Hello, World!\n</p>",
-					},
-					sleep: 5 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						requestHeaders: http.Header{
-							"Accept": {"text/html, text/*;q=0.9, */*;q=0.1"},
-							"X-Foo":  {"456"},
-						},
-						responseHeaders: http.Header{
-							"Content-Type":  {htmlMediaType},
-							"Vary":          {"Accept"},
-							"Cache-Control": {"max-age=604800"},
-							"Date":          {initialTime.Format(http.TimeFormat)},
-							"Age":           {"5"},
-						},
-						responseBody: "<!DOCTYPE html>\n<p>Hello, World!\n</p>",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host":   {"www.example.com"},
-						"Accept": {"text/html, text/*;q=0.9, */*;q=0.1"},
-						"X-Foo":  {"123"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":  {htmlMediaType},
-						"Vary":          {"Accept"},
-						"Cache-Control": {"max-age=604800"},
-						"Date":          {initialTime.Format(http.TimeFormat)},
-					},
-					responseBody: "<!DOCTYPE html>\n<p>Hello, World!\n</p>",
-				},
-			},
-		},
-		{
-			name: "VaryHeaderWildcard",
-			cacheRequests: []*cacheInteraction{
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						requestHeaders: http.Header{
-							"Accept": {"text/html, text/*;q=0.9, */*;q=0.1"},
-							"X-Foo":  {"123"},
-						},
-						responseHeaders: http.Header{
-							"Content-Type":   {htmlMediaType},
-							"Content-Length": {"37"},
-							"Vary":           {"*"},
-							"Cache-Control":  {"max-age=604800"},
-							"Etag":           {`"xyzzy"`},
-							"Date":           {initialTime.Format(http.TimeFormat)},
-						},
-						responseBody: "<!DOCTYPE html>\n<p>Hello, World!\n</p>",
-					},
-					sleep: 5 * time.Second,
-				},
-				{
-					testRequestResponse: testRequestResponse{
-						url: "http://www.example.com/foo",
-						requestHeaders: http.Header{
-							"Accept": {"text/html, text/*;q=0.9, */*;q=0.1"},
-							"X-Foo":  {"123"},
-						},
-						responseHeaders: http.Header{
-							"Content-Type":   {htmlMediaType},
-							"Content-Length": {"37"},
-							"Vary":           {"*"},
-							"Cache-Control":  {"max-age=604800"},
-							"Etag":           {`"xyzzy"`},
-							"Date":           {initialTime.Add(5 * time.Second).Format(http.TimeFormat)},
-						},
-						responseBody: "<!DOCTYPE html>\n<p>Hello, World!\n</p>",
-					},
-				},
-			},
-			serverRequests: []*testRequestResponse{
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host":   {"www.example.com"},
-						"Accept": {"text/html, text/*;q=0.9, */*;q=0.1"},
-						"X-Foo":  {"123"},
-					},
-					responseHeaders: http.Header{
-						"Content-Type":   {htmlMediaType},
-						"Content-Length": {"37"},
-						"Vary":           {"*"},
-						"Cache-Control":  {"max-age=604800"},
-						"Etag":           {`"xyzzy"`},
-						"Date":           {initialTime.Format(http.TimeFormat)},
-					},
-					responseBody: "<!DOCTYPE html>\n<p>Hello, World!\n</p>",
-				},
-				{
-					url: "http://www.example.com/foo",
-					requestHeaders: http.Header{
-						"Host":          {"www.example.com"},
-						"Accept":        {"text/html, text/*;q=0.9, */*;q=0.1"},
-						"X-Foo":         {"123"},
-						"If-None-Match": {`"xyzzy"`},
-					},
-					statusCode: http.StatusNotModified,
-					responseHeaders: http.Header{
-						"Content-Type":   {htmlMediaType},
-						"Content-Length": {"37"},
-						"Vary":           {"*"},
-						"Cache-Control":  {"max-age=604800"},
-						"Etag":           {`"xyzzy"`},
-						"Date":           {initialTime.Add(5 * time.Second).Format(http.TimeFormat)},
-					},
-				},
-			},
-		},
-	}
+	for _, entry := range listing {
+		fileName := entry.Name()
+		if strings.HasPrefix(fileName, ".") {
+			continue
+		}
+		testName, isTXTAR := strings.CutSuffix(fileName, ".txtar")
+		if !isTXTAR {
+			continue
+		}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+		t.Run(testName, func(t *testing.T) {
+			ar, err := txtar.ParseFile(filepath.Join("testdata", fileName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cacheFileData, ok := txtarFileData(ar, "cache.txt")
+			if !ok {
+				t.Fatalf("Missing cache.txt in testdata/%s", fileName)
+			}
+			cacheRequests, err := readRequestResponses(bufio.NewReader(bytes.NewReader(cacheFileData)))
+			if err != nil {
+				t.Fatal("cache.txt:", err)
+			}
+			serverFileData, _ := txtarFileData(ar, "server.txt")
+			serverRequests, err := readRequestResponses(bufio.NewReader(bytes.NewReader(serverFileData)))
+			if err != nil {
+				t.Fatal("server.txt:", err)
+			}
+
 			synctest.Test(t, func(t *testing.T) {
 				mockServer := &mockRoundTripper{
 					tb:        t,
-					responses: test.serverRequests,
+					responses: serverRequests,
 				}
 				cache := Open(filepath.Join(t.TempDir(), "http-cache.sqlite"), mockServer, &Options{
 					ErrorLogger: ErrorReporterFunc(func(ctx context.Context, info *RequestInfo, err error) {
@@ -856,13 +81,19 @@ func TestRoundTripper(t *testing.T) {
 						}
 					}),
 				})
-				defer func() {
+				t.Cleanup(func() {
 					if err := cache.Close(); err != nil {
 						t.Error("cache.Close():", err)
 					}
-				}()
+				})
 
-				for _, req := range test.cacheRequests {
+				for _, req := range cacheRequests {
+					if date, ok := dateHeader(req.requestHeaders, "Date"); ok {
+						if d := time.Until(date); d > 0 {
+							time.Sleep(d)
+						}
+					}
+
 					method := cmp.Or(req.method, http.MethodGet)
 					got, err := cache.RoundTrip(req.makeRequest(t))
 					if err != nil {
@@ -893,10 +124,6 @@ func TestRoundTripper(t *testing.T) {
 								t.Errorf("%s %s: closing body: %v", method, req.url, closeError)
 							}
 						}
-					}
-
-					if req.sleep > 0 {
-						time.Sleep(req.sleep)
 					}
 				}
 
@@ -1003,6 +230,39 @@ type testRequestResponse struct {
 	responseBody    string
 }
 
+func readRequestResponses(r *bufio.Reader) ([]*testRequestResponse, error) {
+	var result []*testRequestResponse
+	reqReader := textproto.NewReader(r)
+	for {
+		req, err := readRequest(reqReader)
+		if err == io.EOF {
+			return result, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		req.Body.Close()
+		resp, err := http.ReadResponse(r, req)
+		if err != nil {
+			return nil, err
+		}
+		body := new(strings.Builder)
+		_, err = io.Copy(body, resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, &testRequestResponse{
+			method:          req.Method,
+			url:             req.URL.String(),
+			requestHeaders:  req.Header,
+			statusCode:      resp.StatusCode,
+			responseHeaders: resp.Header,
+			responseBody:    body.String(),
+		})
+	}
+}
+
 func (trr *testRequestResponse) makeRequest(tb testing.TB) *http.Request {
 	tb.Helper()
 	u, err := url.Parse(trr.url)
@@ -1014,6 +274,79 @@ func (trr *testRequestResponse) makeRequest(tb testing.TB) *http.Request {
 		URL:    u,
 		Header: trr.requestHeaders.Clone(),
 	}).WithContext(tb.Context())
+}
+
+func readRequest(r *textproto.Reader) (*http.Request, error) {
+	first, err := r.ReadLine()
+	if err != nil {
+		if err != io.EOF {
+			err = fmt.Errorf("read http request: %w", err)
+		}
+		return nil, err
+	}
+	req := new(http.Request)
+	var ok1, ok2 bool
+	var rest string
+	req.Method, rest, ok1 = strings.Cut(first, " ")
+	req.RequestURI, req.Proto, ok2 = strings.Cut(rest, " ")
+	if !ok1 || !ok2 {
+		return nil, fmt.Errorf("read http request: malformed HTTP request")
+	}
+	var ok bool
+	if req.ProtoMajor, req.ProtoMinor, ok = http.ParseHTTPVersion(req.Proto); !ok {
+		return nil, fmt.Errorf("read http request: malformed HTTP version %q", req.Proto)
+	}
+	if req.URL, err = url.ParseRequestURI(req.RequestURI); err != nil {
+		return nil, fmt.Errorf("read http request: %v", err)
+	}
+	mimeHeader, err := r.ReadMIMEHeader()
+	if err != nil {
+		return nil, fmt.Errorf("read http request: %v", err)
+	}
+	req.Header = http.Header(mimeHeader)
+	req.Host = cmp.Or(req.URL.Host, req.Header.Get("Host"))
+	if contentLength := req.Header.Get("Content-Length"); contentLength == "" {
+		req.ContentLength = -1
+	} else if n, err := strconv.ParseUint(contentLength, 10, 63); err != nil {
+		return nil, fmt.Errorf("read http request: Content-Length: %v", err)
+	} else {
+		req.ContentLength = int64(n)
+	}
+	switch {
+	case req.Method == http.MethodHead:
+		req.Body = http.NoBody
+	case req.ContentLength <= 0:
+		req.Body = http.NoBody
+		req.ContentLength = 0
+	default:
+		req.Body = &limitedReader{R: r.R, N: req.ContentLength}
+	}
+	return req, nil
+}
+
+type limitedReader struct {
+	R io.Reader
+	N int64
+}
+
+func (lr *limitedReader) Read(p []byte) (n int, err error) {
+	if lr.N <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > lr.N {
+		p = p[0:lr.N]
+	}
+	n, err = lr.R.Read(p)
+	lr.N -= int64(n)
+	return
+}
+
+func (lr *limitedReader) Close() error {
+	var err error
+	if lr.N > 0 {
+		_, err = io.Copy(io.Discard, lr)
+	}
+	return err
 }
 
 type mockRoundTripper struct {
@@ -1191,4 +524,13 @@ func BenchmarkRoundTripper(b *testing.B) {
 		}
 		resp.Body.Close()
 	}
+}
+
+func txtarFileData(ar *txtar.Archive, name string) (data []byte, ok bool) {
+	for _, file := range ar.Files {
+		if file.Name == name {
+			return file.Data, true
+		}
+	}
+	return nil, false
 }
