@@ -23,7 +23,8 @@ type forwardResult struct {
 	// freshenResponses is the set of responses to update response headers for.
 	freshenResponses []*storedResponse
 
-	// serveBodyFromCache is true if the response body should be read from the cache.
+	// serveBodyFromCache is true if the response body should be read from the cache
+	// and the response.Body will be cleared.
 	serveBodyFromCache bool
 	// storedResponseID is the row ID of the resource in the cache to be used for the response body.
 	storedResponseID int64

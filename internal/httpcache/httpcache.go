@@ -121,12 +121,16 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("http cache: %v", err)
 	}
-	// TODO(soon): defer rt.db.Put(conn)
+	connInUse := false
+	defer func() {
+		if !connInUse {
+			rt.db.Put(conn)
+		}
+	}()
 
 	responses, err := readCache(conn, req.URL)
 	if err != nil {
 		// TODO(soon): Cache response.
-		rt.db.Put(conn)
 		return rt.roundTripper.RoundTrip(req)
 	}
 
@@ -137,7 +141,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			continue
 		}
 		if !cacheCheckTime.After(resp.date().Add(resp.freshnessLifetime())) {
-			// No rt.db.Put: database connection will stay open until body is closed.
+			connInUse = true // Database connection will stay open until body is closed.
 			hr := resp.toResponse(rt.newStoredResponseBody(conn, resp.id))
 			hr.Header.Set("Age", formatDeltaSeconds(resp.ageAt(cacheCheckTime)))
 			return hr, nil
@@ -192,9 +196,9 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			rt.reportError(req, err)
 		}
 		if result != nil && result.serveBodyFromCache {
+			// forward already cleared result.response.Body, so no need to close.
+			connInUse = true
 			result.response.Body = rt.newStoredResponseBody(conn, result.storedResponseID)
-		} else {
-			rt.db.Put(conn)
 		}
 		if result == nil {
 			return nil, forwardError
@@ -206,14 +210,12 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	bodyBuffer, err := sqlitefile.NewBuffer(conn)
 	if err != nil {
 		rt.reportError(req, deleteResource(conn, idResult.id))
-		rt.db.Put(conn)
 		return result.response, nil
 	}
 	if _, err := io.Copy(bodyBuffer, result.response.Body); err != nil {
 		// TODO(soon): Return response with partial body from database.
 		rt.reportError(req, deleteResource(conn, idResult.id))
 		bodyBuffer.Close()
-		rt.db.Put(conn)
 		result.response.Body.Close()
 		return nil, fmt.Errorf("cache response body: %v", err)
 	}
@@ -237,12 +239,12 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}()
 	bodyBuffer.Close()
 	if err != nil {
-		rt.db.Put(conn)
 		result.response.Body.Close()
 		return nil, err
 	}
 
 	result.response.Body.Close()
+	connInUse = true
 	result.response.Body = rt.newStoredResponseBody(conn, idResult.id)
 	return result.response, nil
 }
