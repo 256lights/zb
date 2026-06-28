@@ -61,6 +61,28 @@ func (resp *storedResponse) toResponse(body io.ReadCloser) *http.Response {
 	}
 }
 
+func (resp *storedResponse) isFresh(cacheCheckTime time.Time, requestDirectives *cacheControlRequestDirectives) (age time.Duration, fresh bool) {
+	if !resp.responseReceived() {
+		return 0, false
+	}
+	age = resp.ageAt(cacheCheckTime)
+	if requestDirectives.hasMaxAge() && age > requestDirectives.maxAge {
+		return age, false
+	}
+	freshnessLifetime := resp.freshnessLifetime()
+	if requestDirectives.hasMinFresh() && freshnessLifetime < age+requestDirectives.minFresh {
+		return age, false
+	}
+	if requestDirectives != nil && requestDirectives.anyStale {
+		return age, true
+	}
+	if requestDirectives.hasMaxStale() {
+		freshnessLifetime += requestDirectives.maxStale
+	}
+	fresh = !cacheCheckTime.After(resp.date().Add(freshnessLifetime))
+	return age, fresh
+}
+
 func (resp *storedResponse) responseReceived() bool {
 	if resp == nil {
 		return false

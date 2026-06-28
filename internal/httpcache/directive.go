@@ -12,6 +12,68 @@ import (
 	"time"
 )
 
+// cacheControlRequestDirectives is the parsed form of the Cache-Control request header field.
+// See [Section 5.2.1 of RFC 9111] for details.
+//
+// [Section 5.2.1 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-5.2.1
+type cacheControlRequestDirectives struct {
+	maxAge       time.Duration
+	maxStale     time.Duration
+	anyStale     bool
+	minFresh     time.Duration
+	noCache      bool
+	noStore      bool
+	onlyIfCached bool
+}
+
+func newCacheControlRequestDirectives(seq iter.Seq[cacheControlDirective]) *cacheControlRequestDirectives {
+	result := &cacheControlRequestDirectives{
+		maxAge:   -1 * time.Second,
+		maxStale: -1 * time.Second,
+		minFresh: -1 * time.Second,
+	}
+	for d := range seq {
+		switch {
+		case d.nameMatches("max-age"):
+			arg, _ := d.argument()
+			if maxAge, err := parseDeltaSeconds(arg); err == nil {
+				result.maxAge = maxAge
+			}
+		case d.nameMatches("max-stale") && d.rawArgument == "":
+			result.anyStale = true
+		case d.nameMatches("max-stale") && d.rawArgument != "":
+			arg, _ := d.argument()
+			if maxStale, err := parseDeltaSeconds(arg); err == nil {
+				result.maxStale = maxStale
+			}
+		case d.nameMatches("min-fresh"):
+			arg, _ := d.argument()
+			if minFresh, err := parseDeltaSeconds(arg); err == nil {
+				result.minFresh = minFresh
+			}
+		case d.nameMatches("no-store") && d.rawArgument == "":
+			result.noStore = true
+		case d.nameMatches("no-cache") && d.rawArgument == "":
+			result.noCache = true
+		case d.nameMatches("only-if-cached") && d.rawArgument == "":
+			result.onlyIfCached = true
+		}
+	}
+	return result
+}
+
+func (rd *cacheControlRequestDirectives) hasMaxAge() bool {
+	return rd != nil && rd.maxAge >= 0
+}
+
+func (rd *cacheControlRequestDirectives) hasMaxStale() bool {
+	return rd != nil && rd.maxStale >= 0
+}
+
+func (rd *cacheControlRequestDirectives) hasMinFresh() bool {
+	return rd != nil && rd.minFresh >= 0
+}
+
 func cacheControlDirectives(header http.Header) iter.Seq[cacheControlDirective] {
 	return func(yield func(cacheControlDirective) bool) {
 		for _, value := range header["Cache-Control"] {

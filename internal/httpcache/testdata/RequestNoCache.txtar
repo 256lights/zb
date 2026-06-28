@@ -1,0 +1,50 @@
+-- cache.txt --
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!
+GET http://www.example.com/foo HTTP/1.1
+Cache-Control: no-cache
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+Hello, World!
+-- server.txt --
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Cache-Control: no-cache
+If-None-Match: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+HTTP/1.1 304 Not Modified
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+

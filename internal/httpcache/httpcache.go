@@ -18,6 +18,7 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -135,17 +136,41 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	// Find a fresh response.
-	cacheCheckTime := time.Now()
-	for _, resp := range responses {
-		if !resp.responseReceived() || hasNoCacheDirective(cacheControlDirectives(resp.responseHeader)) || !resp.matchesRequestHeader(req.Header) {
-			continue
+	requestDirectives := newCacheControlRequestDirectives(cacheControlDirectives(req.Header))
+	if !requestDirectives.noCache {
+		cacheCheckTime := time.Now()
+		for _, resp := range responses {
+			if !resp.responseReceived() ||
+				hasNoCacheDirective(cacheControlDirectives(resp.responseHeader)) ||
+				!resp.matchesRequestHeader(req.Header) {
+				continue
+			}
+			if age, fresh := resp.isFresh(cacheCheckTime, requestDirectives); fresh {
+				connInUse = true // Database connection will stay open until body is closed.
+				hr := resp.toResponse(rt.newStoredResponseBody(conn, resp.id))
+				hr.Header.Set("Age", formatDeltaSeconds(age))
+				return hr, nil
+			}
 		}
-		if !cacheCheckTime.After(resp.date().Add(resp.freshnessLifetime())) {
-			connInUse = true // Database connection will stay open until body is closed.
-			hr := resp.toResponse(rt.newStoredResponseBody(conn, resp.id))
-			hr.Header.Set("Age", formatDeltaSeconds(resp.ageAt(cacheCheckTime)))
-			return hr, nil
-		}
+	}
+	if requestDirectives.onlyIfCached {
+		const message = "Cached response not available"
+		return &http.Response{
+			Proto:         "HTTP/1.1",
+			ProtoMajor:    1,
+			ProtoMinor:    1,
+			StatusCode:    http.StatusGatewayTimeout,
+			Status:        http.StatusText(http.StatusGatewayTimeout),
+			ContentLength: int64(len(message)),
+			Header: http.Header{
+				"Content-Type":           {"text/plain; charset=utf-8"},
+				"Content-Length":         {strconv.Itoa(len(message))},
+				"X-Content-Type-Options": {"nosniff"},
+				"Date":                   {time.Now().UTC().Format(http.TimeFormat)},
+			},
+			Body:    io.NopCloser(strings.NewReader(message)),
+			Request: req,
+		}, nil
 	}
 
 	// TODO(soon): If there are placeholders, then block.
@@ -172,7 +197,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	result, forwardError := forward(rt.roundTripper, req, responses)
 	idResult := <-ch
-	if forwardError != nil || idResult.error != nil || result.serveBodyFromCache || !result.canStore() {
+	if forwardError != nil || idResult.error != nil || result.serveBodyFromCache || requestDirectives.noStore || !result.canStore() {
 		if idResult.error == nil || result != nil && len(result.freshenResponses) > 0 {
 			err := func() (err error) {
 				endFn, err := sqlitex.ImmediateTransaction(conn)

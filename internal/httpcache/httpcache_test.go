@@ -277,6 +277,11 @@ func (trr *testRequestResponse) makeRequest(tb testing.TB) *http.Request {
 }
 
 func readRequest(r *textproto.Reader) (*http.Request, error) {
+	if buf, err := r.R.Peek(256); err == io.EOF && len(bytes.TrimLeft(buf, "\n\r")) == 0 {
+		r.R.Discard(len(buf))
+		return nil, io.EOF
+	}
+
 	first, err := r.ReadLine()
 	if err != nil {
 		if err != io.EOF {
