@@ -11,6 +11,7 @@ import (
 
 type storedResponse struct {
 	id            int64
+	stale         bool
 	requestedAt   time.Time
 	requestHeader http.Header
 
@@ -25,8 +26,7 @@ type storedResponse struct {
 // match those in the given request header.
 //
 // [Section 4.1 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-4.1
-func (resp *storedResponse) matchesRequestHeader(h http.Header) bool {
-	vary := varyHeader(resp.responseHeader)
+func (resp *storedResponse) matchesRequestHeader(vary varyValue, h http.Header) bool {
 	if vary.IsZero() {
 		return true
 	}
@@ -39,6 +39,12 @@ func (resp *storedResponse) matchesRequestHeader(h http.Header) bool {
 		}
 	}
 	return true
+}
+
+// matchesContentLength reports whether the stored response body matches the given Content-Length value.
+// If n < 0, then any received response matches.
+func (resp *storedResponse) matchesContentLength(n int64) bool {
+	return resp.responseReceived() && (n < 0 || resp.responseBodySize == n)
 }
 
 func (resp *storedResponse) toResponse(body io.ReadCloser) *http.Response {
@@ -66,7 +72,8 @@ func (resp *storedResponse) isFresh(cacheCheckTime time.Time, requestDirectives 
 		return 0, false
 	}
 	age = resp.ageAt(cacheCheckTime)
-	if requestDirectives.hasMaxAge() && age > requestDirectives.maxAge {
+	if (resp.stale && (requestDirectives == nil || !requestDirectives.anyStale)) ||
+		(requestDirectives.hasMaxAge() && age > requestDirectives.maxAge) {
 		return age, false
 	}
 	freshnessLifetime := resp.freshnessLifetime()

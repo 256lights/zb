@@ -142,12 +142,18 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		for _, resp := range responses {
 			if !resp.responseReceived() ||
 				hasNoCacheDirective(cacheControlDirectives(resp.responseHeader)) ||
-				!resp.matchesRequestHeader(req.Header) {
+				!resp.matchesRequestHeader(varyHeader(resp.responseHeader), req.Header) {
 				continue
 			}
 			if age, fresh := resp.isFresh(cacheCheckTime, requestDirectives); fresh {
-				connInUse = true // Database connection will stay open until body is closed.
-				hr := resp.toResponse(rt.newStoredResponseBody(conn, resp.id))
+				var body io.ReadCloser
+				if req.Method == http.MethodHead {
+					body = http.NoBody
+				} else {
+					connInUse = true // Database connection will stay open until body is closed.
+					body = rt.newStoredResponseBody(conn, resp.id)
+				}
+				hr := resp.toResponse(body)
 				hr.Header.Set("Age", formatDeltaSeconds(age))
 				return hr, nil
 			}
@@ -197,8 +203,8 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	result, forwardError := forward(rt.roundTripper, req, responses)
 	idResult := <-ch
-	if forwardError != nil || idResult.error != nil || result.serveBodyFromCache || requestDirectives.noStore || !result.canStore() {
-		if idResult.error == nil || result != nil && len(result.freshenResponses) > 0 {
+	if forwardError != nil || idResult.error != nil || result.serveBodyFromCache || requestDirectives.noStore || req.Method == http.MethodHead || !result.canStore() {
+		if idResult.error == nil || (result != nil && (len(result.freshenResponses) > 0 || len(result.staleResponseIDs) > 0)) {
 			err := func() (err error) {
 				endFn, err := sqlitex.ImmediateTransaction(conn)
 				if err != nil {
@@ -212,6 +218,11 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 					for _, stored := range result.freshenResponses {
 						stored.responseHeader = result.response.Header
 						if err := updateCache(conn, stored); err != nil {
+							return err
+						}
+					}
+					for _, id := range result.staleResponseIDs {
+						if err := markStale(conn, id); err != nil {
 							return err
 						}
 					}
@@ -260,6 +271,11 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			rt.reportError(req, deleteResource(conn, idResult.id))
 			return err
 		}
+
+		for _, id := range result.staleResponseIDs {
+			rt.reportError(req, deleteResource(conn, id))
+		}
+
 		return nil
 	}()
 	bodyBuffer.Close()
@@ -334,6 +350,7 @@ func readCache(conn *sqlite.Conn, u *url.URL) (result []*storedResponse, err err
 		}
 		resp := &storedResponse{
 			id:               stmt.GetInt64("id"),
+			stale:            stmt.GetBool("stale"),
 			statusCode:       int(stmt.GetInt64("status_code")),
 			requestedAt:      time.UnixMilli(stmt.GetInt64("requested_at")),
 			responseBodySize: -1,
@@ -493,6 +510,15 @@ func updateCache(conn *sqlite.Conn, resp *storedResponse) (err error) {
 
 	if err := gcHeaders(conn); err != nil {
 		return err
+	}
+	return nil
+}
+
+func markStale(conn *sqlite.Conn, id int64) error {
+	stmt := prepareQuery(conn, "resources/mark_stale.sql")
+	stmt.SetInt64(":id", id)
+	if err := runStatement(stmt); err != nil {
+		return fmt.Errorf("mark resource id=%d stale: %w", id, err)
 	}
 	return nil
 }

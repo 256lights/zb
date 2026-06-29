@@ -1,5 +1,6 @@
 select
   "resources"."id" as "id",
+  "resources"."stale" as "stale",
   "resources"."requested_at" as "requested_at",
   "resources"."response_received_at" as "response_received_at",
   "resources"."status_code" as "status_code",

@@ -20,6 +20,10 @@ create table "resources" (
   "url" text
     not null
     check ("url" <> ''),
+  "stale" integer
+    not null
+    default false
+    check ("stale" in (false, true)),
   "requested_at" integer -- Milliseconds since the Unix epoch
     not null,
 
