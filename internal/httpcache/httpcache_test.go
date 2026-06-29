@@ -88,40 +88,43 @@ func TestRoundTripper(t *testing.T) {
 				})
 
 				for _, req := range cacheRequests {
-					if date, ok := dateHeader(req.requestHeaders, "Date"); ok {
-						if d := time.Until(date); d > 0 {
+					requestDate, ok := dateHeader(req.requestHeaders, "Date")
+					if ok {
+						if d := time.Until(requestDate); d > 0 {
 							time.Sleep(d)
 						}
+					} else {
+						requestDate = time.Now()
 					}
 
 					method := cmp.Or(req.method, http.MethodGet)
 					got, err := cache.RoundTrip(req.makeRequest(t))
 					if err != nil {
-						t.Errorf("RoundTrip(%s %s): %v", method, req.url, err)
+						t.Errorf("RoundTrip(%s %s @ %s): %v", method, req.url, requestDate.UTC().Format(http.TimeFormat), err)
 					}
 
 					if got == nil {
-						t.Errorf("%s %s: response == <nil>", method, req.url)
+						t.Errorf("%s %s @ %s: response == <nil>", method, req.url, requestDate.UTC().Format(http.TimeFormat))
 					} else {
 						if want := cmp.Or(req.statusCode, http.StatusOK); got.StatusCode != want {
-							t.Errorf("%s %s: status code = %d; want %d", method, req.url, got.StatusCode, want)
+							t.Errorf("%s %s @ %s: status code = %d; want %d", method, req.url, requestDate.UTC().Format(http.TimeFormat), got.StatusCode, want)
 						}
 						if diff := googlecmp.Diff(req.responseHeaders, got.Header, cmpopts.EquateEmpty()); diff != "" {
-							t.Errorf("%s %s: headers (-want +got):\n%s", method, req.url, diff)
+							t.Errorf("%s %s @ %s: headers (-want +got):\n%s", method, req.url, requestDate.UTC().Format(http.TimeFormat), diff)
 						}
 						if got.Body == nil {
-							t.Errorf("%s %s: response.Body == <nil>", method, req.url)
+							t.Errorf("%s %s @ %s: response.Body == <nil>", method, req.url, requestDate.UTC().Format(http.TimeFormat))
 						} else {
 							gotBody, readError := io.ReadAll(got.Body)
 							closeError := got.Body.Close()
 							if readError != nil {
-								t.Errorf("%s %s: reading body: %v", method, req.url, readError)
+								t.Errorf("%s %s @ %s: reading body: %v", method, req.url, requestDate.UTC().Format(http.TimeFormat), readError)
 							}
 							if diff := googlecmp.Diff(req.responseBody, string(gotBody)); diff != "" {
-								t.Errorf("%s %s: body (-want +got):\n%s", method, req.url, diff)
+								t.Errorf("%s %s @ %s: body (-want +got):\n%s", method, req.url, requestDate.UTC().Format(http.TimeFormat), diff)
 							}
 							if closeError != nil {
-								t.Errorf("%s %s: closing body: %v", method, req.url, closeError)
+								t.Errorf("%s %s @ %s: closing body: %v", method, req.url, requestDate.UTC().Format(http.TimeFormat), closeError)
 							}
 						}
 					}
@@ -362,15 +365,20 @@ type mockRoundTripper struct {
 }
 
 func (rt *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	requestDate, ok := dateHeader(req.Header, "Date")
+	if !ok {
+		requestDate = time.Now()
+	}
+
 	gotMethod := cmp.Or(req.Method, http.MethodGet)
-	want, err := rt.match(req)
+	want, err := rt.match(req, requestDate)
 	if err != nil {
 		rt.tb.Error(err)
 		return nil, err
 	}
 
 	if gotHeaders, err := effectiveRequestHeaders(req); err != nil {
-		rt.tb.Errorf("Comparing request headers for %s %v: %v", gotMethod, req.URL, err)
+		rt.tb.Errorf("Comparing request headers for %s %v @ %s: %v", gotMethod, req.URL, requestDate.UTC().Format(http.TimeFormat), err)
 	} else {
 		diff := googlecmp.Diff(
 			want.requestHeaders, gotHeaders,
@@ -378,7 +386,7 @@ func (rt *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 			cmpopts.EquateEmpty(),
 		)
 		if diff != "" {
-			rt.tb.Errorf("%s %v request headers (-want +got):\n%s", gotMethod, req.URL, diff)
+			rt.tb.Errorf("%s %v @ %s request headers (-want +got):\n%s", gotMethod, req.URL, requestDate.UTC().Format(http.TimeFormat), diff)
 		}
 	}
 
@@ -389,7 +397,7 @@ func (rt *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 			case <-t.C:
 			case <-req.Context().Done():
 				t.Stop()
-				return nil, fmt.Errorf("%s %v: %w", gotMethod, req.URL, err)
+				return nil, fmt.Errorf("%s %v @ %s: %w", gotMethod, req.URL, requestDate.UTC().Format(http.TimeFormat), err)
 			}
 		}
 	}
@@ -409,20 +417,20 @@ func (rt *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	return resp, nil
 }
 
-func (rt *mockRoundTripper) match(req *http.Request) (*testRequestResponse, error) {
+func (rt *mockRoundTripper) match(req *http.Request, requestDate time.Time) (*testRequestResponse, error) {
 	gotMethod := cmp.Or(req.Method, http.MethodGet)
 
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
 	if len(rt.responses) == 0 {
-		return nil, fmt.Errorf("mock round tripper received unexpected request for %s %v", gotMethod, req.URL)
+		return nil, fmt.Errorf("mock round tripper received unexpected request for %s %v @ %s", gotMethod, req.URL, requestDate.UTC().Format(http.TimeFormat))
 	}
 	next := rt.responses[0]
 	wantMethod := cmp.Or(next.method, http.MethodGet)
 	if wantMethod != gotMethod || req.URL.String() != next.url {
-		return nil, fmt.Errorf("mock round tripper received request for %s %v (want %s %v)",
-			gotMethod, req.URL, wantMethod, next.url)
+		return nil, fmt.Errorf("mock round tripper received request for %s %v @ %s (want %s %v)",
+			gotMethod, req.URL, requestDate.UTC().Format(http.TimeFormat), wantMethod, next.url)
 	}
 	rt.responses[0] = nil
 	rt.responses = rt.responses[1:]
