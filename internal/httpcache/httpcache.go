@@ -130,10 +130,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}()
 
 	responses, err := readCache(conn, req.URL)
-	if err != nil {
-		// TODO(soon): Cache response.
-		return rt.roundTripper.RoundTrip(req)
-	}
+	rt.reportError(req, err)
 
 	// Find a fresh response.
 	requestDirectives := newCacheControlRequestDirectives(cacheControlDirectives(req.Header))
