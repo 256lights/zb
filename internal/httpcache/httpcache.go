@@ -33,16 +33,16 @@ import (
 // Options contains optional arguments to [Open].
 // nil is treated the same as the zero value.
 type Options struct {
-	// ErrorLogger is the logger to be used when a failure is encountered
+	// ErrorReporter is the reporter to be used when a failure is encountered
 	// that does not prevent a call to [*RoundTripper.RoundTrip] from succeeding.
 	// Such failures are typically errors in reading or writing from the database.
-	ErrorLogger ErrorReporter
+	ErrorReporter ErrorReporter
 }
 
 type RoundTripper struct {
-	db           *sqlitemigration.Pool
-	roundTripper http.RoundTripper
-	errorLogger  ErrorReporter
+	db            *sqlitemigration.Pool
+	roundTripper  http.RoundTripper
+	errorReporter ErrorReporter
 }
 
 func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTripper {
@@ -52,8 +52,8 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 
 	opts = cmp.Or(opts, new(Options))
 	var onDBError sqlitemigration.ReportFunc
-	if opts.ErrorLogger != nil {
-		errorLogger := opts.ErrorLogger
+	if opts.ErrorReporter != nil {
+		errorLogger := opts.ErrorReporter
 		onDBError = func(err error) {
 			errorLogger.ReportError(context.Background(), nil, err)
 		}
@@ -65,7 +65,7 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 			PrepareConn: prepareConn,
 			OnError:     onDBError,
 		}),
-		errorLogger: opts.ErrorLogger,
+		errorReporter: opts.ErrorReporter,
 	}
 }
 
@@ -86,10 +86,10 @@ func (rt *RoundTripper) CloseIdleConnections() {
 }
 
 func (rt *RoundTripper) reportError(req *http.Request, err error) {
-	if err == nil || rt == nil || rt.errorLogger == nil {
+	if err == nil || rt == nil || rt.errorReporter == nil {
 		return
 	}
-	rt.errorLogger.ReportError(req.Context(), newRequestInfo(req), err)
+	rt.errorReporter.ReportError(req.Context(), newRequestInfo(req), err)
 }
 
 func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {

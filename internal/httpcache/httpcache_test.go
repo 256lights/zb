@@ -73,7 +73,7 @@ func TestRoundTripper(t *testing.T) {
 					responses: serverRequests,
 				}
 				cache := Open(filepath.Join(t.TempDir(), "http-cache.sqlite"), mockServer, &Options{
-					ErrorLogger: ErrorReporterFunc(func(ctx context.Context, info *RequestInfo, err error) {
+					ErrorReporter: ErrorReporterFunc(func(ctx context.Context, info *RequestInfo, err error) {
 						if info != nil {
 							t.Errorf("Cache error on %s %v: %v", info.Method, info.URL, err)
 						} else {
@@ -169,7 +169,7 @@ func TestRoundTripperVaryAuthorization(t *testing.T) {
 
 	dbPath := filepath.Join(t.TempDir(), "http-cache.sqlite")
 	cache := Open(dbPath, mockServer, &Options{
-		ErrorLogger: ErrorReporterFunc(func(ctx context.Context, info *RequestInfo, err error) {
+		ErrorReporter: ErrorReporterFunc(func(ctx context.Context, info *RequestInfo, err error) {
 			if info != nil {
 				t.Errorf("Cache error on %s %v: %v", info.Method, info.URL, err)
 			} else {
