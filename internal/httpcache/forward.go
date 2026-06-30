@@ -61,10 +61,6 @@ func (result *forwardResult) newStoredResponse(id int64, responseBodySize int64)
 	return resp, nil
 }
 
-func (result *forwardResult) canStore() bool {
-	return result != nil && canStoreResponse(result.requestHeader, result.response.StatusCode, result.response.Header)
-}
-
 // forward forwards an incoming request to the [http.RoundTripper].
 // If there is at least one stored response for the request URI that has validators,
 // then the request will be transformed into a [validation request]

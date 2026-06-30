@@ -223,6 +223,70 @@ func TestRoundTripperVaryAuthorization(t *testing.T) {
 	}
 }
 
+func TestRoundTripperLargeUnsizedBody(t *testing.T) {
+	testTime := time.Now().UTC()
+	const wantBody = "Hello, User!\n"
+	mockServer := &mockRoundTripper{
+		tb: t,
+		responses: []*testRequestResponse{
+			{
+				url: "http://www.example.com/foo",
+				requestHeaders: http.Header{
+					"Host": {"www.example.com"},
+				},
+				responseHeaders: http.Header{
+					"Content-Type":  {"text/plain; charset=utf-8"},
+					"Date":          {testTime.Format(http.TimeFormat)},
+					"Last-Modified": {testTime.Format(http.TimeFormat)},
+				},
+				responseBody: wantBody,
+			},
+		},
+	}
+
+	dbPath := filepath.Join(t.TempDir(), "http-cache.sqlite")
+	cache := Open(dbPath, mockServer, &Options{
+		MaxResponseSize: 8,
+		ErrorReporter: ErrorReporterFunc(func(ctx context.Context, info *RequestInfo, err error) {
+			if info != nil {
+				t.Errorf("Cache error on %s %v: %v", info.Method, info.URL, err)
+			} else {
+				t.Error("Cache error:", err)
+			}
+		}),
+	})
+	defer func() {
+		if err := cache.Close(); err != nil {
+			t.Error("cache.Close:", err)
+		}
+	}()
+
+	resp, err := cache.RoundTrip(&http.Request{
+		URL: &url.URL{
+			Scheme: "http",
+			Host:   "www.example.com",
+			Path:   "/foo",
+		},
+	})
+	if err != nil {
+		t.Error("RoundTrip:", err)
+	}
+	if resp == nil || resp.Body == nil {
+		t.Error("Missing response body")
+	} else {
+		gotBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Error("read response.Body:", err)
+		}
+		if string(gotBody) != wantBody {
+			t.Errorf("response.Body content = %q; want %q", gotBody, wantBody)
+		}
+		if err := resp.Body.Close(); err != nil {
+			t.Error("response.Body.Close():", err)
+		}
+	}
+}
+
 type testRequestResponse struct {
 	method         string
 	url            string

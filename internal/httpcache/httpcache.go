@@ -33,6 +33,10 @@ import (
 // Options contains optional arguments to [Open].
 // nil is treated the same as the zero value.
 type Options struct {
+	// If MaxResponseSize is positive, then any responses with a body
+	// whose size in bytes is greater than MaxResponseSize will not be cached.
+	MaxResponseSize int64
+
 	// ErrorReporter is the reporter to be used when a failure is encountered
 	// that does not prevent a call to [*RoundTripper.RoundTrip] from succeeding.
 	// Such failures are typically errors in reading or writing from the database.
@@ -40,9 +44,10 @@ type Options struct {
 }
 
 type RoundTripper struct {
-	db            *sqlitemigration.Pool
-	roundTripper  http.RoundTripper
-	errorReporter ErrorReporter
+	db              *sqlitemigration.Pool
+	roundTripper    http.RoundTripper
+	maxResponseSize int64
+	errorReporter   ErrorReporter
 }
 
 func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTripper {
@@ -65,7 +70,8 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 			PrepareConn: prepareConn,
 			OnError:     onDBError,
 		}),
-		errorReporter: opts.ErrorReporter,
+		maxResponseSize: opts.MaxResponseSize,
+		errorReporter:   opts.ErrorReporter,
 	}
 }
 
@@ -200,8 +206,8 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	result, forwardError := forward(rt.roundTripper, req, responses)
 	idResult := <-ch
-	if forwardError != nil || idResult.error != nil || result.serveBodyFromCache || requestDirectives.noStore || req.Method == http.MethodHead || !result.canStore() {
-		if idResult.error == nil || (result != nil && (len(result.freshenResponses) > 0 || len(result.staleResponseIDs) > 0)) {
+	if forwardError != nil || idResult.error != nil || result.serveBodyFromCache || requestDirectives.noStore || req.Method == http.MethodHead || !rt.canStore(result) {
+		if idResult.error == nil || (result != nil && len(result.freshenResponses)+len(result.staleResponseIDs) > 0) {
 			err := func() (err error) {
 				endFn, err := sqlitex.ImmediateTransaction(conn)
 				if err != nil {
@@ -209,19 +215,14 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 				}
 				defer endFn(&err)
 				if idResult.error == nil {
-					deleteResource(conn, idResult.id)
+					rt.reportError(req, deleteResource(conn, idResult.id))
 				}
 				if result != nil {
 					for _, stored := range result.freshenResponses {
-						stored.responseHeader = result.response.Header
-						if err := updateCache(conn, stored); err != nil {
-							return err
-						}
+						rt.reportError(req, updateCache(conn, stored))
 					}
 					for _, id := range result.staleResponseIDs {
-						if err := markStale(conn, id); err != nil {
-							return err
-						}
+						rt.reportError(req, markStale(conn, id))
 					}
 				}
 				return nil
@@ -239,18 +240,44 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		return result.response, nil
 	}
 
-	// TODO(soon): Size limit?
 	bodyBuffer, err := sqlitefile.NewBuffer(conn)
 	if err != nil {
 		rt.reportError(req, deleteResource(conn, idResult.id))
 		return result.response, nil
 	}
-	if _, err := io.Copy(bodyBuffer, result.response.Body); err != nil {
-		// TODO(soon): Return response with partial body from database.
-		rt.reportError(req, deleteResource(conn, idResult.id))
-		bodyBuffer.Close()
-		result.response.Body.Close()
-		return nil, fmt.Errorf("cache response body: %v", err)
+	bodyBufferInUse := false
+	defer func() {
+		if !bodyBufferInUse {
+			bodyBuffer.Close()
+		}
+	}()
+
+	if _, err := limitedCopy(bodyBuffer, result.response.Body, rt.maxResponseSize); err != nil {
+		// If we failed to copy the full body, then don't write to cache.
+		// Return the response and read the bytes back from the temporary buffer,
+		// followed by the rest of the body from the network.
+		err := func() (err error) {
+			endFn, err := sqlitex.ImmediateTransaction(conn)
+			if err != nil {
+				return err
+			}
+			defer endFn(&err)
+
+			rt.reportError(req, deleteResource(conn, idResult.id))
+			for _, stored := range result.freshenResponses {
+				rt.reportError(req, updateCache(conn, stored))
+			}
+			for _, id := range result.staleResponseIDs {
+				rt.reportError(req, markStale(conn, id))
+			}
+			return nil
+		}()
+		rt.reportError(req, err)
+
+		result.response.Body = rt.newBufferedResponseBody(conn, bodyBuffer, result.response.Body)
+		bodyBufferInUse = true
+		connInUse = true
+		return result.response, nil
 	}
 	err = func() (err error) {
 		endFn, err := sqlitex.ImmediateTransaction(conn)
@@ -275,7 +302,6 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 		return nil
 	}()
-	bodyBuffer.Close()
 	if err != nil {
 		result.response.Body.Close()
 		return nil, err
@@ -285,6 +311,21 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	connInUse = true
 	result.response.Body = rt.newStoredResponseBody(conn, idResult.id)
 	return result.response, nil
+}
+
+func (rt *RoundTripper) canStore(result *forwardResult) bool {
+	if result == nil ||
+		result.response == nil ||
+		!canStoreResponse(result.requestHeader, result.response.StatusCode, result.response.Header) ||
+		result.serveBodyFromCache {
+		return false
+	}
+	if rt.maxResponseSize > 0 {
+		if n, _ := contentLength(result.response.Header); n > rt.maxResponseSize {
+			return false
+		}
+	}
+	return true
 }
 
 // canStoreRequestHeader reports whether a header field with the given canonical key
@@ -670,6 +711,58 @@ func (hu headerUpserter) upsert(key, value string) (id int64, err error) {
 	hu.insertStmt.BindText(1, key)
 	hu.insertStmt.BindText(2, value)
 	return sqlitex.ResultInt64(hu.insertStmt)
+}
+
+type bufferedResponseBody struct {
+	db     *sqlitemigration.Pool
+	conn   *sqlite.Conn
+	buffer *sqlitefile.Buffer
+	body   io.ReadCloser
+}
+
+func (rt *RoundTripper) newBufferedResponseBody(conn *sqlite.Conn, buffer *sqlitefile.Buffer, body io.ReadCloser) *bufferedResponseBody {
+	return &bufferedResponseBody{
+		db:     rt.db,
+		conn:   conn,
+		buffer: buffer,
+		body:   body,
+	}
+}
+
+func (body *bufferedResponseBody) Read(p []byte) (n int, err error) {
+	if body.buffer != nil {
+		n, err = body.buffer.Read(p)
+		if n > 0 {
+			if err == io.EOF {
+				err = nil
+			}
+			return n, err
+		}
+		if err != nil && err != io.EOF {
+			return 0, err
+		}
+		body.closeBuffer()
+	}
+
+	return body.body.Read(p)
+}
+
+func (body *bufferedResponseBody) Close() error {
+	err1 := body.closeBuffer()
+	err2 := body.body.Close()
+	return errors.Join(err1, err2)
+}
+
+func (body *bufferedResponseBody) closeBuffer() error {
+	if body.buffer == nil {
+		return nil
+	}
+	err := body.buffer.Close()
+	body.buffer = nil
+	body.db.Put(body.conn)
+	body.db = nil
+	body.conn = nil
+	return err
 }
 
 type storedResponseBody struct {
