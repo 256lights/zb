@@ -99,48 +99,55 @@ func TestRoundTripper(t *testing.T) {
 					}
 				})
 
+				var wg sync.WaitGroup
 				for _, req := range cacheRequests {
 					requestDate, ok := dateHeader(req.requestHeaders, "Date")
 					if ok {
 						if d := time.Until(requestDate); d > 0 {
 							time.Sleep(d)
+							synctest.Wait()
 						}
 					} else {
 						requestDate = time.Now()
 					}
 
-					method := cmp.Or(req.method, http.MethodGet)
-					got, err := cache.RoundTrip(req.makeRequest(t))
-					if err != nil {
-						t.Errorf("RoundTrip(%s %s @ %s): %v", method, req.url, requestDate.UTC().Format(http.TimeFormat), err)
-					}
+					hreq := req.makeRequest(t)
+					wg.Go(func() {
+						method := cmp.Or(req.method, http.MethodGet)
+						got, err := cache.RoundTrip(hreq)
+						if err != nil {
+							t.Errorf("RoundTrip(%s %s @ %s): %v", method, req.url, requestDate.UTC().Format(http.TimeFormat), err)
+						}
 
-					if got == nil {
-						t.Errorf("%s %s @ %s: response == <nil>", method, req.url, requestDate.UTC().Format(http.TimeFormat))
-					} else {
-						if want := cmp.Or(req.statusCode, http.StatusOK); got.StatusCode != want {
-							t.Errorf("%s %s @ %s: status code = %d; want %d", method, req.url, requestDate.UTC().Format(http.TimeFormat), got.StatusCode, want)
-						}
-						if diff := googlecmp.Diff(req.responseHeaders, got.Header, cmpopts.EquateEmpty()); diff != "" {
-							t.Errorf("%s %s @ %s: headers (-want +got):\n%s", method, req.url, requestDate.UTC().Format(http.TimeFormat), diff)
-						}
-						if got.Body == nil {
-							t.Errorf("%s %s @ %s: response.Body == <nil>", method, req.url, requestDate.UTC().Format(http.TimeFormat))
+						if got == nil {
+							t.Errorf("%s %s @ %s: response == <nil>", method, req.url, requestDate.UTC().Format(http.TimeFormat))
 						} else {
-							gotBody, readError := io.ReadAll(got.Body)
-							closeError := got.Body.Close()
-							if readError != nil {
-								t.Errorf("%s %s @ %s: reading body: %v", method, req.url, requestDate.UTC().Format(http.TimeFormat), readError)
+							if want := cmp.Or(req.statusCode, http.StatusOK); got.StatusCode != want {
+								t.Errorf("%s %s @ %s: status code = %d; want %d", method, req.url, requestDate.UTC().Format(http.TimeFormat), got.StatusCode, want)
 							}
-							if diff := googlecmp.Diff(req.responseBody, string(gotBody)); diff != "" {
-								t.Errorf("%s %s @ %s: body (-want +got):\n%s", method, req.url, requestDate.UTC().Format(http.TimeFormat), diff)
+							if diff := googlecmp.Diff(req.responseHeaders, got.Header, cmpopts.EquateEmpty()); diff != "" {
+								t.Errorf("%s %s @ %s: headers (-want +got):\n%s", method, req.url, requestDate.UTC().Format(http.TimeFormat), diff)
 							}
-							if closeError != nil {
-								t.Errorf("%s %s @ %s: closing body: %v", method, req.url, requestDate.UTC().Format(http.TimeFormat), closeError)
+							if got.Body == nil {
+								t.Errorf("%s %s @ %s: response.Body == <nil>", method, req.url, requestDate.UTC().Format(http.TimeFormat))
+							} else {
+								gotBody, readError := io.ReadAll(got.Body)
+								closeError := got.Body.Close()
+								if readError != nil {
+									t.Errorf("%s %s @ %s: reading body: %v", method, req.url, requestDate.UTC().Format(http.TimeFormat), readError)
+								}
+								if diff := googlecmp.Diff(req.responseBody, string(gotBody)); diff != "" {
+									t.Errorf("%s %s @ %s: body (-want +got):\n%s", method, req.url, requestDate.UTC().Format(http.TimeFormat), diff)
+								}
+								if closeError != nil {
+									t.Errorf("%s %s @ %s: closing body: %v", method, req.url, requestDate.UTC().Format(http.TimeFormat), closeError)
+								}
 							}
 						}
-					}
+					})
 				}
+
+				wg.Wait()
 
 				mockServer.mu.Lock()
 				remainingResponses := slices.Clone(mockServer.responses)
