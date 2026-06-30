@@ -47,24 +47,36 @@ func TestRoundTripper(t *testing.T) {
 		if !isTXTAR {
 			continue
 		}
+		fileName = filepath.Join("testdata", fileName)
 
 		t.Run(testName, func(t *testing.T) {
-			ar, err := txtar.ParseFile(filepath.Join("testdata", fileName))
+			ar, err := txtar.ParseFile(fileName)
 			if err != nil {
 				t.Fatal(err)
 			}
-			cacheFileData, ok := txtarFileData(ar, "cache.txt")
-			if !ok {
-				t.Fatalf("Missing cache.txt in testdata/%s", fileName)
+			if len(ar.Files) == 0 {
+				t.Fatalf("%s has no txtar files", fileName)
 			}
-			cacheRequests, err := readRequestResponses(bufio.NewReader(bytes.NewReader(cacheFileData)))
+			if got, want := ar.Files[0].Name, "cache.txt"; got != want {
+				t.Fatalf("First file in %s is %s (want %s)", fileName, got, want)
+			}
+			cacheRequests, err := readRequestResponses(bufio.NewReader(bytes.NewReader(toCRLF(ar.Files[0].Data))))
 			if err != nil {
 				t.Fatal("cache.txt:", err)
 			}
-			serverFileData, _ := txtarFileData(ar, "server.txt")
-			serverRequests, err := readRequestResponses(bufio.NewReader(bytes.NewReader(serverFileData)))
-			if err != nil {
-				t.Fatal("server.txt:", err)
+			var serverRequests []*testRequestResponse
+			if len(ar.Files) >= 2 {
+				if got, want := ar.Files[1].Name, "server.txt"; got != want {
+					t.Fatalf("Second file in %s is %s (want %s)", fileName, got, want)
+				}
+				var err error
+				serverRequests, err = readRequestResponses(bufio.NewReader(bytes.NewReader(toCRLF(ar.Files[1].Data))))
+				if err != nil {
+					t.Fatal("server.txt:", err)
+				}
+				if len(ar.Files) > 2 {
+					t.Errorf("Unexpected files in %s after %s", fileName, ar.Files[1].Name)
+				}
 			}
 
 			synctest.Test(t, func(t *testing.T) {
@@ -603,11 +615,22 @@ func BenchmarkRoundTripper(b *testing.B) {
 	}
 }
 
-func txtarFileData(ar *txtar.Archive, name string) (data []byte, ok bool) {
-	for _, file := range ar.Files {
-		if file.Name == name {
-			return file.Data, true
+func toCRLF(data []byte) []byte {
+	n := len(data)
+	for i, b := range data {
+		if b == '\n' && (i-1 < 0 || data[i-1] != '\r') {
+			n++
 		}
 	}
-	return nil, false
+	if n == len(data) {
+		return data
+	}
+	newData := make([]byte, 0, n)
+	for i, b := range data {
+		if b == '\n' && (i-1 < 0 || data[i-1] != '\r') {
+			newData = append(newData, '\r')
+		}
+		newData = append(newData, b)
+	}
+	return newData
 }
