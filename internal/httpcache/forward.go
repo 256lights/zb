@@ -85,7 +85,7 @@ func forward(rt http.RoundTripper, req *http.Request, responses []*storedRespons
 	newRequest := rewriteRequestForValidation(req, responses)
 	result, err := do(newRequest)
 	if err != nil {
-		// TODO(soon): Use stale response on server error.
+		// TODO(someday): Use stale response on server error.
 		return nil, err
 	}
 	newValidators := extractValidatorFields(result.response.Header)
@@ -109,7 +109,7 @@ func forward(rt http.RoundTripper, req *http.Request, responses []*storedRespons
 			// To recover, we can try the original request.
 			result, err = do(req)
 			if err != nil {
-				// TODO(soon): Use stale response on server error.
+				// TODO(someday): Use stale response on server error.
 				return nil, err
 			}
 		} else {
