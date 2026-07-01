@@ -136,8 +136,8 @@ func forward(rt http.RoundTripper, req *http.Request, responses []*storedRespons
 		}
 		clear(fresh[freshCount:])
 		result.freshenResponses = fresh[:freshCount]
-		result.staleResponseIDs = stale
 	}
+	result.staleResponseIDs = stale
 
 	return result, nil
 }
