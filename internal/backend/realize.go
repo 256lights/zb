@@ -350,7 +350,7 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 		return err
 	}
 
-	log.Debugf(ctx, "Realizing %v...", want)
+	log.Debugf(ctx, "Realizing %v from %v...", want, buildRoots)
 	drvLocks := make(map[zbstore.Path]func())
 	defer func() {
 		for _, unlock := range drvLocks {
@@ -428,6 +428,7 @@ func (b *builder) gatherRealizations(ctx context.Context, graph *dependencyGraph
 	for it := graph.iterator(); ; {
 		curr, err := it.next(ctx)
 		if err == errEndIteration {
+			log.Debugf(ctx, "Gather complete")
 			return nil
 		}
 		if err != nil {
@@ -442,6 +443,7 @@ func (b *builder) gatherRealizations(ctx context.Context, graph *dependencyGraph
 		err = b.gatherRealizationsForDerivation(ctx, curr, node)
 		if err != nil {
 			if errors.Is(err, errMultipleRealizations) || errors.Is(err, errRealizationNotFound) {
+				log.Debugf(ctx, "Unable to gather realization for %s (%v)", curr, err)
 				it.finish(curr, false)
 				continue
 			}
@@ -575,6 +577,8 @@ func (b *builder) obtainBuildRoots(ctx context.Context, graph *dependencyGraph, 
 // and attempt to download store objects matching their realizations if possible.
 // It reports whether the outputs of the derivation at drvPath are present in the local store.
 func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *dependencyGraph, roots sets.Set[zbstore.Path], drvPath zbstore.Path) (bool, error) {
+	log.Debugf(ctx, "Walking back from %s while obtaining build roots", drvPath)
+
 	conn, err := b.server.db.Get(ctx)
 	if err != nil {
 		return false, fmt.Errorf("obtain build roots for %s: %v", drvPath, err)
@@ -620,6 +624,7 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 				}
 			})
 			if err == nil {
+				log.Debugf(ctx, "Adding build root %s", curr)
 				roots.Add(curr)
 				if curr == drvPath {
 					return true, nil
@@ -632,6 +637,7 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 	descend:
 		b.ignoreRealizations(graph, roots, curr)
 		if len(node.derivation.InputDerivations) == 0 {
+			log.Debugf(ctx, "Adding build root %s because it has no input derivations", curr)
 			roots.Add(curr)
 		} else {
 			queue = slices.AppendSeq(queue, maps.Keys(node.derivation.InputDerivations))
