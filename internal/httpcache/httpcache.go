@@ -16,6 +16,7 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,11 @@ type Options struct {
 	// whose size in bytes is greater than MaxResponseSize will not be cached.
 	MaxResponseSize int64
 
+	// RequestCoalescingCutoff is the amount of time to wait
+	// for other concurrent requests to the same URL.
+	// Zero or negative values disable request coalescing.
+	RequestCoalescingCutoff time.Duration
+
 	// ErrorReporter is the reporter to be used when a failure is encountered
 	// that does not prevent a call to [*RoundTripper.RoundTrip] from succeeding.
 	// Such failures are typically errors in reading or writing from the database.
@@ -41,10 +47,9 @@ type Options struct {
 }
 
 type RoundTripper struct {
-	db              *sqlitemigration.Pool
-	roundTripper    http.RoundTripper
-	maxResponseSize int64
-	errorReporter   ErrorReporter
+	db           *sqlitemigration.Pool
+	roundTripper http.RoundTripper
+	opts         Options
 }
 
 func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTripper {
@@ -55,9 +60,9 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 	opts = cmp.Or(opts, new(Options))
 	var onDBError sqlitemigration.ReportFunc
 	if opts.ErrorReporter != nil {
-		errorLogger := opts.ErrorReporter
+		errorReporter := opts.ErrorReporter
 		onDBError = func(err error) {
-			errorLogger.ReportError(context.Background(), nil, err)
+			errorReporter.ReportError(context.Background(), nil, err)
 		}
 	}
 	return &RoundTripper{
@@ -67,8 +72,7 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 			PrepareConn: prepareConn,
 			OnError:     onDBError,
 		}),
-		maxResponseSize: opts.MaxResponseSize,
-		errorReporter:   opts.ErrorReporter,
+		opts: *opts,
 	}
 }
 
@@ -89,10 +93,10 @@ func (rt *RoundTripper) CloseIdleConnections() {
 }
 
 func (rt *RoundTripper) reportError(req *http.Request, err error) {
-	if err == nil || rt == nil || rt.errorReporter == nil {
+	if err == nil || rt == nil || rt.opts.ErrorReporter == nil {
 		return
 	}
-	rt.errorReporter.ReportError(req.Context(), newRequestInfo(req), err)
+	rt.opts.ErrorReporter.ReportError(req.Context(), newRequestInfo(req), err)
 }
 
 func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -132,33 +136,56 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}()
 
-	responses, err := readCache(conn, req.URL)
-	rt.reportError(req, err)
-
-	// Find a fresh response.
 	requestDirectives := newCacheControlRequestDirectives(cacheControlDirectives(req.Header))
-	if !requestDirectives.noCache {
-		cacheCheckTime := time.Now()
-		for _, resp := range responses {
-			if !resp.responseReceived() ||
-				hasNoCacheDirective(cacheControlDirectives(resp.responseHeader)) ||
-				!resp.matchesRequestHeader(varyHeader(resp.responseHeader), req.Header) {
-				continue
-			}
-			if age, fresh := resp.isFresh(cacheCheckTime, requestDirectives); fresh {
-				var body io.ReadCloser
-				if req.Method == http.MethodHead {
-					body = http.NoBody
-				} else {
-					connInUse = true // Database connection will stay open until body is closed.
-					body = rt.newStoredResponseBody(conn, resp.id)
+	var responses []*storedResponse
+	coalesceContext := ctx
+	var cancelCoalesceContext context.CancelFunc = func() {}
+	if rt.opts.RequestCoalescingCutoff > 0 {
+		coalesceContext, cancelCoalesceContext = context.WithTimeout(coalesceContext, rt.opts.RequestCoalescingCutoff)
+		defer cancelCoalesceContext()
+	}
+	for t := new(backoffTimer); ; {
+		var err error
+		responses, err = readCache(conn, req.URL)
+		rt.reportError(req, err)
+
+		if !requestDirectives.noCache {
+			// Find a fresh response.
+			cacheCheckTime := time.Now()
+			for _, resp := range responses {
+				if !resp.responseReceived() ||
+					hasNoCacheDirective(cacheControlDirectives(resp.responseHeader)) ||
+					!resp.matchesRequestHeader(varyHeader(resp.responseHeader), req.Header) {
+					continue
 				}
-				hr := resp.toResponse(body)
-				hr.Header.Set("Age", formatDeltaSeconds(age))
-				return hr, nil
+				if age, fresh := resp.isFresh(cacheCheckTime, requestDirectives); fresh {
+					var body io.ReadCloser
+					if req.Method == http.MethodHead {
+						body = http.NoBody
+					} else {
+						connInUse = true // Database connection will stay open until body is closed.
+						body = rt.newStoredResponseBody(conn, resp.id)
+					}
+					hr := resp.toResponse(body)
+					hr.Header.Set("Age", formatDeltaSeconds(age))
+					return hr, nil
+				}
 			}
 		}
+
+		if rt.opts.RequestCoalescingCutoff <= 0 || !hasUnreceivedResponses(slices.Values(responses)) {
+			break
+		}
+		if err := t.wait(coalesceContext); err != nil {
+			// Don't return the error here:
+			// we'll use the last set of responses read from the cache.
+			// The request's context (hopefully) has a longer deadline.
+			break
+		}
 	}
+	cancelCoalesceContext()
+
+	// Only stale responses.
 	if requestDirectives.onlyIfCached {
 		const message = "Cached response not available"
 		return &http.Response{
@@ -178,10 +205,6 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			Request: req,
 		}, nil
 	}
-
-	// TODO(soon): If there are placeholders, then block.
-
-	// Only stale responses.
 	responses = xslices.Filter(responses, (*storedResponse).responseReceived)
 
 	startedAt := time.Now()
@@ -249,7 +272,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}()
 
-	if _, err := limitedCopy(bodyBuffer, result.response.Body, rt.maxResponseSize); err != nil {
+	if _, err := limitedCopy(bodyBuffer, result.response.Body, rt.opts.MaxResponseSize); err != nil {
 		// If we failed to copy the full body, then don't write to cache.
 		// Return the response and read the bytes back from the temporary buffer,
 		// followed by the rest of the body from the network.
@@ -317,8 +340,8 @@ func (rt *RoundTripper) canStore(result *forwardResult) bool {
 		result.serveBodyFromCache {
 		return false
 	}
-	if rt.maxResponseSize > 0 {
-		if n, _ := contentLength(result.response.Header); n > rt.maxResponseSize {
+	if rt.opts.MaxResponseSize > 0 {
+		if n, _ := contentLength(result.response.Header); n > rt.opts.MaxResponseSize {
 			return false
 		}
 	}

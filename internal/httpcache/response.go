@@ -5,6 +5,7 @@ package httpcache
 
 import (
 	"io"
+	"iter"
 	"net/http"
 	"time"
 )
@@ -165,6 +166,15 @@ func (resp *storedResponse) freshnessLifetime() time.Duration {
 
 func (resp *storedResponse) entityTag() (_ entityTag, ok bool) {
 	return entityTagFromHeader(resp.responseHeader)
+}
+
+func hasUnreceivedResponses(seq iter.Seq[*storedResponse]) bool {
+	for resp := range seq {
+		if !resp.responseReceived() {
+			return true
+		}
+	}
+	return false
 }
 
 // headerValue is equivalent to [http.Header.Get],

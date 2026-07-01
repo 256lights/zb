@@ -85,6 +85,7 @@ func TestRoundTripper(t *testing.T) {
 					responses: serverRequests,
 				}
 				cache := Open(filepath.Join(t.TempDir(), "http-cache.sqlite"), mockServer, &Options{
+					RequestCoalescingCutoff: 30 * time.Second,
 					ErrorReporter: ErrorReporterFunc(func(ctx context.Context, info *RequestInfo, err error) {
 						if info != nil {
 							t.Errorf("Cache error on %s %v: %v", info.Method, info.URL, err)
@@ -125,8 +126,14 @@ func TestRoundTripper(t *testing.T) {
 							if want := cmp.Or(req.statusCode, http.StatusOK); got.StatusCode != want {
 								t.Errorf("%s %s @ %s: status code = %d; want %d", method, req.url, requestDate.UTC().Format(http.TimeFormat), got.StatusCode, want)
 							}
-							if diff := googlecmp.Diff(req.responseHeaders, got.Header, cmpopts.EquateEmpty()); diff != "" {
-								t.Errorf("%s %s @ %s: headers (-want +got):\n%s", method, req.url, requestDate.UTC().Format(http.TimeFormat), diff)
+							headerCompareOptions := googlecmp.Options{
+								cmpopts.EquateEmpty(),
+							}
+							if req.responseHeaders.Get("Age") == "*" {
+								headerCompareOptions = append(headerCompareOptions, headerAgeWildcardCompare())
+							}
+							if diff := googlecmp.Diff(req.responseHeaders, got.Header, headerCompareOptions); diff != "" {
+								t.Errorf("%s %s @ %s: response headers (-want +got):\n%s", method, req.url, requestDate.UTC().Format(http.TimeFormat), diff)
 							}
 							if got.Body == nil {
 								t.Errorf("%s %s @ %s: response.Body == <nil>", method, req.url, requestDate.UTC().Format(http.TimeFormat))
@@ -552,6 +559,30 @@ func effectiveRequestHeaders(req *http.Request) (http.Header, error) {
 		return nil, err
 	}
 	return http.Header(header), nil
+}
+
+// headerAgeWildcardCompare returns a [googlecmp.Option]
+// that will make an "Age: *" header of an [http.Header]
+// compare equal to any valid Age header.
+func headerAgeWildcardCompare() googlecmp.Option {
+	return googlecmp.FilterPath(
+		func(p googlecmp.Path) bool {
+			return p.Index(-2).Type() == reflect.TypeFor[http.Header]() &&
+				p.Index(-1).(googlecmp.MapIndex).Key().Interface() == "Age"
+		},
+		googlecmp.Comparer(func(a, b []string) bool {
+			switch {
+			case len(a) == 1 && len(b) == 1 && a[0] == "*":
+				_, err := strconv.ParseUint(b[0], 10, 31)
+				return err == nil
+			case len(a) == 1 && len(b) == 1 && b[0] == "*":
+				_, err := strconv.ParseUint(a[0], 10, 31)
+				return err == nil
+			default:
+				return slices.Equal(a, b)
+			}
+		}),
+	)
 }
 
 func BenchmarkRoundTripper(b *testing.B) {
