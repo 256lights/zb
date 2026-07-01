@@ -120,6 +120,7 @@ func zbKongOption() kong.Option {
 			"default_store_dir":         string(g.Directory),
 			"default_store_socket":      g.StoreSocket,
 			"cache_db":                  g.CacheDB,
+			"http_cache":                g.HTTPCacheDB,
 			"netrc":                     g.NetrcPath,
 			"default_store_db":          filepath.Join(defaultVarDir(), "db.sqlite"),
 			"build_users_group":         defaultBuildUsersGroup,
@@ -251,11 +252,16 @@ func (c *evalCommand) Signature() string {
 }
 
 func (c *evalCommand) Run(ctx context.Context, g *globalConfig) error {
-	httpClient, err := g.newHTTPClient()
+	httpClient, httpCloser, err := g.newHTTPClient()
 	if err != nil {
 		return err
 	}
-	defer httpClient.CloseIdleConnections()
+	defer func() {
+		httpClient.CloseIdleConnections()
+		if err := httpCloser.Close(); err != nil {
+			log.Warnf(ctx, "%v", err)
+		}
+	}()
 	di := new(zbstorerpc.DeferredImporter)
 	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: di,
@@ -299,11 +305,16 @@ func (c *buildCommand) Signature() string {
 }
 
 func (c *buildCommand) Run(ctx context.Context, g *globalConfig) error {
-	httpClient, err := g.newHTTPClient()
+	httpClient, httpCloser, err := g.newHTTPClient()
 	if err != nil {
 		return err
 	}
-	defer httpClient.CloseIdleConnections()
+	defer func() {
+		httpClient.CloseIdleConnections()
+		if err := httpCloser.Close(); err != nil {
+			log.Warnf(ctx, "%v", err)
+		}
+	}()
 	di := new(zbstorerpc.DeferredImporter)
 	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: di,
