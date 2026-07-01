@@ -1,4 +1,5 @@
 *.drv eol=lf
 *.narinfo eol=lf
+*.sql text eol=lf
 /cmd/zb/docs/*.txt eol=lf
 /internal/httpcache/*.txtar text eol=crlf
