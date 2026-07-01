@@ -7,22 +7,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/tailscale/hujson"
 	"zb.256lights.llc/pkg/internal/backend"
+	"zb.256lights.llc/pkg/internal/httpcache"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/netrc"
 	"zb.256lights.llc/pkg/internal/remotestore"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
+	"zombiezen.com/go/log"
 )
 
 // globalConfig is the set of configuration settings and persistent command-line flags.
@@ -33,6 +37,7 @@ type globalConfig struct {
 	StoreSocket       string                          `json:"storeSocket" kong:"default=${default_store_socket},help=Server socket"`
 	NetrcPath         string                          `json:"netrcFile,omitempty" kong:"name=netrc-file,default=${netrc},help=Use HTTP credentials from the given path."`
 	CacheDB           string                          `json:"cacheDB" kong:"name=cache,default=${cache_db},help=Cache database"`
+	HTTPCacheDB       string                          `json:"httpCache" kong:"name=http-cache,default=${http_cache},help=Cache HTTP responses in the given file."`
 	AllowEnv          stringAllowList                 `json:"allowEnvironment" kong:"-"`
 	TrustedPublicKeys []*zbstore.RealizationPublicKey `json:"trustedPublicKeys" kong:"-"`
 	Server            serverConfig                    `json:"server,omitzero" kong:"-"`
@@ -50,6 +55,7 @@ func defaultGlobalConfig() *globalConfig {
 	}
 	if cd := cacheDir(); cd != "" {
 		g.CacheDB = filepath.Join(cd, "zb", "cache.db")
+		g.HTTPCacheDB = filepath.Join(cd, "zb", "http-cache.db")
 	}
 	return g
 }
@@ -114,6 +120,9 @@ func (g *globalConfig) resolveRelativePaths(dir string, prev *globalConfig) {
 	if prev == nil || g.CacheDB != prev.CacheDB {
 		g.CacheDB = resolve(g.CacheDB)
 	}
+	if prev == nil || g.HTTPCacheDB != prev.HTTPCacheDB {
+		g.HTTPCacheDB = resolve(g.HTTPCacheDB)
+	}
 	if prev == nil || g.NetrcPath != prev.NetrcPath {
 		g.NetrcPath = resolve(g.NetrcPath)
 	}
@@ -161,6 +170,10 @@ func (g *globalConfig) UnmarshalJSONFrom(in *jsontext.Decoder) error {
 			if err := jsonv2.UnmarshalDecode(in, &g.CacheDB); err != nil {
 				return fmt.Errorf("unmarshal config.cacheDB: %w", err)
 			}
+		case "httpCache":
+			if err := jsonv2.UnmarshalDecode(in, &g.HTTPCacheDB); err != nil {
+				return fmt.Errorf("unmarshal config.httpCache: %w", err)
+			}
 		case "allowEnvironment":
 			if err := jsonv2.UnmarshalDecode(in, &g.AllowEnv); err != nil {
 				return fmt.Errorf("unmarshal config.allowEnvironment: %w", err)
@@ -200,7 +213,7 @@ func (g *globalConfig) Validate() error {
 	if g.StoreSocket == "" {
 		return fmt.Errorf("ZB_STORE_SOCKET not set")
 	}
-	if g.CacheDB == "" {
+	if g.CacheDB == "" || g.HTTPCacheDB == "" {
 		return fmt.Errorf("cache directory not set")
 	}
 
@@ -214,23 +227,35 @@ func (g *globalConfig) reusePolicy() *zbstorerpc.ReusePolicy {
 	return &zbstorerpc.ReusePolicy{PublicKeys: g.TrustedPublicKeys}
 }
 
-func (g *globalConfig) newHTTPClient() (*http.Client, error) {
+func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
+	transport := httpcache.Open(g.HTTPCacheDB, http.DefaultTransport, &httpcache.Options{
+		MaxResponseSize:         4 << 20, // 4 MiB
+		RequestCoalescingCutoff: 5 * time.Second,
+		ErrorReporter: httpcache.ErrorReporterFunc(func(ctx context.Context, info *httpcache.RequestInfo, err error) {
+			if info != nil {
+				log.Warnf(ctx, "HTTP cache failure on %s %v: %v", info.Method, info.URL.Redacted(), err)
+			} else {
+				log.Warnf(ctx, "HTTP cache error: %v", err)
+			}
+		}),
+	})
 	if g.NetrcPath == "" {
-		return http.DefaultClient, nil
+		return &http.Client{Transport: transport}, transport, nil
 	}
 	netrcData, err := os.ReadFile(g.NetrcPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return http.DefaultClient, nil
+		return &http.Client{Transport: transport}, transport, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("open netrc file: %v", err)
+		transport.Close()
+		return nil, nil, fmt.Errorf("open netrc file: %v", err)
 	}
 	return &http.Client{
 		Transport: &netrc.Transport{
 			Netrc:        netrcData,
-			RoundTripper: http.DefaultTransport,
+			RoundTripper: transport,
 		},
-	}, nil
+	}, transport, nil
 }
 
 func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) *jsonrpc.Client {
@@ -245,14 +270,15 @@ func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) *jsonrpc.Clien
 
 func (g *globalConfig) storeDeps() (_ *storeDeps, cleanup func()) {
 	var state struct {
-		client *http.Client
+		client       *http.Client
+		clientCloser io.Closer
 	}
 
 	deps := &storeDeps{
 		httpClientProvider: func() (*http.Client, error) {
 			if state.client == nil {
 				var err error
-				state.client, err = g.newHTTPClient()
+				state.client, state.clientCloser, err = g.newHTTPClient()
 				if err != nil {
 					return state.client, err
 				}
@@ -263,6 +289,11 @@ func (g *globalConfig) storeDeps() (_ *storeDeps, cleanup func()) {
 	cleanup = func() {
 		if state.client != nil {
 			state.client.CloseIdleConnections()
+		}
+		if state.clientCloser != nil {
+			if err := state.clientCloser.Close(); err != nil {
+				log.Warnf(context.Background(), "%v", err)
+			}
 		}
 	}
 	return deps, cleanup

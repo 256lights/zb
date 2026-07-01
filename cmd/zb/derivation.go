@@ -80,11 +80,16 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 		}
 	}
 
-	httpClient, err := g.newHTTPClient()
+	httpClient, httpCloser, err := g.newHTTPClient()
 	if err != nil {
 		return err
 	}
-	defer httpClient.CloseIdleConnections()
+	defer func() {
+		httpClient.CloseIdleConnections()
+		if err := httpCloser.Close(); err != nil {
+			log.Warnf(ctx, "%v", err)
+		}
+	}()
 	di := new(zbstorerpc.DeferredImporter)
 	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: di,
@@ -307,11 +312,16 @@ func (c *derivationEnvCommand) Signature() string {
 }
 
 func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
-	httpClient, err := g.newHTTPClient()
+	httpClient, httpCloser, err := g.newHTTPClient()
 	if err != nil {
 		return err
 	}
-	defer httpClient.CloseIdleConnections()
+	defer func() {
+		httpClient.CloseIdleConnections()
+		if err := httpCloser.Close(); err != nil {
+			log.Warnf(ctx, "%v", err)
+		}
+	}()
 	di := new(zbstorerpc.DeferredImporter)
 	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
 		Importer: di,
