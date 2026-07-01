@@ -1,0 +1,41 @@
+Using the "Cache-Control: must-understand" response directive
+with a status code that the cache understands
+must override the "Cache-Control: no-store" response directive.
+
+-- cache.txt --
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800, no-store, must-understand
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800, no-store, must-understand
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+Age: 5
+
+Hello, World!
+-- server.txt --
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800, no-store, must-understand
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!

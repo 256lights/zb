@@ -1,0 +1,52 @@
+If the server responds with a 206 Partial Content status code
+(which we don't handle),
+the response must not be cached regardless of other Cache-Control response directives.
+
+-- cache.txt --
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 206 Partial Content
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+HTTP/1.1 206 Partial Content
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+Hello, World!
+-- server.txt --
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 206 Partial Content
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+HTTP/1.1 206 Partial Content
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+Hello, World!

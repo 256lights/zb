@@ -359,7 +359,7 @@ func canStoreRequestHeader(key string) bool {
 //
 // [Section 3 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-3
 func canStoreResponse(requestHeader http.Header, statusCode int, responseHeader http.Header) bool {
-	if !isFinalStatusCode(statusCode) {
+	if !isFinalStatusCode(statusCode) || statusCode == http.StatusPartialContent {
 		return false
 	}
 	if vary := varyHeader(responseHeader); !vary.hasWildcard() {
@@ -370,19 +370,63 @@ func canStoreResponse(requestHeader http.Header, statusCode int, responseHeader 
 			}
 		}
 	}
-	// TODO(soon): Understand the status code?
 	canStore := isCacheableStatusCode(statusCode) || len(responseHeader["Expires"]) > 0
+	noStore := false
+	mustUnderstand := false
 	for d := range cacheControlDirectives(responseHeader) {
 		switch {
 		case d.nameMatches("no-store") && d.rawArgument == "":
-			return false
+			noStore = true
 		case !canStore && (d.nameMatches("private") ||
 			d.nameMatches("public") && d.rawArgument == "" ||
 			d.nameMatches("max-age") && d.rawArgument != ""):
 			canStore = true
+		case d.nameMatches("must-understand") && d.rawArgument == "":
+			if !isStatusCodeUnderstood(statusCode) {
+				return false
+			}
+			mustUnderstand = true
 		}
 	}
-	return canStore
+	return canStore && (!noStore || mustUnderstand)
+}
+
+// isStatusCodeUnderstood reports whether the HTTP status code
+// is one of those that this cache implementation understands the semantics of.
+func isStatusCodeUnderstood(code int) bool {
+	return code == http.StatusOK ||
+		code == http.StatusCreated ||
+		code == http.StatusAccepted ||
+		code == http.StatusNonAuthoritativeInfo ||
+		code == http.StatusNoContent ||
+		code == http.StatusMultipleChoices ||
+		code == http.StatusMovedPermanently ||
+		code == http.StatusFound ||
+		code == http.StatusSeeOther ||
+		code == http.StatusNotModified ||
+		code == http.StatusTemporaryRedirect ||
+		code == http.StatusPermanentRedirect ||
+		code == http.StatusBadRequest ||
+		code == http.StatusUnauthorized ||
+		code == http.StatusForbidden ||
+		code == http.StatusNotFound ||
+		code == http.StatusMethodNotAllowed ||
+		code == http.StatusNotAcceptable ||
+		code == http.StatusProxyAuthRequired ||
+		code == http.StatusRequestTimeout ||
+		code == http.StatusConflict ||
+		code == http.StatusGone ||
+		code == http.StatusPreconditionFailed ||
+		code == http.StatusRequestURITooLong ||
+		code == http.StatusExpectationFailed ||
+		code == http.StatusMisdirectedRequest ||
+		code == http.StatusUnprocessableEntity ||
+		code == http.StatusUpgradeRequired ||
+		code == http.StatusInternalServerError ||
+		code == http.StatusNotImplemented ||
+		code == http.StatusBadGateway ||
+		code == http.StatusServiceUnavailable ||
+		code == http.StatusGatewayTimeout
 }
 
 func readCache(conn *sqlite.Conn, u *url.URL) (result []*storedResponse, err error) {
