@@ -15,9 +15,10 @@ require (
 	github.com/jotaen/kong-completion v0.0.12
 	github.com/tailscale/hujson v0.0.0-20250226034555-ec1d1c113d33
 	go4.org v0.0.0-20230225012048-214862532bf5
-	golang.org/x/sync v0.14.0
-	golang.org/x/sys v0.33.0
+	golang.org/x/sync v0.21.0
+	golang.org/x/sys v0.46.0
 	golang.org/x/term v0.31.0
+	golang.org/x/tools v0.47.0
 	zombiezen.com/go/bass v0.0.0-20230823162859-0399f01327dd
 	zombiezen.com/go/log v1.2.0
 	zombiezen.com/go/nix v0.0.0-20250514174927-d97ab08b45de
@@ -37,8 +38,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/riywo/loginshell v0.0.0-20200815045211-7d26008be1ab // indirect
 	golang.org/x/exp v0.0.0-20230315142452-642cacee5cc0 // indirect
-	golang.org/x/mod v0.24.0 // indirect
-	golang.org/x/tools v0.33.0 // indirect
+	golang.org/x/mod v0.37.0 // indirect
 	modernc.org/libc v1.61.13 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.8.2 // indirect

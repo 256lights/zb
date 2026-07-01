@@ -1,0 +1,42 @@
+Verifies that if there are multiple concurrent requests to the same URL
+within the RequestCoalescingCutoff
+(assumed to be greater than 20 seconds in this test)
+that only a single request is sent to the server.
+
+"Age: *" is specially handled by the test harness
+to match any valid Age header.
+
+-- cache.txt --
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+Date: Sat, 01 Jan 2000 00:00:20 GMT
+
+Hello, World!
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+Date: Sat, 01 Jan 2000 00:00:20 GMT
+Age: *
+
+Hello, World!
+-- server.txt --
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+Date: Sat, 01 Jan 2000 00:00:20 GMT
+
+Hello, World!

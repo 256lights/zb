@@ -1,0 +1,39 @@
+-- cache.txt --
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: no-cache="X-Foo"
+X-Foo: 42
+X-Bar: pi
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: no-cache="X-Foo"
+X-Bar: pi
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+Age: 5
+
+Hello, World!
+-- server.txt --
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: no-cache="X-Foo"
+X-Foo: 42
+X-Bar: pi
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!

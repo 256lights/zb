@@ -1,0 +1,59 @@
+-- cache.txt --
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!
+POST http://www.example.com/foo HTTP/1.1
+Content-Length: 0
+Date: Sat, 01 Jan 2000 00:00:01 GMT
+
+HTTP/1.1 204 No Content
+Date: Sat, 01 Jan 2000 00:00:01 GMT
+
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:02 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 34
+Cache-Control: max-age=604800
+Date: Sat, 01 Jan 2000 00:00:02 GMT
+
+Hello, World! I've been changed!
+-- server.txt --
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=604800
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!
+POST http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Content-Length: 0
+Date: Sat, 01 Jan 2000 00:00:01 GMT
+
+HTTP/1.1 204 No Content
+Date: Sat, 01 Jan 2000 00:00:01 GMT
+
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Date: Sat, 01 Jan 2000 00:00:02 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 34
+Cache-Control: max-age=604800
+Date: Sat, 01 Jan 2000 00:00:02 GMT
+
+Hello, World! I've been changed!

@@ -44,3 +44,6 @@ trim_trailing_whitespace = true
 [{*.sh,.envrc}]
 indent_style = space
 indent_size = 2
+
+[internal/httpcache/testdata/*.txtar]
+end_of_line = crlf

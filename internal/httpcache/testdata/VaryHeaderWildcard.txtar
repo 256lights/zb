@@ -1,0 +1,63 @@
+-- cache.txt --
+GET http://www.example.com/foo HTTP/1.1
+Accept: text/html, text/*;q=0.9, */*;q=0.1
+X-Foo: 123
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Content-Length: 39
+Vary: *
+Cache-Control: max-age=604800
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+<!DOCTYPE html>
+<p>Hello, World!</p>
+GET http://www.example.com/foo HTTP/1.1
+Accept: text/html, text/*;q=0.9, */*;q=0.1
+X-Foo: 123
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Content-Length: 39
+Vary: *
+Cache-Control: max-age=604800
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+<!DOCTYPE html>
+<p>Hello, World!</p>
+-- server.txt --
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Accept: text/html, text/*;q=0.9, */*;q=0.1
+X-Foo: 123
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Content-Length: 39
+Vary: *
+Cache-Control: max-age=604800
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+<!DOCTYPE html>
+<p>Hello, World!</p>
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Accept: text/html, text/*;q=0.9, */*;q=0.1
+X-Foo: 123
+If-None-Match: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+
+HTTP/1.1 304 Not Modified
+Content-Type: text/html; charset=utf-8
+Content-Length: 39
+Vary: *
+Cache-Control: max-age=604800
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:05 GMT
+

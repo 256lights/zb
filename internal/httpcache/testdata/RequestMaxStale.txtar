@@ -1,0 +1,35 @@
+-- cache.txt --
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=60
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!
+GET http://www.example.com/foo HTTP/1.1
+Cache-Control: max-stale=60
+Date: Sat, 01 Jan 2000 00:01:30 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=60
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+Age: 90
+
+Hello, World!
+-- server.txt --
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=60
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!

@@ -1,0 +1,75 @@
+Verify that receiving a new representation of a resource
+removes old representations from the cache.
+
+-- cache.txt --
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=59
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:01:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 23
+Cache-Control: max-age=59
+ETag: "new"
+Date: Sat, 01 Jan 2000 00:01:00 GMT
+
+this is the new stuff
+GET http://www.example.com/foo HTTP/1.1
+Date: Sat, 01 Jan 2000 00:02:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 23
+Cache-Control: max-age=59
+ETag: "new"
+Date: Sat, 01 Jan 2000 00:02:00 GMT
+
+this is the new stuff
+-- server.txt --
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 15
+Cache-Control: max-age=59
+ETag: "xyzzy"
+Date: Sat, 01 Jan 2000 00:00:00 GMT
+
+Hello, World!
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+If-None-Match: "xyzzy"
+Date: Sat, 01 Jan 2000 00:01:00 GMT
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 23
+Cache-Control: max-age=59
+ETag: "new"
+Date: Sat, 01 Jan 2000 00:01:00 GMT
+
+this is the new stuff
+GET http://www.example.com/foo HTTP/1.1
+Host: www.example.com
+If-None-Match: "new"
+Date: Sat, 01 Jan 2000 00:02:00 GMT
+
+HTTP/1.1 304 Not Modified
+Content-Type: text/plain; charset=utf-8
+Content-Length: 23
+Cache-Control: max-age=59
+ETag: "new"
+Date: Sat, 01 Jan 2000 00:02:00 GMT
+
