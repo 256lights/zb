@@ -95,6 +95,8 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 	if poolSize < 1 {
 		poolSize = 5
 	}
+	initFinished := make(chan struct{})
+	defer close(initFinished)
 	rt.db = sqlitemigration.NewPool(dbPath, schema(), sqlitemigration.Options{
 		Flags:       sqlite.OpenReadWrite | sqlite.OpenCreate,
 		PrepareConn: prepareConn,
@@ -102,6 +104,7 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 		OnError:     onDBError,
 		OnReady: func() {
 			rt.backgroundTasks.Go(func() {
+				<-initFinished
 				rt.optimize(rt.backgroundContext)
 			})
 		},
