@@ -46,12 +46,18 @@ type Options struct {
 	ErrorReporter ErrorReporter
 }
 
+// A RoundTripper is an HTTP cache middleware of a [http.RoundTripper].
+// RoundTripper is safe for concurrent use by multiple goroutines.
 type RoundTripper struct {
 	db           *sqlitemigration.Pool
 	roundTripper http.RoundTripper
 	opts         Options
 }
 
+// Open returns a new [*RoundTripper] that persists cache data to the file at dbPath
+// and forwards uncached requests to the given [http.RoundTripper].
+// The caller is responsible for calling [*RoundTripper.Close]
+// when the [*RoundTripper] is no longer used.
 func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTripper {
 	if roundTripper == nil {
 		panic("nil http.RoundTripper")
@@ -76,6 +82,8 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 	}
 }
 
+// Close releases all resources associated with rt.
+// Close waits until all response bodies being read from the cache are closed.
 func (rt *RoundTripper) Close() error {
 	rt.CloseIdleConnections()
 	return rt.db.Close()
@@ -99,6 +107,7 @@ func (rt *RoundTripper) reportError(req *http.Request, err error) {
 	rt.opts.ErrorReporter.ReportError(req.Context(), newRequestInfo(req), err)
 }
 
+// RoundTrip implements [http.RoundTripper].
 func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
 
