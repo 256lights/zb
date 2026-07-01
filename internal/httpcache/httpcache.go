@@ -145,6 +145,14 @@ func (rt *RoundTripper) reportError(req *http.Request, err error) {
 //
 // [docs for ANALYZE]: https://www.sqlite.org/lang_analyze.html#recommended_usage_patterns
 func (rt *RoundTripper) optimize(ctx context.Context) {
+	isInterrupt := func(err error) bool {
+		code := sqlite.ErrCode(err).ToPrimary()
+		// We also consider SQLITE_BUSY to be an interrupt
+		// because beginning a transaction when interrupted
+		// will cause the BEGIN to return SQLITE_BUSY.
+		return code == sqlite.ResultInterrupt || code == sqlite.ResultBusy
+	}
+
 	conn, err := rt.db.Get(ctx)
 	if err != nil {
 		return
@@ -152,7 +160,7 @@ func (rt *RoundTripper) optimize(ctx context.Context) {
 	err = optimizeDBFull(conn)
 	rt.db.Put(conn)
 	if err != nil {
-		if rt.errorReporter != nil {
+		if rt.errorReporter != nil && !isInterrupt(err) {
 			rt.errorReporter.ReportError(ctx, nil, err)
 		}
 		return
@@ -174,7 +182,7 @@ func (rt *RoundTripper) optimize(ctx context.Context) {
 		err = optimizeDB(conn)
 		rt.db.Put(conn)
 		if err != nil {
-			if rt.errorReporter != nil {
+			if rt.errorReporter != nil && !isInterrupt(err) {
 				rt.errorReporter.ReportError(ctx, nil, err)
 			}
 			return
