@@ -98,15 +98,6 @@ func hasNoCacheDirective(directives iter.Seq[cacheControlDirective]) bool {
 	return false
 }
 
-func hasNoStoreDirective(directives iter.Seq[cacheControlDirective]) bool {
-	for d := range directives {
-		if d.nameMatches("no-store") && d.rawArgument == "" {
-			return true
-		}
-	}
-	return false
-}
-
 type cacheControlDirective struct {
 	name        string
 	rawArgument string
