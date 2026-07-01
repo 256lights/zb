@@ -31,6 +31,11 @@ import (
 // Options contains optional arguments to [Open].
 // nil is treated the same as the zero value.
 type Options struct {
+	// MaxConcurrentRequests specifies a limit on the number of requests
+	// that can concurrently access the cache.
+	// If less than 1, then a reasonable default is used.
+	MaxConcurrentRequests int
+
 	// If MaxResponseSize is positive, then any responses with a body
 	// whose size in bytes is greater than MaxResponseSize will not be cached.
 	MaxResponseSize int64
@@ -49,9 +54,11 @@ type Options struct {
 // A RoundTripper is an HTTP cache middleware of a [http.RoundTripper].
 // RoundTripper is safe for concurrent use by multiple goroutines.
 type RoundTripper struct {
-	db           *sqlitemigration.Pool
-	roundTripper http.RoundTripper
-	opts         Options
+	db                      *sqlitemigration.Pool
+	roundTripper            http.RoundTripper
+	maxResponseSize         int64
+	requestCoalescingCutoff time.Duration
+	errorReporter           ErrorReporter
 }
 
 // Open returns a new [*RoundTripper] that persists cache data to the file at dbPath
@@ -71,14 +78,21 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 			errorReporter.ReportError(context.Background(), nil, err)
 		}
 	}
+	poolSize := opts.MaxConcurrentRequests
+	if poolSize < 1 {
+		poolSize = 5
+	}
 	return &RoundTripper{
 		roundTripper: roundTripper,
 		db: sqlitemigration.NewPool(dbPath, schema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenReadWrite | sqlite.OpenCreate,
 			PrepareConn: prepareConn,
+			PoolSize:    poolSize,
 			OnError:     onDBError,
 		}),
-		opts: *opts,
+		maxResponseSize:         opts.MaxResponseSize,
+		requestCoalescingCutoff: opts.RequestCoalescingCutoff,
+		errorReporter:           opts.ErrorReporter,
 	}
 }
 
@@ -101,10 +115,10 @@ func (rt *RoundTripper) CloseIdleConnections() {
 }
 
 func (rt *RoundTripper) reportError(req *http.Request, err error) {
-	if err == nil || rt == nil || rt.opts.ErrorReporter == nil {
+	if err == nil || rt == nil || rt.errorReporter == nil {
 		return
 	}
-	rt.opts.ErrorReporter.ReportError(req.Context(), newRequestInfo(req), err)
+	rt.errorReporter.ReportError(req.Context(), newRequestInfo(req), err)
 }
 
 // RoundTrip implements [http.RoundTripper].
@@ -149,8 +163,8 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	var responses []*storedResponse
 	coalesceContext := ctx
 	var cancelCoalesceContext context.CancelFunc = func() {}
-	if rt.opts.RequestCoalescingCutoff > 0 {
-		coalesceContext, cancelCoalesceContext = context.WithTimeout(coalesceContext, rt.opts.RequestCoalescingCutoff)
+	if rt.requestCoalescingCutoff > 0 {
+		coalesceContext, cancelCoalesceContext = context.WithTimeout(coalesceContext, rt.requestCoalescingCutoff)
 		defer cancelCoalesceContext()
 	}
 	for t := new(backoffTimer); ; {
@@ -182,7 +196,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 		}
 
-		if rt.opts.RequestCoalescingCutoff <= 0 || !hasUnreceivedResponses(slices.Values(responses)) {
+		if rt.requestCoalescingCutoff <= 0 || !hasUnreceivedResponses(slices.Values(responses)) {
 			break
 		}
 		if err := t.wait(coalesceContext); err != nil {
@@ -281,7 +295,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}()
 
-	if _, err := limitedCopy(bodyBuffer, result.response.Body, rt.opts.MaxResponseSize); err != nil {
+	if _, err := limitedCopy(bodyBuffer, result.response.Body, rt.maxResponseSize); err != nil {
 		// If we failed to copy the full body, then don't write to cache.
 		// Return the response and read the bytes back from the temporary buffer,
 		// followed by the rest of the body from the network.
@@ -349,8 +363,8 @@ func (rt *RoundTripper) canStore(result *forwardResult) bool {
 		result.serveBodyFromCache {
 		return false
 	}
-	if rt.opts.MaxResponseSize > 0 {
-		if n, _ := contentLength(result.response.Header); n > rt.opts.MaxResponseSize {
+	if rt.maxResponseSize > 0 {
+		if n, _ := contentLength(result.response.Header); n > rt.maxResponseSize {
 			return false
 		}
 	}
