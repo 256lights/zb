@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"zb.256lights.llc/pkg/internal/xslices"
@@ -59,6 +60,10 @@ type RoundTripper struct {
 	maxResponseSize         int64
 	requestCoalescingCutoff time.Duration
 	errorReporter           ErrorReporter
+
+	backgroundContext       context.Context
+	cancelBackgroundContext context.CancelFunc
+	backgroundTasks         sync.WaitGroup
 }
 
 // Open returns a new [*RoundTripper] that persists cache data to the file at dbPath
@@ -69,6 +74,14 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 	if roundTripper == nil {
 		panic("nil http.RoundTripper")
 	}
+
+	rt := &RoundTripper{
+		roundTripper:            roundTripper,
+		maxResponseSize:         opts.MaxResponseSize,
+		requestCoalescingCutoff: opts.RequestCoalescingCutoff,
+		errorReporter:           opts.ErrorReporter,
+	}
+	rt.backgroundContext, rt.cancelBackgroundContext = context.WithCancel(context.Background())
 
 	opts = cmp.Or(opts, new(Options))
 	var onDBError sqlitemigration.ReportFunc
@@ -82,24 +95,27 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 	if poolSize < 1 {
 		poolSize = 5
 	}
-	return &RoundTripper{
-		roundTripper: roundTripper,
-		db: sqlitemigration.NewPool(dbPath, schema(), sqlitemigration.Options{
-			Flags:       sqlite.OpenReadWrite | sqlite.OpenCreate,
-			PrepareConn: prepareConn,
-			PoolSize:    poolSize,
-			OnError:     onDBError,
-		}),
-		maxResponseSize:         opts.MaxResponseSize,
-		requestCoalescingCutoff: opts.RequestCoalescingCutoff,
-		errorReporter:           opts.ErrorReporter,
-	}
+	rt.db = sqlitemigration.NewPool(dbPath, schema(), sqlitemigration.Options{
+		Flags:       sqlite.OpenReadWrite | sqlite.OpenCreate,
+		PrepareConn: prepareConn,
+		PoolSize:    poolSize,
+		OnError:     onDBError,
+		OnReady: func() {
+			rt.backgroundTasks.Go(func() {
+				rt.optimize(rt.backgroundContext)
+			})
+		},
+	})
+
+	return rt
 }
 
 // Close releases all resources associated with rt.
 // Close waits until all response bodies being read from the cache are closed.
 func (rt *RoundTripper) Close() error {
 	rt.CloseIdleConnections()
+	rt.cancelBackgroundContext()
+	rt.backgroundTasks.Wait()
 	return rt.db.Close()
 }
 
@@ -119,6 +135,48 @@ func (rt *RoundTripper) reportError(req *http.Request, err error) {
 		return
 	}
 	rt.errorReporter.ReportError(req.Context(), newRequestInfo(req), err)
+}
+
+// optimize is a long-running goroutine that periodically runs "PRAGMA optimize;".
+// See the [docs for ANALYZE] for more details.
+//
+// [docs for ANALYZE]: https://www.sqlite.org/lang_analyze.html#recommended_usage_patterns
+func (rt *RoundTripper) optimize(ctx context.Context) {
+	conn, err := rt.db.Get(ctx)
+	if err != nil {
+		return
+	}
+	err = optimizeDBFull(conn)
+	rt.db.Put(conn)
+	if err != nil {
+		if rt.errorReporter != nil {
+			rt.errorReporter.ReportError(ctx, nil, err)
+		}
+		return
+	}
+
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+
+		conn, err := rt.db.Get(ctx)
+		if err != nil {
+			return
+		}
+		err = optimizeDB(conn)
+		rt.db.Put(conn)
+		if err != nil {
+			if rt.errorReporter != nil {
+				rt.errorReporter.ReportError(ctx, nil, err)
+			}
+			return
+		}
+	}
 }
 
 // RoundTrip implements [http.RoundTripper].

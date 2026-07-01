@@ -127,6 +127,23 @@ func runStatement(stmt *sqlite.Stmt) error {
 	return resetError
 }
 
+func optimizeDB(conn *sqlite.Conn) error {
+	if err := sqlitex.ExecuteTransient(conn, `PRAGMA optimize;`, nil); err != nil {
+		return fmt.Errorf("pragma optimize: %w", err)
+	}
+	return nil
+}
+
+func optimizeDBFull(conn *sqlite.Conn) error {
+	// 0x00002: Run ANALYZE.
+	// 0x00010: Set a limit on ANALYZE.
+	// 0x10000: Check the size of all tables.
+	if err := sqlitex.ExecuteTransient(conn, `PRAGMA optimize=0x10012;`, nil); err != nil {
+		return fmt.Errorf("pragma optimize: %w", err)
+	}
+	return nil
+}
+
 func readFileString(fsys fs.FS, name string) (string, error) {
 	f, err := fsys.Open(name)
 	if err != nil {
