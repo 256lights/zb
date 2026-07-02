@@ -47,6 +47,31 @@ func (graph *dependencyGraph) iterator() *dependencyOrderIterator {
 	}
 }
 
+// transitiveDependents returns a single-use iterator over the given paths
+// and the transitive closure of all paths in the graph that depend on the given paths.
+// After iteration is finished, the paths slice will be cleared and set to length 0.
+// transitiveDependents does not guarantee ordering,
+// nor does it guarantee that it will not yield the same path more than once.
+func (graph *dependencyGraph) transitiveDependents(paths *[]zbstore.Path) iter.Seq[zbstore.Path] {
+	return func(yield func(zbstore.Path) bool) {
+		for len(*paths) > 0 {
+			curr := xslices.Last(*paths)
+			*paths = xslices.Pop(*paths, 1)
+			if !yield(curr) {
+				clear(*paths)
+				*paths = (*paths)[:0]
+				return
+			}
+			var next sets.Set[zbstore.Path]
+			if node := graph.nodes[curr]; node != nil {
+				next = node.dependents
+			}
+			*paths = slices.Grow(*paths, next.Len())
+			*paths = slices.AppendSeq(*paths, next.All())
+		}
+	}
+}
+
 // dependencyGraphNode stores auxiliary information about a [*zbstore.Derivation].
 type dependencyGraphNode struct {
 	derivation *zbstore.Derivation
@@ -162,26 +187,27 @@ func newDependencyOrderIterator(g *dependencyGraph, roots iter.Seq[zbstore.Path]
 	}
 
 	rootSet := make(sets.Set[zbstore.Path])
+	// Maintain a slice list so we can keep the order.
 	var rootList []zbstore.Path
 	for root := range roots {
-		if !rootSet.Has(root) {
+		// Guarantee that roots appear in the graph.
+		if !rootSet.Has(root) && g.nodes[root] != nil {
 			rootList = append(rootList, root)
 			rootSet.Add(root)
 		}
 	}
 
-	// Prune any roots that depend on other paths in rootSet.
+	// Depth-first search over roots.
+	finished := make(map[zbstore.Path]bool)
 	var stack []stackEntry
+	var clearStack []zbstore.Path
 	for _, root := range rootList {
 		if !rootSet.Has(root) {
-			continue
-		}
-		node := g.nodes[root]
-		if node == nil {
-			rootSet.Delete(root)
+			// Skip if we already determined the root is a dependency of another root.
 			continue
 		}
 
+		node := g.nodes[root] // Guaranteed to be non-nil above.
 		stack = slices.Grow(stack, len(node.derivation.InputDerivations))
 		for drvPath := range node.derivation.InputDerivations {
 			stack = append(stack, stackEntry{
@@ -195,9 +221,25 @@ func newDependencyOrderIterator(g *dependencyGraph, roots iter.Seq[zbstore.Path]
 
 			nextRoot := curr.fromRoot
 			if rootSet.Has(curr.path) {
+				// curr.fromRoot transitively depends on curr.path, another root.
 				rootSet.Delete(curr.fromRoot)
 				nextRoot = curr.path
+
+				node := g.nodes[curr.path]
+				clearStack = slices.Grow(clearStack, node.dependents.Len())
+				clearStack = slices.AppendSeq(clearStack, node.dependents.All())
+				for path := range g.transitiveDependents(&clearStack) {
+					delete(finished, path)
+				}
+			} else {
+				// Mark transitive dependencies of a root as visited.
+				// If a root depends on another root
+				// plus some other dependencies that the other root does not have,
+				// we want to make sure that we visit the pruned root.
+				// See issue #224 for details.
+				finished[curr.path] = true
 			}
+
 			if node := g.nodes[curr.path]; node != nil {
 				stack = slices.Grow(stack, len(node.derivation.InputDerivations))
 				for drvPath := range node.derivation.InputDerivations {
@@ -210,26 +252,6 @@ func newDependencyOrderIterator(g *dependencyGraph, roots iter.Seq[zbstore.Path]
 		}
 	}
 	rootList = xslices.Filter(rootList, rootSet.Has)
-
-	// Mark any dependencies of the roots as visited.
-	finished := make(map[zbstore.Path]bool)
-	for _, root := range rootList {
-		stack = append(stack, stackEntry{path: root})
-		for len(stack) > 0 {
-			curr := xslices.Last(stack)
-			stack = xslices.Pop(stack, 1)
-
-			if curr.path != root {
-				finished[curr.path] = true
-			}
-			if node := g.nodes[curr.path]; node != nil {
-				stack = slices.Grow(stack, len(node.derivation.InputDerivations))
-				for drvPath := range node.derivation.InputDerivations {
-					stack = append(stack, stackEntry{path: drvPath})
-				}
-			}
-		}
-	}
 
 	return &dependencyOrderIterator{
 		graph:    g,

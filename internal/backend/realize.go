@@ -33,7 +33,6 @@ import (
 	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/xmaps"
-	"zb.256lights.llc/pkg/internal/xslices"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -582,6 +581,7 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 	defer b.server.db.Put(conn)
 
 	queue := []zbstore.Path{drvPath}
+	var ignoreStack []zbstore.Path
 	for len(queue) > 0 {
 		curr := queue[0]
 		queue = slices.Delete(queue, 0, 1)
@@ -630,7 +630,8 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 		}
 
 	descend:
-		b.ignoreRealizations(graph, roots, curr)
+		ignoreStack = append(ignoreStack, curr)
+		b.ignoreRealizations(graph, roots, &ignoreStack)
 		if len(node.derivation.InputDerivations) == 0 {
 			roots.Add(curr)
 		} else {
@@ -641,12 +642,8 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 	return false, nil
 }
 
-func (b *builder) ignoreRealizations(graph *dependencyGraph, roots sets.Set[zbstore.Path], drvPath zbstore.Path) {
-	stack := []zbstore.Path{drvPath}
-	for len(stack) > 0 {
-		curr := xslices.Last(stack)
-		stack = xslices.Pop(stack, 1)
-
+func (b *builder) ignoreRealizations(graph *dependencyGraph, roots sets.Set[zbstore.Path], drvPaths *[]zbstore.Path) {
+	for curr := range graph.transitiveDependents(drvPaths) {
 		h := b.drvHashes[curr]
 		if !h.IsZero() {
 			delete(b.drvHashes, curr)
@@ -659,10 +656,6 @@ func (b *builder) ignoreRealizations(graph *dependencyGraph, roots sets.Set[zbst
 			}
 		}
 		roots.Delete(curr)
-
-		next := graph.nodes[curr].dependents
-		stack = slices.Grow(stack, next.Len())
-		stack = slices.AppendSeq(stack, next.All())
 	}
 }
 

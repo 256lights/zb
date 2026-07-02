@@ -4,8 +4,12 @@
 package backend
 
 import (
+	"errors"
 	"fmt"
+	"iter"
+	"maps"
 	"reflect"
+	"slices"
 	"testing"
 	"unique"
 
@@ -183,50 +187,13 @@ func TestAnalyze(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			derivations := make(map[zbstore.Path]*zbstore.Derivation)
-			pathForDrvName := func(name string) (zbstore.Path, error) {
-				for p := range derivations {
-					if curr, _ := p.DerivationName(); curr == name {
-						return p, nil
-					}
-				}
-				return "", fmt.Errorf("no such derivation %s", name)
+			derivations, err := rewriteDerivationsForGraphTest(test.derivations)
+			if err != nil {
+				t.Fatal(err)
 			}
-			for _, drv := range test.derivations {
-				rewrittenInputs, err := rewriteKeys(drv.InputDerivations, func(k zbstore.Path) (zbstore.Path, error) {
-					return pathForDrvName(string(k))
-				})
-				if err != nil {
-					t.Fatalf("%s: input derivations: %v", drv.Name, err)
-				}
-				drv = drv.Clone()
-				drv.InputDerivations = rewrittenInputs
-
-				_, trailer, err := drv.Export(nix.SHA256)
-				if err != nil {
-					t.Fatal(err)
-				}
-				drvPath, err := zbstore.FixedCAOutputPath(drv.Dir, drv.Name+zbstore.DerivationExt, trailer.ContentAddress, zbstore.References{
-					Others: trailer.References,
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				derivations[drvPath] = drv
-			}
-
-			desiredOutputs := make(sets.Set[zbstore.OutputReference])
-			for drvName, outputNames := range test.desiredOutputs {
-				drvPath, err := pathForDrvName(drvName)
-				if err != nil {
-					t.Fatal("desired outputs:", err)
-				}
-				for name := range outputNames.All() {
-					desiredOutputs.Add(zbstore.OutputReference{
-						DrvPath:    drvPath,
-						OutputName: name,
-					})
-				}
+			desiredOutputs, err := rewriteDesiredOutputsForGraphTest(derivations, test.desiredOutputs)
+			if err != nil {
+				t.Fatal(err)
 			}
 
 			got, err := analyze(derivations, desiredOutputs)
@@ -251,14 +218,14 @@ func TestAnalyze(t *testing.T) {
 			*want = *test.want
 			want.nodes = make(map[zbstore.Path]*dependencyGraphNode)
 			for fakePath, node := range test.want.nodes {
-				drvPath, err := pathForDrvName(string(fakePath))
+				drvPath, err := pathForDrvName(maps.Keys(derivations), string(fakePath))
 				if err != nil {
 					t.Fatal("want.nodes:", err)
 				}
 				nodeClone := new(dependencyGraphNode)
 				*nodeClone = *node
 				nodeClone.dependents, err = rewriteKeys(node.dependents, func(p zbstore.Path) (zbstore.Path, error) {
-					return pathForDrvName(string(p))
+					return pathForDrvName(maps.Keys(derivations), string(p))
 				})
 				if err != nil {
 					t.Fatal("want.nodes:", err)
@@ -267,7 +234,7 @@ func TestAnalyze(t *testing.T) {
 			}
 			want.roots = make(sets.Set[zbstore.Path])
 			for fakePath := range test.want.roots.All() {
-				drvPath, err := pathForDrvName(string(fakePath))
+				drvPath, err := pathForDrvName(maps.Keys(derivations), string(fakePath))
 				if err != nil {
 					t.Fatal("want.roots:", err)
 				}
@@ -289,6 +256,260 @@ func TestAnalyze(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewDependencyOrderIterator(t *testing.T) {
+	tests := []struct {
+		name           string
+		derivations    []*zbstore.Derivation
+		desiredOutputs map[string]sets.Set[string]
+		roots          []string
+		orderings      [][]string
+	}{
+		{
+			name:      "Empty",
+			orderings: [][]string{{}},
+		},
+		{
+			name: "TwoNodes",
+			derivations: []*zbstore.Derivation{
+				{
+					Name:   "foo.txt",
+					Dir:    zbstore.DefaultUnixDirectory,
+					System: system.Current().String(),
+					Outputs: map[string]*zbstore.DerivationOutputType{
+						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+					},
+				},
+				{
+					Name:   "bar.txt",
+					Dir:    zbstore.DefaultUnixDirectory,
+					System: system.Current().String(),
+					Outputs: map[string]*zbstore.DerivationOutputType{
+						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+					},
+				},
+			},
+			desiredOutputs: map[string]sets.Set[string]{
+				"foo.txt": sets.New("out"),
+				"bar.txt": sets.New("out"),
+			},
+			roots: []string{"foo.txt", "bar.txt"},
+			orderings: [][]string{
+				{"foo.txt", "bar.txt"},
+				{"bar.txt", "foo.txt"},
+			},
+		},
+		{
+			name: "Chain",
+			derivations: []*zbstore.Derivation{
+				{
+					Name:   "foo.txt",
+					Dir:    zbstore.DefaultUnixDirectory,
+					System: system.Current().String(),
+					Outputs: map[string]*zbstore.DerivationOutputType{
+						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+					},
+				},
+				{
+					Name:   "bar.txt",
+					Dir:    zbstore.DefaultUnixDirectory,
+					System: system.Current().String(),
+					InputDerivations: map[zbstore.Path]*sets.Sorted[string]{
+						"foo.txt": sets.NewSorted("out"),
+					},
+					Outputs: map[string]*zbstore.DerivationOutputType{
+						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+					},
+				},
+			},
+			desiredOutputs: map[string]sets.Set[string]{
+				"foo.txt": sets.New("out"),
+				"bar.txt": sets.New("out"),
+			},
+			roots: []string{"foo.txt", "bar.txt"},
+			orderings: [][]string{
+				{"foo.txt", "bar.txt"},
+			},
+		},
+		{
+			name: "Issue224",
+			derivations: []*zbstore.Derivation{
+				{
+					Name:   "a.txt",
+					Dir:    zbstore.DefaultUnixDirectory,
+					System: system.Current().String(),
+					Outputs: map[string]*zbstore.DerivationOutputType{
+						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+					},
+				},
+				{
+					Name:   "b.txt",
+					Dir:    zbstore.DefaultUnixDirectory,
+					System: system.Current().String(),
+					Outputs: map[string]*zbstore.DerivationOutputType{
+						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+					},
+				},
+				{
+					Name:   "c.txt",
+					Dir:    zbstore.DefaultUnixDirectory,
+					System: system.Current().String(),
+					InputDerivations: map[zbstore.Path]*sets.Sorted[string]{
+						"a.txt": sets.NewSorted("out"),
+						"b.txt": sets.NewSorted("out"),
+					},
+					Outputs: map[string]*zbstore.DerivationOutputType{
+						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+					},
+				},
+				{
+					Name:   "d.txt",
+					Dir:    zbstore.DefaultUnixDirectory,
+					System: system.Current().String(),
+					InputDerivations: map[zbstore.Path]*sets.Sorted[string]{
+						"a.txt": sets.NewSorted("out"),
+						"c.txt": sets.NewSorted("out"),
+					},
+					Outputs: map[string]*zbstore.DerivationOutputType{
+						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+					},
+				},
+			},
+			desiredOutputs: map[string]sets.Set[string]{
+				"d.txt": sets.New("out"),
+			},
+			roots: []string{"a.txt", "c.txt"},
+			orderings: [][]string{
+				{"a.txt", "c.txt", "d.txt"},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			derivations, err := rewriteDerivationsForGraphTest(test.derivations)
+			if err != nil {
+				t.Fatal(err)
+			}
+			desiredOutputs, err := rewriteDesiredOutputsForGraphTest(derivations, test.desiredOutputs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			g, err := analyze(derivations, desiredOutputs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			roots := make(sets.Set[zbstore.Path], len(test.roots))
+			for _, name := range test.roots {
+				p, err := pathForDrvName(maps.Keys(derivations), name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				roots.Add(p)
+			}
+			orderings := make([][]zbstore.Path, 0, len(test.orderings))
+			for _, want := range test.orderings {
+				wantPaths := make([]zbstore.Path, 0, len(want))
+				for _, name := range want {
+					p, err := pathForDrvName(maps.Keys(derivations), name)
+					if err != nil {
+						t.Fatal(err)
+					}
+					wantPaths = append(wantPaths, p)
+				}
+				orderings = append(orderings, wantPaths)
+			}
+
+			ctx := t.Context()
+			it := newDependencyOrderIterator(g, roots.All())
+			var got []zbstore.Path
+			for {
+				p, err := it.next(ctx)
+				if err != nil {
+					if !errors.Is(err, errEndIteration) {
+						t.Error("it.next(ctx):", err)
+					}
+					break
+				}
+				got = append(got, p)
+				it.finish(p, true)
+			}
+
+			isValid := false
+			for _, want := range orderings {
+				if slices.Equal(want, got) {
+					isValid = true
+					break
+				}
+			}
+			if !isValid {
+				t.Errorf("paths (-want +got):\n%s", cmp.Diff(orderings[0], got, cmpopts.EquateEmpty()))
+			}
+		})
+	}
+}
+
+// rewriteDerivationsForGraphTest creates a map of derivations cloned from the slice
+// with each key being a full store path
+// and each input derivation rewritten to a full path.
+// rewriteDerivationsForGraphTest returns an error if the slice is not in dependency order.
+func rewriteDerivationsForGraphTest(derivations []*zbstore.Derivation) (map[zbstore.Path]*zbstore.Derivation, error) {
+	rewritten := make(map[zbstore.Path]*zbstore.Derivation)
+	for _, drv := range derivations {
+		rewrittenInputs, err := rewriteKeys(drv.InputDerivations, func(k zbstore.Path) (zbstore.Path, error) {
+			return pathForDrvName(maps.Keys(rewritten), string(k))
+		})
+		if err != nil {
+			return nil, fmt.Errorf("%s: input derivations: %v", drv.Name, err)
+		}
+		drv = drv.Clone()
+		drv.InputDerivations = rewrittenInputs
+
+		_, trailer, err := drv.Export(nix.SHA256)
+		if err != nil {
+			return nil, err
+		}
+		drvPath, err := zbstore.FixedCAOutputPath(drv.Dir, drv.Name+zbstore.DerivationExt, trailer.ContentAddress, zbstore.References{
+			Others: trailer.References,
+		})
+		if err != nil {
+			return nil, err
+		}
+		rewritten[drvPath] = drv
+	}
+	return rewritten, nil
+}
+
+// rewriteDesiredOutputsForGraphTest returns a new set of output references
+// based on the keys in outputs and the paths in derivations.
+func rewriteDesiredOutputsForGraphTest(derivations map[zbstore.Path]*zbstore.Derivation, outputs map[string]sets.Set[string]) (sets.Set[zbstore.OutputReference], error) {
+	rewritten := make(sets.Set[zbstore.OutputReference])
+	for drvName, outputNames := range outputs {
+		drvPath, err := pathForDrvName(maps.Keys(derivations), drvName)
+		if err != nil {
+			return nil, fmt.Errorf("desired outputs: %v", err)
+		}
+		for name := range outputNames.All() {
+			rewritten.Add(zbstore.OutputReference{
+				DrvPath:    drvPath,
+				OutputName: name,
+			})
+		}
+	}
+	return rewritten, nil
+}
+
+// pathForDrvName returns the first path that appears in paths
+// that ends with name+[zbstore.DerivationExt]
+// or an error if not found.
+func pathForDrvName(paths iter.Seq[zbstore.Path], name string) (zbstore.Path, error) {
+	for p := range paths {
+		if curr, _ := p.DerivationName(); curr == name {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("no such derivation %s", name)
 }
 
 func rewriteKeys[K1 comparable, K2 comparable, V any, M1 ~map[K1]V](m M1, f func(K1) (K2, error)) (map[K2]V, error) {
