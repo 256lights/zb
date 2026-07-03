@@ -12,12 +12,11 @@ import (
 	"net/http"
 	"net/url"
 	slashpath "path"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
+	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/system"
@@ -355,57 +354,13 @@ func followKeyPath(ctx context.Context, l *lua.State) (int, error) {
 
 // ParseURL parses a URL, but permits some amount of sloppiness for Windows paths.
 func ParseURL(s string) (*url.URL, error) {
-	if filepath.VolumeName(s) != "" {
-		i := strings.IndexByte(s, '#')
-		if i < 0 {
-			i = len(s)
-		}
-		path, err := url.PathUnescape(s[:i])
-		if err != nil {
-			return nil, err
-		}
-		if i >= len(s)-1 {
-			return &url.URL{Path: path, RawPath: s[:i]}, nil
-		}
-
-		u, err := url.Parse(s[i:])
-		if err != nil {
-			return nil, err
-		}
-		u.Path, err = url.PathUnescape(s[:i])
-		if err != nil {
-			return nil, err
-		}
-		u.RawPath = s[:i]
-		return u, nil
-	}
-
-	return url.Parse(s)
+	return fileurl.Parse(s)
 }
 
 // URLToPath returns the filesystem path represented by u.
 // URLToPath returns an error if u is not a "file:" URL or a path.
 func URLToPath(u *url.URL) (string, error) {
-	if u.Scheme == "" {
-		return strings.ReplaceAll(u.Path, "/", string(filepath.Separator)), nil
-	}
-	if u.Scheme != "file" {
-		return "", fmt.Errorf("%v is not a file:// URL", u)
-	}
-	if runtime.GOOS == "windows" {
-		path := `\\`
-		if u.Host != "" {
-			path += u.Host
-		} else {
-			path += "localhost"
-		}
-		path += strings.ReplaceAll(u.Path, "/", `\`)
-		return path, nil
-	}
-	if u.Host != "" && u.Host != "localhost" {
-		return "", fmt.Errorf("cannot use %s in file:// URL", u.Host)
-	}
-	return strings.ReplaceAll(u.Path, "/", string(filepath.Separator)), nil
+	return fileurl.ToPath(u)
 }
 
 // parseFragment parses an unescaped fragment string (excluding the "#")
