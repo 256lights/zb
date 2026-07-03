@@ -18,6 +18,7 @@ import (
 	"github.com/dsnet/compress/brotli"
 	jsonv2 "github.com/go-json-experiment/json"
 	"zb.256lights.llc/pkg/internal/hal"
+	"zb.256lights.llc/pkg/internal/useragent"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
@@ -223,6 +224,7 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 		Header: http.Header{
 			"Accept":          {accept},
 			"Accept-Encoding": {acceptEncoding},
+			"User-Agent":      {useragent.String},
 		},
 	}).WithContext(ctx)
 	resp, err := client.Do(req)
@@ -314,6 +316,7 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 		Header: http.Header{
 			"Accept":          {"*/*"},
 			"Accept-Encoding": {acceptEncoding},
+			"User-Agent":      {useragent.String},
 		},
 	}
 	resp, err := obj.client.Do(req)
