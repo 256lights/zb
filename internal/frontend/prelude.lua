@@ -19,7 +19,7 @@ end
 ---@return derivation
 function fetchurl(args)
   if (args.url == nil or args.url == "") and (args.urls == nil or next(args.urls) == nil) then
-    error("Either url or urls most be set")
+    error("Either url or urls must be set")
   end
 
   local name
@@ -38,7 +38,7 @@ function fetchurl(args)
     builder = "builtin:fetchurl";
     system = "builtin";
 
-    url = args.url or "";
+    url = args.url;
     urls = args.urls;
     executable = args.executable or false;
     unpack = false;
@@ -126,7 +126,7 @@ end
 function fetchArchive(args)
   local name = args.name or baseNameOf(args.url)
   local dl = fetchurl {
-    urls = { args.url };
+    url = args.url;
     hash = args.hash,
     name = name,
   }
