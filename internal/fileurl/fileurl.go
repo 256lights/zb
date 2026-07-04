@@ -45,17 +45,19 @@ func Parse(s string) (*url.URL, error) {
 	return url.Parse(s)
 }
 
+const uncPrefix = `\\`
+
 // ToPath returns the filesystem path represented by u.
 // ToPath returns an error if u is not a "file:" URL or a path.
 func ToPath(u *url.URL) (string, error) {
 	if u.Scheme == "" {
 		return strings.ReplaceAll(u.Path, "/", string(filepath.Separator)), nil
 	}
-	if u.Scheme != "file" {
-		return "", fmt.Errorf("%v is not a file:// URL", u)
+	if u.Scheme != Scheme {
+		return "", fmt.Errorf("%v is not a %s:// URL", u, Scheme)
 	}
 	if runtime.GOOS == "windows" {
-		path := `\\`
+		path := uncPrefix
 		if u.Host != "" {
 			path += u.Host
 		} else {
@@ -65,7 +67,35 @@ func ToPath(u *url.URL) (string, error) {
 		return path, nil
 	}
 	if u.Host != "" && u.Host != "localhost" {
-		return "", fmt.Errorf("cannot use %s in file:// URL", u.Host)
+		return "", fmt.Errorf("cannot use %s in %s:// URL", u.Host, Scheme)
 	}
 	return strings.ReplaceAll(u.Path, "/", string(filepath.Separator)), nil
+}
+
+// FromPath returns a "file://" URL for the given filepath.
+func FromPath(path string) *url.URL {
+	if !filepath.IsAbs(path) {
+		return &url.URL{Path: filepath.ToSlash(path)}
+	}
+	if runtime.GOOS == "windows" {
+		if rest, isUNC := strings.CutPrefix(path, uncPrefix); isUNC {
+			i := strings.IndexByte(rest, '\\')
+			if i < 0 {
+				i = len(rest)
+			}
+			return &url.URL{
+				Scheme: Scheme,
+				Host:   rest[:i],
+				Path:   filepath.ToSlash(rest[i:]),
+			}
+		}
+	}
+	u := &url.URL{
+		Scheme: Scheme,
+		Path:   filepath.ToSlash(path),
+	}
+	if runtime.GOOS == "windows" {
+		u.Host = "localhost"
+	}
+	return u
 }

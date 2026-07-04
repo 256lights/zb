@@ -121,58 +121,73 @@ func TestParse(t *testing.T) {
 	}
 }
 
-func TestToPath(t *testing.T) {
-	type urlTest struct {
-		url  *url.URL
-		want string
-	}
-	tests := []urlTest{
+type pathTest struct {
+	path string
+	url  *url.URL
+}
+
+func pathTests() []pathTest {
+	tests := []pathTest{
 		{
 			url:  &url.URL{Path: "foo/bar.txt"},
-			want: filepath.Join("foo", "bar.txt"),
+			path: filepath.Join("foo", "bar.txt"),
 		},
 		{
 			url:  &url.URL{Path: "foo/bar.txt"},
-			want: filepath.Join("foo", "bar.txt"),
+			path: filepath.Join("foo", "bar.txt"),
 		},
 	}
 	if runtime.GOOS == "windows" {
 		tests = append(tests,
-			urlTest{
+			pathTest{
 				url:  &url.URL{Scheme: "file", Path: "/foo/bar.txt"},
-				want: `\\localhost\foo\bar.txt`,
+				path: `\\localhost\foo\bar.txt`,
 			},
-			urlTest{
+			pathTest{
 				url:  &url.URL{Scheme: "file", Host: "localhost", Path: "/foo/bar.txt"},
-				want: `\\localhost\foo\bar.txt`,
+				path: `\\localhost\foo\bar.txt`,
 			},
-			urlTest{
+			pathTest{
 				url:  &url.URL{Scheme: "file", Host: "example.com", Path: "/share/foo/bar.txt"},
-				want: `\\example.com\share\foo\bar.txt`,
+				path: `\\example.com\share\foo\bar.txt`,
 			},
-			urlTest{
+			pathTest{
 				url:  &url.URL{Path: `C:\foo\bar.txt`},
-				want: `C:\foo\bar.txt`,
+				path: `C:\foo\bar.txt`,
 			},
-			urlTest{
+			pathTest{
 				url:  &url.URL{Path: `C:/foo/bar.txt`},
-				want: `C:\foo\bar.txt`,
+				path: `C:\foo\bar.txt`,
 			},
 		)
 	} else {
 		tests = append(tests,
-			urlTest{
+			pathTest{
 				url:  &url.URL{Scheme: "file", Path: "/foo/bar.txt"},
-				want: "/foo/bar.txt",
+				path: "/foo/bar.txt",
 			},
 		)
 	}
+	return tests
+}
 
-	for _, test := range tests {
+func TestToPath(t *testing.T) {
+	for _, test := range pathTests() {
 		got, err := ToPath(test.url)
-		if got != test.want || err != nil {
+		if got != test.path || err != nil {
 			t.Errorf("ToPath(&url.URL{Scheme: %q, Host: %q, Path: %q}) = %q, %v; want %q, <nil>",
-				test.url.Scheme, test.url.Host, test.url.Path, got, err, test.want)
+				test.url.Scheme, test.url.Host, test.url.Path, got, err, test.path)
+		}
+	}
+}
+
+func TestFromPath(t *testing.T) {
+	for _, test := range pathTests() {
+		got := FromPath(test.path)
+		want := new(*test.url)
+		want.Path = filepath.ToSlash(want.Path)
+		if diff := cmp.Diff(want, got, cmp.Comparer(userinfoEqual)); diff != "" {
+			t.Errorf("FromPath(%q) (-want +got):\n%s", test.path, diff)
 		}
 	}
 }
