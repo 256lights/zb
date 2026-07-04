@@ -57,7 +57,7 @@ func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string)
 	hrefs := drv.Env["urls"]
 	var urls []string
 	if href == "" && hrefs != "" {
-		urls = strings.Split(hrefs, " ")
+		urls = strings.Fields(hrefs)
 	} else if href != "" && hrefs == "" {
 		urls = []string{href}
 	} else {
