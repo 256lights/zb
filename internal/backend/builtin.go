@@ -76,8 +76,7 @@ func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string)
 	executable := drv.Env["executable"] != ""
 
 	var err error
-	for i := 0; i < len(urls); i++ {
-		href = urls[i]
+	for _, href := range urls {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, href, nil)
 		if err != nil {
 			return err
