@@ -6,11 +6,11 @@ package storetest
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"sync"
 
+	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
@@ -68,7 +68,8 @@ func (store *Store) ObjectBatch(ctx context.Context, storePaths sets.Set[zbstore
 func (store *Store) StoreImport(ctx context.Context, r io.Reader) error {
 	recv := &storeReceiver{store: store}
 	err := zbstore.ReceiveExport(recv, r)
-	return errors.Join(recv.error, err)
+	recv.errors.Add(err)
+	return recv.errors.Error()
 }
 
 // FetchRealizations implements [zbstore.RealizationFetcher].
@@ -130,9 +131,9 @@ func (obj *storeObject) Trailer() *zbstore.ExportTrailer {
 }
 
 type storeReceiver struct {
-	store *Store
-	buf   bytes.Buffer
-	error error
+	store  *Store
+	buf    bytes.Buffer
+	errors multierror.Collector
 }
 
 func (s *storeReceiver) Write(p []byte) (n int, err error) {
@@ -145,7 +146,7 @@ func (s *storeReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		trailer: *trailer,
 	}
 	if err := zbstore.VerifyObject(context.Background(), obj, nil); err != nil {
-		s.error = errors.Join(s.error, err)
+		s.errors.Add(err)
 		return
 	}
 
