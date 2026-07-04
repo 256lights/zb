@@ -1159,7 +1159,7 @@ func TestRealizeFetchURL(t *testing.T) {
 		expectBuildFail bool
 	}{
 		{
-			name: "Fetch singular url",
+			name: "FetchSingularUrl",
 			env: func(urlBase string) map[string]string {
 				return map[string]string{
 					"url": urlBase + "/hello.txt",
@@ -1171,7 +1171,7 @@ func TestRealizeFetchURL(t *testing.T) {
 			fileContent:    "Hello, World!\n",
 		},
 		{
-			name: "Fetch broken urls",
+			name: "FetchBrokenUrls",
 			env: func(urlBase string) map[string]string {
 				return map[string]string{
 					"urls": "http://broken/hello.txt",
@@ -1184,7 +1184,7 @@ func TestRealizeFetchURL(t *testing.T) {
 			expectBuildFail: true,
 		},
 		{
-			name: "Fetch no url(s)",
+			name: "FetchNoUrl",
 			env: func(urlBase string) map[string]string {
 				return map[string]string{}
 			},
@@ -1194,7 +1194,7 @@ func TestRealizeFetchURL(t *testing.T) {
 			expectBuildFail: true,
 		},
 		{
-			name: "Fetch from a list of urls",
+			name: "FetchFromUrlsList",
 			env: func(urlBase string) map[string]string {
 				return map[string]string{
 					"urls": fmt.Sprintf("http://broken/hello.txt, %s", urlBase+"/hello.txt"),
