@@ -66,8 +66,7 @@ func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string)
 	}
 
 	var err error
-	for i := 0; i < len(urls); i++ {
-		href = urls[i]
+	for _, href := range urls {
 		err = getURL(ctx, drv, realStoreDir, href)
 		if err == nil {
 			break
