@@ -140,15 +140,15 @@ func pathTests() []pathTest {
 	if runtime.GOOS == "windows" {
 		tests = append(tests,
 			pathTest{
-				url:  &url.URL{Scheme: "file", Path: "/foo/bar.txt"},
+				url:  &url.URL{Scheme: Scheme, Path: "/foo/bar.txt"},
 				path: `\\localhost\foo\bar.txt`,
 			},
 			pathTest{
-				url:  &url.URL{Scheme: "file", Host: "localhost", Path: "/foo/bar.txt"},
+				url:  &url.URL{Scheme: Scheme, Host: "localhost", Path: "/foo/bar.txt"},
 				path: `\\localhost\foo\bar.txt`,
 			},
 			pathTest{
-				url:  &url.URL{Scheme: "file", Host: "example.com", Path: "/share/foo/bar.txt"},
+				url:  &url.URL{Scheme: Scheme, Host: "example.com", Path: "/share/foo/bar.txt"},
 				path: `\\example.com\share\foo\bar.txt`,
 			},
 			pathTest{
@@ -163,7 +163,7 @@ func pathTests() []pathTest {
 	} else {
 		tests = append(tests,
 			pathTest{
-				url:  &url.URL{Scheme: "file", Path: "/foo/bar.txt"},
+				url:  &url.URL{Scheme: Scheme, Path: "/foo/bar.txt"},
 				path: "/foo/bar.txt",
 			},
 		)

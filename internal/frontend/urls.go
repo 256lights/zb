@@ -48,7 +48,7 @@ func (eval *Eval) URLs(ctx context.Context, urls []string) ([]any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %v", s, err)
 		}
-		if u.Scheme == "" || u.Scheme == "file" {
+		if u.Scheme == "" || u.Scheme == fileurl.Scheme {
 			if _, err := URLToPath(u); err != nil {
 				return nil, err
 			}
@@ -65,7 +65,7 @@ func (eval *Eval) URLs(ctx context.Context, urls []string) ([]any, error) {
 	var mu sync.Mutex
 	importedStorePaths := make(map[string]zbstore.Path, len(parsedURLs))
 	for _, u := range parsedURLs {
-		if u.Scheme == "" || u.Scheme == "file" {
+		if u.Scheme == "" || u.Scheme == fileurl.Scheme {
 			continue
 		}
 		key := stripFragment(u).String()
@@ -111,7 +111,7 @@ func (eval *Eval) URLs(ctx context.Context, urls []string) ([]any, error) {
 	extractStackIndex := l.Top()
 	for i, u := range parsedURLs {
 		l.PushValue(importStackIndex)
-		if u.Scheme == "" || u.Scheme == "file" {
+		if u.Scheme == "" || u.Scheme == fileurl.Scheme {
 			path, err := URLToPath(u)
 			if err != nil {
 				// Should have already been verified above.
