@@ -1197,7 +1197,7 @@ func TestRealizeFetchURL(t *testing.T) {
 			name: "FetchFromUrlsList",
 			env: func(urlBase string) map[string]string {
 				return map[string]string{
-					"urls": fmt.Sprintf("http://broken/hello.txt, %s", urlBase+"/hello.txt"),
+					"urls": fmt.Sprintf("%s, %s", urlBase+"/bad/hello.txt", urlBase+"/hello.txt"),
 					"out":  zbstore.HashPlaceholder("out"),
 				}
 			},
@@ -1223,6 +1223,7 @@ func TestRealizeFetchURL(t *testing.T) {
 						time.Time{},
 						strings.NewReader(test.fileContent))
 				})
+
 			srv := httptest.NewServer(mux)
 			defer srv.Close()
 
