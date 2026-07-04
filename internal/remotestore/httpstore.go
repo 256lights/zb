@@ -18,6 +18,7 @@ import (
 	"github.com/dsnet/compress/brotli"
 	jsonv2 "github.com/go-json-experiment/json"
 	"zb.256lights.llc/pkg/internal/hal"
+	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/useragent"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -90,7 +91,7 @@ func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Obje
 		Base:   path.Base(),
 		Digest: path.Digest(),
 	}
-	var allErrors error
+	var ec multierror.Collector
 	for _, link := range infoLinks.Objects {
 		if !link.Templated {
 			return nil, fmt.Errorf("stat %s: link relation %s: not all links are templated", path, narInfoRelation)
@@ -111,14 +112,15 @@ func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Obje
 		if statusCode, _ := errorStatusCode(err); statusCode == http.StatusNotFound {
 			log.Debugf(ctx, "NAR info not found: %v", err)
 		} else {
-			allErrors = errors.Join(allErrors, err)
+			ec.Add(err)
 		}
 	}
 
-	if allErrors == nil {
-		allErrors = fmt.Errorf("stat %s: %w", path, zbstore.ErrNotFound)
+	err = ec.Error()
+	if err == nil {
+		err = fmt.Errorf("stat %s: %w", path, zbstore.ErrNotFound)
 	}
-	return nil, allErrors
+	return nil, err
 }
 
 func fetchNARInfo(ctx context.Context, client *http.Client, u *url.URL) (*NARInfo, error) {
@@ -148,12 +150,11 @@ func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zb
 	if infoLinks.Single {
 		return result, fmt.Errorf("fetch realizations for %v: %v: link relation %s is not an array", drvHash, s.URL.Redacted(), realizationRelation)
 	}
-	var resultError error
+	var ec multierror.Collector
 	for _, link := range infoLinks.Objects {
 		if !link.Templated {
-			err := fmt.Errorf("fetch realizations for %v: %v: link relation %s: not all links are templated",
-				drvHash, s.URL.Redacted(), realizationRelation)
-			resultError = errors.Join(resultError, err)
+			ec.Add(fmt.Errorf("fetch realizations for %v: %v: link relation %s: not all links are templated",
+				drvHash, s.URL.Redacted(), realizationRelation))
 			break
 		}
 	}
@@ -171,21 +172,20 @@ func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zb
 		}
 		u, err := link.Expand(params)
 		if err != nil {
-			err := fmt.Errorf("fetch realizations for %v: %v: link relation %s: %v",
-				drvHash, s.URL.Redacted(), realizationRelation, err)
-			resultError = errors.Join(resultError, err)
+			ec.Add(fmt.Errorf("fetch realizations for %v: %v: link relation %s: %v",
+				drvHash, s.URL.Redacted(), realizationRelation, err))
 			continue
 		}
 		u = s.URL.ResolveReference(u)
 		if err := s.addRealizations(ctx, &result, u); err != nil {
 			if code, _ := errorStatusCode(err); code != http.StatusNotFound {
-				resultError = errors.Join(resultError, err)
+				ec.Add(err)
 			}
 			continue
 		}
 	}
 
-	return result, resultError
+	return result, ec.Error()
 }
 
 func (s *HTTPStore) addRealizations(ctx context.Context, dst *zbstore.RealizationMap, u *url.URL) error {

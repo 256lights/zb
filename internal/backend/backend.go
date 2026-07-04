@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
@@ -941,7 +942,7 @@ func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths 
 		return fmt.Errorf("failed to copy from fallback store: %v", receiveError)
 	}
 
-	var finalError error
+	var ec multierror.Collector
 	for path, eqClassesForPath := range storePathsToDownload {
 		if !pathRecorder.paths.Has(path) {
 			var err error
@@ -950,7 +951,7 @@ func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths 
 			} else {
 				err = fmt.Errorf("fallback store did not export %s", path)
 			}
-			finalError = errors.Join(finalError, err)
+			ec.Add(err)
 			continue
 		}
 
@@ -969,11 +970,11 @@ func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths 
 					err = fmt.Errorf("failed to import %s from fallback store", path)
 				}
 			}
-			finalError = errors.Join(finalError, err)
+			ec.Add(err)
 		}
 	}
 
-	return finalError
+	return ec.Error()
 }
 
 func (s *Server) gcLogs(ctx context.Context, window time.Duration) {

@@ -5,9 +5,9 @@ package backend
 
 import (
 	"crypto/ed25519"
-	"errors"
 	"slices"
 
+	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/zbstore"
 )
 
@@ -44,14 +44,14 @@ func (k *Keyring) Sign(ref zbstore.RealizationOutputReference, r *zbstore.Realiz
 	}
 
 	result := make([]*zbstore.RealizationSignature, 0, n)
-	var returnedError error
+	var ec multierror.Collector
 	for _, key := range k.Ed25519 {
 		sig, err := zbstore.SignRealizationWithEd25519(ref, r, key)
 		if err != nil {
-			returnedError = errors.Join(returnedError, err)
+			ec.Add(err)
 			continue
 		}
 		result = append(result, sig)
 	}
-	return result, returnedError
+	return result, ec.Error()
 }
