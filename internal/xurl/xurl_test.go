@@ -5,6 +5,7 @@ package xurl
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -109,12 +110,6 @@ func FuzzRelURL(f *testing.F) {
 	f.Add("http://www.example.com/foo", "myuri:blabber")
 	f.Add("http://www.example.com/foo", "foo/bar/baz")
 
-	canUseURL := func(u *url.URL) bool {
-		// TODO(someday): We should still be able to handle two rooted paths,
-		// but it's not as important.
-		return u.Scheme != "" && (u.Host != "" || u.User != nil || u.Path != "" || u.Opaque != "")
-	}
-
 	f.Fuzz(func(t *testing.T, baseURLString string, targetURLString string) {
 		baseURL, baseError := url.Parse(baseURLString)
 		if baseError != nil {
@@ -127,7 +122,8 @@ func FuzzRelURL(f *testing.F) {
 		if baseError != nil || targetError != nil {
 			t.SkipNow()
 		}
-		if !canUseURL(baseURL) || !canUseURL(targetURL) {
+		if !targetURL.IsAbs() && (!isAbsolutePathReference(baseURL) || !isAbsolutePathReference(targetURL)) {
+			// TODO(someday): Some relative-path references are possible, but not important for zb.
 			t.Skipf("Impossible to make a reference to %q from %q", targetURLString, baseURLString)
 		}
 
@@ -141,6 +137,10 @@ func FuzzRelURL(f *testing.F) {
 			t.Errorf("Rel(%v, %v) = %v (resolves to %v)", baseURL, targetURL, ref, got)
 		}
 	})
+}
+
+func isAbsolutePathReference(u *url.URL) bool {
+	return u.Scheme == "" && u.Opaque == "" && u.Host == "" && u.User == nil && strings.HasPrefix(u.EscapedPath(), "/")
 }
 
 func urlsEqual(u1, u2 *url.URL) bool {
