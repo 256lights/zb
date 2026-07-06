@@ -105,6 +105,7 @@ func FuzzRelURL(f *testing.F) {
 	f.Add("http://www.example.com/foo/", "http://www.example.com/foo/#spam")
 	f.Add("http://www.example.com/foo/#spam", "http://www.example.com/foo/#eggs")
 	f.Add("http://www.example.com/foo", "ftp://www.example.com/foo")
+	f.Add("http://www.example.com/foo", "http://www.example.com/foo?")
 	f.Add("http://www.example.com/foo", "myuri:blabber")
 	f.Add("http://www.example.com/foo", "foo/bar/baz")
 
@@ -151,6 +152,7 @@ func urlsEqual(u1, u2 *url.URL) bool {
 		userinfosEqual(u1.User, u2.User) &&
 		path1 == path2 &&
 		u1.RawQuery == u2.RawQuery &&
+		(u1.ForceQuery == u2.ForceQuery || u1.RawQuery != "") &&
 		u1.EscapedFragment() == u2.EscapedFragment()
 }
 

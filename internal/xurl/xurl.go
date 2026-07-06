@@ -127,11 +127,12 @@ func Rel(baseURL, targetURL *url.URL) (*url.URL, error) {
 	if basePath == targetPath {
 		ref := &url.URL{
 			RawQuery:    targetURL.RawQuery,
-			ForceQuery:  targetURL.RawQuery == "" && baseURL.RawQuery != "",
+			ForceQuery:  targetURL.ForceQuery && targetURL.RawQuery == "",
 			Fragment:    targetURL.Fragment,
 			RawFragment: targetURL.RawFragment,
 		}
-		if baseURL.Fragment != "" && targetURL.Fragment == "" {
+		if !ref.ForceQuery && ref.RawQuery == "" && baseURL.RawQuery != "" ||
+			baseURL.Fragment != "" && ref.Fragment == "" {
 			var refPath string
 			if i := strings.LastIndexByte(targetPath, '/'); i == len(targetPath)-1 {
 				refPath = "."
@@ -146,6 +147,9 @@ func Rel(baseURL, targetURL *url.URL) (*url.URL, error) {
 		return ref, nil
 	}
 	if isAbs(basePath) != isAbs(targetPath) {
+		// If one of the URLs is an absolute-path reference
+		// and the other is a relative-path reference,
+		// then impossible to make relative.
 		return targetURL, fmt.Errorf("cannot make %s relative to %s", targetURL.Redacted(), baseURL.Redacted())
 	}
 
@@ -207,6 +211,7 @@ func Rel(baseURL, targetURL *url.URL) (*url.URL, error) {
 
 	ref := &url.URL{
 		RawQuery:    targetURL.RawQuery,
+		ForceQuery:  targetURL.ForceQuery && targetURL.RawQuery == "",
 		Fragment:    targetURL.Fragment,
 		RawFragment: targetURL.RawFragment,
 	}
