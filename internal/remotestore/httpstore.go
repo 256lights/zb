@@ -17,6 +17,7 @@ import (
 
 	"github.com/dsnet/compress/brotli"
 	jsonv2 "github.com/go-json-experiment/json"
+	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/hal"
 	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/useragent"
@@ -94,13 +95,21 @@ func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Obje
 	var ec multierror.Collector
 	for _, link := range infoLinks.Objects {
 		if !link.Templated {
-			return nil, fmt.Errorf("stat %s: link relation %s: not all links are templated", path, narInfoRelation)
+			return nil, fmt.Errorf("stat %s: %s: link relation %s: not all links are templated",
+				path, s.URL.Redacted(), narInfoRelation)
 		}
 		u, err := link.Expand(params)
 		if err != nil {
-			return nil, err
+			ec.Add(fmt.Errorf("stat %s: %s: link relation %s: %v",
+				path, s.URL.Redacted(), narInfoRelation, err))
+			continue
 		}
-		u = s.URL.ResolveReference(u)
+		u, err = resolveReference(s.URL, u)
+		if err != nil {
+			ec.Add(fmt.Errorf("stat %s: %s: link relation %s: %v",
+				path, s.URL.Redacted(), narInfoRelation, err))
+			continue
+		}
 		info, err := fetchNARInfo(ctx, c, u)
 		if err == nil {
 			return &httpObject{
@@ -112,7 +121,7 @@ func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Obje
 		if statusCode, _ := errorStatusCode(err); statusCode == http.StatusNotFound {
 			log.Debugf(ctx, "NAR info not found: %v", err)
 		} else {
-			ec.Add(err)
+			ec.Add(fmt.Errorf("stat %s: %v", path, err))
 		}
 	}
 
@@ -176,7 +185,12 @@ func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zb
 				drvHash, s.URL.Redacted(), realizationRelation, err))
 			continue
 		}
-		u = s.URL.ResolveReference(u)
+		u, err = resolveReference(s.URL, u)
+		if err != nil {
+			ec.Add(fmt.Errorf("fetch realizations for %v: %v: link relation %s: %v",
+				drvHash, s.URL.Redacted(), realizationRelation, err))
+			continue
+		}
 		if err := s.addRealizations(ctx, &result, u); err != nil {
 			if code, _ := errorStatusCode(err); code != http.StatusNotFound {
 				ec.Add(err)
@@ -308,7 +322,10 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("download %s: invalid nar url: %v", obj.info.StorePath, err)
 	}
-	narFileURL := obj.base.ResolveReference(ref)
+	narFileURL, err := resolveReference(obj.base, ref)
+	if err != nil {
+		return fmt.Errorf("download %s: %v", obj.info.StorePath, err)
+	}
 
 	req := &http.Request{
 		Method: http.MethodGet,
@@ -339,6 +356,14 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
 	}
 	return nil
+}
+
+func resolveReference(baseURL, ref *url.URL) (*url.URL, error) {
+	targetURL := baseURL.ResolveReference(ref)
+	if (targetURL.Scheme == "" || targetURL.Scheme == fileurl.Scheme) && baseURL.Scheme != fileurl.Scheme {
+		return nil, fmt.Errorf("link to %s not permitted from %s", ref.Redacted(), baseURL.Redacted())
+	}
+	return targetURL, nil
 }
 
 type httpError struct {
