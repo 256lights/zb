@@ -13,6 +13,25 @@ import (
 	"time"
 )
 
+// IsSafeMethod reports whether the request method's semantics are read-only
+// according to [RFC 9110 Section 9.2.1].
+//
+// [RFC 9110 Section 9.2.1]: https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.1
+func IsSafeMethod(req *http.Request) bool {
+	return req.Method == "" ||
+		req.Method == http.MethodGet ||
+		req.Method == http.MethodHead ||
+		req.Method == http.MethodOptions ||
+		req.Method == http.MethodTrace
+}
+
+// IsFinalStatusCode reports whether the given HTTP status code is [final].
+//
+// [final]: https://www.rfc-editor.org/info/rfc9110/#section-15
+func IsFinalStatusCode(code int) bool {
+	return 200 <= code && code < 600
+}
+
 // SplitList splits an HTTP header [list value],
 // handling [quoted strings].
 //

@@ -198,7 +198,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	// TODO(someday): Handle Range requests.
 	if !isCacheableMethod(req) || len(req.Header["Range"]) > 0 {
 		resp, err := rt.roundTripper.RoundTrip(req)
-		if err == nil && !isSafeMethod(req) && 200 <= resp.StatusCode && resp.StatusCode < 400 {
+		if err == nil && !xhttp.IsSafeMethod(req) && 200 <= resp.StatusCode && resp.StatusCode < 400 {
 			// Unsafe request succeeded: invalidate cache.
 			err := func() (err error) {
 				conn, err := rt.db.Get(ctx)
@@ -452,7 +452,7 @@ func canStoreRequestHeader(key string) bool {
 //
 // [Section 3 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-3
 func canStoreResponse(requestHeader http.Header, statusCode int, responseHeader http.Header) bool {
-	if !isFinalStatusCode(statusCode) || statusCode == http.StatusPartialContent {
+	if !xhttp.IsFinalStatusCode(statusCode) || statusCode == http.StatusPartialContent {
 		return false
 	}
 	if vary := varyHeader(responseHeader); !vary.hasWildcard() {
@@ -1023,16 +1023,4 @@ func fetchResponseHeaders(conn *sqlite.Conn, id int64) (http.Header, error) {
 
 func isCacheableMethod(req *http.Request) bool {
 	return req.Method == "" || req.Method == http.MethodGet || req.Method == http.MethodHead
-}
-
-// isSafeMethod reports whether the request method's semantics are read-only
-// according to [Section 9.2.1 of RFC 9110].
-//
-// [Section 9.2.1 of RFC 9110]: https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.1
-func isSafeMethod(req *http.Request) bool {
-	return req.Method == "" ||
-		req.Method == http.MethodGet ||
-		req.Method == http.MethodHead ||
-		req.Method == http.MethodOptions ||
-		req.Method == http.MethodTrace
 }

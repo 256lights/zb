@@ -215,13 +215,6 @@ func ensureDateHeader(h http.Header, date time.Time) {
 	h["Date"] = append(dateValues, date.UTC().Format(http.TimeFormat))
 }
 
-// isFinalStatusCode reports whether the given HTTP status code is [final].
-//
-// [final]: https://www.rfc-editor.org/info/rfc9110/#section-15
-func isFinalStatusCode(code int) bool {
-	return 200 <= code && code < 600
-}
-
 // isCacheableStatusCode reports whether the given HTTP status code
 // is [heuristically cacheable].
 //
