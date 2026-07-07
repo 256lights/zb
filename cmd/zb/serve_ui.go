@@ -18,7 +18,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
-	"zb.256lights.llc/pkg/internal/rangeheader"
+	"zb.256lights.llc/pkg/internal/xhttp"
 	"zb.256lights.llc/pkg/internal/xnet"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
@@ -188,8 +188,8 @@ func (srv *webServer) showLog(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	spec := rangeheader.StartingAt(0)
-	if rangeHeader, err := rangeheader.Parse(r.Header.Get("Range")); err != nil {
+	spec := xhttp.RangeStartingAt(0)
+	if rangeHeader, err := xhttp.ParseRange(r.Header.Get("Range")); err != nil {
 		http.Error(w, "Invalid Range header: "+err.Error(), http.StatusBadRequest)
 		return
 	} else if len(rangeHeader) > 1 {

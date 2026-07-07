@@ -1,10 +1,7 @@
 // Copyright 2025 The zb Authors
 // SPDX-License-Identifier: MIT
 
-// Package rangeheader parses the [HTTP Range header].
-//
-// [HTTP Range header]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Range
-package rangeheader
+package xhttp
 
 import (
 	"fmt"
@@ -12,45 +9,47 @@ import (
 	"strings"
 )
 
-// Spec is a single bytes range.
-// The zero value of Spec is a range that covers the first byte of the representation data.
-type Spec struct {
+// RangeSpec is a single bytes range from an [HTTP Range header field].
+// The zero value of RangeSpec is a range that covers the first byte of the representation data.
+//
+// [HTTP Range header field]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Range
+type RangeSpec struct {
 	start, end int64
 }
 
-// StartingAt returns a [Spec] that starts at the given byte.
+// RangeStartingAt returns a [RangeSpec] that starts at the given byte.
 // If start is negative, then it is interpreted as the number of bytes
 // before the end of the representation data.
-func StartingAt(start int64) Spec {
-	return Spec{start: start, end: -1}
+func RangeStartingAt(start int64) RangeSpec {
+	return RangeSpec{start: start, end: -1}
 }
 
-// IntRange returns a [Spec] that starts at the byte offset start
+// IntRange returns a [RangeSpec] that starts at the byte offset start
 // and ends at the byte offset end, inclusive.
 // IntRange panics if start or end is negative,
 // or end is less than start.
-func IntRange(start, end int64) Spec {
+func IntRange(start, end int64) RangeSpec {
 	if start < 0 || end < 0 {
 		panic("IntRange with negative values")
 	}
 	if start > end {
 		panic("IntRange start must be less than or equal to end")
 	}
-	return Spec{start: start, end: end}
+	return RangeSpec{start: start, end: end}
 }
 
 // Start returns the first byte offset.
-func (spec Spec) Start() int64 {
+func (spec RangeSpec) Start() int64 {
 	return spec.start
 }
 
 // End returns the last byte offset and whether there is a specified end.
-func (spec Spec) End() (_ int64, ok bool) {
+func (spec RangeSpec) End() (_ int64, ok bool) {
 	return max(spec.end, 0), spec.end >= 0
 }
 
 // Size returns the number of bytes the range represents.
-func (spec Spec) Size() (size int64, hasEnd bool) {
+func (spec RangeSpec) Size() (size int64, hasEnd bool) {
 	if spec.end < 0 {
 		return 0, false
 	}
@@ -58,7 +57,7 @@ func (spec Spec) Size() (size int64, hasEnd bool) {
 }
 
 // String returns spec in the format of the HTTP Range header.
-func (spec Spec) String() string {
+func (spec RangeSpec) String() string {
 	if spec.IsSuffix() {
 		return strconv.FormatInt(spec.Start(), 10)
 	}
@@ -72,11 +71,11 @@ func (spec Spec) String() string {
 	return string(buf)
 }
 
-func (spec Spec) Resolve(n int64) (_ Spec, ok bool) {
+func (spec RangeSpec) Resolve(n int64) (_ RangeSpec, ok bool) {
 	if end, hasEnd := spec.End(); hasEnd {
 		return spec, 0 <= spec.Start() && spec.Start() < n && end < n
 	}
-	newSpec := Spec{spec.start, max(n-1, 0)}
+	newSpec := RangeSpec{spec.start, max(n-1, 0)}
 	if newSpec.start < 0 {
 		newSpec.start += n
 	}
@@ -84,12 +83,14 @@ func (spec Spec) Resolve(n int64) (_ Spec, ok bool) {
 }
 
 // IsSuffix reports whether the start byte offset is relative to the end of representation data.
-func (spec Spec) IsSuffix() bool {
+func (spec RangeSpec) IsSuffix() bool {
 	return spec.start < 0
 }
 
-// Parse parses the content of an HTTP Range header into zero or more [Spec] values.
-func Parse(rangeHeader string) ([]Spec, error) {
+// ParseRange parses the content of an [HTTP Range header field] into zero or more [RangeSpec] values.
+//
+// [HTTP Range header field]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Range
+func ParseRange(rangeHeader string) ([]RangeSpec, error) {
 	if rangeHeader == "" {
 		return nil, nil
 	}
@@ -98,7 +99,7 @@ func Parse(rangeHeader string) ([]Spec, error) {
 		unit, _, _ := strings.Cut(rangeHeader, "=")
 		return nil, fmt.Errorf("parse range header: unsupported unit %q", unit)
 	}
-	var result []Spec
+	var result []RangeSpec
 	for spec := range strings.SplitSeq(rangeHeader, ",") {
 		spec = strings.Trim(spec, " \t")
 		start, end, hasDash := strings.Cut(spec, "-")
@@ -108,13 +109,13 @@ func Parse(rangeHeader string) ([]Spec, error) {
 			if err != nil {
 				return nil, fmt.Errorf("parse range header: suffix-range %q: %v", spec, err)
 			}
-			result = append(result, Spec{start: i, end: -1})
+			result = append(result, RangeSpec{start: i, end: -1})
 		case hasDash && isDigits(start) && end == "":
 			i, err := strconv.ParseInt(start, 10, 64)
 			if err != nil {
 				return nil, fmt.Errorf("parse range header: int-range %q: %v", spec, err)
 			}
-			result = append(result, Spec{start: i, end: -1})
+			result = append(result, RangeSpec{start: i, end: -1})
 		case hasDash && isDigits(start) && isDigits(end):
 			i, err := strconv.ParseInt(start, 10, 64)
 			if err != nil {
@@ -127,7 +128,7 @@ func Parse(rangeHeader string) ([]Spec, error) {
 			if j < i {
 				return nil, fmt.Errorf("parse range header: int-range %q: last position must be greater than first position", spec)
 			}
-			result = append(result, Spec{start: i, end: j})
+			result = append(result, RangeSpec{start: i, end: j})
 		default:
 			return nil, fmt.Errorf("parse range header: invalid spec %q", spec)
 		}
