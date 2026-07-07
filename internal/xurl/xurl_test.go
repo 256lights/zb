@@ -29,6 +29,7 @@ func TestCleanPath(t *testing.T) {
 		{"../.././././", "../.."},
 		{".././..", "../.."},
 		{"foo.html", "foo.html"},
+		{"foo/..", "."},
 		{"../foo.html", "../foo.html"},
 		{".././foo.html", "../foo.html"},
 		{"./foo.html", "foo.html"},
@@ -38,6 +39,7 @@ func TestCleanPath(t *testing.T) {
 		{"/foo/bar/baz.html", "/foo/bar/baz.html"},
 		{"/foo/bar/../baz.html", "/foo/baz.html"},
 		{"/foo/bar/../baz.html", "/foo/baz.html"},
+		{"/foo/..", "/"},
 		{"/a/b/c/./../../g", "/a/g"},
 		{"/", "/"},
 		{"/..//", "//"},
@@ -52,6 +54,7 @@ func TestCleanPath(t *testing.T) {
 		{"http://www.example.com//", "http://www.example.com//"},
 		{"http://www.example.com///", "http://www.example.com///"},
 		{"http://www.example.com/foo.html", "http://www.example.com/foo.html"},
+		{"http://www.example.com/foo/..", "http://www.example.com/"},
 		{"http://www.example.com//foo.html", "http://www.example.com//foo.html"},
 		{"http://www.example.com//./foo.html", "http://www.example.com//foo.html"},
 		{"http://www.example.com//../foo.html", "http://www.example.com/foo.html"},
@@ -59,8 +62,10 @@ func TestCleanPath(t *testing.T) {
 		{"http://www.example.com/../foo.html", "http://www.example.com/foo.html"},
 		{"http://www.example.com/../foo.html", "http://www.example.com/foo.html"},
 		{"?spam=eggs", "?spam=eggs"},
+		{"foo/..?spam=eggs", ".?spam=eggs"},
 		{"#", ""},
 		{"#foo", "#foo"},
+		{"foo/..#foo", ".#foo"},
 	}
 
 	for _, test := range tests {

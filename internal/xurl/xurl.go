@@ -13,15 +13,15 @@ import (
 // CleanPath returns the shortest [*url.URL] equivalent to u purely by lexical processing.
 // It applies the following rules iteratively until no further processing can be done:
 //
-//  1. Eliminate each . path name element (the current directory).
-//  2. Eliminate each inner .. path name element (the parent directory)
-//     along with the non-.. element that precedes it.
-//  3. Eliminate .. elements that begin a rooted path:
+//  1. Eliminate each "." path name element (the current directory).
+//  2. Eliminate each inner ".." path name element (the parent directory)
+//     along with the non-".." element that precedes it.
+//  3. Eliminate ".." elements that begin a rooted path:
 //     that is, replace "/.." by "/" at the beginning of a path.
 //
-// If the result of this process is an empty URL and the path had at least one . path name element,
-// then CleanPath returns ".".
-// If the result of this process is a URL with a scheme, host, or user and an empty path,
+// If the result of this process is a URL with an empty path and the path was not originally empty,
+// then CleanPath returns a URL whose Path == ".".
+// If the result of this process is a URL with an empty path and a non-empty scheme, host, or user,
 // then CleanPath returns a URL whose Path == "/".
 func CleanPath(u *url.URL) *url.URL {
 	if u.Opaque != "" {
@@ -39,16 +39,13 @@ func CleanPath(u *url.URL) *url.URL {
 			r = 1
 		}
 	}
-	hasDot := false
 	for r < len(path) {
 		switch {
 		case path[r] == '.' && r+1 == len(path):
 			// . at end
-			hasDot = true
 			r++
 		case path[r] == '.' && r+1 < len(path) && path[r+1] == '/':
 			// ./ element
-			hasDot = true
 			r += 2
 			if !rooted && out.w == 0 && r < len(path) && path[r] == '/' {
 				out.append('.')
@@ -88,7 +85,7 @@ func CleanPath(u *url.URL) *url.URL {
 		}
 	}
 
-	if out.w == 0 && hasDot {
+	if out.w == 0 && u.Path != "" {
 		u = new(*u)
 		if err := setRawPath(u, "."); err != nil {
 			panic(err)
