@@ -248,7 +248,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			for _, resp := range responses {
 				if !resp.responseReceived() ||
 					hasNoCacheDirective(cacheControlDirectives(resp.responseHeader)) ||
-					!resp.matchesRequestHeader(varyHeader(resp.responseHeader), req.Header) {
+					!resp.matchesRequestHeader(xhttp.VaryHeader(resp.responseHeader), req.Header) {
 					continue
 				}
 				if age, fresh := resp.isFresh(cacheCheckTime, requestDirectives); fresh {
@@ -455,9 +455,9 @@ func canStoreResponse(requestHeader http.Header, statusCode int, responseHeader 
 	if !xhttp.IsFinalStatusCode(statusCode) || statusCode == http.StatusPartialContent {
 		return false
 	}
-	if vary := varyHeader(responseHeader); !vary.hasWildcard() {
+	if vary := xhttp.VaryHeader(responseHeader); !vary.HasWildcard() {
 		// Additional requirement beyond RFC: must be able store request header from Vary key.
-		for key := range vary.fieldNames() {
+		for key := range vary.FieldNames() {
 			if len(requestHeader[key]) > 0 && !canStoreRequestHeader(key) {
 				return false
 			}
@@ -994,7 +994,7 @@ func fetchRequestHeaders(conn *sqlite.Conn, id int64) (http.Header, error) {
 		} else {
 			// Generally, we don't serialize like this because it would lose order,
 			// but handle just in case.
-			v[0] += headerFieldCombiner + value
+			v[0] += xhttp.HeaderFieldCombiner + value
 			result[name] = v
 		}
 	}

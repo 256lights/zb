@@ -29,15 +29,15 @@ type storedResponse struct {
 // match those in the given request header.
 //
 // [Section 4.1 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-4.1
-func (resp *storedResponse) matchesRequestHeader(vary varyValue, h http.Header) bool {
+func (resp *storedResponse) matchesRequestHeader(vary xhttp.VaryValue, h http.Header) bool {
 	if vary.IsZero() {
 		return true
 	}
-	if vary.hasWildcard() {
+	if vary.HasWildcard() {
 		return false
 	}
-	for key := range vary.fieldNames() {
-		if !headerValuesEqual(resp.requestHeader[key], h[key]) {
+	for key := range vary.FieldNames() {
+		if !xhttp.HeaderValuesEqual(resp.requestHeader[key], h[key]) {
 			return false
 		}
 	}

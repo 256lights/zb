@@ -45,8 +45,8 @@ func (result *forwardResult) newStoredResponse(id int64, responseBodySize int64)
 		responseReceivedAt: result.responseReceivedAt,
 		responseBodySize:   responseBodySize,
 	}
-	if vary := varyHeader(result.response.Header); !vary.hasWildcard() {
-		for key := range vary.fieldNames() {
+	if vary := xhttp.VaryHeader(result.response.Header); !vary.HasWildcard() {
+		for key := range vary.FieldNames() {
 			values := result.requestHeader[key]
 			if len(values) == 0 {
 				continue
@@ -57,7 +57,7 @@ func (result *forwardResult) newStoredResponse(id int64, responseBodySize int64)
 			if resp.requestHeader == nil {
 				resp.requestHeader = make(http.Header)
 			}
-			resp.requestHeader[key] = []string{strings.Join(values, headerFieldCombiner)}
+			resp.requestHeader[key] = []string{strings.Join(values, xhttp.HeaderFieldCombiner)}
 		}
 	}
 	return resp, nil
@@ -93,9 +93,9 @@ func forward(rt http.RoundTripper, req *http.Request, responses []*storedRespons
 	newValidators := xhttp.ExtractValidatorFields(result.response.Header)
 	responseContentLength, _ := contentLength(result.response.Header)
 	fresh, stale := computeFreshen(newValidators, responseContentLength, func(yield func(*storedResponse) bool) {
-		vary := varyHeader(result.response.Header)
+		vary := xhttp.VaryHeader(result.response.Header)
 		for _, resp := range responses {
-			if vary.hasWildcard() || resp.matchesRequestHeader(vary, req.Header) {
+			if vary.HasWildcard() || resp.matchesRequestHeader(vary, req.Header) {
 				if !yield(resp) {
 					return
 				}
