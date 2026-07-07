@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// CleanPath returns the shortest URL equivalent to u purely by lexical processing.
+// CleanPath returns the shortest [*url.URL] equivalent to u purely by lexical processing.
 // It applies the following rules iteratively until no further processing can be done:
 //
 //  1. Eliminate each . path name element (the current directory).
@@ -109,7 +109,8 @@ func CleanPath(u *url.URL) *url.URL {
 	return u2
 }
 
-// Rel returns a URL relative to baseURL that is equivalent to targetURL.
+// Rel returns a [*url.URL] relative to baseURL that is equivalent to targetURL.
+// If targetURL is absolute, Rel will not return an error.
 func Rel(baseURL, targetURL *url.URL) (*url.URL, error) {
 	if baseURL.Scheme != targetURL.Scheme ||
 		baseURL.Opaque != "" ||
