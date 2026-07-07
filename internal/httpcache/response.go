@@ -8,6 +8,8 @@ import (
 	"iter"
 	"net/http"
 	"time"
+
+	"zb.256lights.llc/pkg/internal/xhttp"
 )
 
 type storedResponse struct {
@@ -164,8 +166,8 @@ func (resp *storedResponse) freshnessLifetime() time.Duration {
 	return 0
 }
 
-func (resp *storedResponse) entityTag() (_ entityTag, ok bool) {
-	return entityTagFromHeader(resp.responseHeader)
+func (resp *storedResponse) entityTag() (_ xhttp.EntityTag, ok bool) {
+	return xhttp.EntityTagFromHeader(resp.responseHeader)
 }
 
 func hasUnreceivedResponses(seq iter.Seq[*storedResponse]) bool {

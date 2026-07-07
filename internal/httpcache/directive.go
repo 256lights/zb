@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"zb.256lights.llc/pkg/internal/xhttp"
 )
 
 // cacheControlRequestDirectives is the parsed form of the Cache-Control request header field.
@@ -77,7 +79,7 @@ func (rd *cacheControlRequestDirectives) hasMinFresh() bool {
 func cacheControlDirectives(header http.Header) iter.Seq[cacheControlDirective] {
 	return func(yield func(cacheControlDirective) bool) {
 		for _, value := range header["Cache-Control"] {
-			for elem := range splitList(value) {
+			for elem := range xhttp.SplitList(value) {
 				d, ok := parseCacheControlDirective(elem)
 				if ok {
 					if !yield(d) {
@@ -175,37 +177,6 @@ func (d cacheControlDirective) argument() (_ string, ok bool) {
 		}
 		sb.WriteByte(inner[i])
 		i++
-	}
-}
-
-// splitList splits an HTTP header [list value],
-// handling [quoted strings].
-//
-// [list value]: https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.1
-// [quoted strings]: https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.4
-func splitList(value string) iter.Seq[string] {
-	const ows = " \t"
-	return func(yield func(string) bool) {
-		i := 0
-		for j := 0; j < len(value); j++ {
-			switch value[j] {
-			case ',':
-				if !yield(strings.Trim(value[i:j], ows)) {
-					return
-				}
-				i = j + 1
-			case '"':
-				j++
-				for j < len(value) && value[j] != '"' {
-					if value[j] == '\\' {
-						j += 2
-					} else {
-						j++
-					}
-				}
-			}
-		}
-		yield(strings.Trim(value[i:], ows))
 	}
 }
 

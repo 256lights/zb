@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"zb.256lights.llc/pkg/internal/xhttp"
 	"zb.256lights.llc/pkg/internal/xslices"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitefile"
@@ -767,7 +768,7 @@ func headersToNotStore(header http.Header) map[string]struct{} {
 	for d := range cacheControlDirectives(header) {
 		if d.nameMatches("no-cache") {
 			if arg, ok := d.argument(); ok {
-				for name := range splitList(arg) {
+				for name := range xhttp.SplitList(arg) {
 					if name != "" && tokenEnd(name) == len(name) {
 						skip[http.CanonicalHeaderKey(name)] = struct{}{}
 					}
@@ -776,7 +777,7 @@ func headersToNotStore(header http.Header) map[string]struct{} {
 		}
 	}
 	for _, value := range header["Connection"] {
-		for name := range splitList(value) {
+		for name := range xhttp.SplitList(value) {
 			if name != "" && tokenEnd(name) == len(name) {
 				skip[http.CanonicalHeaderKey(name)] = struct{}{}
 			}

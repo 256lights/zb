@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"zb.256lights.llc/pkg/internal/xhttp"
 )
 
 // forwardResult is the result of a call to [forward].
@@ -88,7 +90,7 @@ func forward(rt http.RoundTripper, req *http.Request, responses []*storedRespons
 		// TODO(someday): Use stale response on server error.
 		return nil, err
 	}
-	newValidators := extractValidatorFields(result.response.Header)
+	newValidators := xhttp.ExtractValidatorFields(result.response.Header)
 	responseContentLength, _ := contentLength(result.response.Header)
 	fresh, stale := computeFreshen(newValidators, responseContentLength, func(yield func(*storedResponse) bool) {
 		vary := varyHeader(result.response.Header)
@@ -206,9 +208,9 @@ func rewriteRequestForValidation(req *http.Request, responses []*storedResponse)
 // See [Section 4.3.4 of RFC 9111] for a description.
 //
 // [Section 4.3.4 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-4.3.4
-func computeFreshen(newValidators validatorFields, contentLength int64, responses iter.Seq[*storedResponse]) (freshenResponses []*storedResponse, staleIDs []int64) {
+func computeFreshen(newValidators xhttp.ValidatorFields, contentLength int64, responses iter.Seq[*storedResponse]) (freshenResponses []*storedResponse, staleIDs []int64) {
 	switch {
-	case newValidators.hasStrong():
+	case newValidators.HasStrong():
 		n := 0
 		for range responses {
 			n++
@@ -217,14 +219,14 @@ func computeFreshen(newValidators validatorFields, contentLength int64, response
 		freshenResponses = make([]*storedResponse, 0, n)
 
 		for resp := range responses {
-			if extractValidatorFields(resp.responseHeader).hasAnyStrongFrom(newValidators) && resp.matchesContentLength(contentLength) {
+			if xhttp.ExtractValidatorFields(resp.responseHeader).HasAnyStrongFrom(newValidators) && resp.matchesContentLength(contentLength) {
 				freshenResponses = append(freshenResponses, resp)
 			} else {
 				staleIDs = append(staleIDs, resp.id)
 			}
 		}
 		return freshenResponses, staleIDs
-	case newValidators.hasWeak():
+	case newValidators.HasWeak():
 		n := 0
 		for range responses {
 			n++
@@ -232,7 +234,7 @@ func computeFreshen(newValidators validatorFields, contentLength int64, response
 		staleIDs = make([]int64, 0, n)
 
 		for resp := range responses {
-			if len(freshenResponses) == 0 && extractValidatorFields(resp.responseHeader).hasAnyFrom(newValidators) && resp.matchesContentLength(contentLength) {
+			if len(freshenResponses) == 0 && xhttp.ExtractValidatorFields(resp.responseHeader).HasAnyFrom(newValidators) && resp.matchesContentLength(contentLength) {
 				// Only the most recent allowed.
 				freshenResponses = []*storedResponse{resp}
 			} else {
@@ -262,7 +264,7 @@ func computeFreshen(newValidators validatorFields, contentLength int64, response
 			return
 		}
 		stop()
-		if extractValidatorFields(first.responseHeader).IsZero() && first.matchesContentLength(contentLength) {
+		if xhttp.ExtractValidatorFields(first.responseHeader).IsZero() && first.matchesContentLength(contentLength) {
 			return []*storedResponse{first}, nil
 		} else {
 			return nil, []int64{first.id}

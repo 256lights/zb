@@ -7,6 +7,8 @@ import (
 	"iter"
 	"net/http"
 	"strings"
+
+	"zb.256lights.llc/pkg/internal/xhttp"
 )
 
 // varyValue is a list of HTTP Vary field lines.
@@ -25,7 +27,7 @@ func (vv varyValue) IsZero() bool {
 // hasWildcard reports whether vv contains "*".
 func (vv varyValue) hasWildcard() bool {
 	for _, varyValue := range vv {
-		for varyElem := range splitList(varyValue) {
+		for varyElem := range xhttp.SplitList(varyValue) {
 			if varyElem == "*" {
 				return true
 			}
@@ -39,7 +41,7 @@ func (vv varyValue) hasWildcard() bool {
 func (vv varyValue) fieldNames() iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for _, varyValue := range vv {
-			for varyElem := range splitList(varyValue) {
+			for varyElem := range xhttp.SplitList(varyValue) {
 				if varyElem != "*" {
 					varyElem = http.CanonicalHeaderKey(varyElem)
 					if !yield(varyElem) {

@@ -28,6 +28,7 @@ import (
 	googlecmp "github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"golang.org/x/tools/txtar"
+	"zb.256lights.llc/pkg/internal/xhttp"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -596,7 +597,7 @@ func BenchmarkRoundTripper(b *testing.B) {
 		w.Header().Set("ETag", entityTag)
 
 		for _, value := range r.Header.Values("If-None-Match") {
-			for elem := range splitList(value) {
+			for elem := range xhttp.SplitList(value) {
 				if elem == entityTag {
 					w.WriteHeader(http.StatusNotModified)
 					return
