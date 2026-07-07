@@ -5,7 +5,10 @@ package fileurl
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -13,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dsnet/compress/brotli"
 )
 
 // Transport is an [http.RoundTripper] that serves GET, HEAD, and PUT requests
@@ -22,6 +27,9 @@ type Transport struct {
 
 // RoundTrip implements [http.RoundTripper].
 func (t Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		defer req.Body.Close()
+	}
 	if req.URL.Scheme != Scheme {
 		return nil, http.ErrSkipAltProtocol
 	}
@@ -70,9 +78,7 @@ func (t Transport) put(req *http.Request) (resp *http.Response) {
 	if err != nil {
 		return errorResponse(req, err.Error(), http.StatusNotFound)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
-		return errorResponse(req, "Could not create parent directory", http.StatusInternalServerError)
-	}
+
 	flag := os.O_WRONLY | os.O_CREATE
 	if ifMatch := req.Header.Values("If-Match"); len(ifMatch) == 0 {
 		flag |= os.O_CREATE
@@ -83,6 +89,24 @@ func (t Transport) put(req *http.Request) (resp *http.Response) {
 	}
 	if req.Header.Get("If-None-Match") == "*" {
 		flag |= os.O_EXCL
+	}
+
+	body, err := decodeBody(req.Body, req.Header.Get("Content-Encoding"))
+	if err != nil {
+		var code int
+		if _, isUnknown := errors.AsType[contentEncodingError](err); isUnknown {
+			code = http.StatusUnsupportedMediaType
+		} else {
+			code = http.StatusBadRequest
+		}
+		resp := errorResponse(req, err.Error(), code)
+		resp.Header.Set("Accept-Encoding", acceptEncoding)
+		return resp
+	}
+	defer body.Close()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+		return errorResponse(req, "Could not create parent directory", http.StatusInternalServerError)
 	}
 	f, err := os.OpenFile(path, flag, 0o666)
 	if err != nil {
@@ -117,7 +141,7 @@ func (t Transport) put(req *http.Request) (resp *http.Response) {
 	if err := f.Truncate(0); err != nil {
 		return errorResponse(req, "Copy failed", http.StatusInternalServerError)
 	}
-	if _, err := io.Copy(f, req.Body); err != nil {
+	if _, err := io.Copy(f, body); err != nil {
 		return errorResponse(req, "Copy failed", http.StatusInternalServerError)
 	}
 
@@ -149,6 +173,35 @@ func (t Transport) put(req *http.Request) (resp *http.Response) {
 		Header:     responseHeader,
 		Body:       io.NopCloser(bytes.NewReader(nil)),
 	}
+}
+
+// acceptEncoding is the value of an [Accept-Encoding header]
+// that advertises the algorithms that [decodeBody] supports.
+//
+// [Accept-Encoding header]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Accept-Encoding
+const acceptEncoding = "br,gzip,deflate"
+
+func decodeBody(r io.Reader, contentEncoding string) (io.ReadCloser, error) {
+	switch contentEncoding {
+	case "":
+		return io.NopCloser(r), nil
+	case "br":
+		return brotli.NewReader(r, nil)
+	case "gzip", "x-gzip":
+		return gzip.NewReader(r)
+	case "deflate":
+		return flate.NewReader(r), nil
+	default:
+		return nil, contentEncodingError{contentEncoding}
+	}
+}
+
+type contentEncodingError struct {
+	contentEncoding string
+}
+
+func (cee contentEncodingError) Error() string {
+	return fmt.Sprintf("unsupported Content-Encoding %s", cee.contentEncoding)
 }
 
 // serveResponse calls h.ServeHTTP and converts the result into an [*http.Response].

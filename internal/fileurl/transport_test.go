@@ -4,6 +4,8 @@
 package fileurl
 
 import (
+	"bytes"
+	"compress/gzip"
 	"io"
 	"mime"
 	"net/http"
@@ -120,6 +122,48 @@ func TestTransport(t *testing.T) {
 			Body: io.NopCloser(strings.NewReader(content)),
 			GetBody: func() (io.ReadCloser, error) {
 				return io.NopCloser(strings.NewReader(content)), nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				t.Error("response.Body.Close():", err)
+			}
+		}()
+
+		if got, want := resp.StatusCode, http.StatusNoContent; got != want {
+			t.Errorf("response.StatusCode = %d; want %d", got, want)
+		}
+		if got, err := os.ReadFile(path); string(got) != content || err != nil {
+			t.Errorf("os.ReadFile(%q) = %q, %v; want %q, <nil>", path, got, err, content)
+		}
+	})
+
+	t.Run("PutGzip", func(t *testing.T) {
+		const content = "Hello, World!\n"
+		bodyBuffer := new(bytes.Buffer)
+		zw := gzip.NewWriter(bodyBuffer)
+		if _, err := zw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		path := filepath.Join(t.TempDir(), "foo.txt")
+		resp, err := client.Do(&http.Request{
+			Method: http.MethodPut,
+			URL:    FromPath(path),
+			Header: http.Header{
+				"Content-Length":   {strconv.Itoa(len(content))},
+				"Content-Type":     {"text/plain; charset=utf-8"},
+				"Content-Encoding": {"gzip"},
+			},
+			Body: io.NopCloser(bytes.NewReader(bodyBuffer.Bytes())),
+			GetBody: func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(bodyBuffer.Bytes())), nil
 			},
 		})
 		if err != nil {
