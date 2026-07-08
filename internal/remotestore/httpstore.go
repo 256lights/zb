@@ -5,8 +5,6 @@ package remotestore
 
 import (
 	"bytes"
-	"compress/flate"
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -15,9 +13,10 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/dsnet/compress/brotli"
 	jsonv2 "github.com/go-json-experiment/json"
+	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/hal"
+	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/useragent"
 	"zb.256lights.llc/pkg/zbstore"
@@ -94,13 +93,21 @@ func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Obje
 	var ec multierror.Collector
 	for _, link := range infoLinks.Objects {
 		if !link.Templated {
-			return nil, fmt.Errorf("stat %s: link relation %s: not all links are templated", path, narInfoRelation)
+			return nil, fmt.Errorf("stat %s: %s: link relation %s: not all links are templated",
+				path, s.URL.Redacted(), narInfoRelation)
 		}
 		u, err := link.Expand(params)
 		if err != nil {
-			return nil, err
+			ec.Add(fmt.Errorf("stat %s: %s: link relation %s: %v",
+				path, s.URL.Redacted(), narInfoRelation, err))
+			continue
 		}
-		u = s.URL.ResolveReference(u)
+		u, err = resolveReference(s.URL, u)
+		if err != nil {
+			ec.Add(fmt.Errorf("stat %s: %s: link relation %s: %v",
+				path, s.URL.Redacted(), narInfoRelation, err))
+			continue
+		}
 		info, err := fetchNARInfo(ctx, c, u)
 		if err == nil {
 			return &httpObject{
@@ -112,7 +119,7 @@ func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Obje
 		if statusCode, _ := errorStatusCode(err); statusCode == http.StatusNotFound {
 			log.Debugf(ctx, "NAR info not found: %v", err)
 		} else {
-			ec.Add(err)
+			ec.Add(fmt.Errorf("stat %s: %v", path, err))
 		}
 	}
 
@@ -176,7 +183,12 @@ func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zb
 				drvHash, s.URL.Redacted(), realizationRelation, err))
 			continue
 		}
-		u = s.URL.ResolveReference(u)
+		u, err = resolveReference(s.URL, u)
+		if err != nil {
+			ec.Add(fmt.Errorf("fetch realizations for %v: %v: link relation %s: %v",
+				drvHash, s.URL.Redacted(), realizationRelation, err))
+			continue
+		}
 		if err := s.addRealizations(ctx, &result, u); err != nil {
 			if code, _ := errorStatusCode(err); code != http.StatusNotFound {
 				ec.Add(err)
@@ -223,7 +235,7 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 		URL:    u,
 		Header: http.Header{
 			"Accept":          {accept},
-			"Accept-Encoding": {acceptEncoding},
+			"Accept-Encoding": {httpencoding.Accept},
 			"User-Agent":      {useragent.String},
 		},
 	}).WithContext(ctx)
@@ -253,7 +265,7 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 		}
 	}
 	if e := resp.Header.Get("Content-Encoding"); e != "" {
-		dec, err := decodeBody(bytes.NewReader(data), e)
+		dec, err := httpencoding.Decode(bytes.NewReader(data), e)
 		if err != nil {
 			return nil, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
 		}
@@ -264,27 +276,6 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 		}
 	}
 	return data, nil
-}
-
-// acceptEncoding is the value of an [Accept-Encoding header]
-// that advertises the algorithms that [decodeBody] supports.
-//
-// [Accept-Encoding header]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Accept-Encoding
-const acceptEncoding = "br,gzip,deflate"
-
-func decodeBody(r io.Reader, contentEncoding string) (io.ReadCloser, error) {
-	switch contentEncoding {
-	case "":
-		return io.NopCloser(r), nil
-	case "br":
-		return brotli.NewReader(r, nil)
-	case "gzip", "x-gzip":
-		return gzip.NewReader(r)
-	case "deflate":
-		return flate.NewReader(r), nil
-	default:
-		return nil, fmt.Errorf("unsupported Content-Encoding %s", contentEncoding)
-	}
 }
 
 // httpObject is the implementation of [zbstore.Object] for [HTTPStore].
@@ -308,14 +299,17 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("download %s: invalid nar url: %v", obj.info.StorePath, err)
 	}
-	narFileURL := obj.base.ResolveReference(ref)
+	narFileURL, err := resolveReference(obj.base, ref)
+	if err != nil {
+		return fmt.Errorf("download %s: %v", obj.info.StorePath, err)
+	}
 
 	req := &http.Request{
 		Method: http.MethodGet,
 		URL:    narFileURL,
 		Header: http.Header{
 			"Accept":          {"*/*"},
-			"Accept-Encoding": {acceptEncoding},
+			"Accept-Encoding": {httpencoding.Accept},
 			"User-Agent":      {useragent.String},
 		},
 	}
@@ -330,7 +324,7 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 			status:     resp.Status,
 		})
 	}
-	decodedBody, err := decodeBody(resp.Body, resp.Header.Get("Content-Encoding"))
+	decodedBody, err := httpencoding.Decode(resp.Body, resp.Header.Get("Content-Encoding"))
 	if err != nil {
 		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
 	}
@@ -339,6 +333,14 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
 	}
 	return nil
+}
+
+func resolveReference(baseURL, ref *url.URL) (*url.URL, error) {
+	targetURL := baseURL.ResolveReference(ref)
+	if (targetURL.Scheme == "" || targetURL.Scheme == fileurl.Scheme) && baseURL.Scheme != fileurl.Scheme {
+		return nil, fmt.Errorf("link to %s not permitted from %s", ref.Redacted(), baseURL.Redacted())
+	}
+	return targetURL, nil
 }
 
 type httpError struct {

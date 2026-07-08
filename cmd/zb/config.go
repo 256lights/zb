@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,12 +15,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/tailscale/hujson"
 	"zb.256lights.llc/pkg/internal/backend"
+	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/httpcache"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/netrc"
@@ -56,6 +59,17 @@ func defaultGlobalConfig() *globalConfig {
 	if cd := cacheDir(); cd != "" {
 		g.CacheDB = filepath.Join(cd, "zb", "cache.db")
 		g.HTTPCacheDB = filepath.Join(cd, "zb", "http-cache.db")
+	}
+	return g
+}
+
+func (g *globalConfig) clone() *globalConfig {
+	if g == nil {
+		return nil
+	}
+	g = new(*g)
+	if g.Server.Download != nil {
+		g.Server.Download = new(*g.Server.Download)
 	}
 	return g
 }
@@ -97,7 +111,7 @@ func (g *globalConfig) mergeFiles(paths iter.Seq[string]) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %v", path, err)
 		}
-		prev := new(*g)
+		prev := g.clone()
 		if err := jsonv2.Unmarshal(jsonData, g, jsonv2.RejectUnknownMembers(false)); err != nil {
 			return fmt.Errorf("read %s: %v", path, err)
 		}
@@ -114,6 +128,18 @@ func (g *globalConfig) resolveRelativePaths(dir string, prev *globalConfig) {
 		}
 		return path
 	}
+	dirToURL := func() *url.URL {
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			return nil
+		}
+		baseURL := fileurl.FromPath(absDir)
+		if !strings.HasSuffix(baseURL.Path, "/") {
+			baseURL.Path += "/"
+		}
+		return baseURL
+	}
+
 	if prev == nil || g.StoreSocket != prev.StoreSocket {
 		g.StoreSocket = resolve(g.StoreSocket)
 	}
@@ -125,6 +151,11 @@ func (g *globalConfig) resolveRelativePaths(dir string, prev *globalConfig) {
 	}
 	if prev == nil || g.NetrcPath != prev.NetrcPath {
 		g.NetrcPath = resolve(g.NetrcPath)
+	}
+	if prev == nil || !g.Server.Download.Equal(prev.Server.Download) {
+		if baseURL := dirToURL(); baseURL != nil {
+			g.Server.Download = g.Server.Download.resolve(baseURL)
+		}
 	}
 }
 
@@ -228,7 +259,7 @@ func (g *globalConfig) reusePolicy() *zbstorerpc.ReusePolicy {
 }
 
 func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
-	transport := httpcache.Open(g.HTTPCacheDB, http.DefaultTransport, &httpcache.Options{
+	cache := httpcache.Open(g.HTTPCacheDB, http.DefaultTransport, &httpcache.Options{
 		MaxResponseSize:         4 << 20, // 4 MiB
 		RequestCoalescingCutoff: 5 * time.Second,
 		ErrorReporter: httpcache.ErrorReporterFunc(func(ctx context.Context, info *httpcache.RequestInfo, err error) {
@@ -239,15 +270,16 @@ func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
 			}
 		}),
 	})
+	transport := &fileSplitTransport{fallback: cache}
 	if g.NetrcPath == "" {
-		return &http.Client{Transport: transport}, transport, nil
+		return &http.Client{Transport: transport}, cache, nil
 	}
 	netrcData, err := os.ReadFile(g.NetrcPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return &http.Client{Transport: transport}, transport, nil
+		return &http.Client{Transport: transport}, cache, nil
 	}
 	if err != nil {
-		transport.Close()
+		cache.Close()
 		return nil, nil, fmt.Errorf("open netrc file: %v", err)
 	}
 	return &http.Client{
@@ -255,7 +287,31 @@ func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
 			Netrc:        netrcData,
 			RoundTripper: transport,
 		},
-	}, transport, nil
+	}, cache, nil
+}
+
+// fileSplitTransport is an [http.RoundTripper]
+// that sends "file://" URLs directly to a [fileurl.Transport].
+// This allows "file://" URLs to bypass caching
+// and other middleware unnecessary for local file access.
+type fileSplitTransport struct {
+	file     fileurl.Transport
+	fallback http.RoundTripper
+}
+
+func (t *fileSplitTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Scheme == fileurl.Scheme {
+		var transport fileurl.Transport
+		if t != nil {
+			transport = t.file
+		}
+		return transport.RoundTrip(req)
+	}
+	if t == nil || t.fallback == nil {
+		req.Body.Close()
+		return nil, http.ErrSkipAltProtocol
+	}
+	return t.fallback.RoundTrip(req)
 }
 
 func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) *jsonrpc.Client {
@@ -308,6 +364,34 @@ type storeConfig struct {
 	Properties jsontext.Value `json:",inline"`
 }
 
+func (sc *storeConfig) isNull() bool {
+	return sc == nil || sc.Type == "null"
+}
+
+func (sc *storeConfig) Equal(other *storeConfig) bool {
+	if sc.isNull() {
+		return other.isNull()
+	}
+	if other.isNull() {
+		return false
+	}
+	if sc.Type != other.Type {
+		return false
+	}
+	if bytes.Equal(sc.Properties, other.Properties) {
+		return true
+	}
+	p1 := sc.Properties.Clone()
+	if err := p1.Canonicalize(); err != nil {
+		return false
+	}
+	p2 := other.Properties.Clone()
+	if err := p2.Canonicalize(); err != nil {
+		return false
+	}
+	return bytes.Equal(p1, p2)
+}
+
 func (sc *storeConfig) toStore(deps *storeDeps) (backend.Store, error) {
 	if sc == nil {
 		return zbstore.Null{}, nil
@@ -316,9 +400,7 @@ func (sc *storeConfig) toStore(deps *storeDeps) (backend.Store, error) {
 	case "null":
 		return zbstore.Null{}, nil
 	case "http":
-		var props struct {
-			URL string `json:"url"`
-		}
+		var props storeConfigHTTPProperties
 		if err := jsonv2.Unmarshal(sc.Properties, &props); err != nil {
 			return nil, fmt.Errorf("unmarshal http store configuration: %v", err)
 		}
@@ -333,10 +415,48 @@ func (sc *storeConfig) toStore(deps *storeDeps) (backend.Store, error) {
 		if err != nil {
 			return nil, fmt.Errorf("unmarshal http store configuration: url: %v", err)
 		}
+		if !store.URL.IsAbs() {
+			return nil, fmt.Errorf("unmarshal http store configuration: url: %s is not absolute", store.URL.Redacted())
+		}
 		return store, nil
 	default:
 		return nil, fmt.Errorf("unmarshal store configuration: unknown type %q", sc.Type)
 	}
+}
+
+// resolve returns a copy of sc with any relative URLs resolved relative to base,
+// or returns sc if does not contain relative URLs.
+func (sc *storeConfig) resolve(base *url.URL) *storeConfig {
+	if sc == nil {
+		return nil
+	}
+	switch sc.Type {
+	case "http":
+		var props storeConfigHTTPProperties
+		if err := jsonv2.Unmarshal(sc.Properties, &props); err != nil {
+			return sc
+		}
+		u, err := url.Parse(props.URL)
+		if err != nil || u.IsAbs() {
+			return sc
+		}
+		props.URL = base.ResolveReference(u).String()
+		newProps, err := jsonv2.Marshal(props)
+		if err != nil {
+			return sc
+		}
+		return &storeConfig{
+			Type:       sc.Type,
+			Properties: newProps,
+		}
+	default:
+		return sc
+	}
+}
+
+// storeConfigHTTPProperties is the set of properties in [storeConfig] for the "http" type.
+type storeConfigHTTPProperties struct {
+	URL string `json:"url"`
 }
 
 // defaultVarDir returns "/opt/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.

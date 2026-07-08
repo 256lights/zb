@@ -15,6 +15,7 @@ import (
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
+	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xmaps"
@@ -54,7 +55,7 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 			if err != nil {
 				return err
 			}
-			if (u.Scheme == "" || u.Scheme == "file") && u.Fragment == "" &&
+			if (u.Scheme == "" || u.Scheme == fileurl.Scheme) && u.Fragment == "" &&
 				strings.HasSuffix(u.Path, zbstore.DerivationExt) {
 				drvPaths[i], err = frontend.URLToPath(u)
 				if err != nil {
