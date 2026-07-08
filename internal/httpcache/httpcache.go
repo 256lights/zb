@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"zb.256lights.llc/pkg/internal/xhttp"
 	"zb.256lights.llc/pkg/internal/xslices"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitefile"
@@ -197,7 +198,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	// TODO(someday): Handle Range requests.
 	if !isCacheableMethod(req) || len(req.Header["Range"]) > 0 {
 		resp, err := rt.roundTripper.RoundTrip(req)
-		if err == nil && !isSafeMethod(req) && 200 <= resp.StatusCode && resp.StatusCode < 400 {
+		if err == nil && !xhttp.IsSafeMethod(req) && 200 <= resp.StatusCode && resp.StatusCode < 400 {
 			// Unsafe request succeeded: invalidate cache.
 			err := func() (err error) {
 				conn, err := rt.db.Get(ctx)
@@ -247,7 +248,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			for _, resp := range responses {
 				if !resp.responseReceived() ||
 					hasNoCacheDirective(cacheControlDirectives(resp.responseHeader)) ||
-					!resp.matchesRequestHeader(varyHeader(resp.responseHeader), req.Header) {
+					!resp.matchesRequestHeader(xhttp.VaryHeader(resp.responseHeader), req.Header) {
 					continue
 				}
 				if age, fresh := resp.isFresh(cacheCheckTime, requestDirectives); fresh {
@@ -451,12 +452,12 @@ func canStoreRequestHeader(key string) bool {
 //
 // [Section 3 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-3
 func canStoreResponse(requestHeader http.Header, statusCode int, responseHeader http.Header) bool {
-	if !isFinalStatusCode(statusCode) || statusCode == http.StatusPartialContent {
+	if !xhttp.IsFinalStatusCode(statusCode) || statusCode == http.StatusPartialContent {
 		return false
 	}
-	if vary := varyHeader(responseHeader); !vary.hasWildcard() {
+	if vary := xhttp.VaryHeader(responseHeader); !vary.HasWildcard() {
 		// Additional requirement beyond RFC: must be able store request header from Vary key.
-		for key := range vary.fieldNames() {
+		for key := range vary.FieldNames() {
 			if len(requestHeader[key]) > 0 && !canStoreRequestHeader(key) {
 				return false
 			}
@@ -767,7 +768,7 @@ func headersToNotStore(header http.Header) map[string]struct{} {
 	for d := range cacheControlDirectives(header) {
 		if d.nameMatches("no-cache") {
 			if arg, ok := d.argument(); ok {
-				for name := range splitList(arg) {
+				for name := range xhttp.SplitList(arg) {
 					if name != "" && tokenEnd(name) == len(name) {
 						skip[http.CanonicalHeaderKey(name)] = struct{}{}
 					}
@@ -776,7 +777,7 @@ func headersToNotStore(header http.Header) map[string]struct{} {
 		}
 	}
 	for _, value := range header["Connection"] {
-		for name := range splitList(value) {
+		for name := range xhttp.SplitList(value) {
 			if name != "" && tokenEnd(name) == len(name) {
 				skip[http.CanonicalHeaderKey(name)] = struct{}{}
 			}
@@ -993,7 +994,7 @@ func fetchRequestHeaders(conn *sqlite.Conn, id int64) (http.Header, error) {
 		} else {
 			// Generally, we don't serialize like this because it would lose order,
 			// but handle just in case.
-			v[0] += headerFieldCombiner + value
+			v[0] += xhttp.HeaderFieldCombiner + value
 			result[name] = v
 		}
 	}
@@ -1022,16 +1023,4 @@ func fetchResponseHeaders(conn *sqlite.Conn, id int64) (http.Header, error) {
 
 func isCacheableMethod(req *http.Request) bool {
 	return req.Method == "" || req.Method == http.MethodGet || req.Method == http.MethodHead
-}
-
-// isSafeMethod reports whether the request method's semantics are read-only
-// according to [Section 9.2.1 of RFC 9110].
-//
-// [Section 9.2.1 of RFC 9110]: https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.1
-func isSafeMethod(req *http.Request) bool {
-	return req.Method == "" ||
-		req.Method == http.MethodGet ||
-		req.Method == http.MethodHead ||
-		req.Method == http.MethodOptions ||
-		req.Method == http.MethodTrace
 }

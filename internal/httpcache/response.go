@@ -8,6 +8,8 @@ import (
 	"iter"
 	"net/http"
 	"time"
+
+	"zb.256lights.llc/pkg/internal/xhttp"
 )
 
 type storedResponse struct {
@@ -27,15 +29,15 @@ type storedResponse struct {
 // match those in the given request header.
 //
 // [Section 4.1 of RFC 9111]: https://www.rfc-editor.org/rfc/rfc9111.html#section-4.1
-func (resp *storedResponse) matchesRequestHeader(vary varyValue, h http.Header) bool {
+func (resp *storedResponse) matchesRequestHeader(vary xhttp.VaryValue, h http.Header) bool {
 	if vary.IsZero() {
 		return true
 	}
-	if vary.hasWildcard() {
+	if vary.HasWildcard() {
 		return false
 	}
-	for key := range vary.fieldNames() {
-		if !headerValuesEqual(resp.requestHeader[key], h[key]) {
+	for key := range vary.FieldNames() {
+		if !xhttp.HeaderValuesEqual(resp.requestHeader[key], h[key]) {
 			return false
 		}
 	}
@@ -164,8 +166,8 @@ func (resp *storedResponse) freshnessLifetime() time.Duration {
 	return 0
 }
 
-func (resp *storedResponse) entityTag() (_ entityTag, ok bool) {
-	return entityTagFromHeader(resp.responseHeader)
+func (resp *storedResponse) entityTag() (_ xhttp.EntityTag, ok bool) {
+	return xhttp.EntityTagFromHeader(resp.responseHeader)
 }
 
 func hasUnreceivedResponses(seq iter.Seq[*storedResponse]) bool {
@@ -211,13 +213,6 @@ func ensureDateHeader(h http.Header, date time.Time) {
 	clear(dateValues)
 	dateValues = dateValues[:0]
 	h["Date"] = append(dateValues, date.UTC().Format(http.TimeFormat))
-}
-
-// isFinalStatusCode reports whether the given HTTP status code is [final].
-//
-// [final]: https://www.rfc-editor.org/info/rfc9110/#section-15
-func isFinalStatusCode(code int) bool {
-	return 200 <= code && code < 600
 }
 
 // isCacheableStatusCode reports whether the given HTTP status code
