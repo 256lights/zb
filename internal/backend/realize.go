@@ -1936,9 +1936,9 @@ func filterSandboxPaths(sandboxPaths map[string]SandboxPath, depsList string) ma
 // given the same drvPath and outputName,
 // it will return the same path.
 func tempPath(ref zbstore.OutputReference) (zbstore.Path, error) {
-	drvName, ok := ref.DrvPath.DerivationName()
-	if !ok {
-		return "", fmt.Errorf("make build temp path: %s is not a derivation", ref.DrvPath)
+	name, err := ref.Suffix()
+	if err != nil {
+		return "", fmt.Errorf("make build temp path: %v", err)
 	}
 	h := sha256.New()
 	io.WriteString(h, "rewrite:")
@@ -1946,10 +1946,6 @@ func tempPath(ref zbstore.OutputReference) (zbstore.Path, error) {
 	io.WriteString(h, ":name:")
 	io.WriteString(h, ref.OutputName)
 	h2 := nix.NewHash(nix.SHA256, make([]byte, nix.SHA256.Size()))
-	name := drvName
-	if ref.OutputName != zbstore.DefaultDerivationOutputName {
-		name += "-" + ref.OutputName
-	}
 	dir := ref.DrvPath.Dir()
 	digest := storepath.MakeDigest(h, string(dir), h2, name)
 	p, err := dir.Object(digest + "-" + name)
