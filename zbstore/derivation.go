@@ -196,7 +196,7 @@ func (drv *Derivation) References() References {
 func (drv *Derivation) OutputPath(outputName string) (Path, error) {
 	outputType, ok := drv.Outputs[outputName]
 	if !ok {
-		return "", fmt.Errorf("output path for %s: no such output", outputName)
+		return "", fmt.Errorf("output path for %s!%s: no such output", drv.Name, outputName)
 	}
 	return derivationOutputPath(drv.Dir, drv.Name, outputName, outputType)
 }
@@ -207,17 +207,32 @@ func (drv *Derivation) OutputPath(outputName string) (Path, error) {
 // and output name (e.g. "out").
 func derivationOutputPath(store Directory, drvName, outputName string, t *DerivationOutputType) (Path, error) {
 	if t == nil {
-		return "", fmt.Errorf("output path for %s: non-fixed output type", outputName)
+		return "", fmt.Errorf("output path for %s!%s: non-fixed output type", drvName, outputName)
 	}
 	switch t.typ {
 	case fixedCAOutputType:
-		if outputName != DefaultDerivationOutputName {
-			drvName += "-" + outputName
+		name, err := outputPathName(drvName, outputName)
+		if err != nil {
+			return "", fmt.Errorf("output path for %s!%s: %v", drvName, outputName, err)
 		}
-		return FixedCAOutputPath(store, drvName, t.ca, References{})
+		return FixedCAOutputPath(store, name, t.ca, References{})
 	default:
-		return "", fmt.Errorf("output path for %s: non-fixed output type", outputName)
+		return "", fmt.Errorf("output path for %s!%s: non-fixed output type", drvName, outputName)
 	}
+}
+
+// outputPathName computes the name part of the store path of the derivation output.
+func outputPathName(drvName, outputName string) (string, error) {
+	if drvName == "" {
+		return "", fmt.Errorf("empty derivation name")
+	}
+	if !IsValidOutputName(outputName) {
+		return "", fmt.Errorf("invalid output name %q", outputName)
+	}
+	if outputName == DefaultDerivationOutputName {
+		return drvName, nil
+	}
+	return drvName + "-" + outputName, nil
 }
 
 // MarshalText converts the derivation to ATerm format.
@@ -785,6 +800,22 @@ func (ref OutputReference) IsZero() bool {
 // String returns the path and the output name separated by "!".
 func (ref OutputReference) String() string {
 	return string(ref.DrvPath) + "!" + ref.OutputName
+}
+
+// Suffix returns the name part (as would be returned by [Path.Name])
+// of the store path of the referenced output.
+// Suffix returns an error if ref.DrvPath does not end in [DerivationExt]
+// or ref.OutputName is not valid.
+func (ref OutputReference) Suffix() (string, error) {
+	drvName, ok := ref.DrvPath.DerivationName()
+	if !ok {
+		return "", fmt.Errorf("output path for %v: not a derivation", ref)
+	}
+	name, err := outputPathName(drvName, ref.OutputName)
+	if err != nil {
+		return "", fmt.Errorf("output path for %v: %v", ref, err)
+	}
+	return name, nil
 }
 
 // MarshalText returns the output reference in the same format as [OutputReference.String].

@@ -87,14 +87,11 @@ func pseudoHashDrv(drv *zbstore.Derivation) (nix.Hash, error) {
 	}
 	rewrites := make(map[string]zbstore.Path)
 	for input := range drv.InputDerivationOutputs() {
-		inputDrvName, ok := input.DrvPath.DerivationName()
-		if !ok {
-			return nix.Hash{}, fmt.Errorf("hash derivation: invalid input derivation %s", input.DrvPath)
+		suffix, err := input.Suffix()
+		if err != nil {
+			return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)
 		}
-		base := fakeDigest + "-" + inputDrvName
-		if input.OutputName != zbstore.DefaultDerivationOutputName {
-			base += "-" + input.OutputName
-		}
+		base := fakeDigest + "-" + suffix
 		rewritten, err := input.DrvPath.Dir().Object(base)
 		if err != nil {
 			return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)
