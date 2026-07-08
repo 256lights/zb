@@ -311,15 +311,18 @@ func (s *Server) newBuilder(id uuid.UUID, derivations map[zbstore.Path]*zbstore.
 	}
 }
 
-func (b *builder) toEquivalenceClass(ref zbstore.OutputReference) (_ equivalenceClass, ok bool) {
+func (b *builder) toEquivalenceClass(ref zbstore.OutputReference) (_ derivationPathAndEquivalenceClass, ok bool) {
 	if ref.OutputName == "" {
-		return equivalenceClass{}, false
+		return derivationPathAndEquivalenceClass{}, false
 	}
 	h := b.drvHashes[ref.DrvPath]
 	if h.IsZero() {
-		return equivalenceClass{}, false
+		return derivationPathAndEquivalenceClass{}, false
 	}
-	return newEquivalenceClass(h, ref.OutputName), true
+	return derivationPathAndEquivalenceClass{
+		drvPath:          ref.DrvPath,
+		equivalenceClass: newEquivalenceClass(h, ref.OutputName),
+	}, true
 }
 
 // lookup returns the realized path for the given output if the builder realized one.
@@ -328,7 +331,7 @@ func (b *builder) lookup(ref zbstore.OutputReference) (_ zbstore.Path, ok bool) 
 	if !ok {
 		return "", false
 	}
-	r, ok := b.realizations[eqClassRef]
+	r, ok := b.realizations[eqClassRef.equivalenceClass]
 	return r.path, ok
 }
 
@@ -467,13 +470,16 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 	b.drvHashes[curr] = drvHash
 
 	drvHashKey := makeHashKey(drvHash)
-	wantEqClasses := iter.Seq[equivalenceClass](func(yield func(equivalenceClass) bool) {
+	wantEqClasses := iter.Seq[derivationPathAndEquivalenceClass](func(yield func(derivationPathAndEquivalenceClass) bool) {
 		for outputName := range node.usedOutputs.All() {
-			eqClass := equivalenceClass{
-				drvHashKey: drvHashKey,
-				outputName: outputName,
+			dpe := derivationPathAndEquivalenceClass{
+				drvPath: curr,
+				equivalenceClass: equivalenceClass{
+					drvHashKey: drvHashKey,
+					outputName: outputName,
+				},
 			}
-			if !yield(eqClass) {
+			if !yield(dpe) {
 				return
 			}
 		}
@@ -1037,13 +1043,16 @@ func (b *builder) planRealizationsAndFinalizeBuildResult(ctx context.Context, co
 	defer sqlitex.Save(conn)(&err)
 
 	p := b.newPlanner()
-	p.planSeq(ctx, conn, func(yield func(equivalenceClass) bool) {
+	p.planSeq(ctx, conn, func(yield func(derivationPathAndEquivalenceClass) bool) {
 		for outputName := range state.outputNames.All() {
-			eqClass := equivalenceClass{
-				drvHashKey: state.derivationHashKey,
-				outputName: outputName,
+			dpe := derivationPathAndEquivalenceClass{
+				drvPath: state.drvPath,
+				equivalenceClass: equivalenceClass{
+					drvHashKey: state.derivationHashKey,
+					outputName: outputName,
+				},
 			}
-			if !yield(eqClass) {
+			if !yield(dpe) {
 				return
 			}
 		}
@@ -1167,11 +1176,11 @@ func (b *builder) inputs(conn *sqlite.Conn, drvPath zbstore.Path) (map[zbstore.P
 	}
 	result := make(map[zbstore.Path]sets.Set[equivalenceClass])
 	for input := range drv.InputDerivationOutputs() {
-		eqClass, ok := b.toEquivalenceClass(input)
+		dpe, ok := b.toEquivalenceClass(input)
 		if !ok {
 			return nil, fmt.Errorf("input closure for %s: missing derivation hash for %v", drvPath, input)
 		}
-		out, ok := b.realizations[eqClass]
+		out, ok := b.realizations[dpe.equivalenceClass]
 		if !ok {
 			return nil, fmt.Errorf("input closure for %s: missing realization for %v", drvPath, input)
 		}

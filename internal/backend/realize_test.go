@@ -1468,6 +1468,116 @@ func TestRealizeSingleDerivationFallback(t *testing.T) {
 	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(wantOutputContent), got)
 }
 
+func TestRealizeWithImproperlyNamedFallback(t *testing.T) {
+	ctx := testcontext.New(t)
+	dir := backendtest.NewStoreDirectory(t)
+
+	const inputContent = "Hello, World!\n"
+	localExportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExportWriter(localExportBuffer)
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
+		Name:      "hello.txt",
+		Directory: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drvContent := &zbstore.Derivation{
+		Name:   "hello2.txt",
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"in":  string(inputFilePath),
+			"out": zbstore.HashPlaceholder(zbstore.DefaultDerivationOutputName),
+		},
+		InputSources: *sets.NewSorted(
+			inputFilePath,
+		),
+		Outputs: map[string]*zbstore.DerivationOutputType{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	drvContent.Builder, drvContent.Args = catcatBuilder()
+	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	drvHash, err := drvContent.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
+		return "", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fallbackExportBuffer := new(bytes.Buffer)
+	exporter = zbstore.NewExportWriter(fallbackExportBuffer)
+	incorrectOutputPath, _, err := storetest.ExportSourceFile(exporter, []byte("INCORRECT\n"), storetest.SourceExportOptions{
+		Name:      "bork.txt",
+		Directory: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fallbackStore := new(storetest.Store)
+	if err := fallbackStore.StoreImport(ctx, fallbackExportBuffer); err != nil {
+		t.Fatal(err)
+	}
+	ref := zbstore.RealizationOutputReference{
+		DerivationHash: drvHash,
+		OutputName:     zbstore.DefaultDerivationOutputName,
+	}
+	fallbackStore.AddRealization(ref, &zbstore.Realization{
+		OutputPath: incorrectOutputPath,
+	})
+
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir: t.TempDir(),
+		Options: Options{
+			Fallback: fallbackStore,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(nil, localExportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+		DrvPaths: []zbstore.Path{drvPath},
+		Reuse:    &zbstorerpc.ReusePolicy{All: true},
+	})
+	if err != nil {
+		t.Fatal("RPC error:", err)
+	}
+
+	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+	if err != nil {
+		gotLog, _ := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvPath)
+		t.Fatalf("build drv: %v\nlog:\n%s", err, gotLog)
+	}
+
+	const wantOutputContent = "Hello, World!\nHello, World!\n"
+	wantOutputPath, err := singleFileOutputPath(dir, drvContent.Name, []byte(wantOutputContent), zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(wantOutputContent), got)
+}
+
 // TestRealizeMultiStepFallback tests a build of drv2 depending on drv1,
 // with a fallback store that has a full realization chain
 // and only includes the output store object for drv2.
@@ -1691,7 +1801,7 @@ func TestRealizeMultiStepFallbackIntermediate(t *testing.T) {
 	exporter = zbstore.NewExportWriter(fallbackExportBuffer)
 	const wantOutputContent1 = inputContent + inputContent
 	wantOutputPath1, _, err := storetest.ExportSourceFile(exporter, []byte(wantOutputContent1), storetest.SourceExportOptions{
-		Name:      drv2Content.Name,
+		Name:      drv1Content.Name,
 		Directory: dir,
 	})
 	if err != nil {
