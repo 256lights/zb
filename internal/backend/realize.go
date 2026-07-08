@@ -614,10 +614,10 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 		}
 
 		{
-			err := b.server.copyFromFallback(ctx, conn, func(yield func(zbstore.Path, equivalenceClass) bool) {
+			err := b.server.copyFromFallback(ctx, conn, func(yield func(pathAndEquivalenceClass) bool) {
 				for path, eqClassesForPath := range paths {
 					for eqClass := range eqClassesForPath.All() {
-						if !yield(path, eqClass) {
+						if !yield(pathAndEquivalenceClass{path, eqClass}) {
 							return
 						}
 					}
@@ -1087,10 +1087,10 @@ func (b *builder) planRealizationsAndFinalizeBuildResult(ctx context.Context, co
 // Callers can use [isCopyFromFallbackError] to determine whether any error returned from this function
 // indicates a failure to copy the absent store objects from the fallback store.
 func (b *builder) copyFromFallbackAndFinalizeBuildResult(ctx context.Context, conn *sqlite.Conn, state *derivationBuildState, p *realizationPlanner) error {
-	err := b.server.copyFromFallback(ctx, conn, func(yield func(zbstore.Path, equivalenceClass) bool) {
+	err := b.server.copyFromFallback(ctx, conn, func(yield func(pathAndEquivalenceClass) bool) {
 		for eqClass := range p.absent.All() {
 			r := p.planned[eqClass] // Always present: p.absent is a set of keys in p.planned.
-			if !yield(r.path, eqClass) {
+			if !yield(pathAndEquivalenceClass{r.path, eqClass}) {
 				return
 			}
 		}
