@@ -872,7 +872,7 @@ func (s *Server) delete(ctx context.Context, paths sets.Set[zbstore.Path], recur
 // The [equivalenceClass] values are used in error messages.
 // If any of the store objects could not be downloaded, then copyFromFallback will return an error.
 // If copyFromFallback returns an error, it will always be a [copyFromFallbackError].
-func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths iter.Seq2[zbstore.Path, equivalenceClass]) (err error) {
+func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths iter.Seq[pathAndEquivalenceClass]) (err error) {
 	defer func() {
 		if err != nil {
 			err = copyFromFallbackError{err}
@@ -881,37 +881,37 @@ func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths 
 
 	storePathsToDownload := make(map[zbstore.Path]sets.Set[equivalenceClass])
 	exists := make(sets.Set[zbstore.Path])
-	for outputPath, eqClass := range paths {
-		if exists.Has(outputPath) {
+	for pe := range paths {
+		if exists.Has(pe.path) {
 			continue
 		}
-		if eqClassSet, ok := storePathsToDownload[outputPath]; ok {
-			if !eqClass.isZero() {
+		if eqClassSet, ok := storePathsToDownload[pe.path]; ok {
+			if !pe.equivalenceClass.isZero() {
 				if eqClassSet == nil {
 					eqClassSet = make(sets.Set[equivalenceClass])
-					storePathsToDownload[outputPath] = eqClassSet
+					storePathsToDownload[pe.path] = eqClassSet
 				}
-				eqClassSet.Add(eqClass)
+				eqClassSet.Add(pe.equivalenceClass)
 			}
 			continue
 		}
 
-		log.Debugf(ctx, "Waiting for lock on %s (output of %v)...", outputPath, eqClass)
-		unlockInput, err := s.writing.lock(ctx, outputPath)
+		log.Debugf(ctx, "Waiting for lock on %s (output of %v)...", pe.path, pe.equivalenceClass)
+		unlockInput, err := s.writing.lock(ctx, pe.path)
 		if err != nil {
 			return err
 		}
-		_, err = os.Lstat(s.realPath(outputPath))
+		_, err = os.Lstat(s.realPath(pe.path))
 		unlockInput()
-		log.Debugf(ctx, "%s exists=%t (output of %v)", outputPath, err == nil, eqClass)
+		log.Debugf(ctx, "%s exists=%t (output of %v)", pe.path, err == nil, pe.equivalenceClass)
 		if err == nil {
-			exists.Add(outputPath)
-		} else if eqClass.isZero() {
-			if _, ok := storePathsToDownload[outputPath]; !ok {
-				storePathsToDownload[outputPath] = nil
+			exists.Add(pe.path)
+		} else if pe.equivalenceClass.isZero() {
+			if _, ok := storePathsToDownload[pe.path]; !ok {
+				storePathsToDownload[pe.path] = nil
 			}
 		} else {
-			addToMultiMap(storePathsToDownload, outputPath, eqClass)
+			addToMultiMap(storePathsToDownload, pe.path, pe.equivalenceClass)
 		}
 	}
 

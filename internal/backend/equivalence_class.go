@@ -58,6 +58,7 @@ func (eqClass equivalenceClass) String() string {
 	return eqClass.drvHashKey.toHash().String() + "!" + eqClass.outputName.Value()
 }
 
+// pathAndEquivalenceClass holds a [zbstore.Path] and the [equivalenceClass] that produced it.
 type pathAndEquivalenceClass struct {
 	path             zbstore.Path
 	equivalenceClass equivalenceClass
