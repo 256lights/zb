@@ -333,7 +333,7 @@ func marshalInputDerivations[K ~string](buf []byte, m map[K]*sets.Sorted[string]
 
 // SHA256RealizationHash computes the hash for the given derivation
 // based on the realizations of its input derivations.
-// This hash is intended for use in [newEquivalenceClass].
+// This hash is intended for use in [RealizationOutputReference].
 func (drv *Derivation) SHA256RealizationHash(realization func(ref OutputReference) (Path, bool)) (nix.Hash, error) {
 	if drv.Outputs[DefaultDerivationOutputName].IsFixed() {
 		return hashDrvFixed(drv)
@@ -834,6 +834,18 @@ func (ref *OutputReference) UnmarshalText(text []byte) error {
 	var err error
 	*ref, err = ParseOutputReference(string(text))
 	return err
+}
+
+// IsValidOutputPath reports whether path can be used for the given derivation output.
+func IsValidOutputPath(ref OutputReference, path Path) bool {
+	if path.Dir() != ref.DrvPath.Dir() {
+		return false
+	}
+	suffix, err := ref.Suffix()
+	if err != nil {
+		return false
+	}
+	return path.Name() == suffix
 }
 
 // HashPlaceholder returns the placeholder string used in leiu of a derivation's output path.

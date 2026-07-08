@@ -64,6 +64,20 @@ type pathAndEquivalenceClass struct {
 	equivalenceClass equivalenceClass
 }
 
+// derivationPathAndEquivalenceClass holds an [equivalenceClass]
+// and the [zbstore.Path] to a .drv file that matches the realization hash.
+type derivationPathAndEquivalenceClass struct {
+	drvPath          zbstore.Path
+	equivalenceClass equivalenceClass
+}
+
+func (dpe derivationPathAndEquivalenceClass) toOutputReference() zbstore.OutputReference {
+	return zbstore.OutputReference{
+		DrvPath:    dpe.drvPath,
+		OutputName: dpe.equivalenceClass.outputName.Value(),
+	}
+}
+
 // pseudoHashDrv computes a hash of a derivation
 // that can be used for comparing derivations for structural similarity.
 // If hashDrv(drv1) == hashDrv(drv2),

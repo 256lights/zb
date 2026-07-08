@@ -96,11 +96,11 @@ func (p *realizationPlanner) commit() {
 //
 // plan may add realizations to p.planned for equivalence classes beyond the given one
 // because selecting a realization may imply selecting realizations from its closure.
-func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass) {
+func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, dpe derivationPathAndEquivalenceClass) {
 	if p.error != nil {
 		return
 	}
-	if _, exists := p.get(eqClass); exists {
+	if _, exists := p.get(dpe.equivalenceClass); exists {
 		return
 	}
 
@@ -111,8 +111,8 @@ func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClas
 	}
 	defer rollback()
 
-	log.Debugf(ctx, "Searching for realizations for %v...", eqClass)
-	presentInStore, absentFromStore, err := findPossibleRealizations(ctx, conn, eqClass, p.reusePolicy)
+	log.Debugf(ctx, "Searching for realizations for %v...", dpe.toOutputReference())
+	presentInStore, absentFromStore, err := findPossibleRealizations(ctx, conn, dpe.equivalenceClass, p.reusePolicy)
 	if err != nil {
 		p.error = err
 		return
@@ -120,7 +120,7 @@ func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClas
 
 	var r cachedRealization
 	present := false
-	r.path, r.closure, err = p.pick(ctx, conn, eqClass, presentInStore)
+	r.path, r.closure, err = p.pick(ctx, conn, dpe, presentInStore)
 	switch {
 	case err == nil:
 		present = true
@@ -129,9 +129,9 @@ func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClas
 			p.error = err
 			return
 		}
-		r.path, r.closure, err = p.pick(ctx, conn, eqClass, absentFromStore)
+		r.path, r.closure, err = p.pick(ctx, conn, dpe, absentFromStore)
 		if errors.Is(err, errMultipleRealizations) {
-			p.error = fmt.Errorf("pick compatible realization for %v: %w", eqClass, errRealizationNotFound)
+			p.error = fmt.Errorf("pick compatible realization for %v: %w", dpe.toOutputReference(), errRealizationNotFound)
 			return
 		}
 		if err != nil {
@@ -144,14 +144,13 @@ func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClas
 	}
 
 	// Now that we selected our realization, fill out the closures.
-	log.Debugf(ctx, "Using sole viable candidate %s for %v", r.path, eqClass)
+	log.Debugf(ctx, "Using sole viable candidate %s for %v", r.path, dpe.toOutputReference())
 	for refPath, eqClasses := range r.closure {
 		refPathExists := true
 		if !present {
 			var err error
 			refPathExists, err = objectExists(conn, refPath)
 			if err != nil {
-				p.error = fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
 				return
 			}
 		}
@@ -176,7 +175,7 @@ func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClas
 				return true
 			})
 			if err != nil {
-				p.error = fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
+				p.error = fmt.Errorf("pick compatible realization for %v: %v", dpe.toOutputReference(), err)
 				return
 			}
 			p.planned[eqClass] = closureRealization
@@ -198,7 +197,7 @@ func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, eqClas
 //
 // planSeq may add realizations for equivalence classes beyond the given one
 // because selecting a realization may imply selecting realizations from its closure.
-func (p *realizationPlanner) planSeq(ctx context.Context, conn *sqlite.Conn, eqClasses iter.Seq[equivalenceClass]) {
+func (p *realizationPlanner) planSeq(ctx context.Context, conn *sqlite.Conn, eqClasses iter.Seq[derivationPathAndEquivalenceClass]) {
 	if p.error != nil {
 		return
 	}
@@ -221,22 +220,25 @@ func (p *realizationPlanner) planSeq(ctx context.Context, conn *sqlite.Conn, eqC
 // pick will return an error that unwraps to [errRealizationNotFound]
 // if there is no such realization,
 // or an error that unwraps to [errMultipleRealizations] if there are multiple such realizations.
-func (p *realizationPlanner) pick(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass, existing sets.Set[zbstore.Path]) (selectedPath zbstore.Path, closure map[zbstore.Path]sets.Set[equivalenceClass], err error) {
+func (p *realizationPlanner) pick(ctx context.Context, conn *sqlite.Conn, dpe derivationPathAndEquivalenceClass, existing sets.Set[zbstore.Path]) (selectedPath zbstore.Path, closure map[zbstore.Path]sets.Set[equivalenceClass], err error) {
 	rollback, err := readonlySavepoint(conn)
 	if err != nil {
-		return "", nil, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
+		return "", nil, fmt.Errorf("pick compatible realization for %v: %v", dpe.toOutputReference(), err)
 	}
 	defer rollback()
 
 	closure = make(map[zbstore.Path]sets.Set[equivalenceClass])
 	remaining := existing.Clone()
 	for outputPath := range existing.All() {
-		log.Debugf(ctx, "Checking whether %s can be used as %v...", outputPath, eqClass)
+		log.Debugf(ctx, "Checking whether %s can be used as %v...", outputPath, dpe.toOutputReference())
 		remaining.Delete(outputPath)
 
+		if !zbstore.IsValidOutputPath(dpe.toOutputReference(), outputPath) {
+			continue
+		}
 		pe := pathAndEquivalenceClass{
 			path:             outputPath,
-			equivalenceClass: eqClass,
+			equivalenceClass: dpe.equivalenceClass,
 		}
 		clear(closure)
 		canUse := true
@@ -247,23 +249,23 @@ func (p *realizationPlanner) pick(ctx context.Context, conn *sqlite.Conn, eqClas
 			} else {
 				r, _ := p.get(ref.equivalenceClass)
 				log.Debugf(ctx, "Cannot use %s as %v: depends on %s (need %s)",
-					outputPath, eqClass, ref.path, r.path)
+					outputPath, dpe.toOutputReference(), ref.path, r.path)
 			}
 			return canUse
 		})
 		if err != nil {
-			return "", nil, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
+			return "", nil, fmt.Errorf("pick compatible realization for %v: %v", dpe.toOutputReference(), err)
 		}
 		if canUse {
-			log.Debugf(ctx, "Found %s as a candidate for %v", outputPath, eqClass)
+			log.Debugf(ctx, "Found %s as a candidate for %v", outputPath, dpe.toOutputReference())
 			selectedPath = outputPath
 			break
 		}
 	}
 
 	if selectedPath == "" {
-		log.Debugf(ctx, "No suitable realizations exist for %v", eqClass)
-		return "", nil, fmt.Errorf("pick compatible realization for %v: %w", eqClass, errRealizationNotFound)
+		log.Debugf(ctx, "No suitable realizations exist for %v", dpe.toOutputReference())
+		return "", nil, fmt.Errorf("pick compatible realization for %v: %w", dpe.toOutputReference(), errRealizationNotFound)
 	}
 
 	// In the case where there are multiple valid candidates
@@ -272,7 +274,7 @@ func (p *realizationPlanner) pick(ctx context.Context, conn *sqlite.Conn, eqClas
 	for outputPath := range remaining.All() {
 		pe := pathAndEquivalenceClass{
 			path:             outputPath,
-			equivalenceClass: eqClass,
+			equivalenceClass: dpe.equivalenceClass,
 		}
 		canUse := true
 		err := closurePaths(conn, pe, func(ref pathAndEquivalenceClass) bool {
@@ -280,13 +282,13 @@ func (p *realizationPlanner) pick(ctx context.Context, conn *sqlite.Conn, eqClas
 			return canUse
 		})
 		if err != nil {
-			return "", nil, fmt.Errorf("pick compatible realization for %v: %v", eqClass, err)
+			return "", nil, fmt.Errorf("pick compatible realization for %v: %v", dpe.toOutputReference(), err)
 		}
 		if canUse {
 			// Multiple realizations are compatible.
 			// Return none of them.
-			log.Debugf(ctx, "Both %s and %s are viable candidates for %v. Returning nothing.", outputPath, selectedPath, eqClass)
-			return "", nil, fmt.Errorf("pick compatible realization for %v: %w", eqClass, errMultipleRealizations)
+			log.Debugf(ctx, "Both %s and %s are viable candidates for %v. Returning nothing.", outputPath, selectedPath, dpe.toOutputReference())
+			return "", nil, fmt.Errorf("pick compatible realization for %v: %w", dpe.toOutputReference(), errMultipleRealizations)
 		}
 	}
 
