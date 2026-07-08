@@ -13,6 +13,7 @@
 package zbstore
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/ed25519"
@@ -299,6 +300,70 @@ func (m RealizationMap) All() iter.Seq2[RealizationOutputReference, *Realization
 	}
 }
 
+// Compact deduplicates [*Realization] entries in m.
+func (m RealizationMap) Compact() {
+	if m.Realizations == nil {
+		return
+	}
+	for outputName, realizations := range m.Realizations {
+		newRealizations := realizations[:0]
+		for _, r := range realizations {
+			newRealizations = appendRealization(newRealizations, r)
+		}
+		clear(realizations[len(newRealizations):])
+		m.Realizations[outputName] = newRealizations
+	}
+}
+
+// Merge updates m with realizations from src.
+func (m *RealizationMap) Merge(src RealizationMap) error {
+	if src.IsEmpty() {
+		return nil
+	}
+	if !src.DerivationHash.Equal(m.DerivationHash) {
+		return fmt.Errorf("mismatched hash %v", src.DerivationHash)
+	}
+	if m.Realizations == nil {
+		m.Realizations = src.Realizations
+		return nil
+	}
+	for outputName, realizations := range src.Realizations {
+		if len(realizations) == 0 {
+			continue
+		}
+		if m.Realizations == nil {
+			m.Realizations = make(map[string][]*Realization)
+		}
+		newRealizations := m.Realizations[outputName]
+		for _, r := range realizations {
+			newRealizations = appendRealization(newRealizations, r)
+		}
+		m.Realizations[outputName] = newRealizations
+	}
+	return nil
+}
+
+// appendRealization joins r with realizations and returns the resulting slice.
+// If another realization in the slice has the same output path and reference classes as r,
+// unique r.Signatures will be appended to the first such realization in the slice.
+func appendRealization(realizations []*Realization, r *Realization) []*Realization {
+	i := slices.IndexFunc(realizations, func(r2 *Realization) bool {
+		return realizationKeysEqual(r, r2)
+	})
+	if i == -1 {
+		return append(realizations, r)
+	}
+	for _, sig := range r.Signatures {
+		found := slices.ContainsFunc(realizations[i].Signatures, func(other *RealizationSignature) bool {
+			return realizationSignaturesEqual(sig, other)
+		})
+		if !found {
+			realizations[i].Signatures = append(realizations[i].Signatures, sig)
+		}
+	}
+	return realizations
+}
+
 // A Realization is a known output path for a particular [RealizationOutputReference].
 type Realization struct {
 	OutputPath       Path                    `json:"outputPath"`
@@ -306,10 +371,49 @@ type Realization struct {
 	Signatures       []*RealizationSignature `json:"signatures,omitempty"`
 }
 
+func realizationKeysEqual(r1, r2 *Realization) bool {
+	if r1.OutputPath != r2.OutputPath || len(r1.ReferenceClasses) != len(r2.ReferenceClasses) {
+		return false
+	}
+	rc1 := slices.Clone(r1.ReferenceClasses)
+	slices.SortFunc(rc1, compareReferenceClasses)
+	rc2 := slices.Clone(r2.ReferenceClasses)
+	slices.SortFunc(rc2, compareReferenceClasses)
+	for i := range rc1 {
+		if compareReferenceClasses(rc1[i], rc2[i]) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // A ReferenceClass is a mapping of referenced path to optional realization.
 type ReferenceClass struct {
 	Path        Path                                 `json:"path"`
 	Realization Nullable[RealizationOutputReference] `json:"realization"`
+}
+
+func compareReferenceClasses(rc1, rc2 *ReferenceClass) int {
+	if result := cmp.Compare(rc1.Path, rc2.Path); result != 0 {
+		return result
+	}
+	switch {
+	case !rc1.Realization.Valid && !rc2.Realization.Valid:
+		return 0
+	case !rc1.Realization.Valid && rc2.Realization.Valid:
+		return -1
+	case rc1.Realization.Valid && !rc2.Realization.Valid:
+		return 1
+	}
+	ref1 := rc1.Realization.X
+	ref2 := rc2.Realization.X
+	if result := cmp.Compare(ref1.DerivationHash.Type(), ref2.DerivationHash.Type()); result != 0 {
+		return result
+	}
+	return cmp.Or(
+		bytes.Compare(ref1.DerivationHash.Bytes(nil), ref2.DerivationHash.Bytes(nil)),
+		cmp.Compare(ref1.OutputName, ref2.OutputName),
+	)
 }
 
 // RealizationOutputReference is a reference to an output of an equivalence class of derivations.
@@ -343,10 +447,26 @@ type RealizationPublicKey struct {
 	Data   []byte                     `json:"publicKey,format:base64"`
 }
 
+// Equal reports whether pub and other are equal.
+func (pub *RealizationPublicKey) Equal(other *RealizationPublicKey) bool {
+	switch {
+	case (pub != nil) != (other != nil):
+		return false
+	case pub == nil && other == nil:
+		return true
+	default:
+		return pub.Format == other.Format && bytes.Equal(pub.Data, other.Data)
+	}
+}
+
 // A RealizationSignature is a cryptographic signature of a [RealizationOutputReference], [Realization] tuple.
 type RealizationSignature struct {
 	PublicKey RealizationPublicKey `json:",inline"`
 	Signature []byte               `json:"signature,format:base64"`
+}
+
+func realizationSignaturesEqual(sig1, sig2 *RealizationSignature) bool {
+	return sig1.PublicKey.Equal(&sig2.PublicKey) && bytes.Equal(sig1.Signature, sig2.Signature)
 }
 
 // SignRealizationWithEd25519 creates a signature for the realization
