@@ -5,8 +5,6 @@ package remotestore
 
 import (
 	"bytes"
-	"compress/flate"
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -15,10 +13,10 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/dsnet/compress/brotli"
 	jsonv2 "github.com/go-json-experiment/json"
 	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/hal"
+	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/useragent"
 	"zb.256lights.llc/pkg/zbstore"
@@ -237,7 +235,7 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 		URL:    u,
 		Header: http.Header{
 			"Accept":          {accept},
-			"Accept-Encoding": {acceptEncoding},
+			"Accept-Encoding": {httpencoding.Accept},
 			"User-Agent":      {useragent.String},
 		},
 	}).WithContext(ctx)
@@ -267,7 +265,7 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 		}
 	}
 	if e := resp.Header.Get("Content-Encoding"); e != "" {
-		dec, err := decodeBody(bytes.NewReader(data), e)
+		dec, err := httpencoding.Decode(bytes.NewReader(data), e)
 		if err != nil {
 			return nil, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
 		}
@@ -278,27 +276,6 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 		}
 	}
 	return data, nil
-}
-
-// acceptEncoding is the value of an [Accept-Encoding header]
-// that advertises the algorithms that [decodeBody] supports.
-//
-// [Accept-Encoding header]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Accept-Encoding
-const acceptEncoding = "br,gzip,deflate"
-
-func decodeBody(r io.Reader, contentEncoding string) (io.ReadCloser, error) {
-	switch contentEncoding {
-	case "":
-		return io.NopCloser(r), nil
-	case "br":
-		return brotli.NewReader(r, nil)
-	case "gzip", "x-gzip":
-		return gzip.NewReader(r)
-	case "deflate":
-		return flate.NewReader(r), nil
-	default:
-		return nil, fmt.Errorf("unsupported Content-Encoding %s", contentEncoding)
-	}
 }
 
 // httpObject is the implementation of [zbstore.Object] for [HTTPStore].
@@ -332,7 +309,7 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 		URL:    narFileURL,
 		Header: http.Header{
 			"Accept":          {"*/*"},
-			"Accept-Encoding": {acceptEncoding},
+			"Accept-Encoding": {httpencoding.Accept},
 			"User-Agent":      {useragent.String},
 		},
 	}
@@ -347,7 +324,7 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 			status:     resp.Status,
 		})
 	}
-	decodedBody, err := decodeBody(resp.Body, resp.Header.Get("Content-Encoding"))
+	decodedBody, err := httpencoding.Decode(resp.Body, resp.Header.Get("Content-Encoding"))
 	if err != nil {
 		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
 	}

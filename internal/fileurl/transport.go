@@ -5,10 +5,7 @@ package fileurl
 
 import (
 	"bytes"
-	"compress/flate"
-	"compress/gzip"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -17,7 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dsnet/compress/brotli"
+	"zb.256lights.llc/pkg/internal/httpencoding"
+	"zb.256lights.llc/pkg/internal/xhttp"
 )
 
 // Transport is an [http.RoundTripper] that serves GET, HEAD, and PUT requests
@@ -51,7 +49,7 @@ func (t Transport) get(req *http.Request) *http.Response {
 	if err != nil {
 		return errorResponse(req, err.Error(), http.StatusNotFound)
 	}
-	return serveResponse(req, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	return xhttp.ServeResponse(req, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		f, err := os.Open(path)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -91,16 +89,16 @@ func (t Transport) put(req *http.Request) (resp *http.Response) {
 		flag |= os.O_EXCL
 	}
 
-	body, err := decodeBody(req.Body, req.Header.Get("Content-Encoding"))
+	body, err := httpencoding.Decode(req.Body, req.Header.Get("Content-Encoding"))
 	if err != nil {
 		var code int
-		if _, isUnknown := errors.AsType[contentEncodingError](err); isUnknown {
+		if httpencoding.IsUnsupported(err) {
 			code = http.StatusUnsupportedMediaType
 		} else {
 			code = http.StatusBadRequest
 		}
 		resp := errorResponse(req, err.Error(), code)
-		resp.Header.Set("Accept-Encoding", acceptEncoding)
+		resp.Header.Set("Accept-Encoding", httpencoding.Accept)
 		return resp
 	}
 	defer body.Close()
@@ -175,153 +173,6 @@ func (t Transport) put(req *http.Request) (resp *http.Response) {
 	}
 }
 
-// acceptEncoding is the value of an [Accept-Encoding header]
-// that advertises the algorithms that [decodeBody] supports.
-//
-// [Accept-Encoding header]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Accept-Encoding
-const acceptEncoding = "br,gzip,deflate"
-
-func decodeBody(r io.Reader, contentEncoding string) (io.ReadCloser, error) {
-	switch contentEncoding {
-	case "":
-		return io.NopCloser(r), nil
-	case "br":
-		return brotli.NewReader(r, nil)
-	case "gzip", "x-gzip":
-		return gzip.NewReader(r)
-	case "deflate":
-		return flate.NewReader(r), nil
-	default:
-		return nil, contentEncodingError{contentEncoding}
-	}
-}
-
-type contentEncodingError struct {
-	contentEncoding string
-}
-
-func (cee contentEncodingError) Error() string {
-	return fmt.Sprintf("unsupported Content-Encoding %s", cee.contentEncoding)
-}
-
-// serveResponse calls h.ServeHTTP and converts the result into an [*http.Response].
-func serveResponse(req *http.Request, h http.Handler) *http.Response {
-	headerWritten := make(chan int)
-	var rbody io.ReadCloser
-	var wbody io.WriteCloser
-	serveDone := make(chan struct{})
-	if req.Method == http.MethodHead {
-		rbody = &customReadCloser{
-			Reader: bytes.NewReader(nil),
-			close: func() error {
-				<-serveDone
-				return nil
-			},
-		}
-		wbody = discardCloser{}
-	} else {
-		var pr *io.PipeReader
-		pr, wbody = io.Pipe()
-		rbody = &customReadCloser{
-			Reader: pr,
-			close: func() error {
-				err := pr.Close()
-				<-serveDone
-				return err
-			},
-		}
-	}
-	header := make(http.Header)
-	go func() {
-		defer func() {
-			wbody.Close()
-			close(serveDone)
-		}()
-		w := &pipedResponseWriter{
-			headerWritten: headerWritten,
-			header:        header,
-			body:          wbody,
-		}
-		h.ServeHTTP(w, req)
-	}()
-
-	statusCode := <-headerWritten
-	resp := &http.Response{
-		Request:    req,
-		Proto:      "HTTP/1.1",
-		ProtoMajor: 1,
-		ProtoMinor: 1,
-		Status:     http.StatusText(statusCode),
-		StatusCode: statusCode,
-		Header:     header,
-		Body:       rbody,
-	}
-	if values := header.Values("Content-Length"); len(values) == 1 {
-		if n, err := strconv.ParseUint(values[0], 10, 63); err == nil {
-			resp.ContentLength = int64(n)
-		} else {
-			resp.ContentLength = -1
-		}
-	} else {
-		resp.ContentLength = -1
-	}
-	return resp
-}
-
-type pipedResponseWriter struct {
-	body io.Writer
-
-	headerWritten chan<- int
-	header        http.Header
-}
-
-func (w *pipedResponseWriter) Header() http.Header {
-	return w.header
-}
-
-func (w *pipedResponseWriter) WriteHeader(statusCode int) {
-	if w.headerWritten != nil {
-		// Prevent future changes to w.Header() from racing with reads.
-		w.header = w.header.Clone()
-
-		w.headerWritten <- statusCode
-		close(w.headerWritten)
-		w.headerWritten = nil
-	}
-}
-
-func (w *pipedResponseWriter) Write(p []byte) (int, error) {
-	w.WriteHeader(http.StatusOK)
-	return w.body.Write(p)
-}
-
-type discardCloser struct{}
-
-func (discardCloser) Write(p []byte) (int, error) {
-	return len(p), nil
-}
-
-func (discardCloser) WriteString(s string) (int, error) {
-	return len(s), nil
-}
-
-func (discardCloser) ReadFrom(r io.Reader) (n int64, err error) {
-	return io.Copy(io.Discard, r)
-}
-
-func (discardCloser) Close() error {
-	return nil
-}
-
-type customReadCloser struct {
-	io.Reader
-	close func() error
-}
-
-func (crc *customReadCloser) Close() error {
-	return crc.close()
-}
-
 func errorResponse(req *http.Request, error string, code int) *http.Response {
 	if error != "" {
 		error += "\n"
@@ -343,9 +194,3 @@ func errorResponse(req *http.Request, error string, code int) *http.Response {
 		Body: io.NopCloser(strings.NewReader(error)),
 	}
 }
-
-// headerFieldCombiner is the string recommended by [Section 5.3 of RFC 9110]
-// to be used to join multiple values of the same HTTP header field.
-//
-// [Section 5.3 of RFC 9110]: https://www.rfc-editor.org/rfc/rfc9110.html#section-5.3
-const headerFieldCombiner = ", "
