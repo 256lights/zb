@@ -11,9 +11,10 @@ import (
 
 // ValidatorFields is a subset of HTTP headers
 // that can be used in preconditions.
-// See [Section 8.8 of RFC 9110].
+// See [RFC 9110 Section 8.8].
+// The zero value is a set of absent headers.
 //
-// [Section 8.8 of RFC 9110]: https://www.rfc-editor.org/rfc/rfc9110.html#section-8.8
+// [RFC 9110 Section 8.8]: https://datatracker.ietf.org/doc/html/rfc9110#section-8.8
 type ValidatorFields struct {
 	entityTag    EntityTag
 	lastModified time.Time
@@ -30,6 +31,20 @@ func ExtractValidatorFields(h http.Header) ValidatorFields {
 // IsZero reports whether vf is the zero value.
 func (vf ValidatorFields) IsZero() bool {
 	return vf.entityTag == "" && vf.lastModified.IsZero()
+}
+
+// ETag returns the [entity tag] from the fields, if present.
+//
+// [entity tag]: https://datatracker.ietf.org/doc/html/rfc9110#section-8.8.3
+func (vf ValidatorFields) ETag() (_ EntityTag, ok bool) {
+	return vf.entityTag, vf.entityTag != ""
+}
+
+// LastModified returns the [Last-Modified field value], if present.
+//
+// [Last-Modified field value]: https://datatracker.ietf.org/doc/html/rfc9110#section-8.8.2
+func (vf ValidatorFields) LastModified() (_ time.Time, ok bool) {
+	return vf.lastModified, !vf.lastModified.IsZero()
 }
 
 // HasStrong reports whether vf has at least one strong validator.
