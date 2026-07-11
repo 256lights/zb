@@ -203,6 +203,10 @@ func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zb
 func (s *HTTPStore) addRealizations(ctx context.Context, dst *zbstore.RealizationMap, u *url.URL) error {
 	docData, err := fetch(ctx, s.client(), u, "application/json,text/*;q=0.9,*/*;q=0.8")
 	if err != nil {
+		if code, _ := errorStatusCode(err); code == http.StatusNotFound || code == http.StatusGone {
+			log.Debugf(ctx, "Fetch realizations for %v: %v", dst.DerivationHash, err)
+			return nil
+		}
 		return fmt.Errorf("fetch realizations for %v: %w", dst.DerivationHash, err)
 	}
 	doc := new(zbstore.RealizationMap)
