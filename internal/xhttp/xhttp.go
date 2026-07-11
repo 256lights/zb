@@ -150,6 +150,19 @@ func headerValue(h http.Header, key string) string {
 	return v[0]
 }
 
+// setHeader is equivalent to [http.Header.Set],
+// but skips the overhead of calling [http.CanonicalHeaderKey].
+// Its key parameter should always be a constant string.
+func setHeader(h http.Header, key, value string) {
+	v := h[key]
+	if v == nil {
+		v = []string{value}
+	} else {
+		v = append(v[:0], value)
+	}
+	h[key] = v
+}
+
 // dateHeader is equivalent to [http.ParseTime] on a header.
 // but skips the overhead of calling [http.CanonicalHeaderKey].
 // Its key parameter should always be a constant string.
