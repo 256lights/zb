@@ -28,6 +28,8 @@ import (
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"golang.org/x/sync/errgroup"
+	"zb.256lights.llc/pkg/internal/xiter"
+	"zb.256lights.llc/pkg/internal/xslices"
 	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
@@ -276,11 +278,58 @@ type RealizationMap struct {
 // IsEmpty reports whether m is an empty map.
 func (m RealizationMap) IsEmpty() bool {
 	for _, slice := range m.Realizations {
-		if len(slice) > 0 {
-			return false
+		for _, r := range slice {
+			if r != nil {
+				return false
+			}
 		}
 	}
 	return true
+}
+
+// Clone returns a copy of m.
+// Nil [*Realization] pointers are removed,
+// and empty slices are not added to the resulting Realizations map.
+func (m RealizationMap) Clone() RealizationMap {
+	keyCount := 0
+	realizationCount := 0
+	for _, slice := range m.Realizations {
+		n := realizationCount
+		for _, r := range slice {
+			if r != nil {
+				realizationCount++
+			}
+		}
+		if realizationCount > n {
+			keyCount++
+		}
+	}
+
+	m2 := RealizationMap{
+		DerivationHash: m.DerivationHash,
+	}
+	if keyCount > 0 {
+		m2.Realizations = make(map[string][]*Realization, keyCount)
+		pool := make([]Realization, realizationCount)
+		slicePool := make([]*Realization, realizationCount)
+		for outputName, slice := range m.Realizations {
+			newSlice := slicePool[:0]
+			for _, original := range slice {
+				if original == nil {
+					continue
+				}
+				r := &pool[0]
+				pool = pool[1:]
+				*r = *original.Clone()
+				newSlice = append(newSlice, r)
+			}
+			if len(newSlice) > 0 {
+				slicePool = slicePool[len(newSlice):]
+				m2.Realizations[outputName] = slices.Clip(newSlice)
+			}
+		}
+	}
+	return m2
 }
 
 // All returns an iterator over all the realizations in the map.
@@ -292,8 +341,10 @@ func (m RealizationMap) All() iter.Seq2[RealizationOutputReference, *Realization
 				OutputName:     outputName,
 			}
 			for _, v := range slice {
-				if !yield(ref, v) {
-					return
+				if v != nil {
+					if !yield(ref, v) {
+						return
+					}
 				}
 			}
 		}
@@ -305,12 +356,12 @@ func (m RealizationMap) Compact() {
 	if m.Realizations == nil {
 		return
 	}
-	for outputName, realizations := range m.Realizations {
-		newRealizations := realizations[:0]
-		for _, r := range realizations {
-			newRealizations = appendRealization(newRealizations, r)
+	for outputName, slice := range m.Realizations {
+		newRealizations := slice[:0]
+		for _, r := range slice {
+			newRealizations = appendRealization(newRealizations, r, false)
 		}
-		clear(realizations[len(newRealizations):])
+		clear(slice[len(newRealizations):])
 		m.Realizations[outputName] = newRealizations
 	}
 }
@@ -327,16 +378,16 @@ func (m *RealizationMap) Merge(src RealizationMap) error {
 		m.Realizations = src.Realizations
 		return nil
 	}
-	for outputName, realizations := range src.Realizations {
-		if len(realizations) == 0 {
+	for outputName, slice := range src.Realizations {
+		if xiter.All(slices.Values(slice), func(r *Realization) bool { return r == nil }) {
 			continue
 		}
 		if m.Realizations == nil {
 			m.Realizations = make(map[string][]*Realization)
 		}
 		newRealizations := m.Realizations[outputName]
-		for _, r := range realizations {
-			newRealizations = appendRealization(newRealizations, r)
+		for _, r := range slice {
+			newRealizations = appendRealization(newRealizations, r, true)
 		}
 		m.Realizations[outputName] = newRealizations
 	}
@@ -346,22 +397,32 @@ func (m *RealizationMap) Merge(src RealizationMap) error {
 // appendRealization joins r with realizations and returns the resulting slice.
 // If another realization in the slice has the same output path and reference classes as r,
 // unique r.Signatures will be appended to the first such realization in the slice.
-func appendRealization(realizations []*Realization, r *Realization) []*Realization {
-	i := slices.IndexFunc(realizations, func(r2 *Realization) bool {
+// If clone is true, the parts of r that are added to dst are cloned.
+func appendRealization(dst []*Realization, r *Realization, clone bool) []*Realization {
+	if r == nil {
+		return dst
+	}
+	i := slices.IndexFunc(dst, func(r2 *Realization) bool {
 		return realizationKeysEqual(r, r2)
 	})
 	if i == -1 {
-		return append(realizations, r)
+		if clone {
+			r = r.Clone()
+		}
+		return append(dst, r)
 	}
 	for _, sig := range r.Signatures {
-		found := slices.ContainsFunc(realizations[i].Signatures, func(other *RealizationSignature) bool {
+		found := slices.ContainsFunc(dst[i].Signatures, func(other *RealizationSignature) bool {
 			return realizationSignaturesEqual(sig, other)
 		})
 		if !found {
-			realizations[i].Signatures = append(realizations[i].Signatures, sig)
+			if clone {
+				sig = sig.Clone()
+			}
+			dst[i].Signatures = append(dst[i].Signatures, sig)
 		}
 	}
-	return realizations
+	return dst
 }
 
 // A Realization is a known output path for a particular [RealizationOutputReference].
@@ -369,6 +430,18 @@ type Realization struct {
 	OutputPath       Path                    `json:"outputPath"`
 	ReferenceClasses []*ReferenceClass       `json:"referenceClasses"`
 	Signatures       []*RealizationSignature `json:"signatures,omitempty"`
+}
+
+// Clone returns a copy of r or nil if r is nil.
+func (r *Realization) Clone() *Realization {
+	r2 := &Realization{
+		OutputPath: r.OutputPath,
+		Signatures: cloneSignatures(nil, r.Signatures...),
+	}
+	if len(r.ReferenceClasses) > 0 {
+		r2.ReferenceClasses = xslices.ClonePointers(r.ReferenceClasses)
+	}
+	return r2
 }
 
 func realizationKeysEqual(r1, r2 *Realization) bool {
@@ -459,10 +532,64 @@ func (pub *RealizationPublicKey) Equal(other *RealizationPublicKey) bool {
 	}
 }
 
+// Clone returns a copy of pub or nil if pub is nil.
+func (pub *RealizationPublicKey) Clone() *RealizationPublicKey {
+	if pub == nil {
+		return nil
+	}
+	return &RealizationPublicKey{
+		Format: pub.Format,
+		Data:   bytes.Clone(pub.Data),
+	}
+}
+
 // A RealizationSignature is a cryptographic signature of a [RealizationOutputReference], [Realization] tuple.
 type RealizationSignature struct {
 	PublicKey RealizationPublicKey `json:",inline"`
 	Signature []byte               `json:"signature,format:base64"`
+}
+
+// Clone returns a copy of sig or nil if sig is nil.
+func (sig *RealizationSignature) Clone() *RealizationSignature {
+	return cloneSignatures(nil, sig)[0]
+}
+
+func cloneSignatures(dst []*RealizationSignature, sigs ...*RealizationSignature) []*RealizationSignature {
+	if len(sigs) == 0 {
+		return dst
+	}
+	n := 0
+	byteBufSize := 0
+	for _, sig := range sigs {
+		if sig != nil {
+			n++
+			byteBufSize += len(sig.PublicKey.Data) + len(sig.Signature)
+		}
+	}
+	byteBuf := make([]byte, 0, byteBufSize)
+	sigBuf := make([]RealizationSignature, n)
+	dst = slices.Grow(dst, len(sigs))
+	newLength := len(dst) + len(sigs)
+	result := dst[len(dst):newLength]
+	for i, sig := range sigs {
+		if sig == nil {
+			continue
+		}
+
+		sig2 := &sigBuf[0]
+		sigBuf = sigBuf[1:]
+		*sig2 = RealizationSignature{
+			PublicKey: RealizationPublicKey{Format: sig.PublicKey.Format},
+		}
+		byteBuf = append(byteBuf, sig.PublicKey.Data...)
+		sig2.PublicKey.Data = slices.Clip(byteBuf)
+		byteBuf = append(byteBuf[len(byteBuf):], sig.Signature...)
+		sig2.Signature = slices.Clip(byteBuf)
+		byteBuf = byteBuf[len(byteBuf):]
+
+		result[i] = sig2
+	}
+	return dst[:newLength]
 }
 
 func realizationSignaturesEqual(sig1, sig2 *RealizationSignature) bool {
