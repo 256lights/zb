@@ -17,7 +17,11 @@ import (
 	"zb.256lights.llc/pkg/internal/useragent"
 )
 
-func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) ([]byte, error) {
+type resource struct {
+	body []byte
+}
+
+func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) (*resource, error) {
 	req := (&http.Request{
 		Method: http.MethodGet,
 		URL:    u,
@@ -32,38 +36,41 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 		return nil, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
 	}
 	defer resp.Body.Close()
+
+	result := &resource{}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch %v: %w", u.Redacted(), &httpError{
+		return result, fmt.Errorf("fetch %v: %w", u.Redacted(), &httpError{
 			statusCode: resp.StatusCode,
 			status:     resp.Status,
 		})
 	}
+
 	const mebibyte = 1 << 20
 	const maxSize = 4 * mebibyte
 	if resp.ContentLength > maxSize {
-		return nil, fmt.Errorf("fetch %v: response too large (%.1f MiB)", u.Redacted(), float64(resp.ContentLength)/mebibyte)
+		return result, fmt.Errorf("fetch %v: response too large (%.1f MiB)", u.Redacted(), float64(resp.ContentLength)/mebibyte)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSize))
+	result.body, err = io.ReadAll(io.LimitReader(resp.Body, maxSize))
 	if err != nil {
-		return nil, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
+		return result, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
 	}
-	if resp.ContentLength == -1 && len(data) == maxSize {
+	if resp.ContentLength == -1 && len(result.body) == maxSize {
 		if n, _ := resp.Body.Read(make([]byte, 1)); n > 0 {
-			return nil, fmt.Errorf("fetch %v: response too large", u.Redacted())
+			return result, fmt.Errorf("fetch %v: response too large", u.Redacted())
 		}
 	}
 	if e := resp.Header.Get("Content-Encoding"); e != "" {
-		dec, err := httpencoding.Decode(bytes.NewReader(data), e)
+		dec, err := httpencoding.Decode(bytes.NewReader(result.body), e)
 		if err != nil {
-			return nil, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
+			return result, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
 		}
 		defer dec.Close()
-		data, err = io.ReadAll(dec)
+		result.body, err = io.ReadAll(dec)
 		if err != nil {
-			return nil, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
+			return result, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
 		}
 	}
-	return data, nil
+	return result, nil
 }
 
 type httpError struct {
