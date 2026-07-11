@@ -9,6 +9,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -187,6 +188,751 @@ func TestVerifyObject(t *testing.T) {
 	})
 }
 
+func TestRealizationMapClone(t *testing.T) {
+	t.Run("Empty", func(t *testing.T) {
+		original := RealizationMap{
+			DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+		}
+		got := original.Clone()
+		want := RealizationMap{
+			DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("Clone() (-want +got):\n%s", diff)
+		}
+		if diff := cmp.Diff(want, original); diff != "" {
+			t.Errorf("after Clone(), original (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("NilPointers", func(t *testing.T) {
+		original := RealizationMap{
+			DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+			Realizations: map[string][]*Realization{
+				DefaultDerivationOutputName: {nil, nil},
+			},
+		}
+		got := original.Clone()
+		want := RealizationMap{
+			DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("Clone() (-want +got):\n%s", diff)
+		}
+		wantOriginal := RealizationMap{
+			DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+			Realizations: map[string][]*Realization{
+				DefaultDerivationOutputName: {nil, nil},
+			},
+		}
+		if diff := cmp.Diff(wantOriginal, original); diff != "" {
+			t.Errorf("after Clone(), original (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("NonEmpty", func(t *testing.T) {
+		makeMap := func() RealizationMap {
+			return RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				Realizations: map[string][]*Realization{
+					DefaultDerivationOutputName: {
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0x13, 0x37},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+					},
+				},
+			}
+		}
+		original := makeMap()
+		got := original.Clone()
+		want := makeMap()
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("Clone() (-want +got):\n%s", diff)
+		}
+		if diff := cmp.Diff(want, original); diff != "" {
+			t.Errorf("after Clone(), original (-want +got):\n%s", diff)
+		}
+		if sameMap(original.Realizations, got.Realizations) {
+			t.Error("Clone returned same map")
+		}
+	})
+}
+
+func TestRealizationMapCompact(t *testing.T) {
+	tests := []struct {
+		name string
+		m    RealizationMap
+		want RealizationMap
+	}{
+		{
+			name: "Empty",
+			m: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+			},
+			want: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+			},
+		},
+		{
+			name: "NilPointers",
+			m: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				Realizations: map[string][]*Realization{
+					DefaultDerivationOutputName: {nil, nil},
+				},
+			},
+			want: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+			},
+		},
+		{
+			name: "DistinctSignatures",
+			m: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				Realizations: map[string][]*Realization{
+					DefaultDerivationOutputName: {
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0x13, 0x37},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				Realizations: map[string][]*Realization{
+					DefaultDerivationOutputName: {
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0x13, 0x37},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "IdenticalSignatures",
+			m: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				Realizations: map[string][]*Realization{
+					DefaultDerivationOutputName: {
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				Realizations: map[string][]*Realization{
+					DefaultDerivationOutputName: {
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := test.m.Clone()
+			got.Compact()
+			if diff := cmp.Diff(test.want, got); diff != "" {
+				t.Errorf("after Compact() (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestRealizationMapMerge(t *testing.T) {
+	tests := []struct {
+		name      string
+		m         RealizationMap
+		src       func() RealizationMap
+		want      RealizationMap
+		wantError bool
+	}{
+		{
+			name: "Empty",
+			m: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+			},
+			src: func() RealizationMap {
+				return RealizationMap{
+					DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				}
+			},
+			want: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+			},
+		},
+		{
+			name: "NilPointers",
+			m: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+			},
+			src: func() RealizationMap {
+				return RealizationMap{
+					DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+					Realizations: map[string][]*Realization{
+						DefaultDerivationOutputName: {nil, nil},
+					},
+				}
+			},
+			want: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+			},
+		},
+		{
+			name: "DistinctSignatures",
+			m: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				Realizations: map[string][]*Realization{
+					DefaultDerivationOutputName: {
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
+						},
+					},
+				},
+			},
+			src: func() RealizationMap {
+				return RealizationMap{
+					DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+					Realizations: map[string][]*Realization{
+						DefaultDerivationOutputName: {
+							{
+								OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+								ReferenceClasses: []*ReferenceClass{
+									{
+										Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+										Realization: Nullable[RealizationOutputReference]{
+											Valid: true,
+											X: RealizationOutputReference{
+												DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+												OutputName:     "foo",
+											},
+										},
+									},
+								},
+								Signatures: []*RealizationSignature{
+									{
+										PublicKey: RealizationPublicKey{
+											Format: "nonsense",
+											Data:   []byte{0x13, 0x37},
+										},
+										Signature: []byte{0xca, 0xfe},
+									},
+								},
+							},
+						},
+					},
+				}
+			},
+			want: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				Realizations: map[string][]*Realization{
+					DefaultDerivationOutputName: {
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0x13, 0x37},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "IdenticalSignatures",
+			m: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				Realizations: map[string][]*Realization{
+					DefaultDerivationOutputName: {
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
+						},
+					},
+				},
+			},
+			src: func() RealizationMap {
+				return RealizationMap{
+					DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+					Realizations: map[string][]*Realization{
+						DefaultDerivationOutputName: {
+							{
+								OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+								ReferenceClasses: []*ReferenceClass{
+									{
+										Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+										Realization: Nullable[RealizationOutputReference]{
+											Valid: true,
+											X: RealizationOutputReference{
+												DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+												OutputName:     "foo",
+											},
+										},
+									},
+								},
+								Signatures: []*RealizationSignature{
+									{
+										PublicKey: RealizationPublicKey{
+											Format: "nonsense",
+											Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+										},
+										Signature: []byte{0xca, 0xfe},
+									},
+								},
+							},
+						},
+					},
+				}
+			},
+			want: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				Realizations: map[string][]*Realization{
+					DefaultDerivationOutputName: {
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "DistinctSignaturesInSource",
+			m: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				Realizations: map[string][]*Realization{
+					DefaultDerivationOutputName: {
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
+						},
+					},
+				},
+			},
+			src: func() RealizationMap {
+				return RealizationMap{
+					DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+					Realizations: map[string][]*Realization{
+						DefaultDerivationOutputName: {
+							{
+								OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+								ReferenceClasses: []*ReferenceClass{
+									{
+										Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+										Realization: Nullable[RealizationOutputReference]{
+											Valid: true,
+											X: RealizationOutputReference{
+												DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+												OutputName:     "foo",
+											},
+										},
+									},
+								},
+								Signatures: []*RealizationSignature{
+									{
+										PublicKey: RealizationPublicKey{
+											Format: "nonsense",
+											Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+										},
+										Signature: []byte{0xca, 0xfe},
+									},
+								},
+							},
+							{
+								OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+								ReferenceClasses: []*ReferenceClass{
+									{
+										Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+										Realization: Nullable[RealizationOutputReference]{
+											Valid: true,
+											X: RealizationOutputReference{
+												DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+												OutputName:     "foo",
+											},
+										},
+									},
+								},
+								Signatures: []*RealizationSignature{
+									{
+										PublicKey: RealizationPublicKey{
+											Format: "nonsense",
+											Data:   []byte{0x13, 0x37},
+										},
+										Signature: []byte{0xca, 0xfe},
+									},
+								},
+							},
+						},
+					},
+				}
+			},
+			want: RealizationMap{
+				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+				Realizations: map[string][]*Realization{
+					DefaultDerivationOutputName: {
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
+						},
+						{
+							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
+							ReferenceClasses: []*ReferenceClass{
+								{
+									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
+									Realization: Nullable[RealizationOutputReference]{
+										Valid: true,
+										X: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
+										},
+									},
+								},
+							},
+							Signatures: []*RealizationSignature{
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+								{
+									PublicKey: RealizationPublicKey{
+										Format: "nonsense",
+										Data:   []byte{0x13, 0x37},
+									},
+									Signature: []byte{0xca, 0xfe},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := test.m.Clone()
+			src := test.src()
+			originalSource := test.src()
+			if err := got.Merge(src); err != nil {
+				t.Log("Merge:", err)
+				if !test.wantError {
+					t.Fail()
+				}
+			} else if test.wantError {
+				t.Error("Merge did not return an error")
+			}
+			if diff := cmp.Diff(test.want, got); diff != "" {
+				t.Errorf("after Merge (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(originalSource, src); diff != "" {
+				t.Errorf("after Merge, source (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestRealizationSignature(t *testing.T) {
 	testKey := ed25519.PrivateKey{
 		0xf8, 0xd3, 0x03, 0x35, 0xfb, 0xe3, 0x0a, 0x67,
@@ -332,4 +1078,9 @@ func (obj *fakeObject) Trailer() *ExportTrailer {
 func (obj *fakeObject) WriteNAR(ctx context.Context, w io.Writer) error {
 	_, err := w.Write(obj.nar)
 	return err
+}
+
+// sameMap reports whether m1 and m2 alias the same storage.
+func sameMap[K comparable, V any, M ~map[K]V](m1, m2 M) bool {
+	return reflect.ValueOf(m1).UnsafePointer() == reflect.ValueOf(m2).UnsafePointer()
 }

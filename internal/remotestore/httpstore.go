@@ -210,21 +210,8 @@ func (s *HTTPStore) addRealizations(ctx context.Context, dst *zbstore.Realizatio
 	if err := jsonv2.Unmarshal(docData, doc, jsonv2.WithUnmarshalers(unmarshalers)); err != nil {
 		return fmt.Errorf("fetch realizations for %v: %v: %v", dst.DerivationHash, u.Redacted(), err)
 	}
-	if !doc.DerivationHash.Equal(dst.DerivationHash) {
-		return fmt.Errorf("fetch realizations for %v: %v: mismatched hash %v", dst.DerivationHash, u.Redacted(), doc.DerivationHash)
-	}
-	if dst.Realizations == nil {
-		dst.Realizations = doc.Realizations
-		return nil
-	}
-	for outputName, realizations := range doc.Realizations {
-		if len(realizations) == 0 {
-			continue
-		}
-		if dst.Realizations == nil {
-			dst.Realizations = make(map[string][]*zbstore.Realization)
-		}
-		dst.Realizations[outputName] = append(dst.Realizations[outputName], realizations...)
+	if err := dst.Merge(*doc); err != nil {
+		return fmt.Errorf("fetch realizations for %v: %v: %v", dst.DerivationHash, u.Redacted(), err)
 	}
 	return nil
 }
