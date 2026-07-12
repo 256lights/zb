@@ -116,7 +116,7 @@ func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Obje
 				info:   info,
 			}, nil
 		}
-		if statusCode, _ := errorStatusCode(err); statusCode == http.StatusNotFound {
+		if statusCode, _ := errorStatusCode(err); statusCode == http.StatusNotFound || statusCode == http.StatusGone {
 			log.Debugf(ctx, "NAR info not found: %v", err)
 		} else {
 			ec.Add(fmt.Errorf("stat %s: %v", path, err))
