@@ -190,9 +190,7 @@ func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zb
 			continue
 		}
 		if err := s.addRealizations(ctx, &result, u); err != nil {
-			if code, _ := errorStatusCode(err); code != http.StatusNotFound {
-				ec.Add(err)
-			}
+			ec.Add(err)
 			continue
 		}
 	}
