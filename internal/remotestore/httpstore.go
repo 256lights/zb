@@ -113,7 +113,7 @@ func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Obje
 				info:   info,
 			}, nil
 		}
-		if statusCode, _ := errorStatusCode(err); statusCode == http.StatusNotFound {
+		if statusCode, _ := errorStatusCode(err); statusCode == http.StatusNotFound || statusCode == http.StatusGone {
 			log.Debugf(ctx, "NAR info not found: %v", err)
 		} else {
 			ec.Add(fmt.Errorf("stat %s: %v", path, err))
@@ -191,9 +191,7 @@ func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zb
 			continue
 		}
 		if err := s.addRealizations(ctx, &result, u); err != nil {
-			if code, _ := errorStatusCode(err); code != http.StatusNotFound {
-				ec.Add(err)
-			}
+			ec.Add(err)
 			continue
 		}
 	}
@@ -204,6 +202,10 @@ func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zb
 func (s *HTTPStore) addRealizations(ctx context.Context, dst *zbstore.RealizationMap, u *url.URL) error {
 	docData, err := fetch(ctx, s.client(), u, "application/json,text/*;q=0.9,*/*;q=0.8")
 	if err != nil {
+		if code, _ := errorStatusCode(err); code == http.StatusNotFound || code == http.StatusGone {
+			log.Debugf(ctx, "Fetch realizations for %v: %v", dst.DerivationHash, err)
+			return nil
+		}
 		return fmt.Errorf("fetch realizations for %v: %w", dst.DerivationHash, err)
 	}
 	doc := new(zbstore.RealizationMap)
