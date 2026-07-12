@@ -167,11 +167,15 @@ func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zb
 	}
 
 	params := struct {
-		HashAlgorithm string
-		HashDigest    string
+		HashAlgorithm    string
+		HashDigest       string
+		HashDigestHex    string
+		HashDigestBase64 string
 	}{
-		HashAlgorithm: drvHash.Type().String(),
-		HashDigest:    drvHash.RawBase16(),
+		HashAlgorithm:    drvHash.Type().String(),
+		HashDigest:       drvHash.RawBase32(),
+		HashDigestHex:    drvHash.RawBase16(),
+		HashDigestBase64: drvHash.RawBase64(),
 	}
 	for _, link := range infoLinks.Objects {
 		if !link.Templated {
