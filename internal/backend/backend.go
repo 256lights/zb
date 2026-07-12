@@ -25,6 +25,7 @@ import (
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/xiter"
+	"zb.256lights.llc/pkg/internal/xtime"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -638,12 +639,8 @@ func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 		}
 
 		// Wait for more.
-		t := time.NewTimer(builderLogInterval)
-		select {
-		case <-t.C:
-		case <-ctx.Done():
-			t.Stop()
-			return nil, fmt.Errorf("read log for %s in build %v: %w", args.DrvPath, buildID, ctx.Err())
+		if err := xtime.Sleep(ctx, builderLogInterval); err != nil {
+			return nil, fmt.Errorf("read log for %s in build %v: %w", args.DrvPath, buildID, err)
 		}
 	}
 }

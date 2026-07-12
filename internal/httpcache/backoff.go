@@ -4,10 +4,11 @@
 package httpcache
 
 import (
-	"cmp"
 	"context"
 	"math/rand/v2"
 	"time"
+
+	"zb.256lights.llc/pkg/internal/xtime"
 )
 
 // A backoffTimer waits for progressively longer time durations
@@ -35,17 +36,7 @@ func (bt *backoffTimer) wait(ctx context.Context) error {
 	jitterCoefficient := rand.Float64()*(jitterPercentage*2) - jitterPercentage
 	jitter := time.Duration(float64(baseDuration) * jitterCoefficient)
 	duration := baseDuration + jitter
-	if deadline, ok := ctx.Deadline(); ok && duration >= time.Until(deadline) {
-		return cmp.Or(ctx.Err(), context.DeadlineExceeded)
-	}
-	t := time.NewTimer(duration)
-	select {
-	case <-t.C:
-		return nil
-	case <-ctx.Done():
-		t.Stop()
-		return ctx.Err()
-	}
+	return xtime.Sleep(ctx, duration)
 }
 
 var backoffTable = [...]time.Duration{

@@ -17,6 +17,7 @@ import (
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
+	"zb.256lights.llc/pkg/internal/xtime"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/xcontext"
 )
@@ -142,11 +143,7 @@ func (c *Client) communicate(ctx context.Context, open OpenFunc) {
 		if err != nil {
 			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				log.Warnf(ctx, "Failed to open JSON-RPC connection (will retry): %v", err)
-				t := time.NewTimer(1 * time.Second)
-				select {
-				case <-t.C:
-				case <-ctx.Done():
-					t.Stop()
+				if err := xtime.Sleep(ctx, 1*time.Second); err != nil {
 					return
 				}
 			}
