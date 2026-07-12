@@ -1,11 +1,5 @@
 {
   "_links": {
-    "https://zb-build.dev/api/rel/narinfo": [
-      {
-        "href": "{digest}.narinfo",
-        "templated": true
-      }
-    ],
     "https://zb-build.dev/api/rel/realization": [
       {
         "href": "realizations/{hashDigest}.json",

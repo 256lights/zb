@@ -20,10 +20,9 @@ import (
 )
 
 func TestHTTPStoreObject(t *testing.T) {
-	store := httpStoreForDirectory(t, filepath.Join("testdata", "cache"))
-
 	t.Run("File", func(t *testing.T) {
 		ctx := testcontext.New(t)
+		store := httpStoreForDirectory(t, ".")
 		caHash, err := nix.ParseHash("sha256:1qicirpsz48j7a2r5h9lj04kipdyvxanwglv9ymfq0qsv7isywdf")
 		if err != nil {
 			t.Fatal(err)
@@ -54,6 +53,7 @@ func TestHTTPStoreObject(t *testing.T) {
 
 	t.Run("NotFound", func(t *testing.T) {
 		ctx := testcontext.New(t)
+		store := httpStoreForDirectory(t, ".")
 		_, err := store.Object(ctx, "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bork")
 		if err == nil {
 			t.Error("no error returned")
@@ -64,10 +64,9 @@ func TestHTTPStoreObject(t *testing.T) {
 }
 
 func TestHTTPStoreFetchRealizations(t *testing.T) {
-	store := httpStoreForDirectory(t, filepath.Join("testdata", "cache"))
-
 	t.Run("File", func(t *testing.T) {
 		ctx := testcontext.New(t)
+		store := httpStoreForDirectory(t, ".")
 		drvHash := mustParseHash(t, "sha256:bd172e7b837e02a672e417976696642eaabb97847f61a77cf430f515efc97b61")
 		got, err := store.FetchRealizations(ctx, drvHash)
 		if err != nil {
@@ -90,6 +89,7 @@ func TestHTTPStoreFetchRealizations(t *testing.T) {
 
 	t.Run("NotFound", func(t *testing.T) {
 		ctx := testcontext.New(t)
+		store := httpStoreForDirectory(t, ".")
 		drvHash := mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 		got, err := store.FetchRealizations(ctx, drvHash)
 		if err != nil {
@@ -105,10 +105,15 @@ func TestHTTPStoreFetchRealizations(t *testing.T) {
 	})
 }
 
+func testdataPath(tb testing.TB, path string) string {
+	tb.Helper()
+	return filepath.Join("testdata", filepath.FromSlash(tb.Name()), filepath.FromSlash(path))
+}
+
 func httpStoreForDirectory(tb testing.TB, path string) *HTTPStore {
 	tb.Helper()
 
-	root, err := os.OpenRoot(path)
+	root, err := os.OpenRoot(testdataPath(tb, path))
 	if err != nil {
 		tb.Fatal(err)
 	}
