@@ -54,9 +54,29 @@ func runBuiltin(ctx context.Context, invocation *builderInvocation) error {
 
 func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string) error {
 	href := drv.Env["url"]
-	if href == "" {
+	var urls []string
+	if href != "" {
+		urls = append(urls, href)
+	}
+
+	hrefs := drv.Env["urls"]
+	urls = append(urls, strings.Fields(hrefs)...)
+	if len(urls) == 0 {
 		return fmt.Errorf("missing url environment variable")
 	}
+
+	var err error
+	for _, href := range urls {
+		err = getURL(ctx, drv, realStoreDir, href)
+		if err == nil {
+			break
+		}
+	}
+
+	return err
+}
+
+func getURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string, href string) error {
 	outputPath := drv.Env[zbstore.DefaultDerivationOutputName]
 	if outputPath == "" {
 		return fmt.Errorf("missing %s environment variable", zbstore.DefaultDerivationOutputName)

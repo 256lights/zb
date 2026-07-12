@@ -15,10 +15,20 @@ local function baseNameOf(path)
   return base
 end
 
----@param args {url: string, hash: string, name: string?, executable: boolean?}
+---@param args {hash: string, name: string?, executable: boolean?, url: string?, urls: string[]?}
 ---@return derivation
 function fetchurl(args)
-  local name = args.name or baseNameOf(args.url)
+  if (args.url == nil or args.url == "") and (args.urls == nil or next(args.urls) == nil) then
+    error("Either url or urls must be set")
+  end
+
+  local name
+  if args.url == nil then
+    name = args.name or baseNameOf(args.urls[1])
+  else
+    name = args.name or baseNameOf(args.url)
+  end
+
   local outputHashMode = "flat"
   if args.executable then
     outputHashMode = "recursive"
@@ -29,7 +39,7 @@ function fetchurl(args)
     system = "builtin";
 
     url = args.url;
-    urls = { args.url };
+    urls = args.urls;
     executable = args.executable or false;
     unpack = false;
     outputHash = args.hash;
