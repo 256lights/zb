@@ -57,12 +57,12 @@ func (s *HTTPStore) discover(ctx context.Context) (*hal.Resource, error) {
 		return nil, fmt.Errorf("get discovery document: url missing")
 	}
 
-	data, err := fetch(ctx, s.client(), s.URL, "application/hal+json,application/json;q=0.9,text/*;q=0.8,*/*;q=0.7")
+	res, err := fetch(ctx, s.client(), s.URL, "application/hal+json,application/json;q=0.9,text/*;q=0.8,*/*;q=0.7")
 	if err != nil {
 		return nil, fmt.Errorf("get discovery document: %v", err)
 	}
 	hr := new(hal.Resource)
-	if err := jsonv2.Unmarshal(data, hr); err != nil {
+	if err := jsonv2.Unmarshal(res.body, hr); err != nil {
 		return nil, fmt.Errorf("get discovery document: %v", err)
 	}
 	return hr, nil
@@ -128,12 +128,12 @@ func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Obje
 }
 
 func fetchNARInfo(ctx context.Context, client *http.Client, u *url.URL) (*NARInfo, error) {
-	data, err := fetch(ctx, client, u, "text/x-nix-narinfo,text/*;q=0.9,*/*;q=0.8")
+	res, err := fetch(ctx, client, u, "text/x-nix-narinfo,text/*;q=0.9,*/*;q=0.8")
 	if err != nil {
 		return nil, err
 	}
 	result := new(NARInfo)
-	if err := result.UnmarshalText(data); err != nil {
+	if err := result.UnmarshalText(res.body); err != nil {
 		return nil, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
 	}
 	return result, nil
@@ -200,7 +200,7 @@ func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zb
 }
 
 func (s *HTTPStore) addRealizations(ctx context.Context, dst *zbstore.RealizationMap, u *url.URL) error {
-	docData, err := fetch(ctx, s.client(), u, "application/json,text/*;q=0.9,*/*;q=0.8")
+	res, err := fetch(ctx, s.client(), u, "application/json,text/*;q=0.9,*/*;q=0.8")
 	if err != nil {
 		if code, _ := errorStatusCode(err); code == http.StatusNotFound || code == http.StatusGone {
 			log.Debugf(ctx, "Fetch realizations for %v: %v", dst.DerivationHash, err)
@@ -210,7 +210,7 @@ func (s *HTTPStore) addRealizations(ctx context.Context, dst *zbstore.Realizatio
 	}
 	doc := new(zbstore.RealizationMap)
 	unmarshalers := jsonv2.UnmarshalFromFunc(zbstore.UnmarshalHashJSONFrom)
-	if err := jsonv2.Unmarshal(docData, doc, jsonv2.WithUnmarshalers(unmarshalers)); err != nil {
+	if err := jsonv2.Unmarshal(res.body, doc, jsonv2.WithUnmarshalers(unmarshalers)); err != nil {
 		return fmt.Errorf("fetch realizations for %v: %v: %v", dst.DerivationHash, u.Redacted(), err)
 	}
 	if err := dst.Merge(*doc); err != nil {
