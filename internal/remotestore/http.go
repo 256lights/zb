@@ -17,6 +17,7 @@ import (
 	"zb.256lights.llc/pkg/internal/useragent"
 	"zb.256lights.llc/pkg/internal/xhttp"
 	"zb.256lights.llc/pkg/sets"
+	"zombiezen.com/go/log"
 )
 
 type resource struct {
@@ -88,6 +89,58 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 	return result, nil
 }
 
+type putRequest struct {
+	url *url.URL
+
+	content       io.Reader
+	contentLength int64
+	contentType   string
+
+	noReplace    bool
+	cacheControl string
+}
+
+func put(ctx context.Context, client *http.Client, req *putRequest) error {
+	httpRequest := &http.Request{
+		Method: http.MethodPut,
+		URL:    req.url,
+		Header: http.Header{
+			"Content-Type": {req.contentType},
+			"User-Agent":   {useragent.String},
+		},
+		ContentLength: -1,
+		Body:          io.NopCloser(req.content),
+	}
+	if req.contentLength >= 0 {
+		httpRequest.Header.Set("Content-Length", strconv.FormatInt(req.contentLength, 10))
+		httpRequest.ContentLength = req.contentLength
+	}
+	if req.noReplace {
+		httpRequest.Header.Set("If-None-Match", "*")
+	}
+	if req.cacheControl != "" {
+		httpRequest.Header.Set("Cache-Control", req.cacheControl)
+	}
+	log.Debugf(ctx, "PUT %s Content-Length:%d", req.url.Redacted(), req.contentLength)
+	resp, err := client.Do(httpRequest.WithContext(ctx))
+	if resp != nil {
+		resp.Body.Close()
+	}
+	if err == nil &&
+		resp.StatusCode != http.StatusOK &&
+		resp.StatusCode != http.StatusCreated &&
+		resp.StatusCode != http.StatusNoContent {
+		err = &httpError{
+			statusCode: resp.StatusCode,
+			status:     resp.Status,
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("put %s: %v", req.url.Redacted(), err)
+	}
+	return err
+}
+
 type httpError struct {
 	statusCode int
 	status     string
@@ -113,4 +166,14 @@ func errorStatusCode(err error) (statusCode int, ok bool) {
 		return http.StatusInternalServerError, false
 	}
 	return h.statusCode, true
+}
+
+func isNotFound(err error) bool {
+	code, _ := errorStatusCode(err)
+	return code == http.StatusNotFound || code == http.StatusGone
+}
+
+func isMethodNotAllowed(err error) bool {
+	code, _ := errorStatusCode(err)
+	return code == http.StatusMethodNotAllowed || code == http.StatusNotImplemented
 }

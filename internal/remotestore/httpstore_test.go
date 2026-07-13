@@ -4,7 +4,9 @@
 package remotestore
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,8 +16,10 @@ import (
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/google/go-cmp/cmp"
+	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/zbstore"
+	"zombiezen.com/go/log/testlog"
 	"zombiezen.com/go/nix"
 )
 
@@ -105,9 +109,165 @@ func TestHTTPStoreFetchRealizations(t *testing.T) {
 	})
 }
 
+func TestHTTPStorePutObject(t *testing.T) {
+	t.Run("Create", func(t *testing.T) {
+		ctx := testcontext.New(t)
+
+		narData, err := os.ReadFile(testdataPath(t, "hello.txt.nar"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ca, _, err := zbstore.SourceSHA256ContentAddress(bytes.NewReader(narData), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		objectPath, err := zbstore.FixedCAOutputPath(zbstore.DefaultUnixDirectory, "hello.txt", ca, zbstore.References{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		const wantDigest = "mv4z5c5znjdnc40fvqfl1qknszgbdyxd"
+		if got := objectPath.Digest(); got != wantDigest {
+			t.Errorf("computed store path = %s; want digest of %s", objectPath, wantDigest)
+		}
+		wantNARInfo, err := os.ReadFile(testdataPath(t, wantDigest+".narinfo"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dir := t.TempDir()
+		copyToDir(t, dir, "discovery.json")
+		discoveryPath, err := filepath.Abs(filepath.Join(dir, "discovery.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		discoveryURL := fileurl.FromPath(discoveryPath)
+		store := &HTTPStore{
+			URL: discoveryURL,
+			HTTPClient: &http.Client{
+				Transport: fileurl.Transport{},
+			},
+		}
+
+		err = store.PutObject(ctx, &PutObjectRequest{
+			StorePath:      objectPath,
+			ContentAddress: ca,
+			NAR:            bytes.NewReader(narData),
+			NARSize:        int64(len(narData)),
+		})
+		if err != nil {
+			t.Error("store.PutObject:", err)
+		}
+
+		if got, err := os.ReadFile(filepath.Join(dir, objectPath.Digest()+".narinfo")); err != nil {
+			t.Error(err)
+		} else if !bytes.Equal(got, wantNARInfo) {
+			dst := filepath.Join(t.ArtifactDir(), objectPath.Digest()+".narinfo")
+			t.Errorf("%s.narinfo content does not match (wrote to %s)", objectPath.Digest(), dst)
+			os.WriteFile(dst, got, 0o666)
+		}
+
+		if got, err := os.ReadFile(filepath.Join(dir, "nar", objectPath.Digest()+".nar")); err != nil {
+			t.Error(err)
+		} else if !bytes.Equal(got, narData) {
+			dst := filepath.Join(t.ArtifactDir(), "hello.txt.nar")
+			t.Errorf("hello.txt.nar content does not match (wrote to %s)", dst)
+			os.WriteFile(dst, got, 0o666)
+		}
+	})
+
+	t.Run("Existing", func(t *testing.T) {
+		ctx := testcontext.New(t)
+
+		narData, err := os.ReadFile(testdataPath(t, "hello.txt.nar"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ca, _, err := zbstore.SourceSHA256ContentAddress(bytes.NewReader(narData), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		objectPath, err := zbstore.FixedCAOutputPath(zbstore.DefaultUnixDirectory, "hello.txt", ca, zbstore.References{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		const wantDigest = "mv4z5c5znjdnc40fvqfl1qknszgbdyxd"
+		if got := objectPath.Digest(); got != wantDigest {
+			t.Errorf("computed store path = %s; want digest of %s", objectPath, wantDigest)
+		}
+		wantNARInfo, err := os.ReadFile(testdataPath(t, wantDigest+".narinfo"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dir := t.TempDir()
+		copyToDir(t, dir, "discovery.json")
+		copyToDir(t, dir, "hello.txt.nar")
+		copyToDir(t, dir, wantDigest+".narinfo")
+		discoveryPath, err := filepath.Abs(filepath.Join(dir, "discovery.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		discoveryURL := fileurl.FromPath(discoveryPath)
+		store := &HTTPStore{
+			URL: discoveryURL,
+			HTTPClient: &http.Client{
+				Transport: fileurl.Transport{},
+			},
+		}
+
+		err = store.PutObject(ctx, &PutObjectRequest{
+			StorePath:      objectPath,
+			ContentAddress: ca,
+			NAR:            bytes.NewReader(narData),
+			NARSize:        int64(len(narData)),
+		})
+		if err != nil {
+			t.Error("store.PutObject:", err)
+		}
+
+		if got, err := os.ReadFile(filepath.Join(dir, objectPath.Digest()+".narinfo")); err != nil {
+			t.Error(err)
+		} else if !bytes.Equal(got, wantNARInfo) {
+			dst := filepath.Join(t.ArtifactDir(), objectPath.Digest()+".narinfo")
+			t.Errorf("%s.narinfo content does not match (wrote to %s)", objectPath.Digest(), dst)
+			os.WriteFile(dst, got, 0o666)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "upload")); err == nil {
+			t.Error("upload directory exists after PutObject")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Error(err)
+		}
+	})
+}
+
 func testdataPath(tb testing.TB, path string) string {
 	tb.Helper()
 	return filepath.Join("testdata", filepath.FromSlash(tb.Name()), filepath.FromSlash(path))
+}
+
+func copyToDir(tb testing.TB, dstDir string, path string) {
+	tb.Helper()
+
+	src, err := os.Open(testdataPath(tb, path))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer src.Close()
+	subpath := filepath.ToSlash(path)
+	if err := os.MkdirAll(filepath.Join(dstDir, filepath.Dir(subpath)), 0o777); err != nil {
+		tb.Fatal(err)
+	}
+	dst, err := os.Create(filepath.Join(dstDir, subpath))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, src); err != nil {
+		tb.Fatalf("copy %s to %s: %v", src.Name(), dst.Name(), err)
+	}
+	if err := dst.Close(); err != nil {
+		tb.Fatalf("write %s: %v", dst.Name(), err)
+	}
 }
 
 func httpStoreForDirectory(tb testing.TB, path string) *HTTPStore {
@@ -134,4 +294,9 @@ func httpStoreForDirectory(tb testing.TB, path string) *HTTPStore {
 		URL:        srvURL,
 		HTTPClient: srv.Client(),
 	}
+}
+
+func TestMain(m *testing.M) {
+	testlog.Main(nil)
+	os.Exit(m.Run())
 }
