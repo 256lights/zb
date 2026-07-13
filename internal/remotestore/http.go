@@ -21,8 +21,9 @@ import (
 )
 
 type resource struct {
-	body  []byte
-	allow sets.Set[string]
+	body       []byte
+	allow      sets.Set[string]
+	validators xhttp.ValidatorFields
 }
 
 func (res *resource) isMethodAllowed(method string) bool {
@@ -45,7 +46,9 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 	}
 	defer resp.Body.Close()
 
-	result := &resource{}
+	result := &resource{
+		validators: xhttp.ExtractValidatorFields(resp.Header),
+	}
 	if allow := resp.Header.Values("Allow"); len(allow) > 0 {
 		result.allow = make(sets.Set[string])
 		for _, value := range allow {
@@ -97,10 +100,15 @@ type putRequest struct {
 	contentType   string
 
 	noReplace    bool
+	precondition xhttp.ValidatorFields
 	cacheControl string
 }
 
 func put(ctx context.Context, client *http.Client, req *putRequest) error {
+	if req.noReplace && !req.precondition.IsZero() {
+		return fmt.Errorf("put %s: precondition combined with If-None-Match:*", req.url.Redacted())
+	}
+
 	httpRequest := &http.Request{
 		Method: http.MethodPut,
 		URL:    req.url,
@@ -117,6 +125,13 @@ func put(ctx context.Context, client *http.Client, req *putRequest) error {
 	}
 	if req.noReplace {
 		httpRequest.Header.Set("If-None-Match", "*")
+	} else if etag, hasEntityTag := req.precondition.ETag(); hasEntityTag {
+		httpRequest.Header.Set("If-Match", string(etag))
+	} else if lastModified, ok := req.precondition.LastModified(); ok {
+		// As per https://datatracker.ietf.org/doc/html/rfc9110#section-13.1.4,
+		// "[a] recipient MUST ignore If-Unmodified-Since if the request contains an If-Match header field [...]".
+		// Thus, we avoid sending the header field if we already have an entity tag.
+		httpRequest.Header.Set("If-Unmodified-Since", lastModified.UTC().Format(http.TimeFormat))
 	}
 	if req.cacheControl != "" {
 		httpRequest.Header.Set("Cache-Control", req.cacheControl)

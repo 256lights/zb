@@ -16,6 +16,7 @@ import (
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/zbstore"
@@ -236,6 +237,146 @@ func TestHTTPStorePutObject(t *testing.T) {
 			t.Error("upload directory exists after PutObject")
 		} else if !errors.Is(err, os.ErrNotExist) {
 			t.Error(err)
+		}
+	})
+}
+
+func TestHTTPStorePutRealizations(t *testing.T) {
+	t.Run("Create", func(t *testing.T) {
+		ctx := testcontext.New(t)
+
+		dir := t.TempDir()
+		copyToDir(t, dir, "discovery.json")
+		discoveryPath, err := filepath.Abs(filepath.Join(dir, "discovery.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		discoveryURL := fileurl.FromPath(discoveryPath)
+		store := &HTTPStore{
+			URL: discoveryURL,
+			HTTPClient: &http.Client{
+				Transport: fileurl.Transport{},
+			},
+		}
+
+		drvHash := mustParseHash(t, "sha256:bd172e7b837e02a672e417976696642eaabb97847f61a77cf430f515efc97b61")
+		err = store.PutRealizations(ctx, zbstore.RealizationMap{
+			DerivationHash: drvHash,
+			Realizations: map[string][]*zbstore.Realization{
+				zbstore.DefaultDerivationOutputName: {
+					{
+						OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
+					},
+				},
+			},
+		})
+		if err != nil {
+			t.Error("PutRealizations:", err)
+		}
+
+		gotData, err := os.ReadFile(filepath.Join(dir, "realizations", "0qbvr7pibx9hyiyafqbzhjbvpaifcjb6d5qpwirac0kyhdxjw5xx.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got zbstore.RealizationMap
+		unmarshalers := jsonv2.UnmarshalFromFunc(zbstore.UnmarshalHashJSONFrom)
+		if err := jsonv2.Unmarshal(gotData, &got, jsonv2.WithUnmarshalers(unmarshalers)); err != nil {
+			t.Fatal(err)
+		}
+		want := zbstore.RealizationMap{
+			DerivationHash: drvHash,
+			Realizations: map[string][]*zbstore.Realization{
+				zbstore.DefaultDerivationOutputName: {
+					{
+						OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
+					},
+				},
+			},
+		}
+		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("realizations (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("Update", func(t *testing.T) {
+		ctx := testcontext.New(t)
+
+		dir := t.TempDir()
+		copyToDir(t, dir, "discovery.json")
+		copyToDir(t, dir, "realizations/0qbvr7pibx9hyiyafqbzhjbvpaifcjb6d5qpwirac0kyhdxjw5xx.json")
+		discoveryPath, err := filepath.Abs(filepath.Join(dir, "discovery.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		discoveryURL := fileurl.FromPath(discoveryPath)
+		store := &HTTPStore{
+			URL: discoveryURL,
+			HTTPClient: &http.Client{
+				Transport: fileurl.Transport{},
+			},
+		}
+
+		drvHash := mustParseHash(t, "sha256:bd172e7b837e02a672e417976696642eaabb97847f61a77cf430f515efc97b61")
+		err = store.PutRealizations(ctx, zbstore.RealizationMap{
+			DerivationHash: drvHash,
+			Realizations: map[string][]*zbstore.Realization{
+				zbstore.DefaultDerivationOutputName: {
+					{
+						OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
+						Signatures: []*zbstore.RealizationSignature{
+							{
+								PublicKey: zbstore.RealizationPublicKey{
+									Format: "nonsense",
+									Data:   []byte{0x13, 0x37},
+								},
+								Signature: []byte{0xca, 0xfe},
+							},
+						},
+					},
+				},
+			},
+		})
+		if err != nil {
+			t.Error("PutRealizations:", err)
+		}
+
+		gotData, err := os.ReadFile(filepath.Join(dir, "realizations", "0qbvr7pibx9hyiyafqbzhjbvpaifcjb6d5qpwirac0kyhdxjw5xx.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got zbstore.RealizationMap
+		unmarshalers := jsonv2.UnmarshalFromFunc(zbstore.UnmarshalHashJSONFrom)
+		if err := jsonv2.Unmarshal(gotData, &got, jsonv2.WithUnmarshalers(unmarshalers)); err != nil {
+			t.Fatal(err)
+		}
+		want := zbstore.RealizationMap{
+			DerivationHash: drvHash,
+			Realizations: map[string][]*zbstore.Realization{
+				zbstore.DefaultDerivationOutputName: {
+					{
+						OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
+						Signatures: []*zbstore.RealizationSignature{
+							{
+								PublicKey: zbstore.RealizationPublicKey{
+									Format: "nonsense",
+									Data:   []byte{0xde, 0xad, 0xbe, 0xef},
+								},
+								Signature: []byte{0xca, 0xfe},
+							},
+							{
+								PublicKey: zbstore.RealizationPublicKey{
+									Format: "nonsense",
+									Data:   []byte{0x13, 0x37},
+								},
+								Signature: []byte{0xca, 0xfe},
+							},
+						},
+					},
+				},
+			},
+		}
+		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("realizations (-want +got):\n%s", diff)
 		}
 	})
 }

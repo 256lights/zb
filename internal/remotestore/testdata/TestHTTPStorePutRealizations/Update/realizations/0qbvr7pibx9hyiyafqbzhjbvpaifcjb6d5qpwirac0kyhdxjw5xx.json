@@ -1,0 +1,20 @@
+{
+  "derivationHash": {
+    "algorithm": "sha256",
+    "digest": "vRcue4N+AqZy5BeXZpZkLqq7l4R/Yad89DD1Fe/Je2E="
+  },
+  "realizations": {
+    "out": [
+      {
+        "outputPath": "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
+        "signatures": [
+          {
+            "format": "nonsense",
+            "publicKey": "3q2+7w==",
+            "signature": "yv4="
+          }
+        ]
+      }
+    ]
+  }
+}

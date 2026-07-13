@@ -6,11 +6,13 @@ package remotestore
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
 	"net/http"
 	"net/url"
+	"time"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"zb.256lights.llc/pkg/bytebuffer"
@@ -20,6 +22,7 @@ import (
 	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/useragent"
 	"zb.256lights.llc/pkg/internal/xio"
+	"zb.256lights.llc/pkg/internal/xtime"
 	"zb.256lights.llc/pkg/internal/xurl"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -55,6 +58,9 @@ type HTTPStore struct {
 	// If CreateTemp is nil, uploads will store NAR files in memory.
 	// This is generally not recommended, as the files can be large.
 	CreateTemp bytebuffer.Creator
+	// RealizationsCacheControl is the Cache-Control header value to use
+	// when uploading a realizations document.
+	RealizationsCacheControl string
 }
 
 func (s *HTTPStore) client() *http.Client {
@@ -118,44 +124,13 @@ func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Obje
 }
 
 func (s *HTTPStore) narInfoURLs(ec *multierror.Collector, discoveryDocument *hal.Resource, path zbstore.Path) iter.Seq[*url.URL] {
-	infoLinks := discoveryDocument.Links[narInfoRelation]
-	if infoLinks.Single {
-		return func(yield func(*url.URL) bool) {
-			ec.Add(fmt.Errorf("%s: link relation %s is not an array", s.URL.Redacted(), narInfoRelation))
-		}
-	}
-	params := struct {
+	return s.expandLinks(ec, discoveryDocument, narInfoRelation, struct {
 		Base   string
 		Digest string
 	}{
 		Base:   path.Base(),
 		Digest: path.Digest(),
-	}
-	return func(yield func(*url.URL) bool) {
-		addedNotTemplatedError := false
-		for _, link := range infoLinks.Objects {
-			if !link.Templated {
-				if !addedNotTemplatedError {
-					ec.Add(fmt.Errorf("%s: link relation %s: not all links are templated", s.URL.Redacted(), narInfoRelation))
-					addedNotTemplatedError = true
-				}
-				continue
-			}
-			u, err := link.Expand(params)
-			if err != nil {
-				ec.Add(fmt.Errorf("%s: link relation %s: %v", s.URL.Redacted(), narInfoRelation, err))
-				continue
-			}
-			u, err = resolveReference(s.URL, u)
-			if err != nil {
-				ec.Add(fmt.Errorf("%s: link relation %s: %v", s.URL.Redacted(), narInfoRelation, err))
-				continue
-			}
-			if !yield(u) {
-				return
-			}
-		}
-	}
+	})
 }
 
 func fetchNARInfo(ctx context.Context, client *http.Client, u *url.URL) (info *NARInfo, putAllowed bool, err error) {
@@ -415,57 +390,24 @@ func ensureInfoMatches(ec *multierror.Collector, req *PutObjectRequest, u *url.U
 // [derivation hash]: https://zb.256lights.llc/binary-cache/realizations#derivation-hashes
 func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zbstore.RealizationMap, error) {
 	result := zbstore.RealizationMap{DerivationHash: drvHash}
-
 	hr, err := s.discover(ctx)
 	if err != nil {
 		return result, fmt.Errorf("fetch realizations for %v: %v", drvHash, err)
 	}
-	infoLinks := hr.Links[realizationRelation]
-	if infoLinks.Single {
-		return result, fmt.Errorf("fetch realizations for %v: %v: link relation %s is not an array", drvHash, s.URL.Redacted(), realizationRelation)
-	}
-	var ec multierror.Collector
-	for _, link := range infoLinks.Objects {
-		if !link.Templated {
-			ec.Add(fmt.Errorf("fetch realizations for %v: %v: link relation %s: not all links are templated",
-				drvHash, s.URL.Redacted(), realizationRelation))
-			break
-		}
-	}
 
-	params := struct {
-		HashAlgorithm    string
-		HashDigest       string
-		HashDigestHex    string
-		HashDigestBase64 string
-	}{
-		HashAlgorithm:    drvHash.Type().String(),
-		HashDigest:       drvHash.RawBase32(),
-		HashDigestHex:    drvHash.RawBase16(),
-		HashDigestBase64: drvHash.RawBase64(),
-	}
-	for _, link := range infoLinks.Objects {
-		if !link.Templated {
-			continue
-		}
-		u, err := link.Expand(params)
-		if err != nil {
-			ec.Add(fmt.Errorf("fetch realizations for %v: %v: link relation %s: %v",
-				drvHash, s.URL.Redacted(), realizationRelation, err))
-			continue
-		}
-		u, err = resolveReference(s.URL, u)
-		if err != nil {
-			ec.Add(fmt.Errorf("fetch realizations for %v: %v: link relation %s: %v",
-				drvHash, s.URL.Redacted(), realizationRelation, err))
-			continue
-		}
+	var ec multierror.Collector
+	for u := range s.realizationURLs(&ec, hr, drvHash) {
 		if err := s.addRealizations(ctx, &result, u); err != nil {
 			ec.Add(err)
 			continue
 		}
 	}
 
+	err = ec.Error()
+	ec = multierror.Collector{}
+	for err := range multierror.All(err) {
+		ec.Add(fmt.Errorf("fetch realizations for %v: %v", drvHash, err))
+	}
 	return result, ec.Error()
 }
 
@@ -487,6 +429,159 @@ func (s *HTTPStore) addRealizations(ctx context.Context, dst *zbstore.Realizatio
 		return fmt.Errorf("fetch realizations for %v: %v: %v", dst.DerivationHash, u.Redacted(), err)
 	}
 	return nil
+}
+
+// PutRealizations uploads the realizations to the store.
+// PutRealizations attempts to send a PUT request to each "https://zb-build.dev/api/rel/realization" link
+// from the discovery document in sequence until one succeeds.
+// Conditional requests are used to prevent lost concurrent updates,
+// as best as the server supports.
+func (s *HTTPStore) PutRealizations(ctx context.Context, realizations zbstore.RealizationMap) error {
+	if realizations.IsEmpty() {
+		return nil
+	}
+
+	hr, err := s.discover(ctx)
+	if err != nil {
+		return fmt.Errorf("update realizations for %v: %v", realizations.DerivationHash, err)
+	}
+
+	var ec multierror.Collector
+	for u := range s.realizationURLs(&ec, hr, realizations.DerivationHash) {
+		var retries multierror.Collector
+		for attempt := 1; attempt < 50; attempt++ {
+			err := s.putRealizations(ctx, u, realizations)
+			if err == nil {
+				if err := ec.Error(); err != nil {
+					log.Warnf(ctx, "While updating realizations for %v: %v", realizations.DerivationHash, err)
+				}
+				return nil
+			}
+			retries.Add(err)
+			if code, _ := errorStatusCode(err); code != http.StatusPreconditionFailed {
+				ec.Add(retries.Error())
+				break
+			}
+
+			duration := putBackoffTable[min(attempt, len(putBackoffTable)-1)]
+			log.Debugf(ctx, "%dth retry to update realizations for %v after %v...",
+				attempt, realizations.DerivationHash, duration)
+			if err := xtime.Sleep(ctx, duration); err != nil {
+				ec.Add(retries.Error())
+				ec.Add(err)
+				break
+			}
+		}
+	}
+	if ec.Error() == nil {
+		ec.Add(fmt.Errorf("no %s relation in %s", realizationRelation, s.URL.Redacted()))
+	}
+
+	var ec2 multierror.Collector
+	for err := range multierror.All(ec.Error()) {
+		ec2.Add(fmt.Errorf("update realizations for %v: %v", realizations.DerivationHash, err))
+	}
+	return ec2.Error()
+}
+
+func (s *HTTPStore) putRealizations(ctx context.Context, u *url.URL, realizations zbstore.RealizationMap) error {
+	c := s.client()
+	var existing zbstore.RealizationMap
+	noReplace := false
+	oldResource, fetchError := fetch(ctx, c, u, "application/json,text/*;q=0.9,*/*;q=0.8")
+	if !oldResource.isMethodAllowed(http.MethodPut) {
+		log.Debugf(ctx, "Skipping %s because %s not in Allow header", u.Redacted(), http.MethodPut)
+		return fmt.Errorf("%s: %s not allowed", u.Redacted(), http.MethodPut)
+	}
+	if fetchError != nil {
+		if code, _ := errorStatusCode(fetchError); code != http.StatusNotFound && code != http.StatusGone {
+			// Make error opaque.
+			return errors.New(fetchError.Error())
+		}
+		existing = zbstore.RealizationMap{DerivationHash: realizations.DerivationHash}
+		noReplace = true
+	} else {
+		unmarshalers := jsonv2.UnmarshalFromFunc(zbstore.UnmarshalHashJSONFrom)
+		if err := jsonv2.Unmarshal(oldResource.body, &existing, jsonv2.WithUnmarshalers(unmarshalers)); err != nil {
+			return fmt.Errorf("%s: %v", u.Redacted(), err)
+		}
+		existing.Compact()
+	}
+	if err := existing.Merge(realizations); err != nil {
+		return fmt.Errorf("%s: %v", u.Redacted(), err)
+	}
+
+	marshalers := jsonv2.MarshalToFunc(zbstore.MarshalHashJSONTo)
+	newData, err := jsonv2.Marshal(existing, jsonv2.WithMarshalers(marshalers))
+	if err != nil {
+		return fmt.Errorf("%s: %v", u.Redacted(), err)
+	}
+
+	err = put(ctx, c, &putRequest{
+		url:           u,
+		contentLength: int64(len(newData)),
+		content:       bytes.NewReader(newData),
+		contentType:   "application/json",
+		noReplace:     noReplace,
+		precondition:  oldResource.validators,
+		cacheControl:  s.RealizationsCacheControl,
+	})
+	if err != nil {
+		if isMethodNotAllowed(err) {
+			log.Debugf(ctx, "Skipping %s: %v", u.Redacted(), err)
+			return fmt.Errorf("%s: %s not allowed", u.Redacted(), http.MethodPut)
+		}
+		return fmt.Errorf("%s: %w", u.Redacted(), err)
+	}
+	return nil
+}
+
+func (s *HTTPStore) realizationURLs(ec *multierror.Collector, discoveryDocument *hal.Resource, drvHash nix.Hash) iter.Seq[*url.URL] {
+	return s.expandLinks(ec, discoveryDocument, realizationRelation, struct {
+		HashAlgorithm    string
+		HashDigest       string
+		HashDigestHex    string
+		HashDigestBase64 string
+	}{
+		HashAlgorithm:    drvHash.Type().String(),
+		HashDigest:       drvHash.RawBase32(),
+		HashDigestHex:    drvHash.RawBase16(),
+		HashDigestBase64: drvHash.RawBase64(),
+	})
+}
+
+func (s *HTTPStore) expandLinks(ec *multierror.Collector, discoveryDocument *hal.Resource, rel string, params any) iter.Seq[*url.URL] {
+	realizationLinks := discoveryDocument.Links[rel]
+	if realizationLinks.Single {
+		return func(yield func(*url.URL) bool) {
+			ec.Add(fmt.Errorf("%s: link relation %s is not an array", s.URL.Redacted(), rel))
+		}
+	}
+	return func(yield func(*url.URL) bool) {
+		addedNotTemplatedError := false
+		for _, link := range realizationLinks.Objects {
+			if !link.Templated {
+				if !addedNotTemplatedError {
+					ec.Add(fmt.Errorf("%s: link relation %s: not all links are templated", s.URL.Redacted(), rel))
+					addedNotTemplatedError = true
+				}
+				continue
+			}
+			u, err := link.Expand(params)
+			if err != nil {
+				ec.Add(fmt.Errorf("%s: link relation %s: %v", s.URL.Redacted(), rel, err))
+				continue
+			}
+			u, err = resolveReference(s.URL, u)
+			if err != nil {
+				ec.Add(fmt.Errorf("%s: link relation %s: %v", s.URL.Redacted(), rel, err))
+				continue
+			}
+			if !yield(u) {
+				return
+			}
+		}
+	}
 }
 
 // httpObject is the implementation of [zbstore.Object] for [HTTPStore].
@@ -571,4 +666,13 @@ func resolveReference(baseURL, ref *url.URL) (*url.URL, error) {
 		return nil, fmt.Errorf("link to %s not permitted from %s", ref.Redacted(), baseURL.Redacted())
 	}
 	return targetURL, nil
+}
+
+var putBackoffTable = [...]time.Duration{
+	0 * time.Millisecond,
+	100 * time.Millisecond,
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	1000 * time.Millisecond,
+	5000 * time.Millisecond,
 }
