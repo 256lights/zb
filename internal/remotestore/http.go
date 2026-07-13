@@ -15,10 +15,17 @@ import (
 
 	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/useragent"
+	"zb.256lights.llc/pkg/internal/xhttp"
+	"zb.256lights.llc/pkg/sets"
 )
 
 type resource struct {
-	body []byte
+	body  []byte
+	allow sets.Set[string]
+}
+
+func (res *resource) isMethodAllowed(method string) bool {
+	return res == nil || len(res.allow) == 0 || res.allow.Has(method)
 }
 
 func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) (*resource, error) {
@@ -38,6 +45,14 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 	defer resp.Body.Close()
 
 	result := &resource{}
+	if allow := resp.Header.Values("Allow"); len(allow) > 0 {
+		result.allow = make(sets.Set[string])
+		for _, value := range allow {
+			for elem := range xhttp.SplitList(value) {
+				result.allow.Add(elem)
+			}
+		}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return result, fmt.Errorf("fetch %v: %w", u.Redacted(), &httpError{
 			statusCode: resp.StatusCode,
