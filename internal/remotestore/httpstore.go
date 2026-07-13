@@ -72,16 +72,22 @@ func (s *HTTPStore) client() *http.Client {
 
 func (s *HTTPStore) discover(ctx context.Context) (*hal.Resource, error) {
 	if s.URL == nil {
-		return nil, fmt.Errorf("get discovery document: url missing")
+		return nil, permanentError{fmt.Errorf("get discovery document: url missing")}
 	}
 
 	res, err := fetch(ctx, s.client(), s.URL, "application/hal+json,application/json;q=0.9,text/*;q=0.8,*/*;q=0.7")
 	if err != nil {
-		return nil, fmt.Errorf("get discovery document: %v", err)
+		code, _ := errorStatusCode(err)
+		err := fmt.Errorf("get discovery document: %v", err)
+		if code == http.StatusGone {
+			// Gone indicates that retries to obtain this resource will continue to fail.
+			err = permanentError{err}
+		}
+		return nil, err
 	}
 	hr := new(hal.Resource)
 	if err := jsonv2.Unmarshal(res.body, hr); err != nil {
-		return nil, fmt.Errorf("get discovery document: %v", err)
+		return nil, permanentError{fmt.Errorf("get discovery document: %v", err)}
 	}
 	return hr, nil
 }
@@ -90,7 +96,7 @@ func (s *HTTPStore) discover(ctx context.Context) (*hal.Resource, error) {
 func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, error) {
 	hr, err := s.discover(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("stat %s: %v", path, err)
+		return nil, fmt.Errorf("stat %s: %w", path, err)
 	}
 	var ec multierror.Collector
 	c := s.client()
@@ -177,15 +183,15 @@ type PutObjectRequest struct {
 // then the .narinfo file is never uploaded.
 func (s *HTTPStore) PutObject(ctx context.Context, req *PutObjectRequest) error {
 	if req.StorePath == "" {
-		return fmt.Errorf("upload: path not set")
+		return permanentError{fmt.Errorf("upload: path not set")}
 	}
 	if req.ContentAddress.IsZero() {
-		return fmt.Errorf("upload %s: content address not set", req.StorePath)
+		return permanentError{fmt.Errorf("upload %s: content address not set", req.StorePath)}
 	}
 
 	hr, err := s.discover(ctx)
 	if err != nil {
-		return fmt.Errorf("upload %s: %v", req.StorePath, err)
+		return fmt.Errorf("upload %s: %w", req.StorePath, err)
 	}
 
 	// Look at existing .narinfo files for a few reasons:
@@ -226,9 +232,9 @@ func (s *HTTPStore) PutObject(ctx context.Context, req *PutObjectRequest) error 
 		}
 	}
 	if !hasInfoURLs {
-		ec.Add(fmt.Errorf("%s: missing valid %s link", s.URL.Redacted(), narInfoRelation))
+		ec.Add(permanentError{fmt.Errorf("%s: missing valid %s link", s.URL.Redacted(), narInfoRelation)})
 	} else if len(putURLs) == 0 {
-		ec.Add(fmt.Errorf("%s: %s links do not permit %s", s.URL.Redacted(), narInfoRelation, http.MethodPut))
+		ec.Add(permanentError{fmt.Errorf("%s: %s links do not permit %s", s.URL.Redacted(), narInfoRelation, http.MethodPut)})
 	}
 	if err := ec.Error(); err != nil {
 		var ec2 multierror.Collector
@@ -240,7 +246,7 @@ func (s *HTTPStore) PutObject(ctx context.Context, req *PutObjectRequest) error 
 
 	narLink, hasNARLink := hr.Links[narRelation].Get()
 	if !hasNARLink {
-		return fmt.Errorf("upload %s: %s: missing %s link", req.StorePath, s.URL.Redacted(), narRelation)
+		return permanentError{fmt.Errorf("upload %s: %s: missing %s link", req.StorePath, s.URL.Redacted(), narRelation)}
 	}
 	params := struct {
 		Base   string
@@ -251,12 +257,12 @@ func (s *HTTPStore) PutObject(ctx context.Context, req *PutObjectRequest) error 
 	}
 	narURL, err := narLink.Expand(params)
 	if err != nil {
-		return fmt.Errorf("upload %s: %s: %v", req.StorePath, s.URL.Redacted(), err)
+		return permanentError{fmt.Errorf("upload %s: %s: %v", req.StorePath, s.URL.Redacted(), err)}
 	}
 	narURL, err = resolveReference(s.URL, narURL)
 	if err != nil {
-		return fmt.Errorf("upload %s: %s: %s: link: %v",
-			req.StorePath, s.URL.Redacted(), narRelation, err)
+		return permanentError{fmt.Errorf("upload %s: %s: %s: link: %v",
+			req.StorePath, s.URL.Redacted(), narRelation, err)}
 	}
 
 	verifyWriter := make(chan io.Writer)
@@ -302,10 +308,14 @@ func (s *HTTPStore) PutObject(ctx context.Context, req *PutObjectRequest) error 
 	verifyWriteDone <- uploadNARError
 	verifyError := <-verifyDone
 	if uploadNARError != nil {
-		return fmt.Errorf("upload %s: %v", req.StorePath, uploadNARError)
+		err := fmt.Errorf("upload %s: %v", req.StorePath, uploadNARError)
+		if isMethodNotAllowed(uploadNARError) {
+			err = permanentError{err}
+		}
+		return err
 	}
 	if verifyError == nil && narSize >= 0 && int64(*wc) != narSize {
-		verifyError = fmt.Errorf("nar size = %d bytes (hint was %d bytes)", *wc, narSize)
+		verifyError = fmt.Errorf("nar size = %d bytes (advertised %d bytes)", *wc, narSize)
 	}
 	if verifyError != nil {
 		return fmt.Errorf("upload %s: %v", req.StorePath, verifyError)
@@ -365,20 +375,20 @@ func (s *HTTPStore) PutObject(ctx context.Context, req *PutObjectRequest) error 
 func ensureInfoMatches(ec *multierror.Collector, req *PutObjectRequest, u *url.URL, remoteInfo *NARInfo) bool {
 	matches := true
 	if remoteInfo.StorePath != req.StorePath {
-		ec.Add(fmt.Errorf("%s: mismatched store path %s", u.Redacted(), remoteInfo.StorePath))
+		ec.Add(permanentError{fmt.Errorf("%s: mismatched store path %s", u.Redacted(), remoteInfo.StorePath)})
 		matches = false
 	}
 	if remoteInfo.CA.IsZero() {
-		ec.Add(fmt.Errorf("%s: missing content address", u.Redacted()))
+		ec.Add(permanentError{fmt.Errorf("%s: missing content address", u.Redacted())})
 		matches = false
 	} else if !remoteInfo.CA.Equal(req.ContentAddress) {
-		ec.Add(fmt.Errorf("%s: content address = %v; expecting %v",
-			u.Redacted(), remoteInfo.CA, req.ContentAddress))
+		ec.Add(permanentError{fmt.Errorf("%s: content address = %v; expecting %v",
+			u.Redacted(), remoteInfo.CA, req.ContentAddress)})
 		matches = false
 	}
 	if req.NARSize > 0 && remoteInfo.NARSize != req.NARSize {
-		ec.Add(fmt.Errorf("%s: nar size = %d bytes; expecting %d bytes",
-			u.Redacted(), remoteInfo.NARSize, req.NARSize))
+		ec.Add(permanentError{fmt.Errorf("%s: nar size = %d bytes; expecting %d bytes",
+			u.Redacted(), remoteInfo.NARSize, req.NARSize)})
 		matches = false
 	}
 	return matches
@@ -392,7 +402,7 @@ func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zb
 	result := zbstore.RealizationMap{DerivationHash: drvHash}
 	hr, err := s.discover(ctx)
 	if err != nil {
-		return result, fmt.Errorf("fetch realizations for %v: %v", drvHash, err)
+		return result, fmt.Errorf("fetch realizations for %v: %w", drvHash, err)
 	}
 
 	var ec multierror.Collector
@@ -443,10 +453,11 @@ func (s *HTTPStore) PutRealizations(ctx context.Context, realizations zbstore.Re
 
 	hr, err := s.discover(ctx)
 	if err != nil {
-		return fmt.Errorf("update realizations for %v: %v", realizations.DerivationHash, err)
+		return fmt.Errorf("update realizations for %v: %w", realizations.DerivationHash, err)
 	}
 
 	var ec multierror.Collector
+	hasPutAllowed := false
 	for u := range s.realizationURLs(&ec, hr, realizations.DerivationHash) {
 		var retries multierror.Collector
 		for attempt := 1; attempt < 50; attempt++ {
@@ -457,8 +468,12 @@ func (s *HTTPStore) PutRealizations(ctx context.Context, realizations zbstore.Re
 				}
 				return nil
 			}
-			retries.Add(err)
-			if code, _ := errorStatusCode(err); code != http.StatusPreconditionFailed {
+			retries.Add(errors.New(err.Error()))
+			code, hasResponse := errorStatusCode(err)
+			if hasResponse && !isMethodNotAllowed(err) {
+				hasPutAllowed = true
+			}
+			if code != http.StatusPreconditionFailed {
 				ec.Add(retries.Error())
 				break
 			}
@@ -474,12 +489,15 @@ func (s *HTTPStore) PutRealizations(ctx context.Context, realizations zbstore.Re
 		}
 	}
 	if ec.Error() == nil {
-		ec.Add(fmt.Errorf("no %s relation in %s", realizationRelation, s.URL.Redacted()))
+		ec.Add(permanentError{fmt.Errorf("%s: no %s relation", s.URL.Redacted(), realizationRelation)})
+	} else if !hasPutAllowed {
+		ec.Add(permanentError{fmt.Errorf("%s: %s not supported for %s relation",
+			s.URL.Redacted(), http.MethodPut, realizationRelation)})
 	}
 
 	var ec2 multierror.Collector
 	for err := range multierror.All(ec.Error()) {
-		ec2.Add(fmt.Errorf("update realizations for %v: %v", realizations.DerivationHash, err))
+		ec2.Add(fmt.Errorf("update realizations for %v: %w", realizations.DerivationHash, err))
 	}
 	return ec2.Error()
 }
@@ -491,7 +509,7 @@ func (s *HTTPStore) putRealizations(ctx context.Context, u *url.URL, realization
 	oldResource, fetchError := fetch(ctx, c, u, "application/json,text/*;q=0.9,*/*;q=0.8")
 	if !oldResource.isMethodAllowed(http.MethodPut) {
 		log.Debugf(ctx, "Skipping %s because %s not in Allow header", u.Redacted(), http.MethodPut)
-		return fmt.Errorf("%s: %s not allowed", u.Redacted(), http.MethodPut)
+		return fmt.Errorf("%s: %w", u.Redacted(), methodNotAllowedError{http.MethodPut})
 	}
 	if fetchError != nil {
 		if code, _ := errorStatusCode(fetchError); code != http.StatusNotFound && code != http.StatusGone {
@@ -529,7 +547,7 @@ func (s *HTTPStore) putRealizations(ctx context.Context, u *url.URL, realization
 	if err != nil {
 		if isMethodNotAllowed(err) {
 			log.Debugf(ctx, "Skipping %s: %v", u.Redacted(), err)
-			return fmt.Errorf("%s: %s not allowed", u.Redacted(), http.MethodPut)
+			err = methodNotAllowedError{http.MethodPut}
 		}
 		return fmt.Errorf("%s: %w", u.Redacted(), err)
 	}
@@ -666,6 +684,25 @@ func resolveReference(baseURL, ref *url.URL) (*url.URL, error) {
 		return nil, fmt.Errorf("link to %s not permitted from %s", ref.Redacted(), baseURL.Redacted())
 	}
 	return targetURL, nil
+}
+
+type permanentError struct {
+	err error
+}
+
+func (te permanentError) Error() string {
+	return te.err.Error()
+}
+
+func (te permanentError) Unwrap() error {
+	return te.err
+}
+
+// IsPermanentError reports whether err indicates a failure
+// that likely cannot be resolved by retrying.
+func IsPermanentError(err error) bool {
+	_, ok := errors.AsType[permanentError](err)
+	return ok
 }
 
 var putBackoffTable = [...]time.Duration{

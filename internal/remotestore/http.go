@@ -188,7 +188,18 @@ func isNotFound(err error) bool {
 	return code == http.StatusNotFound || code == http.StatusGone
 }
 
+type methodNotAllowedError struct {
+	method string
+}
+
+func (e methodNotAllowedError) Error() string {
+	return e.method + " not allowed"
+}
+
 func isMethodNotAllowed(err error) bool {
+	if _, ok := errors.AsType[methodNotAllowedError](err); ok {
+		return true
+	}
 	code, _ := errorStatusCode(err)
 	return code == http.StatusMethodNotAllowed || code == http.StatusNotImplemented
 }
