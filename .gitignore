@@ -2,6 +2,7 @@
 /zb.exe
 /cmd/zb/zb
 /cmd/zb/zb.exe
+_artifacts/
 node_modules/
 /internal/ui/build/
 .env
