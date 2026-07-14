@@ -140,7 +140,7 @@ func (t Transport) put(req *http.Request) (resp *http.Response) {
 			if err != nil {
 				return errorResponse(req, "Stat failed", http.StatusInternalServerError)
 			}
-			if info.ModTime().After(t) {
+			if info.ModTime().Truncate(time.Second).After(t.Truncate(time.Second)) {
 				return errorResponse(req, "Modified since "+ifUnmodifiedSince, http.StatusPreconditionFailed)
 			}
 		}
