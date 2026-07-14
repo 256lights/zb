@@ -27,6 +27,7 @@ import (
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/netrc"
 	"zb.256lights.llc/pkg/internal/remotestore"
+	"zb.256lights.llc/pkg/internal/xslices"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -259,6 +260,17 @@ func (g *globalConfig) reusePolicy() *zbstorerpc.ReusePolicy {
 }
 
 func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			if req.URL.Scheme == fileurl.Scheme && len(via) > 0 && xslices.Last(via).URL.Scheme != fileurl.Scheme {
+				return fmt.Errorf("cannot redirect from %s to %s", xslices.Last(via).URL.Redacted(), req.URL.Redacted())
+			}
+			return nil
+		},
+	}
 	cache := httpcache.Open(g.HTTPCacheDB, http.DefaultTransport, &httpcache.Options{
 		MaxResponseSize:         4 << 20, // 4 MiB
 		RequestCoalescingCutoff: 5 * time.Second,
@@ -270,24 +282,23 @@ func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
 			}
 		}),
 	})
-	transport := &fileSplitTransport{fallback: cache}
+	client.Transport = &fileSplitTransport{fallback: cache}
 	if g.NetrcPath == "" {
-		return &http.Client{Transport: transport}, cache, nil
+		return client, cache, nil
 	}
 	netrcData, err := os.ReadFile(g.NetrcPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return &http.Client{Transport: transport}, cache, nil
+		return client, cache, nil
 	}
 	if err != nil {
 		cache.Close()
 		return nil, nil, fmt.Errorf("open netrc file: %v", err)
 	}
-	return &http.Client{
-		Transport: &netrc.Transport{
-			Netrc:        netrcData,
-			RoundTripper: transport,
-		},
-	}, cache, nil
+	client.Transport = &netrc.Transport{
+		Netrc:        netrcData,
+		RoundTripper: client.Transport,
+	}
+	return client, cache, nil
 }
 
 // fileSplitTransport is an [http.RoundTripper]
