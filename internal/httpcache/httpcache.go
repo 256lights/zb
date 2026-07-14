@@ -24,6 +24,7 @@ import (
 
 	"zb.256lights.llc/pkg/internal/xhttp"
 	"zb.256lights.llc/pkg/internal/xslices"
+	"zb.256lights.llc/pkg/internal/xtime"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitefile"
 	"zombiezen.com/go/sqlite/sqlitemigration"
@@ -237,7 +238,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		coalesceContext, cancelCoalesceContext = context.WithTimeout(coalesceContext, rt.requestCoalescingCutoff)
 		defer cancelCoalesceContext()
 	}
-	for t := new(backoffTimer); ; {
+	for t := xtime.NewBackoffTimer(backoffTable[:], 0.25); ; {
 		var err error
 		responses, err = readCache(conn, req.URL)
 		rt.reportError(req, err)
@@ -269,7 +270,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		if rt.requestCoalescingCutoff <= 0 || !hasUnreceivedResponses(slices.Values(responses)) {
 			break
 		}
-		if err := t.wait(coalesceContext); err != nil {
+		if err := t.Sleep(coalesceContext); err != nil {
 			// Don't return the error here:
 			// we'll use the last set of responses read from the cache.
 			// The request's context (hopefully) has a longer deadline.
@@ -1023,4 +1024,19 @@ func fetchResponseHeaders(conn *sqlite.Conn, id int64) (http.Header, error) {
 
 func isCacheableMethod(req *http.Request) bool {
 	return req.Method == "" || req.Method == http.MethodGet || req.Method == http.MethodHead
+}
+
+var backoffTable = [...]time.Duration{
+	50 * time.Millisecond,
+	100 * time.Millisecond,
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	500 * time.Millisecond,
+	1000 * time.Millisecond,
+	1000 * time.Millisecond,
+	1000 * time.Millisecond,
+	1000 * time.Millisecond,
+	1000 * time.Millisecond,
+	2500 * time.Millisecond,
+	5000 * time.Millisecond,
 }
