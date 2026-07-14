@@ -1,7 +1,10 @@
 // Copyright 2025 The zb Authors
 // SPDX-License-Identifier: MIT
 
-package remotestore
+// Package zbstorehttp provides a client of the [zb binary cache protocol].
+//
+// [zb binary cache protocol]: https://zb.256lights.llc/binary-cache/
+package zbstorehttp
 
 import (
 	"bytes"
@@ -34,7 +37,7 @@ import (
 var _ interface {
 	zbstore.Store
 	zbstore.RealizationFetcher
-} = (*HTTPStore)(nil)
+} = (*Store)(nil)
 
 const (
 	narRelation         = "https://zb-build.dev/api/rel/nar"
@@ -42,11 +45,11 @@ const (
 	realizationRelation = "https://zb-build.dev/api/rel/realization"
 )
 
-// An HTTPStore implements [zbstore.Store] and [zbstore.RealizationFetcher]
+// A Store implements [zbstore.Store] and [zbstore.RealizationFetcher]
 // using the [Binary Cache Protocol].
 //
 // [Binary Cache Protocol]: https://zb.256lights.llc/binary-cache/
-type HTTPStore struct {
+type Store struct {
 	// URL is the URL of the binary cache discovery document.
 	// This must be non-nil or the store's methods will return errors.
 	URL *url.URL
@@ -63,14 +66,14 @@ type HTTPStore struct {
 	RealizationsCacheControl string
 }
 
-func (s *HTTPStore) client() *http.Client {
+func (s *Store) client() *http.Client {
 	if s.HTTPClient == nil {
 		return http.DefaultClient
 	}
 	return s.HTTPClient
 }
 
-func (s *HTTPStore) discover(ctx context.Context) (*hal.Resource, error) {
+func (s *Store) discover(ctx context.Context) (*hal.Resource, error) {
 	if s.URL == nil {
 		return nil, permanentError{fmt.Errorf("get discovery document: url missing")}
 	}
@@ -93,7 +96,7 @@ func (s *HTTPStore) discover(ctx context.Context) (*hal.Resource, error) {
 }
 
 // Object fetches the .narinfo resource for the store object at the given path.
-func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, error) {
+func (s *Store) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, error) {
 	hr, err := s.discover(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("stat %s: %w", path, err)
@@ -129,7 +132,7 @@ func (s *HTTPStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Obje
 	return nil, err
 }
 
-func (s *HTTPStore) narInfoURLs(ec *multierror.Collector, discoveryDocument *hal.Resource, path zbstore.Path) iter.Seq[*url.URL] {
+func (s *Store) narInfoURLs(ec *multierror.Collector, discoveryDocument *hal.Resource, path zbstore.Path) iter.Seq[*url.URL] {
 	return s.expandLinks(ec, discoveryDocument, narInfoRelation, struct {
 		Base   string
 		Digest string
@@ -152,7 +155,7 @@ func fetchNARInfo(ctx context.Context, client *http.Client, u *url.URL) (info *N
 	return result, putAllowed, nil
 }
 
-// PutObjectRequest is holds the arguments to [*HTTPStore.PutObject].
+// PutObjectRequest is holds the arguments to [*Store.PutObject].
 type PutObjectRequest struct {
 	// StorePath is the path of the store object.
 	// It must not be empty.
@@ -181,7 +184,7 @@ type PutObjectRequest struct {
 // The object is verified during transit,
 // so if after writing the NAR file the content does not match the trailer,
 // then the .narinfo file is never uploaded.
-func (s *HTTPStore) PutObject(ctx context.Context, req *PutObjectRequest) error {
+func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 	if req.StorePath == "" {
 		return permanentError{fmt.Errorf("upload: path not set")}
 	}
@@ -398,7 +401,7 @@ func ensureInfoMatches(ec *multierror.Collector, req *PutObjectRequest, u *url.U
 // by fetching the realization document(s) for the given [derivation hash].
 //
 // [derivation hash]: https://zb.256lights.llc/binary-cache/realizations#derivation-hashes
-func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zbstore.RealizationMap, error) {
+func (s *Store) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zbstore.RealizationMap, error) {
 	result := zbstore.RealizationMap{DerivationHash: drvHash}
 	hr, err := s.discover(ctx)
 	if err != nil {
@@ -421,7 +424,7 @@ func (s *HTTPStore) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zb
 	return result, ec.Error()
 }
 
-func (s *HTTPStore) addRealizations(ctx context.Context, dst *zbstore.RealizationMap, u *url.URL) error {
+func (s *Store) addRealizations(ctx context.Context, dst *zbstore.RealizationMap, u *url.URL) error {
 	res, err := fetch(ctx, s.client(), u, "application/json,text/*;q=0.9,*/*;q=0.8")
 	if err != nil {
 		if isNotFound(err) {
@@ -446,7 +449,7 @@ func (s *HTTPStore) addRealizations(ctx context.Context, dst *zbstore.Realizatio
 // from the discovery document in sequence until one succeeds.
 // Conditional requests are used to prevent lost concurrent updates,
 // as best as the server supports.
-func (s *HTTPStore) PutRealizations(ctx context.Context, realizations zbstore.RealizationMap) error {
+func (s *Store) PutRealizations(ctx context.Context, realizations zbstore.RealizationMap) error {
 	if realizations.IsEmpty() {
 		return nil
 	}
@@ -502,7 +505,7 @@ func (s *HTTPStore) PutRealizations(ctx context.Context, realizations zbstore.Re
 	return ec2.Error()
 }
 
-func (s *HTTPStore) putRealizations(ctx context.Context, u *url.URL, realizations zbstore.RealizationMap) error {
+func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zbstore.RealizationMap) error {
 	c := s.client()
 	var existing zbstore.RealizationMap
 	noReplace := false
@@ -554,7 +557,7 @@ func (s *HTTPStore) putRealizations(ctx context.Context, u *url.URL, realization
 	return nil
 }
 
-func (s *HTTPStore) realizationURLs(ec *multierror.Collector, discoveryDocument *hal.Resource, drvHash nix.Hash) iter.Seq[*url.URL] {
+func (s *Store) realizationURLs(ec *multierror.Collector, discoveryDocument *hal.Resource, drvHash nix.Hash) iter.Seq[*url.URL] {
 	return s.expandLinks(ec, discoveryDocument, realizationRelation, struct {
 		HashAlgorithm    string
 		HashDigest       string
@@ -568,7 +571,7 @@ func (s *HTTPStore) realizationURLs(ec *multierror.Collector, discoveryDocument 
 	})
 }
 
-func (s *HTTPStore) expandLinks(ec *multierror.Collector, discoveryDocument *hal.Resource, rel string, params any) iter.Seq[*url.URL] {
+func (s *Store) expandLinks(ec *multierror.Collector, discoveryDocument *hal.Resource, rel string, params any) iter.Seq[*url.URL] {
 	realizationLinks := discoveryDocument.Links[rel]
 	if realizationLinks.Single {
 		return func(yield func(*url.URL) bool) {
@@ -602,7 +605,7 @@ func (s *HTTPStore) expandLinks(ec *multierror.Collector, discoveryDocument *hal
 	}
 }
 
-// httpObject is the implementation of [zbstore.Object] for [HTTPStore].
+// httpObject is the implementation of [zbstore.Object] for [Store].
 type httpObject struct {
 	client *http.Client
 	base   *url.URL

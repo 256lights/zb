@@ -25,10 +25,10 @@ import (
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/osutil"
-	"zb.256lights.llc/pkg/internal/remotestore"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/ui"
 	"zb.256lights.llc/pkg/internal/xnet"
+	"zb.256lights.llc/pkg/internal/zbstorehttp"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -107,10 +107,10 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 	if err != nil {
 		return err
 	}
-	var uploadHTTPStore *remotestore.HTTPStore
+	var uploadHTTPStore *zbstorehttp.Store
 	switch uploadStore := uploadStore.(type) {
 	case zbstore.Null:
-	case *remotestore.HTTPStore:
+	case *zbstorehttp.Store:
 		uploadHTTPStore = uploadStore
 	default:
 		return fmt.Errorf("unsupported type %q for upload store", g.Server.Upload.Type)

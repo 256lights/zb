@@ -26,8 +26,8 @@ import (
 	"zb.256lights.llc/pkg/internal/httpcache"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/netrc"
-	"zb.256lights.llc/pkg/internal/remotestore"
 	"zb.256lights.llc/pkg/internal/xslices"
+	"zb.256lights.llc/pkg/internal/zbstorehttp"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -427,7 +427,7 @@ func (sc *storeConfig) toStore(deps *storeDeps) (backend.Store, error) {
 		if err != nil {
 			return nil, err
 		}
-		store := &remotestore.HTTPStore{
+		store := &zbstorehttp.Store{
 			HTTPClient: client,
 		}
 		store.URL, err = url.Parse(props.URL)
