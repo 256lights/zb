@@ -66,7 +66,7 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 
 	const mebibyte = 1 << 20
 	const maxSize = 4 * mebibyte
-	if resp.ContentLength > maxSize {
+	if resp.ContentLength >= 0 && resp.ContentLength > maxSize {
 		return result, fmt.Errorf("fetch %v: response too large (%.1f MiB)", u.Redacted(), float64(resp.ContentLength)/mebibyte)
 	}
 	result.body, err = io.ReadAll(io.LimitReader(resp.Body, maxSize))
