@@ -66,6 +66,10 @@ func (t Transport) get(req *http.Request) *http.Response {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
+		if info.IsDir() {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 
 		http.ServeContent(w, req, filepath.Base(path), info.ModTime(), f)
 	}))
@@ -77,7 +81,7 @@ func (t Transport) put(req *http.Request) (resp *http.Response) {
 		return errorResponse(req, err.Error(), http.StatusNotFound)
 	}
 
-	flag := os.O_WRONLY | os.O_CREATE
+	flag := os.O_WRONLY
 	if ifMatch := req.Header.Values("If-Match"); len(ifMatch) == 0 {
 		flag |= os.O_CREATE
 	} else if len(ifMatch) != 1 || ifMatch[0] != "*" {
@@ -113,6 +117,11 @@ func (t Transport) put(req *http.Request) (resp *http.Response) {
 		}
 		if flag&os.O_CREATE == 0 && errors.Is(err, os.ErrNotExist) {
 			return errorResponse(req, "Does not exist", http.StatusPreconditionFailed)
+		}
+		if isDirectoryError(err) {
+			resp := errorResponse(req, "Is a directory", http.StatusMethodNotAllowed)
+			resp.Header.Set("Allow", http.MethodGet+","+http.MethodHead)
+			return resp
 		}
 		return errorResponse(req, "Could not open file", http.StatusInternalServerError)
 	}

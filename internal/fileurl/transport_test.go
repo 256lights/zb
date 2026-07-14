@@ -14,6 +14,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"zb.256lights.llc/pkg/internal/xhttp"
+	"zb.256lights.llc/pkg/sets"
 )
 
 func TestTransport(t *testing.T) {
@@ -53,6 +57,30 @@ func TestTransport(t *testing.T) {
 		}
 		if got, err := io.ReadAll(resp.Body); string(got) != content || err != nil {
 			t.Errorf("io.ReadAll(response.Body) = %q, %v; want %q, <nil>", got, err, content)
+		}
+	})
+
+	t.Run("GetDirectory", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "foo")
+		if err := os.Mkdir(path, 0o777); err != nil {
+			t.Fatal(err)
+		}
+
+		resp, err := client.Do(&http.Request{URL: FromPath(path)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				t.Error("response.Body.Close():", err)
+			}
+		}()
+
+		if got, want := resp.StatusCode, http.StatusNoContent; got != want {
+			t.Errorf("response.StatusCode = %d; want %d", got, want)
+		}
+		if got, want := resp.Header.Get("Content-Type"), ""; got != want {
+			t.Errorf("Content-Type = %q; want %q", got, want)
 		}
 	})
 
@@ -180,6 +208,47 @@ func TestTransport(t *testing.T) {
 		}
 		if got, err := os.ReadFile(path); string(got) != content || err != nil {
 			t.Errorf("os.ReadFile(%q) = %q, %v; want %q, <nil>", path, got, err, content)
+		}
+	})
+
+	t.Run("PutDirectory", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "foo")
+		if err := os.Mkdir(path, 0o777); err != nil {
+			t.Fatal(err)
+		}
+
+		const content = "Hello, World!\n"
+		resp, err := client.Do(&http.Request{
+			Method: http.MethodPut,
+			URL:    FromPath(path),
+			Header: http.Header{
+				"Content-Length": {strconv.Itoa(len(content))},
+				"Content-Type":   {"text/plain; charset=utf-8"},
+			},
+			Body: io.NopCloser(strings.NewReader(content)),
+			GetBody: func() (io.ReadCloser, error) {
+				return io.NopCloser(strings.NewReader(content)), nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				t.Error("response.Body.Close():", err)
+			}
+		}()
+
+		if got, want := resp.StatusCode, http.StatusMethodNotAllowed; got != want {
+			t.Errorf("response.StatusCode = %d; want %d", got, want)
+		}
+		gotAllow := make(sets.Set[string])
+		for _, value := range resp.Header.Values("Allow") {
+			gotAllow.AddSeq(xhttp.SplitList(value))
+		}
+		wantAllow := sets.New(http.MethodGet, http.MethodHead)
+		if diff := cmp.Diff(wantAllow, gotAllow); diff != "" {
+			t.Errorf("Allow (-want +got):\n%s", diff)
 		}
 	})
 }
