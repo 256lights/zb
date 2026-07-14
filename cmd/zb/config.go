@@ -72,6 +72,9 @@ func (g *globalConfig) clone() *globalConfig {
 	if g.Server.Download != nil {
 		g.Server.Download = new(*g.Server.Download)
 	}
+	if g.Server.Upload != nil {
+		g.Server.Upload = new(*g.Server.Upload)
+	}
 	return g
 }
 
@@ -156,6 +159,11 @@ func (g *globalConfig) resolveRelativePaths(dir string, prev *globalConfig) {
 	if prev == nil || !g.Server.Download.Equal(prev.Server.Download) {
 		if baseURL := dirToURL(); baseURL != nil {
 			g.Server.Download = g.Server.Download.resolve(baseURL)
+		}
+	}
+	if prev == nil || !g.Server.Upload.Equal(prev.Server.Upload) {
+		if baseURL := dirToURL(); baseURL != nil {
+			g.Server.Upload = g.Server.Upload.resolve(baseURL)
 		}
 	}
 }

@@ -15,10 +15,19 @@ import (
 
 	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/useragent"
+	"zb.256lights.llc/pkg/internal/xhttp"
+	"zb.256lights.llc/pkg/sets"
+	"zombiezen.com/go/log"
 )
 
 type resource struct {
-	body []byte
+	body       []byte
+	allow      sets.Set[string]
+	validators xhttp.ValidatorFields
+}
+
+func (res *resource) isMethodAllowed(method string) bool {
+	return res == nil || len(res.allow) == 0 || res.allow.Has(method)
 }
 
 func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) (*resource, error) {
@@ -37,7 +46,17 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 	}
 	defer resp.Body.Close()
 
-	result := &resource{}
+	result := &resource{
+		validators: xhttp.ExtractValidatorFields(resp.Header),
+	}
+	if allow := resp.Header.Values("Allow"); len(allow) > 0 {
+		result.allow = make(sets.Set[string])
+		for _, value := range allow {
+			for elem := range xhttp.SplitList(value) {
+				result.allow.Add(elem)
+			}
+		}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return result, fmt.Errorf("fetch %v: %w", u.Redacted(), &httpError{
 			statusCode: resp.StatusCode,
@@ -47,7 +66,7 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 
 	const mebibyte = 1 << 20
 	const maxSize = 4 * mebibyte
-	if resp.ContentLength > maxSize {
+	if resp.ContentLength >= 0 && resp.ContentLength > maxSize {
 		return result, fmt.Errorf("fetch %v: response too large (%.1f MiB)", u.Redacted(), float64(resp.ContentLength)/mebibyte)
 	}
 	result.body, err = io.ReadAll(io.LimitReader(resp.Body, maxSize))
@@ -71,6 +90,70 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) 
 		}
 	}
 	return result, nil
+}
+
+type putRequest struct {
+	url *url.URL
+
+	content       io.Reader
+	contentLength int64
+	contentType   string
+
+	noReplace    bool
+	precondition xhttp.ValidatorFields
+	cacheControl string
+}
+
+func put(ctx context.Context, client *http.Client, req *putRequest) error {
+	if req.noReplace && !req.precondition.IsZero() {
+		return fmt.Errorf("put %s: precondition combined with If-None-Match:*", req.url.Redacted())
+	}
+
+	httpRequest := &http.Request{
+		Method: http.MethodPut,
+		URL:    req.url,
+		Header: http.Header{
+			"Content-Type": {req.contentType},
+			"User-Agent":   {useragent.String},
+		},
+		ContentLength: -1,
+		Body:          io.NopCloser(req.content),
+	}
+	if req.contentLength >= 0 {
+		httpRequest.Header.Set("Content-Length", strconv.FormatInt(req.contentLength, 10))
+		httpRequest.ContentLength = req.contentLength
+	}
+	if req.noReplace {
+		httpRequest.Header.Set("If-None-Match", "*")
+	} else if etag, hasEntityTag := req.precondition.ETag(); hasEntityTag {
+		httpRequest.Header.Set("If-Match", string(etag))
+	} else if lastModified, ok := req.precondition.LastModified(); ok {
+		// As per https://datatracker.ietf.org/doc/html/rfc9110#section-13.1.4,
+		// "[a] recipient MUST ignore If-Unmodified-Since if the request contains an If-Match header field [...]".
+		// Thus, we avoid sending the header field if we already have an entity tag.
+		httpRequest.Header.Set("If-Unmodified-Since", lastModified.UTC().Format(http.TimeFormat))
+	}
+	if req.cacheControl != "" {
+		httpRequest.Header.Set("Cache-Control", req.cacheControl)
+	}
+	log.Debugf(ctx, "PUT %s Content-Length:%d", req.url.Redacted(), req.contentLength)
+	resp, err := client.Do(httpRequest.WithContext(ctx))
+	if resp != nil {
+		resp.Body.Close()
+	}
+	if err == nil &&
+		resp.StatusCode != http.StatusOK &&
+		resp.StatusCode != http.StatusCreated &&
+		resp.StatusCode != http.StatusNoContent {
+		err = &httpError{
+			statusCode: resp.StatusCode,
+			status:     resp.Status,
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("put %s: %v", req.url.Redacted(), err)
+	}
+	return err
 }
 
 type httpError struct {
@@ -98,4 +181,25 @@ func errorStatusCode(err error) (statusCode int, ok bool) {
 		return http.StatusInternalServerError, false
 	}
 	return h.statusCode, true
+}
+
+func isNotFound(err error) bool {
+	code, _ := errorStatusCode(err)
+	return code == http.StatusNotFound || code == http.StatusGone
+}
+
+type methodNotAllowedError struct {
+	method string
+}
+
+func (e methodNotAllowedError) Error() string {
+	return e.method + " not allowed"
+}
+
+func isMethodNotAllowed(err error) bool {
+	if _, ok := errors.AsType[methodNotAllowedError](err); ok {
+		return true
+	}
+	code, _ := errorStatusCode(err)
+	return code == http.StatusMethodNotAllowed || code == http.StatusNotImplemented
 }

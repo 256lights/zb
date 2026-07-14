@@ -24,12 +24,15 @@ import (
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/multierror"
+	"zb.256lights.llc/pkg/internal/remotestore"
 	"zb.256lights.llc/pkg/internal/xiter"
+	"zb.256lights.llc/pkg/internal/xslices"
 	"zb.256lights.llc/pkg/internal/xtime"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
+	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 	"zombiezen.com/go/sqlite/sqlitex"
@@ -66,6 +69,10 @@ type Options struct {
 	// Fallback is used to obtain objects and realizations
 	// that don't exist in the server's store directory.
 	Fallback Store
+
+	// If Upload is not nil, then after a successful builder program run,
+	// the server will upload the object and realizations.
+	Upload *remotestore.HTTPStore
 
 	// DatabasePoolSize is the maximum permitted number of concurrent connections to the database.
 	// If less than 1, a reasonable default is used.
@@ -150,12 +157,14 @@ type Server struct {
 	buildContext    func(context.Context, string) context.Context
 	keyring         *Keyring
 	fallback        Store
+	upload          *remotestore.HTTPStore
 
 	sandbox      bool
 	sandboxPaths map[string]SandboxPath
 
-	cancelBackground context.CancelFunc
-	background       sync.WaitGroup
+	backgroundContext context.Context
+	cancelBackground  context.CancelFunc
+	background        sync.WaitGroup
 
 	coresPerBuild int
 
@@ -199,6 +208,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		buildContext:    opts.BuildContext,
 		keyring:         opts.Keyring.Clone(),
 		fallback:        opts.Fallback,
+		upload:          opts.Upload,
 
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
@@ -242,19 +252,18 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	if srv.fallback == nil {
 		srv.fallback = zbstore.Null{}
 	}
-	var bgCtx context.Context
-	bgCtx, srv.cancelBackground = context.WithCancel(context.Background())
+	srv.backgroundContext, srv.cancelBackground = context.WithCancel(context.Background())
 
 	srv.background.Go(func() {
-		srv.optimizeDatabase(bgCtx)
+		srv.optimizeDatabase(srv.backgroundContext)
 	})
 
 	srv.background.Go(func() {
-		srv.writeHeartbeat(bgCtx)
+		srv.writeHeartbeat(srv.backgroundContext)
 	})
 	if opts.BuildLogRetention > 0 {
 		srv.background.Go(func() {
-			srv.gcLogs(bgCtx, opts.BuildLogRetention)
+			srv.gcLogs(srv.backgroundContext, opts.BuildLogRetention)
 		})
 	}
 	return srv
@@ -974,6 +983,165 @@ func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths 
 	return ec.Error()
 }
 
+// uploadClosure uploads the store objects in the batch
+// and all transitive dependencies of those store objects.
+// uploadClosure will attempt to upload as many objects as possible
+// without uploading any objects
+// where their referenced objects have not been confirmed to be uploaded.
+func (s *Server) uploadClosure(ctx context.Context, batch iter.Seq[*ObjectInfo]) {
+	if s.upload == nil {
+		return
+	}
+
+	objectMap := s.makeObjectInfoMap(ctx, batch, func(err error) {
+		log.Warnf(ctx, "%v", err)
+	})
+	stack := make([]*ObjectInfo, 0, len(objectMap))
+	for _, obj := range objectMap {
+		if obj.References.Len() == 0 {
+			stack = append(stack, obj)
+		}
+	}
+
+	done := make(map[zbstore.Path]bool)
+	for len(stack) > 0 {
+		curr := xslices.Last(stack)
+		stack = xslices.Pop(stack, 1)
+		if _, visited := done[curr.StorePath]; visited {
+			continue
+		}
+		err := s.uploadObject(ctx, curr)
+		done[curr.StorePath] = err == nil
+		if err != nil {
+			log.Warnf(ctx, "%v", err)
+			continue
+		}
+		for _, other := range objectMap {
+			if other.StorePath == curr.StorePath || !other.References.Has(curr.StorePath) {
+				continue
+			}
+			if xiter.All(other.References.Values(), func(p zbstore.Path) bool { return done[p] }) {
+				stack = append(stack, other)
+			}
+		}
+	}
+}
+
+// uploadObject uploads a single object to the s.upload store, retrying as necessary.
+func (s *Server) uploadObject(ctx context.Context, obj *ObjectInfo) error {
+	if s.upload == nil {
+		return nil
+	}
+
+	log.Infof(ctx, "Uploading %s to store at %s...", obj.StorePath, s.upload.URL.Redacted())
+	for t := xtime.NewBackoffTimer(uploadBackoffTable[:], uploadBackoffJitter); ; {
+		log.Debugf(ctx, "Waiting for lock on %s...", obj.StorePath)
+		unlock, err := s.writing.lock(ctx, obj.StorePath)
+		if err != nil {
+			return fmt.Errorf("upload %s: %w", obj.StorePath, err)
+		}
+		pr, pw := io.Pipe()
+		dumpDone := make(chan struct{})
+		go func() {
+			defer close(dumpDone)
+			err := nar.DumpPath(pw, s.realPath(obj.StorePath))
+			pw.CloseWithError(err)
+		}()
+		err = s.upload.PutObject(ctx, &remotestore.PutObjectRequest{
+			StorePath:      obj.StorePath,
+			References:     obj.References,
+			ContentAddress: obj.CA,
+			NAR:            pr,
+			NARSize:        obj.NARSize,
+		})
+		pr.Close()
+		unlock()
+		<-dumpDone
+
+		if err == nil {
+			log.Infof(ctx, "Uploaded %s", obj.StorePath)
+			return nil
+		}
+		if remotestore.IsPermanentError(err) {
+			return err
+		}
+		log.Warnf(ctx, "%v", err)
+		if err := t.Sleep(ctx); err != nil {
+			return fmt.Errorf("upload %s: %w", obj.StorePath, err)
+		}
+	}
+}
+
+// makeObjectInfoMap builds a map of the transitive closure of [*ObjectInfo] values
+// for the objects sequence.
+func (s *Server) makeObjectInfoMap(ctx context.Context, objects iter.Seq[*ObjectInfo], onError func(error)) map[zbstore.Path]*ObjectInfo {
+	result := make(map[zbstore.Path]*ObjectInfo)
+	for obj := range objects {
+		result[obj.StorePath] = obj
+	}
+	var stack []zbstore.Path
+	for _, obj := range result {
+		stack = slices.Grow(stack, obj.References.Len())
+		stack = slices.AppendSeq(stack, obj.References.Values())
+	}
+
+	if len(stack) > 0 {
+		conn, err := s.db.Get(ctx)
+		if err != nil {
+			onError(fmt.Errorf("gather object information: %w", err))
+			return result
+		}
+		defer s.db.Put(conn)
+
+		for len(stack) > 0 {
+			curr := xslices.Last(stack)
+			stack = xslices.Pop(stack, 1)
+			if _, ok := result[curr]; ok {
+				continue
+			}
+			result[curr], err = pathInfo(conn, curr)
+			if err != nil {
+				if errors.Is(err, zbstore.ErrNotFound) {
+					log.Debugf(ctx, "%v", err)
+				} else {
+					onError(err)
+				}
+			}
+		}
+
+		for p, obj := range result {
+			if obj == nil {
+				delete(result, p)
+			}
+		}
+	}
+
+	return result
+}
+
+// uploadRealizations uploads a [zbstore.RealizationMap] to the s.upload store, retrying as necessary.
+func (s *Server) uploadRealizations(ctx context.Context, realizations zbstore.RealizationMap) {
+	if s.upload == nil || realizations.IsEmpty() {
+		return
+	}
+
+	for t := xtime.NewBackoffTimer(uploadBackoffTable[:], uploadBackoffJitter); ; {
+		err := s.upload.PutRealizations(s.backgroundContext, realizations)
+		if err == nil {
+			log.Infof(ctx, "Uploaded realizations for %v", realizations.DerivationHash)
+			return
+		}
+		log.Warnf(ctx, "%v", err)
+		if remotestore.IsPermanentError(err) {
+			return
+		}
+
+		if err := t.Sleep(ctx); err != nil {
+			return
+		}
+	}
+}
+
 func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
 	ticker := time.NewTicker(min(5*time.Minute, window))
 	defer ticker.Stop()
@@ -1165,3 +1333,16 @@ func isCopyFromFallbackError(err error) bool {
 
 func (e copyFromFallbackError) Error() string { return e.err.Error() }
 func (e copyFromFallbackError) Unwrap() error { return e.err }
+
+const uploadBackoffJitter = 0.25
+
+var uploadBackoffTable = [...]time.Duration{
+	1 * time.Second,
+	1 * time.Second,
+	1 * time.Second,
+	5 * time.Second,
+	5 * time.Second,
+	5 * time.Second,
+	10 * time.Second,
+	30 * time.Second,
+}
