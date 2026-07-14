@@ -25,11 +25,13 @@ import (
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/osutil"
+	"zb.256lights.llc/pkg/internal/remotestore"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/ui"
 	"zb.256lights.llc/pkg/internal/xnet"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/bass/runhttp"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/log/zstdlog"
@@ -39,6 +41,7 @@ const contentAddressTempFilePattern = "zb-ca-*"
 
 type serverConfig struct {
 	Download *storeConfig `json:"download"`
+	Upload   *storeConfig `json:"upload"`
 }
 
 type serveCommand struct {
@@ -100,6 +103,18 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 	if err != nil {
 		return err
 	}
+	uploadStore, err := g.Server.Upload.toStore(configStoreDeps)
+	if err != nil {
+		return err
+	}
+	var uploadHTTPStore *remotestore.HTTPStore
+	switch uploadStore := uploadStore.(type) {
+	case zbstore.Null:
+	case *remotestore.HTTPStore:
+		uploadHTTPStore = uploadStore
+	default:
+		return fmt.Errorf("unsupported type %q for upload store", g.Server.Upload.Type)
+	}
 
 	webHandler := new(webServer)
 	if c.TemplatesDirectory != "" {
@@ -134,6 +149,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 		BuildLogRetention:           c.BuildLogRetention,
 		Keyring:                     keyring,
 		Fallback:                    fallbackStore,
+		Upload:                      uploadHTTPStore,
 	})
 	defer func() {
 		if err := backendServer.Close(); err != nil {

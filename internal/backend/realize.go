@@ -858,6 +858,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		DerivationHash: state.derivationHash,
 		Realizations:   make(map[string][]*zbstore.Realization),
 	}
+	objectsToUpload := make([]*ObjectInfo, 0, len(tempOutPaths))
 	for outputName, tempOutputPath := range tempOutPaths {
 		ref := zbstore.OutputReference{
 			DrvPath:    drvPath,
@@ -868,6 +869,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 			return fmt.Errorf("build %s: %v", drvPath, err)
 		}
 		delete(tempOutPaths, outputName) // No longer needs cleanup if we fail.
+		objectsToUpload = append(objectsToUpload, info)
 
 		eqClass := equivalenceClass{
 			drvHashKey: state.derivationHashKey,
@@ -900,6 +902,13 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 			log.Warnf(ctx, "Signing built realization: %v", err)
 		}
 		outputs.Realizations[outputName] = []*zbstore.Realization{r}
+	}
+
+	if b.server.upload != nil {
+		srv := b.server
+		srv.background.Go(func() {
+			srv.uploadClosure(srv.backgroundContext, slices.Values(objectsToUpload))
+		})
 	}
 
 	// Record realizations.
@@ -1837,12 +1846,23 @@ func rewriteAtPath(path string, baseOffset int64, newDigest string, rewriters []
 // and on success, saves the realizations into b.realizations.
 // The outputs must exist in the store.
 func (b *builder) recordRealizations(ctx context.Context, conn *sqlite.Conn, buildResultID int64, outputs zbstore.RealizationMap) (err error) {
+	if outputs.IsEmpty() {
+		return nil
+	}
+
 	if log.IsEnabled(log.Debug) {
 		outputPaths := make(map[string]zbstore.Path)
 		for ref, r := range outputs.All() {
 			outputPaths[ref.OutputName] = r.OutputPath
 		}
 		log.Debugf(ctx, "Recording realizations for %v: %s", outputs.DerivationHash, formatOutputPaths(outputPaths))
+	}
+
+	if b.server.upload != nil {
+		srv := b.server
+		srv.background.Go(func() {
+			srv.uploadRealizations(ctx, outputs)
+		})
 	}
 
 	endFn, err := sqlitex.ImmediateTransaction(conn)

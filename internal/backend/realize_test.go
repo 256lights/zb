@@ -10,24 +10,29 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	. "zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
+	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/remotestore"
 	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
+	"zombiezen.com/go/log/testlog"
 	"zombiezen.com/go/nix"
 )
 
@@ -2030,6 +2035,168 @@ func TestRealizeMultiStepFallbackMissingObject(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkSingleFileOutput(t, drv2Path, wantOutputPath2, []byte(wantOutputContent2), got)
+}
+
+func TestRealizeUpload(t *testing.T) {
+	ctx := testcontext.New(t)
+	dir := backendtest.NewStoreDirectory(t)
+
+	testKey := ed25519.PrivateKey{
+		0xf8, 0xd3, 0x03, 0x35, 0xfb, 0xe3, 0x0a, 0x67,
+		0x53, 0xf6, 0x62, 0xeb, 0xf7, 0x36, 0x9d, 0x61,
+		0x05, 0xf0, 0x17, 0xf9, 0x8f, 0x2e, 0xc4, 0xe8,
+		0x33, 0x0d, 0xfa, 0xc9, 0x7e, 0xf0, 0xe8, 0x70,
+		0x95, 0x09, 0x22, 0xbd, 0x27, 0x65, 0xac, 0x30,
+		0x63, 0xc2, 0x01, 0x3f, 0x54, 0xd9, 0x8f, 0x79,
+		0xf4, 0xd1, 0x60, 0x01, 0xf7, 0x62, 0x49, 0x61,
+		0x91, 0xbd, 0x66, 0xd7, 0x62, 0x51, 0x94, 0x70,
+	}
+
+	const inputContent = "Hello, World!\n"
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
+	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
+		Name:      "hello.txt",
+		Directory: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantOutputName = "hello2.txt"
+	drvContent := &zbstore.Derivation{
+		Name:   wantOutputName,
+		Dir:    dir,
+		System: system.Current().String(),
+		Env: map[string]string{
+			"in":  string(inputFilePath),
+			"out": zbstore.HashPlaceholder("out"),
+		},
+		InputSources: *sets.NewSorted(
+			inputFilePath,
+		),
+		Outputs: map[string]*zbstore.DerivationOutputType{
+			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
+		},
+	}
+	drvContent.Builder, drvContent.Args = catcatBuilder()
+	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	uploadStoreDir, err := filepath.Abs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	discoveryData, err := os.ReadFile(filepath.Join("testdata", filepath.FromSlash(t.Name()), "discovery.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	discoveryPath := filepath.Join(uploadStoreDir, "discovery.json")
+	err = os.WriteFile(discoveryPath, discoveryData, 0o666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadStore := &remotestore.HTTPStore{
+		URL: fileurl.FromPath(discoveryPath),
+		HTTPClient: &http.Client{
+			Transport: fileurl.Transport{},
+		},
+	}
+
+	synctest.Test(t, func(t *testing.T) {
+		ctx := testlog.WithTB(t.Context(), t)
+		_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+			TempDir: t.TempDir(),
+			Options: Options{
+				Upload: uploadStore,
+				Keyring: &Keyring{
+					Ed25519: []ed25519.PrivateKey{testKey},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		codec, releaseCodec, err := storeCodec(ctx, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = codec.Export(nil, exportBuffer)
+		releaseCodec()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		realizeResponse := new(zbstorerpc.RealizeResponse)
+		err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+			DrvPaths: []zbstore.Path{drvPath},
+		})
+		if err != nil {
+			t.Fatal("RPC error:", err)
+		}
+		if realizeResponse.BuildID == "" {
+			t.Fatal("no build ID returned")
+		}
+
+		_, err = backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+		if err != nil {
+			gotLog, _ := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvPath)
+			t.Fatalf("build drv: %v\nlog:\n%s", err, gotLog)
+		}
+
+		// Wait for background goroutines to finish.
+		synctest.Wait()
+	})
+
+	const wantOutputContent = "Hello, World!\nHello, World!\n"
+	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, []byte(wantOutputContent), zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Object existence is sufficient: [remotestore.HTTPStore] already verifies.
+	if _, err := uploadStore.Object(ctx, wantOutputPath); err != nil {
+		t.Error(err)
+	}
+
+	// Verify realizations.
+	drvHash, err := drvContent.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
+		return "", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := uploadStore.FetchRealizations(ctx, drvHash); err != nil {
+		t.Error(err)
+	} else {
+		outputRef := zbstore.RealizationOutputReference{
+			DerivationHash: drvHash,
+			OutputName:     zbstore.DefaultDerivationOutputName,
+		}
+		wantRealization := &zbstore.Realization{
+			OutputPath: wantOutputPath,
+		}
+		sig, err := zbstore.SignRealizationWithEd25519(outputRef, wantRealization, testKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantRealization.Signatures = append(wantRealization.Signatures, sig)
+		want := zbstore.RealizationMap{
+			DerivationHash: drvHash,
+			Realizations: map[string][]*zbstore.Realization{
+				zbstore.DefaultDerivationOutputName: {
+					wantRealization,
+				},
+			},
+		}
+		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("realizations for %v (-want +got):\n%s", drvHash, diff)
+		}
+	}
 }
 
 var buildResultOption = cmp.Options{
