@@ -5,6 +5,7 @@ package zbstorehttp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -38,32 +39,41 @@ type Client interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-type resource struct {
+type fetchRequest struct {
+	url    *url.URL
+	origin *url.URL
+	accept string
+}
+
+type fetchResponse struct {
 	body       []byte
 	allow      sets.Set[string]
 	validators xhttp.ValidatorFields
 }
 
-func (res *resource) isMethodAllowed(method string) bool {
+func (res *fetchResponse) isMethodAllowed(method string) bool {
 	return res == nil || len(res.allow) == 0 || res.allow.Has(method)
 }
 
-func fetch(ctx context.Context, client Client, u *url.URL, accept string) (*resource, error) {
-	req := (&http.Request{
+func fetch(ctx context.Context, client Client, req *fetchRequest) (*fetchResponse, error) {
+	httpRequest := (&http.Request{
 		Method: http.MethodGet,
-		URL:    u,
+		URL:    req.url,
 		Header: http.Header{
-			"Accept":          {accept},
+			"Accept":          {req.accept},
 			"Accept-Encoding": {httpencoding.Accept},
 		},
 	}).WithContext(ctx)
-	resp, err := client.Do(req)
+	if origin, ok := computeOrigin(http.MethodGet, req.url, req.origin); ok {
+		httpRequest.Header.Set("Origin", origin)
+	}
+	resp, err := client.Do(httpRequest)
 	if err != nil {
-		return nil, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
+		return nil, fmt.Errorf("fetch %v: %v", req.url.Redacted(), err)
 	}
 	defer resp.Body.Close()
 
-	result := &resource{
+	result := &fetchResponse{
 		validators: xhttp.ExtractValidatorFields(resp.Header),
 	}
 	if allow := resp.Header.Values("Allow"); len(allow) > 0 {
@@ -75,7 +85,7 @@ func fetch(ctx context.Context, client Client, u *url.URL, accept string) (*reso
 		}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return result, fmt.Errorf("fetch %v: %w", u.Redacted(), &httpError{
+		return result, fmt.Errorf("fetch %v: %w", req.url.Redacted(), &httpError{
 			statusCode: resp.StatusCode,
 			status:     resp.Status,
 		})
@@ -84,33 +94,35 @@ func fetch(ctx context.Context, client Client, u *url.URL, accept string) (*reso
 	const mebibyte = 1 << 20
 	const maxSize = 4 * mebibyte
 	if resp.ContentLength >= 0 && resp.ContentLength > maxSize {
-		return result, fmt.Errorf("fetch %v: response too large (%.1f MiB)", u.Redacted(), float64(resp.ContentLength)/mebibyte)
+		return result, fmt.Errorf("fetch %v: response too large (%.1f MiB)",
+			req.url.Redacted(), float64(resp.ContentLength)/mebibyte)
 	}
 	result.body, err = io.ReadAll(io.LimitReader(resp.Body, maxSize))
 	if err != nil {
-		return result, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
+		return result, fmt.Errorf("fetch %v: %v", req.url.Redacted(), err)
 	}
 	if resp.ContentLength == -1 && len(result.body) == maxSize {
 		if n, _ := resp.Body.Read(make([]byte, 1)); n > 0 {
-			return result, fmt.Errorf("fetch %v: response too large", u.Redacted())
+			return result, fmt.Errorf("fetch %v: response too large", req.url.Redacted())
 		}
 	}
 	if e := resp.Header.Get("Content-Encoding"); e != "" {
 		dec, err := httpencoding.Decode(bytes.NewReader(result.body), e)
 		if err != nil {
-			return result, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
+			return result, fmt.Errorf("fetch %v: %v", req.url.Redacted(), err)
 		}
 		defer dec.Close()
 		result.body, err = io.ReadAll(dec)
 		if err != nil {
-			return result, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
+			return result, fmt.Errorf("fetch %v: %v", req.url.Redacted(), err)
 		}
 	}
 	return result, nil
 }
 
 type putRequest struct {
-	url *url.URL
+	url    *url.URL
+	origin *url.URL
 
 	content       io.Reader
 	contentLength int64
@@ -138,6 +150,9 @@ func put(ctx context.Context, client Client, req *putRequest) error {
 	if req.contentLength >= 0 {
 		httpRequest.Header.Set("Content-Length", strconv.FormatInt(req.contentLength, 10))
 		httpRequest.ContentLength = req.contentLength
+	}
+	if origin, ok := computeOrigin(http.MethodPut, req.url, req.origin); ok {
+		httpRequest.Header.Set("Origin", origin)
 	}
 	if req.noReplace {
 		httpRequest.Header.Set("If-None-Match", "*")
@@ -170,6 +185,21 @@ func put(ctx context.Context, client Client, req *putRequest) error {
 		return fmt.Errorf("put %s: %v", req.url.Redacted(), err)
 	}
 	return err
+}
+
+// computeOrigin marshals the [Origin header] for a request to URL u coming from the origin URL.
+// include is true if u is not the same origin as origin
+// or if method is not GET or HEAD.
+//
+// [Origin header]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Origin
+func computeOrigin(method string, u, origin *url.URL) (_ string, include bool) {
+	origin = cmp.Or(origin, u)
+	include = (method != "" && method != http.MethodGet && method != http.MethodHead) ||
+		u.Scheme != origin.Scheme || u.Host != origin.Host
+	if origin.Scheme != "http" && origin.Scheme != "https" {
+		return "null", true
+	}
+	return origin.Scheme + "://" + origin.Host, include
 }
 
 type httpError struct {
