@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"iter"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -23,7 +22,7 @@ import (
 	"github.com/alecthomas/kong"
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
-	"github.com/jotaen/kong-completion"
+	kongcompletion "github.com/jotaen/kong-completion"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/frontend"
@@ -208,7 +207,7 @@ func (opts *evalOptions) Validate() error {
 	return nil
 }
 
-func (opts *evalOptions) newEval(g *globalConfig, httpClient *http.Client, storeClient *jsonrpc.Client, di *zbstorerpc.DeferredImporter) (*frontend.Eval, error) {
+func (opts *evalOptions) newEval(g *globalConfig, httpClient frontend.HTTPClient, storeClient *jsonrpc.Client, di *zbstorerpc.DeferredImporter) (*frontend.Eval, error) {
 	store := &rpcStore{
 		dir:        g.Directory,
 		keepFailed: opts.KeepFailed,

@@ -38,6 +38,25 @@ const stdlibRegistryKey = "zb.256lights.llc/pkg/internal/frontend stdlib"
 //go:embed prelude.luac
 var preludeSource []byte
 
+// An HTTPClient is an HTTP client that handles redirects, caching, and authentication.
+// Clients are safe for concurrent use by multiple goroutines.
+//
+// Do sends an HTTP request and returns an HTTP response,
+// following policy as configured on the client.
+//
+// Do returns an error if caused by client policy or failure to speak HTTP.
+// On error, any [*http.Response] can be ignored.
+// A non-2xx status code doesn't cause an error.
+// If the returned error is nil, the [*http.Response] will contain a non-nil Body
+// which the user is expected to close.
+// Any returned error should be of type [*url.Error].
+//
+// The [*http.Request] Body, if non-nil, will be closed by the Client, even on errors.
+// The Body may be closed asynchronously after Do returns.
+type HTTPClient interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
 // Options is the set of parameters for [NewEval].
 type Options struct {
 	// Store is an open JSON-RPC client to the store server.
@@ -52,7 +71,7 @@ type Options struct {
 	LookupEnv func(ctx context.Context, key string) (string, bool)
 	// HTTPClient is used for making web requests.
 	// If nil, [http.DefaultClient] will be used.
-	HTTPClient *http.Client
+	HTTPClient HTTPClient
 	// DownloadBufferCreator is used to create buffers for unbounded downloads.
 	// If nil, then in-memory byte slices are used with reasonable limits.
 	DownloadBufferCreator bytebuffer.Creator
@@ -76,7 +95,7 @@ type Eval struct {
 	storeDir     zbstore.Directory
 	cachePool    *sqlitemigration.Pool
 	lookupEnv    func(ctx context.Context, key string) (string, bool)
-	httpClient   *http.Client
+	httpClient   HTTPClient
 	downloadTemp bytebuffer.Creator
 
 	baseImportContext context.Context

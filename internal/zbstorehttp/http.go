@@ -14,11 +14,29 @@ import (
 	"strconv"
 
 	"zb.256lights.llc/pkg/internal/httpencoding"
-	"zb.256lights.llc/pkg/internal/useragent"
 	"zb.256lights.llc/pkg/internal/xhttp"
 	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/log"
 )
+
+// A Client is an HTTP client that handles redirects, caching, and authentication.
+// Clients are safe for concurrent use by multiple goroutines.
+//
+// Do sends an HTTP request and returns an HTTP response,
+// following policy as configured on the client.
+//
+// Do returns an error if caused by client policy or failure to speak HTTP.
+// On error, any [*http.Response] can be ignored.
+// A non-2xx status code doesn't cause an error.
+// If the returned error is nil, the [*http.Response] will contain a non-nil Body
+// which the user is expected to close.
+// Any returned error should be of type [*url.Error].
+//
+// The [*http.Request] Body, if non-nil, will be closed by the Client, even on errors.
+// The Body may be closed asynchronously after Do returns.
+type Client interface {
+	Do(*http.Request) (*http.Response, error)
+}
 
 type resource struct {
 	body       []byte
@@ -30,14 +48,13 @@ func (res *resource) isMethodAllowed(method string) bool {
 	return res == nil || len(res.allow) == 0 || res.allow.Has(method)
 }
 
-func fetch(ctx context.Context, client *http.Client, u *url.URL, accept string) (*resource, error) {
+func fetch(ctx context.Context, client Client, u *url.URL, accept string) (*resource, error) {
 	req := (&http.Request{
 		Method: http.MethodGet,
 		URL:    u,
 		Header: http.Header{
 			"Accept":          {accept},
 			"Accept-Encoding": {httpencoding.Accept},
-			"User-Agent":      {useragent.String},
 		},
 	}).WithContext(ctx)
 	resp, err := client.Do(req)
@@ -104,7 +121,7 @@ type putRequest struct {
 	cacheControl string
 }
 
-func put(ctx context.Context, client *http.Client, req *putRequest) error {
+func put(ctx context.Context, client Client, req *putRequest) error {
 	if req.noReplace && !req.precondition.IsZero() {
 		return fmt.Errorf("put %s: precondition combined with If-None-Match:*", req.url.Redacted())
 	}
@@ -114,7 +131,6 @@ func put(ctx context.Context, client *http.Client, req *putRequest) error {
 		URL:    req.url,
 		Header: http.Header{
 			"Content-Type": {req.contentType},
-			"User-Agent":   {useragent.String},
 		},
 		ContentLength: -1,
 		Body:          io.NopCloser(req.content),
