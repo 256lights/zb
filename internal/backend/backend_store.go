@@ -1054,6 +1054,9 @@ func prepareConn(conn *sqlite.Conn) error {
 	if err := sqlitex.ExecuteTransient(conn, "PRAGMA journal_mode = wal;", nil); err != nil {
 		return err
 	}
+	if err := sqlitex.ExecuteTransient(conn, "PRAGMA synchronous = normal;", nil); err != nil {
+		return err
+	}
 	if err := sqlitex.ExecuteTransient(conn, "PRAGMA optimize = 0x10002;", nil); err != nil {
 		return err
 	}
