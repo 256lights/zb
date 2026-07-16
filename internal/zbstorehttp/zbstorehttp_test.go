@@ -1,7 +1,7 @@
 // Copyright 2025 The zb Authors
 // SPDX-License-Identifier: MIT
 
-package remotestore
+package zbstorehttp
 
 import (
 	"bytes"
@@ -24,7 +24,7 @@ import (
 	"zombiezen.com/go/nix"
 )
 
-func TestHTTPStoreObject(t *testing.T) {
+func TestStoreObject(t *testing.T) {
 	t.Run("File", func(t *testing.T) {
 		ctx := testcontext.New(t)
 		store := httpStoreForDirectory(t, ".")
@@ -68,7 +68,7 @@ func TestHTTPStoreObject(t *testing.T) {
 	})
 }
 
-func TestHTTPStoreFetchRealizations(t *testing.T) {
+func TestStoreFetchRealizations(t *testing.T) {
 	t.Run("File", func(t *testing.T) {
 		ctx := testcontext.New(t)
 		store := httpStoreForDirectory(t, ".")
@@ -110,7 +110,7 @@ func TestHTTPStoreFetchRealizations(t *testing.T) {
 	})
 }
 
-func TestHTTPStorePutObject(t *testing.T) {
+func TestStorePutObject(t *testing.T) {
 	t.Run("Create", func(t *testing.T) {
 		ctx := testcontext.New(t)
 
@@ -142,7 +142,7 @@ func TestHTTPStorePutObject(t *testing.T) {
 			t.Fatal(err)
 		}
 		discoveryURL := fileurl.FromPath(discoveryPath)
-		store := &HTTPStore{
+		store := &Store{
 			URL: discoveryURL,
 			HTTPClient: &http.Client{
 				Transport: fileurl.Transport{},
@@ -209,7 +209,7 @@ func TestHTTPStorePutObject(t *testing.T) {
 			t.Fatal(err)
 		}
 		discoveryURL := fileurl.FromPath(discoveryPath)
-		store := &HTTPStore{
+		store := &Store{
 			URL: discoveryURL,
 			HTTPClient: &http.Client{
 				Transport: fileurl.Transport{},
@@ -241,7 +241,7 @@ func TestHTTPStorePutObject(t *testing.T) {
 	})
 }
 
-func TestHTTPStorePutRealizations(t *testing.T) {
+func TestStorePutRealizations(t *testing.T) {
 	t.Run("Create", func(t *testing.T) {
 		ctx := testcontext.New(t)
 
@@ -252,7 +252,7 @@ func TestHTTPStorePutRealizations(t *testing.T) {
 			t.Fatal(err)
 		}
 		discoveryURL := fileurl.FromPath(discoveryPath)
-		store := &HTTPStore{
+		store := &Store{
 			URL: discoveryURL,
 			HTTPClient: &http.Client{
 				Transport: fileurl.Transport{},
@@ -309,7 +309,7 @@ func TestHTTPStorePutRealizations(t *testing.T) {
 			t.Fatal(err)
 		}
 		discoveryURL := fileurl.FromPath(discoveryPath)
-		store := &HTTPStore{
+		store := &Store{
 			URL: discoveryURL,
 			HTTPClient: &http.Client{
 				Transport: fileurl.Transport{},
@@ -411,7 +411,7 @@ func copyToDir(tb testing.TB, dstDir string, path string) {
 	}
 }
 
-func httpStoreForDirectory(tb testing.TB, path string) *HTTPStore {
+func httpStoreForDirectory(tb testing.TB, path string) *Store {
 	tb.Helper()
 
 	root, err := os.OpenRoot(testdataPath(tb, path))
@@ -431,7 +431,7 @@ func httpStoreForDirectory(tb testing.TB, path string) *HTTPStore {
 		tb.Fatal(err)
 	}
 
-	return &HTTPStore{
+	return &Store{
 		URL:        srvURL,
 		HTTPClient: srv.Client(),
 	}

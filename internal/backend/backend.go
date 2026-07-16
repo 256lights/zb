@@ -24,10 +24,10 @@ import (
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/multierror"
-	"zb.256lights.llc/pkg/internal/remotestore"
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/xslices"
 	"zb.256lights.llc/pkg/internal/xtime"
+	"zb.256lights.llc/pkg/internal/zbstorehttp"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -72,7 +72,7 @@ type Options struct {
 
 	// If Upload is not nil, then after a successful builder program run,
 	// the server will upload the object and realizations.
-	Upload *remotestore.HTTPStore
+	Upload *zbstorehttp.Store
 
 	// DatabasePoolSize is the maximum permitted number of concurrent connections to the database.
 	// If less than 1, a reasonable default is used.
@@ -157,7 +157,7 @@ type Server struct {
 	buildContext    func(context.Context, string) context.Context
 	keyring         *Keyring
 	fallback        Store
-	upload          *remotestore.HTTPStore
+	upload          *zbstorehttp.Store
 
 	sandbox      bool
 	sandboxPaths map[string]SandboxPath
@@ -1047,7 +1047,7 @@ func (s *Server) uploadObject(ctx context.Context, obj *ObjectInfo) error {
 			err := nar.DumpPath(pw, s.realPath(obj.StorePath))
 			pw.CloseWithError(err)
 		}()
-		err = s.upload.PutObject(ctx, &remotestore.PutObjectRequest{
+		err = s.upload.PutObject(ctx, &zbstorehttp.PutObjectRequest{
 			StorePath:      obj.StorePath,
 			References:     obj.References,
 			ContentAddress: obj.CA,
@@ -1062,7 +1062,7 @@ func (s *Server) uploadObject(ctx context.Context, obj *ObjectInfo) error {
 			log.Infof(ctx, "Uploaded %s", obj.StorePath)
 			return nil
 		}
-		if remotestore.IsPermanentError(err) {
+		if zbstorehttp.IsPermanentError(err) {
 			return err
 		}
 		log.Warnf(ctx, "%v", err)
@@ -1132,7 +1132,7 @@ func (s *Server) uploadRealizations(ctx context.Context, realizations zbstore.Re
 			return
 		}
 		log.Warnf(ctx, "%v", err)
-		if remotestore.IsPermanentError(err) {
+		if zbstorehttp.IsPermanentError(err) {
 			return
 		}
 

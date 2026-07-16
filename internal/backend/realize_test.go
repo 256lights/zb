@@ -25,10 +25,10 @@ import (
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
-	"zb.256lights.llc/pkg/internal/remotestore"
 	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
+	"zb.256lights.llc/pkg/internal/zbstorehttp"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -2100,7 +2100,7 @@ func TestRealizeUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uploadStore := &remotestore.HTTPStore{
+	uploadStore := &zbstorehttp.Store{
 		URL: fileurl.FromPath(discoveryPath),
 		HTTPClient: &http.Client{
 			Transport: fileurl.Transport{},
@@ -2158,7 +2158,7 @@ func TestRealizeUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Object existence is sufficient: [remotestore.HTTPStore] already verifies.
+	// Object existence is sufficient: [zbstorehttp.Store] already verifies.
 	if _, err := uploadStore.Object(ctx, wantOutputPath); err != nil {
 		t.Error(err)
 	}
