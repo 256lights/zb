@@ -77,6 +77,7 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 		panic("nil http.RoundTripper")
 	}
 
+	opts = cmp.Or(opts, new(Options))
 	rt := &RoundTripper{
 		roundTripper:            roundTripper,
 		maxResponseSize:         opts.MaxResponseSize,
@@ -85,7 +86,6 @@ func Open(dbPath string, roundTripper http.RoundTripper, opts *Options) *RoundTr
 	}
 	rt.backgroundContext, rt.cancelBackgroundContext = context.WithCancel(context.Background())
 
-	opts = cmp.Or(opts, new(Options))
 	var onDBError sqlitemigration.ReportFunc
 	if opts.ErrorReporter != nil {
 		errorReporter := opts.ErrorReporter
