@@ -20,7 +20,6 @@ import (
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/system"
-	"zb.256lights.llc/pkg/internal/useragent"
 	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -177,8 +176,7 @@ func (eval *Eval) importURL(ctx context.Context, u *url.URL) (zbstore.Path, erro
 		Method: http.MethodGet,
 		URL:    u,
 		Header: http.Header{
-			"Accept":     {"text/plain, application/gzip, application/x-bzip2, application/zip, application/x-tar;q=0.9"},
-			"User-Agent": {useragent.String},
+			"Accept": {"text/plain, application/gzip, application/x-bzip2, application/zip, application/x-tar;q=0.9"},
 		},
 	}
 	resp, err := eval.httpClient.Do(req.WithContext(ctx))

@@ -25,8 +25,6 @@ import (
 	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/httpcache"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
-	"zb.256lights.llc/pkg/internal/netrc"
-	"zb.256lights.llc/pkg/internal/xslices"
 	"zb.256lights.llc/pkg/internal/zbstorehttp"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
@@ -267,18 +265,7 @@ func (g *globalConfig) reusePolicy() *zbstorerpc.ReusePolicy {
 	return &zbstorerpc.ReusePolicy{PublicKeys: g.TrustedPublicKeys}
 }
 
-func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("stopped after 10 redirects")
-			}
-			if req.URL.Scheme == fileurl.Scheme && len(via) > 0 && xslices.Last(via).URL.Scheme != fileurl.Scheme {
-				return fmt.Errorf("cannot redirect from %s to %s", xslices.Last(via).URL.Redacted(), req.URL.Redacted())
-			}
-			return nil
-		},
-	}
+func (g *globalConfig) newHTTPClient() (*httpClient, io.Closer, error) {
 	cache := httpcache.Open(g.HTTPCacheDB, http.DefaultTransport, &httpcache.Options{
 		MaxResponseSize:         4 << 20, // 4 MiB
 		RequestCoalescingCutoff: 5 * time.Second,
@@ -290,7 +277,9 @@ func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
 			}
 		}),
 	})
-	client.Transport = &fileSplitTransport{fallback: cache}
+	client := &httpClient{
+		Transport: cache,
+	}
 	if g.NetrcPath == "" {
 		return client, cache, nil
 	}
@@ -302,10 +291,7 @@ func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
 		cache.Close()
 		return nil, nil, fmt.Errorf("open netrc file: %v", err)
 	}
-	client.Transport = &netrc.Transport{
-		Netrc:        netrcData,
-		RoundTripper: client.Transport,
-	}
+	client.Netrc = netrcData
 	return client, cache, nil
 }
 
@@ -345,12 +331,12 @@ func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) *jsonrpc.Clien
 
 func (g *globalConfig) storeDeps() (_ *storeDeps, cleanup func()) {
 	var state struct {
-		client       *http.Client
+		client       *httpClient
 		clientCloser io.Closer
 	}
 
 	deps := &storeDeps{
-		httpClientProvider: func() (*http.Client, error) {
+		httpClientProvider: func() (*httpClient, error) {
 			if state.client == nil {
 				var err error
 				state.client, state.clientCloser, err = g.newHTTPClient()
@@ -375,7 +361,7 @@ func (g *globalConfig) storeDeps() (_ *storeDeps, cleanup func()) {
 }
 
 type storeDeps struct {
-	httpClientProvider func() (*http.Client, error)
+	httpClientProvider func() (*httpClient, error)
 }
 
 type storeConfig struct {

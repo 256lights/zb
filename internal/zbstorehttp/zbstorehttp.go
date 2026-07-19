@@ -23,7 +23,6 @@ import (
 	"zb.256lights.llc/pkg/internal/hal"
 	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/multierror"
-	"zb.256lights.llc/pkg/internal/useragent"
 	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/xtime"
 	"zb.256lights.llc/pkg/internal/xurl"
@@ -56,7 +55,7 @@ type Store struct {
 	// Store methods use HTTPClient to make HTTP requests.
 	// It is recommended to use a client that performs caching.
 	// If HTTPClient is nil, then [http.DefaultClient] is used.
-	HTTPClient *http.Client
+	HTTPClient Client
 	// CreateTemp is called to create temporary storage for uploading.
 	// If CreateTemp is nil, uploads will store NAR files in memory.
 	// This is generally not recommended, as the files can be large.
@@ -66,7 +65,7 @@ type Store struct {
 	RealizationsCacheControl string
 }
 
-func (s *Store) client() *http.Client {
+func (s *Store) client() Client {
 	if s.HTTPClient == nil {
 		return http.DefaultClient
 	}
@@ -142,7 +141,7 @@ func (s *Store) narInfoURLs(ec *multierror.Collector, discoveryDocument *hal.Res
 	})
 }
 
-func fetchNARInfo(ctx context.Context, client *http.Client, u *url.URL) (info *NARInfo, putAllowed bool, err error) {
+func fetchNARInfo(ctx context.Context, client Client, u *url.URL) (info *NARInfo, putAllowed bool, err error) {
 	res, err := fetch(ctx, client, u, "text/x-nix-narinfo,text/*;q=0.9,*/*;q=0.8")
 	putAllowed = res.isMethodAllowed(http.MethodPut)
 	if err != nil {
@@ -607,7 +606,7 @@ func (s *Store) expandLinks(ec *multierror.Collector, discoveryDocument *hal.Res
 
 // httpObject is the implementation of [zbstore.Object] for [Store].
 type httpObject struct {
-	client *http.Client
+	client Client
 	base   *url.URL
 	info   *NARInfo
 }
@@ -637,7 +636,6 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 		Header: http.Header{
 			"Accept":          {"*/*"},
 			"Accept-Encoding": {httpencoding.Accept},
-			"User-Agent":      {useragent.String},
 		},
 	}
 	resp, err := obj.client.Do(req)
