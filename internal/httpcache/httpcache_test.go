@@ -596,16 +596,12 @@ func BenchmarkRoundTripper(b *testing.B) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		w.Header().Set("ETag", entityTag)
 
-		for _, value := range r.Header.Values("If-None-Match") {
-			for elem := range xhttp.SplitList(value) {
-				if elem == entityTag {
-					w.WriteHeader(http.StatusNotModified)
-					return
-				}
-			}
+		vf := xhttp.ValidatorFields{ETag: entityTag}
+		code := xhttp.EvaluatePreconditions(r.Method, r.Header, vf, true)
+		w.WriteHeader(code)
+		if code == http.StatusOK {
+			io.WriteString(w, content)
 		}
-
-		io.WriteString(w, content)
 	}))
 	b.Cleanup(srv.Close)
 

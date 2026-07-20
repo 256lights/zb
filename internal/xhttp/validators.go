@@ -16,74 +16,103 @@ import (
 //
 // [RFC 9110 Section 8.8]: https://datatracker.ietf.org/doc/html/rfc9110#section-8.8
 type ValidatorFields struct {
-	entityTag    EntityTag
-	lastModified time.Time
+	// ETag is the [entity tag].
+	// It is the empty string if not present.
+	//
+	// [entity tag]: https://datatracker.ietf.org/doc/html/rfc9110#section-8.8.3
+	ETag EntityTag
+	// LastModified is the [Last-Modified field value].
+	// It is the zero time if not present.
+	//
+	// [Last-Modified field value]: https://datatracker.ietf.org/doc/html/rfc9110#section-8.8.2
+	LastModified time.Time
 }
 
 // ExtractValidatorFields parses the validators from an [http.Header].
 func ExtractValidatorFields(h http.Header) ValidatorFields {
 	var vf ValidatorFields
-	vf.entityTag, _ = EntityTagFromHeader(h)
-	vf.lastModified, _ = dateHeader(h, "Last-Modified")
+	vf.ETag, _ = EntityTagFromHeader(h)
+	vf.LastModified, _ = dateHeader(h, "Last-Modified")
 	return vf
+}
+
+// String formats the fields in a Go-struct-like syntax.
+func (vf ValidatorFields) String() string {
+	sb := new(strings.Builder)
+	sb.WriteString("{")
+	if vf.ETag != "" {
+		sb.WriteString("ETag:")
+		sb.WriteString(string(vf.ETag))
+		if !vf.LastModified.IsZero() {
+			sb.WriteString(" ")
+		}
+	}
+	if !vf.LastModified.IsZero() {
+		sb.WriteString("Last-Modified:")
+		sb.WriteString(vf.LastModified.UTC().Format(http.TimeFormat))
+	}
+	sb.WriteString("}")
+	return sb.String()
 }
 
 // IsZero reports whether vf is the zero value.
 func (vf ValidatorFields) IsZero() bool {
-	return vf.entityTag == "" && vf.lastModified.IsZero()
-}
-
-// ETag returns the [entity tag] from the fields, if present.
-//
-// [entity tag]: https://datatracker.ietf.org/doc/html/rfc9110#section-8.8.3
-func (vf ValidatorFields) ETag() (_ EntityTag, ok bool) {
-	return vf.entityTag, vf.entityTag != ""
-}
-
-// LastModified returns the [Last-Modified field value], if present.
-//
-// [Last-Modified field value]: https://datatracker.ietf.org/doc/html/rfc9110#section-8.8.2
-func (vf ValidatorFields) LastModified() (_ time.Time, ok bool) {
-	return vf.lastModified, !vf.lastModified.IsZero()
+	return vf.ETag == "" && vf.LastModified.IsZero()
 }
 
 // HasStrong reports whether vf has at least one strong validator.
 func (vf ValidatorFields) HasStrong() bool {
 	// TODO(maybe): RFC 9110 8.8.2.2 states that Last-Modified can be strong
 	// under certain circumstances I don't quite understand.
-	return vf.entityTag.IsStrong()
+	return vf.ETag.IsStrong()
 }
 
 // HasWeak reports whether vf has at least one weak validator.
 func (vf ValidatorFields) HasWeak() bool {
-	return !vf.lastModified.IsZero() || vf.entityTag.IsWeak()
+	return !vf.LastModified.IsZero() || vf.ETag.IsWeak()
 }
 
 // HasAnyStrongFrom reports whether vf contains any of the strong validators in want.
 func (vf ValidatorFields) HasAnyStrongFrom(want ValidatorFields) bool {
-	return vf.entityTag.EqualStrong(want.entityTag)
+	return vf.ETag.EqualStrong(want.ETag)
 }
 
 // HasAnyFrom reports whether vf contains any of the validators in want.
 func (vf ValidatorFields) HasAnyFrom(want ValidatorFields) bool {
-	return vf.entityTag.EqualWeak(want.entityTag) ||
-		!vf.lastModified.IsZero() && !want.lastModified.IsZero()
+	return vf.ETag.EqualWeak(want.ETag) ||
+		!vf.LastModified.IsZero() && !want.LastModified.IsZero()
 }
 
+// EvaluatePreconditions evaluates the preconditions specified in the request header
+// for the request method and the origin server resource's validator fields (if any)
+// and whether the server resource exists.
+// EvaluatePreconditions returns the status code that complies with [RFC 9110 Section 13.2].
+//
+// [RFC 9110 Section 13.2]: https://datatracker.ietf.org/doc/html/rfc9110#section-13.2
 func EvaluatePreconditions(method string, requestHeader http.Header, vf ValidatorFields, exists bool) int {
 	if !exists {
 		vf = ValidatorFields{}
 	}
 
+	if values := requestHeader["If-Match"]; len(values) > 0 {
+		if !evaluateIfMatch(values, vf, exists) {
+			return http.StatusPreconditionFailed
+		}
+	} else if values := requestHeader["If-Unmodified-Since"]; len(values) > 0 {
+		if !evaluateIfUnmodifiedSince(values, vf) {
+			return http.StatusPreconditionFailed
+		}
+	}
+	isGetOrHead := method == "" || method == http.MethodGet || method == http.MethodHead
 	if values := requestHeader["If-None-Match"]; len(values) > 0 {
 		if !evaluateIfNoneMatch(values, vf, exists) {
-			if method == "" || method == http.MethodGet || method == http.MethodHead {
+			if isGetOrHead {
 				return http.StatusNotModified
 			} else {
 				return http.StatusPreconditionFailed
 			}
 		}
-	} else if values := requestHeader["If-Modified-Since"]; len(values) > 0 {
+	} else if values := requestHeader["If-Modified-Since"]; isGetOrHead && len(values) > 0 {
 		if !evaluateIfModifiedSince(values, vf) {
 			return http.StatusNotModified
 		}
@@ -91,19 +120,46 @@ func EvaluatePreconditions(method string, requestHeader http.Header, vf Validato
 
 	// TODO(someday): Range request.
 
-	return http.StatusOK
+	switch {
+	case isGetOrHead && !exists:
+		return http.StatusNotFound
+	case method == http.MethodPut && !exists:
+		return http.StatusCreated
+	default:
+		return http.StatusOK
+	}
+}
+
+func evaluateIfMatch(values []string, vf ValidatorFields, exists bool) bool {
+	if len(values) == 1 && values[0] == "*" {
+		return exists
+	}
+	if len(values) == 0 || len(values) == 1 && strings.Trim(values[0], " \t") == "" {
+		return true
+	}
+	if !vf.ETag.IsValid() || !vf.ETag.IsStrong() {
+		return false
+	}
+	for _, value := range values {
+		for elem := range SplitList(value) {
+			if etag := EntityTag(elem); etag.IsValid() && etag.EqualStrong(vf.ETag) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func evaluateIfNoneMatch(values []string, vf ValidatorFields, exists bool) bool {
 	if len(values) == 1 && values[0] == "*" {
 		return !exists
 	}
-	if vf.entityTag == "" || len(values) == 0 || len(values) == 1 && strings.Trim(values[0], " \t") == "" {
+	if vf.ETag == "" || len(values) == 0 || len(values) == 1 && strings.Trim(values[0], " \t") == "" {
 		return true
 	}
 	for _, value := range values {
 		for elem := range SplitList(value) {
-			if etag := EntityTag(elem); etag.IsValid() && etag.EqualWeak(vf.entityTag) {
+			if etag := EntityTag(elem); etag.IsValid() && etag.EqualWeak(vf.ETag) {
 				return false
 			}
 		}
@@ -112,14 +168,25 @@ func evaluateIfNoneMatch(values []string, vf ValidatorFields, exists bool) bool 
 }
 
 func evaluateIfModifiedSince(values []string, vf ValidatorFields) bool {
-	if len(values) == 0 || vf.lastModified.IsZero() {
+	if len(values) == 0 || vf.LastModified.IsZero() {
 		return true
 	}
 	t, err := http.ParseTime(values[0])
 	if err != nil {
 		return true
 	}
-	return vf.lastModified.After(t)
+	return vf.LastModified.Truncate(time.Second).After(t.Truncate(time.Second))
+}
+
+func evaluateIfUnmodifiedSince(values []string, vf ValidatorFields) bool {
+	if len(values) == 0 || vf.LastModified.IsZero() {
+		return true
+	}
+	t, err := http.ParseTime(values[0])
+	if err != nil {
+		return true
+	}
+	return !vf.LastModified.Truncate(time.Second).After(t.Truncate(time.Second))
 }
 
 // weakEntityTagPrefix is the string that precedes a weak [EntityTag].

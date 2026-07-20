@@ -141,13 +141,14 @@ func put(ctx context.Context, client Client, req *putRequest) error {
 	}
 	if req.noReplace {
 		httpRequest.Header.Set("If-None-Match", "*")
-	} else if etag, hasEntityTag := req.precondition.ETag(); hasEntityTag {
-		httpRequest.Header.Set("If-Match", string(etag))
-	} else if lastModified, ok := req.precondition.LastModified(); ok {
+	} else if req.precondition.ETag != "" {
+		httpRequest.Header.Set("If-Match", string(req.precondition.ETag))
+	} else if !req.precondition.LastModified.IsZero() {
 		// As per https://datatracker.ietf.org/doc/html/rfc9110#section-13.1.4,
 		// "[a] recipient MUST ignore If-Unmodified-Since if the request contains an If-Match header field [...]".
 		// Thus, we avoid sending the header field if we already have an entity tag.
-		httpRequest.Header.Set("If-Unmodified-Since", lastModified.UTC().Format(http.TimeFormat))
+		v := req.precondition.LastModified.UTC().Format(http.TimeFormat)
+		httpRequest.Header.Set("If-Unmodified-Since", v)
 	}
 	if req.cacheControl != "" {
 		httpRequest.Header.Set("Cache-Control", req.cacheControl)
