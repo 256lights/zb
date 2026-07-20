@@ -315,3 +315,31 @@ func TestEvaluatePreconditions(t *testing.T) {
 		})
 	}
 }
+
+func TestEntityTagIsValid(t *testing.T) {
+	tests := []struct {
+		etag EntityTag
+		want bool
+	}{
+		{``, false},
+		{`"`, false},
+		{`W/"`, false},
+		{`""`, true},
+		{`W/""`, true},
+		{`"foo"`, true},
+		{`W/"foo"`, true},
+		{`w/"foo"`, false},
+		{`foo`, false},
+		{`W/foo`, false},
+		{`"foo"bar"`, false},
+		{`"foo bar"`, false},
+		{`W/"foo"bar"`, false},
+		{`W/"foo bar"`, false},
+	}
+
+	for _, test := range tests {
+		if got := test.etag.IsValid(); got != test.want {
+			t.Errorf("EntityTag(%q).IsValid() = %t; want %t", test.etag, got, test.want)
+		}
+	}
+}
