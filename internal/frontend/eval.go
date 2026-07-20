@@ -439,6 +439,9 @@ func prepareCache(conn *sqlite.Conn) error {
 	if err := sqlitex.ExecuteTransient(conn, "PRAGMA journal_mode=wal;", nil); err != nil {
 		return fmt.Errorf("enable write-ahead logging: %v", err)
 	}
+	if err := sqlitex.ExecuteTransient(conn, "PRAGMA synchronous=normal;", nil); err != nil {
+		return fmt.Errorf("enable write-ahead logging: %v", err)
+	}
 	if err := sqlitex.ExecuteTransient(conn, "PRAGMA foreign_keys=on;", nil); err != nil {
 		return fmt.Errorf("enable foreign keys: %v", err)
 	}
