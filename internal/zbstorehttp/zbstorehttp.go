@@ -77,7 +77,10 @@ func (s *Store) discover(ctx context.Context) (*hal.Resource, error) {
 		return nil, permanentError{fmt.Errorf("get discovery document: url missing")}
 	}
 
-	res, err := fetch(ctx, s.client(), s.URL, "application/hal+json,application/json;q=0.9,text/*;q=0.8,*/*;q=0.7")
+	res, err := fetch(ctx, s.client(), &fetchRequest{
+		url:    s.URL,
+		accept: "application/hal+json,application/json;q=0.9,text/*;q=0.8,*/*;q=0.7",
+	})
 	if err != nil {
 		code, _ := errorStatusCode(err)
 		err := fmt.Errorf("get discovery document: %v", err)
@@ -103,7 +106,7 @@ func (s *Store) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, 
 	var ec multierror.Collector
 	c := s.client()
 	for u := range s.narInfoURLs(&ec, hr, path) {
-		info, _, err := fetchNARInfo(ctx, c, u)
+		info, _, err := s.fetchNARInfo(ctx, c, u)
 		if err == nil {
 			return &httpObject{
 				base:   u,
@@ -141,8 +144,12 @@ func (s *Store) narInfoURLs(ec *multierror.Collector, discoveryDocument *hal.Res
 	})
 }
 
-func fetchNARInfo(ctx context.Context, client Client, u *url.URL) (info *NARInfo, putAllowed bool, err error) {
-	res, err := fetch(ctx, client, u, "text/x-nix-narinfo,text/*;q=0.9,*/*;q=0.8")
+func (s *Store) fetchNARInfo(ctx context.Context, client Client, u *url.URL) (info *NARInfo, putAllowed bool, err error) {
+	res, err := fetch(ctx, client, &fetchRequest{
+		url:    u,
+		accept: "text/x-nix-narinfo,text/*;q=0.9,*/*;q=0.8",
+		origin: s.URL,
+	})
 	putAllowed = res.isMethodAllowed(http.MethodPut)
 	if err != nil {
 		return nil, putAllowed, err
@@ -208,7 +215,7 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 	hasConflicts := false
 	for u := range s.narInfoURLs(&ec, hr, req.StorePath) {
 		hasInfoURLs = true
-		remoteInfo, putAllowed, err := fetchNARInfo(ctx, c, u)
+		remoteInfo, putAllowed, err := s.fetchNARInfo(ctx, c, u)
 		if putAllowed {
 			putURLs = append(putURLs, u)
 		}
@@ -424,7 +431,11 @@ func (s *Store) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zbstor
 }
 
 func (s *Store) addRealizations(ctx context.Context, dst *zbstore.RealizationMap, u *url.URL) error {
-	res, err := fetch(ctx, s.client(), u, "application/json,text/*;q=0.9,*/*;q=0.8")
+	res, err := fetch(ctx, s.client(), &fetchRequest{
+		url:    u,
+		accept: "application/json,text/*;q=0.9,*/*;q=0.8",
+		origin: s.URL,
+	})
 	if err != nil {
 		if isNotFound(err) {
 			log.Debugf(ctx, "Fetch realizations for %v: %v", dst.DerivationHash, err)
@@ -508,7 +519,11 @@ func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zb
 	c := s.client()
 	var existing zbstore.RealizationMap
 	noReplace := false
-	oldResource, fetchError := fetch(ctx, c, u, "application/json,text/*;q=0.9,*/*;q=0.8")
+	oldResource, fetchError := fetch(ctx, c, &fetchRequest{
+		url:    u,
+		accept: "application/json,text/*;q=0.9,*/*;q=0.8",
+		origin: s.URL,
+	})
 	if !oldResource.isMethodAllowed(http.MethodPut) {
 		log.Debugf(ctx, "Skipping %s because %s not in Allow header", u.Redacted(), http.MethodPut)
 		return fmt.Errorf("%s: %w", u.Redacted(), methodNotAllowedError{http.MethodPut})
