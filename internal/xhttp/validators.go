@@ -4,6 +4,7 @@
 package xhttp
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -200,11 +201,39 @@ const weakEntityTagPrefix = "W/"
 // [Section 8.8.3 of RFC 9110]: https://www.rfc-editor.org/rfc/rfc9110.html#section-8.8.3
 type EntityTag string
 
+// StrongEntityTag returns a new, strong [EntityTag] with the given opaque string.
+func StrongEntityTag(s string) (EntityTag, error) {
+	for _, b := range []byte(s) {
+		if !isEntityTagCharacter(b) {
+			return "", fmt.Errorf("new entity tag: invalid character %q", b)
+		}
+	}
+	return EntityTag(`"` + s + `"`), nil
+}
+
+// WeakEntityTag returns a new, weak [EntityTag] with the given opaque string.
+func WeakEntityTag(s string) (EntityTag, error) {
+	etag, err := StrongEntityTag(s)
+	if err != nil {
+		return "", err
+	}
+	return weakEntityTagPrefix + etag, nil
+}
+
 // IsValid reports whether the entity tag is syntactically valid.
 func (etag EntityTag) IsValid() bool {
 	s := strings.TrimPrefix(string(etag), weakEntityTagPrefix)
-	s = strings.TrimPrefix(s, `"`)
-	return strings.IndexByte(s, '"') == len(s)-1
+	s, quoted := strings.CutPrefix(s, `"`)
+	end := len(s) - 1
+	if !quoted || end < 0 || s[end] != '"' {
+		return false
+	}
+	for _, b := range []byte(s[:end]) {
+		if !isEntityTagCharacter(b) {
+			return false
+		}
+	}
+	return true
 }
 
 // IsWeak reports whether the entity tag is a weak validator.
@@ -234,15 +263,14 @@ func (etag EntityTag) EqualWeak(etag2 EntityTag) bool {
 	return s1 == s2
 }
 
-// EntityTagFromHeader parses an [entityTag] from an [ETag response header].
+// EntityTagFromHeader parses an [EntityTag] from an [ETag response header].
 //
-// [ETag response header]: https://www.rfc-editor.org/rfc/rfc9110.html#section-8.8.3
+// [ETag response header]: https://www.rfc-r.org/rfc/rfc9110.html#section-8.8.3
 func EntityTagFromHeader(h http.Header) (_ EntityTag, ok bool) {
-	value := headerValue(h, "Etag")
-	rest := strings.TrimPrefix(value, "W/")
-	rest = strings.TrimPrefix(rest, `"`)
-	if strings.IndexByte(rest, '"') != len(rest)-1 {
-		return "", false
-	}
-	return EntityTag(value), true
+	etag := EntityTag(headerValue(h, "Etag"))
+	return etag, etag.IsValid()
+}
+
+func isEntityTagCharacter(b byte) bool {
+	return b > ' ' && b != '"' && b != 0x7f
 }
