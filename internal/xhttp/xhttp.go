@@ -38,20 +38,27 @@ func IsFinalStatusCode(code int) bool {
 	return 200 <= code && code < 600
 }
 
+// whitespace is the set of whitespace characters
+// as defined in [RFC 9110 Section 5.6.3].
+//
+// [RFC 9110 Section 5.6.3]: https://datatracker.ietf.org/doc/html/rfc9110#section-5.6.3
+const whitespace = " \t"
+
 // SplitList splits an HTTP header [list value],
 // handling [quoted strings].
 //
-// [list value]: https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.1
-// [quoted strings]: https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.4
+// [list value]: https://datatracker.ietf.org/doc/html/rfc9110#section-5.6.1
+// [quoted strings]: https://datatracker.ietf.org/doc/html/rfc9110#section-5.6.4
 func SplitList(value string) iter.Seq[string] {
-	const ows = " \t"
 	return func(yield func(string) bool) {
 		i := 0
 		for j := 0; j < len(value); j++ {
 			switch value[j] {
 			case ',':
-				if !yield(strings.Trim(value[i:j], ows)) {
-					return
+				if elem := strings.Trim(value[i:j], whitespace); elem != "" {
+					if !yield(elem) {
+						return
+					}
 				}
 				i = j + 1
 			case '"':
@@ -65,7 +72,9 @@ func SplitList(value string) iter.Seq[string] {
 				}
 			}
 		}
-		yield(strings.Trim(value[i:], ows))
+		if elem := strings.Trim(value[i:], whitespace); elem != "" {
+			yield(elem)
+		}
 	}
 }
 
