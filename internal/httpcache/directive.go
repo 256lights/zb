@@ -252,25 +252,11 @@ func unquote(s string) (string, bool) {
 
 func tokenEnd(s string) int {
 	for i, b := range []byte(s) {
-		if !isTokenChar(rune(b)) {
+		if !xhttp.IsTokenChar(rune(b)) {
 			return i
 		}
 	}
 	return len(s)
-}
-
-const tokenChars = "" +
-	"\x00\x00\x00\x00" +
-	"\xfa" + // !#$%&'
-	"\x6c" + // *+-.
-	"\xff\x03" + // 0-9
-	"\xfe\xff\xff\xc7" + // A-Z^_
-	"\xff\xff\xff\x57" // `a-z|~
-
-func isTokenChar(c rune) bool {
-	i := uint(c) >> 3
-	mask := byte(1 << (c & 0b111))
-	return i < uint(len(tokenChars)) && tokenChars[i]&mask != 0
 }
 
 func equalCaseInsensitive(s1, s2 string) bool {
