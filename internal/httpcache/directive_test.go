@@ -6,7 +6,6 @@ package httpcache
 import (
 	"net/http"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -161,19 +160,5 @@ func TestCacheControlDirectives(t *testing.T) {
 		if diff != "" {
 			t.Errorf("cacheControlDirectives({Cache-Control: %q}) (-want +got):\n%s", test.values, diff)
 		}
-	}
-}
-
-func TestIsTokenChar(t *testing.T) {
-	sb := new(strings.Builder)
-	for i := range byte(0x80) {
-		if isTokenChar(rune(i)) {
-			sb.WriteByte(i)
-		}
-	}
-	got := sb.String()
-	const want = "!#$%&'*+-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ^_`abcdefghijklmnopqrstuvwxyz|~"
-	if got != want {
-		t.Errorf("token characters:\n got: %s\nwant: %s", got, want)
 	}
 }

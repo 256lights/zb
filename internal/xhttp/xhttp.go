@@ -139,6 +139,24 @@ func iterHeaderValueBytes(lines []string) iter.Seq[byte] {
 	}
 }
 
+const tokenChars = "" +
+	"\x00\x00\x00\x00" +
+	"\xfa" + // !#$%&'
+	"\x6c" + // *+-.
+	"\xff\x03" + // 0-9
+	"\xfe\xff\xff\xc7" + // A-Z^_
+	"\xff\xff\xff\x57" // `a-z|~
+
+// IsTokenChar reports whether c is a character that can be used in an HTTP token
+// as defined in [RFC 9110 Section 5.6.2].
+//
+// [RFC 9110 Section 5.6.2]: https://datatracker.ietf.org/doc/html/rfc9110#section-5.6.2
+func IsTokenChar(c rune) bool {
+	i := uint(c) >> 3
+	mask := byte(1 << (c & 0b111))
+	return i < uint(len(tokenChars)) && tokenChars[i]&mask != 0
+}
+
 // headerValue is equivalent to [http.Header.Get],
 // but skips the overhead of calling [http.CanonicalHeaderKey].
 // Its key parameter should always be a constant string.
