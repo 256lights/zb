@@ -18,9 +18,14 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/auth/credentials"
+	"cloud.google.com/go/auth/httptransport"
+	"cloud.google.com/go/storage"
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/tailscale/hujson"
+	"google.golang.org/api/option"
+	"zb.256lights.llc/pkg/internal/althttp"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/httpcache"
@@ -266,7 +271,22 @@ func (g *globalConfig) reusePolicy() *zbstorerpc.ReusePolicy {
 }
 
 func (g *globalConfig) newHTTPClient() (*httpClient, io.Closer, error) {
-	cache := httpcache.Open(g.HTTPCacheDB, http.DefaultTransport, &httpcache.Options{
+	baseTransport := &http.Transport{
+		// Settings copied from [http.DefaultTransport].
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	baseTransport.RegisterProtocol(althttp.GCSScheme, g.newGCSTransport(baseTransport))
+
+	cache := httpcache.Open(g.HTTPCacheDB, baseTransport, &httpcache.Options{
 		MaxResponseSize:         4 << 20, // 4 MiB
 		RequestCoalescingCutoff: 5 * time.Second,
 		ErrorReporter: httpcache.ErrorReporterFunc(func(ctx context.Context, info *httpcache.RequestInfo, err error) {
@@ -293,6 +313,30 @@ func (g *globalConfig) newHTTPClient() (*httpClient, io.Closer, error) {
 	}
 	client.Netrc = netrcData
 	return client, cache, nil
+}
+
+func (g *globalConfig) newGCSTransport(baseRoundTripper http.RoundTripper) http.RoundTripper {
+	adc, detectADCError := credentials.DetectDefault(&credentials.DetectOptions{
+		Scopes: []string{storage.ScopeReadWrite},
+		Client: &http.Client{Transport: baseRoundTripper},
+	})
+	authHTTPClient, err := httptransport.NewClient(&httptransport.Options{
+		BaseRoundTripper:      baseRoundTripper,
+		Credentials:           adc,
+		DisableAuthentication: detectADCError != nil,
+	})
+	if err != nil {
+		return stubRoundTripper{err}
+	}
+	gcsClient, err := storage.NewClient(
+		context.Background(),
+		option.WithHTTPClient(authHTTPClient),
+		storage.WithJSONReads(),
+	)
+	if err != nil {
+		return stubRoundTripper{err}
+	}
+	return &althttp.GCSTransport{Client: gcsClient}
 }
 
 // fileSplitTransport is an [http.RoundTripper]

@@ -108,3 +108,11 @@ func (c *httpClient) transportFor(scheme string) http.RoundTripper {
 	}
 	return http.DefaultTransport
 }
+
+type stubRoundTripper struct {
+	err error
+}
+
+func (stub stubRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	return nil, stub.err
+}
