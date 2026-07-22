@@ -251,7 +251,9 @@ func newDependencyOrderIterator(g *dependencyGraph, roots iter.Seq[zbstore.Path]
 			}
 		}
 	}
-	rootList = xslices.Filter(rootList, rootSet.Has)
+	rootList = slices.DeleteFunc(rootList, func(p zbstore.Path) bool {
+		return !rootSet.Has(p)
+	})
 
 	return &dependencyOrderIterator{
 		graph:    g,
