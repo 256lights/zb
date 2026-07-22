@@ -23,6 +23,7 @@ import (
 	"zb.256lights.llc/pkg/internal/hal"
 	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/multierror"
+	"zb.256lights.llc/pkg/internal/xhttp"
 	"zb.256lights.llc/pkg/internal/xtime"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -145,7 +146,7 @@ func (s *Store) fetchNARInfo(ctx context.Context, u *url.URL) (info *NARInfo, pu
 		accept: "text/x-nix-narinfo,text/*;q=0.9,*/*;q=0.8",
 		origin: s.URL,
 	})
-	putAllowed = res.isMethodAllowed(http.MethodPut)
+	putAllowed = requestNegotiationFromFetchResponse(res, err).isMethodAllowed(http.MethodPut)
 	if err != nil {
 		return nil, putAllowed, err
 	}
@@ -270,29 +271,31 @@ func (s *Store) PutRealizations(ctx context.Context, realizations zbstore.Realiz
 
 func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zbstore.RealizationMap) error {
 	var existing zbstore.RealizationMap
-	noReplace := false
 	oldResource, fetchError := fetch(ctx, s.client(), &fetchRequest{
 		url:    u,
 		accept: "application/json,text/*;q=0.9,*/*;q=0.8",
 		origin: s.URL,
 	})
-	if !oldResource.isMethodAllowed(http.MethodPut) {
+	if !requestNegotiationFromFetchResponse(oldResource, fetchError).isMethodAllowed(http.MethodPut) {
 		log.Debugf(ctx, "Skipping %s because %s not in Allow header", u.Redacted(), http.MethodPut)
 		return fmt.Errorf("%s: %w", u.Redacted(), methodNotAllowedError{http.MethodPut})
 	}
-	if fetchError != nil {
-		if code, _ := errorStatusCode(fetchError); code != http.StatusNotFound && code != http.StatusGone {
-			// Make error opaque.
-			return errors.New(fetchError.Error())
-		}
-		existing = zbstore.RealizationMap{DerivationHash: realizations.DerivationHash}
-		noReplace = true
-	} else {
+	noReplace := false
+	var validators xhttp.ValidatorFields
+	switch {
+	case fetchError == nil:
 		unmarshalers := jsonv2.UnmarshalFromFunc(zbstore.UnmarshalHashJSONFrom)
 		if err := jsonv2.Unmarshal(oldResource.body, &existing, jsonv2.WithUnmarshalers(unmarshalers)); err != nil {
 			return fmt.Errorf("%s: %v", u.Redacted(), err)
 		}
 		existing.Compact()
+		validators = oldResource.validators
+	case isNotFound(fetchError):
+		existing = zbstore.RealizationMap{DerivationHash: realizations.DerivationHash}
+		noReplace = true
+	default:
+		// Make error opaque.
+		return errors.New(fetchError.Error())
 	}
 	if err := existing.Merge(realizations); err != nil {
 		return fmt.Errorf("%s: %v", u.Redacted(), err)
@@ -310,7 +313,7 @@ func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zb
 		content:       bytes.NewReader(newData),
 		contentType:   "application/json",
 		noReplace:     noReplace,
-		precondition:  oldResource.validators,
+		precondition:  validators,
 		cacheControl:  s.RealizationsCacheControl,
 	})
 	if err != nil {
@@ -411,10 +414,8 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), &httpError{
-			statusCode: resp.StatusCode,
-			status:     resp.Status,
-		})
+		err := httpErrorFromResponse(resp)
+		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
 	}
 	decodedBody, err := httpencoding.Decode(resp.Body, resp.Header.Get("Content-Encoding"))
 	if err != nil {
