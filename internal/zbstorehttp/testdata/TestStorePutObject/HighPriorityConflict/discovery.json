@@ -1,0 +1,18 @@
+{
+  "_links": {
+    "https://zb-build.dev/api/rel/nar": {
+      "href": "upload/{digest}.nar",
+      "templated": true
+    },
+    "https://zb-build.dev/api/rel/narinfo": [
+      {
+        "href": "info1/{digest}.narinfo",
+        "templated": true
+      },
+      {
+        "href": "info2/{digest}.narinfo",
+        "templated": true
+      }
+    ]
+  }
+}

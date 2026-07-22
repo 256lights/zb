@@ -6,11 +6,13 @@ package zbstorehttp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 
+	"zb.256lights.llc/pkg/internal/hal"
 	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/xurl"
@@ -62,49 +64,8 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 	if err != nil {
 		return fmt.Errorf("upload %s: %w", req.StorePath, err)
 	}
-
-	// Look at existing .narinfo files for a few reasons:
-	//
-	// 1. See if this object already exists in the store.
-	// 2. If the object already exists, does it match our information?
-	// 3. Do any of the .narinfo URLs specifically advertise not supporting PUT?
-	var ec multierror.Collector
-	var putURLs []*url.URL
-	hasInfoURLs := false
-	hasConflicts := false
-	for u := range s.narInfoURLs(&ec, hr, req.StorePath) {
-		hasInfoURLs = true
-		remoteInfo, putAllowed, err := s.fetchNARInfo(ctx, u)
-		if putAllowed {
-			putURLs = append(putURLs, u)
-		}
-		if err != nil {
-			if isNotFound(err) {
-				log.Debugf(ctx, "While uploading %s, as expected: %v", req.StorePath, err)
-			} else {
-				ec.Add(err)
-			}
-			continue
-		}
-		if !ensureInfoMatches(&ec, req, u, remoteInfo) {
-			hasConflicts = true
-		} else if !hasConflicts {
-			// If the first fetched .narinfo is congruent, then no-op.
-			if err := ec.Error(); err != nil {
-				log.Warnf(ctx, "Found existing %s at %s. Skipping upload. While searching: %v",
-					req.StorePath, u.Redacted(), err)
-			} else {
-				log.Debugf(ctx, "Found existing %s at %s. Skipping upload.", req.StorePath, u.Redacted())
-			}
-			return nil
-		}
-	}
-	if !hasInfoURLs {
-		ec.Add(permanentError{fmt.Errorf("%s: missing valid %s link", s.URL.Redacted(), narInfoRelation)})
-	} else if len(putURLs) == 0 {
-		ec.Add(permanentError{fmt.Errorf("%s: %s links do not permit %s", s.URL.Redacted(), narInfoRelation, http.MethodPut)})
-	}
-	if err := ec.Error(); err != nil {
+	putInfoURLs, err := s.findExistingInfoForPut(ctx, hr, req)
+	if !errors.Is(err, zbstore.ErrNotFound) {
 		var ec2 multierror.Collector
 		for err := range multierror.All(err) {
 			ec2.Add(fmt.Errorf("upload %s: %w", req.StorePath, err))
@@ -190,7 +151,8 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 	}
 	narSize = int64(*wc)
 
-	for _, u := range putURLs {
+	var ec multierror.Collector
+	for _, u := range putInfoURLs {
 		relNARURL, err := xurl.Rel(u, narURL)
 		if err != nil {
 			ec.Add(err)
@@ -235,6 +197,53 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 		ec2.Add(fmt.Errorf("upload %s: %w", req.StorePath, err))
 	}
 	return ec2.Error()
+}
+
+// findExistingInfoForPut checks whether there is an existing .narinfo file
+// that is compatible with the [*PutObjectRequest].
+// findExistingInfoForPut returns [zbstore.ErrNotFound] if the store does not have such a file.
+// On any error, findExistingInfoForPut will return a list of .narinfo URLs that seem to accept PUTs.
+func (s *Store) findExistingInfoForPut(ctx context.Context, discoveryDocument *hal.Resource, req *PutObjectRequest) (putURLs []*url.URL, err error) {
+	var ec multierror.Collector
+	hasInfoURLs := false
+	for u := range s.narInfoURLs(&ec, discoveryDocument, req.StorePath) {
+		hasInfoURLs = true
+		remoteInfo, putAllowed, fetchError := s.fetchNARInfo(ctx, u)
+		if fetchError == nil {
+			if !ensureInfoMatches(&ec, req, u, remoteInfo) {
+				if len(putURLs) == 0 {
+					break
+				}
+				log.Warnf(ctx, "Found conflicting %s at %s, but have %d other URL(s) that are higher priority. While searching: %v",
+					req.StorePath, u.Redacted(), len(putURLs), ec.Error())
+				return putURLs, zbstore.ErrNotFound
+			}
+			if err := ec.Error(); err != nil {
+				log.Warnf(ctx, "Found existing %s at %s. Skipping upload. While searching: %v",
+					req.StorePath, u.Redacted(), err)
+			} else {
+				log.Debugf(ctx, "Found existing %s at %s. Skipping upload.", req.StorePath, u.Redacted())
+			}
+			return nil, nil
+		}
+		if putAllowed {
+			putURLs = append(putURLs, u)
+		}
+		if isNotFound(fetchError) {
+			log.Debugf(ctx, "While uploading %s, as expected: %v", req.StorePath, fetchError)
+		} else {
+			ec.Add(fetchError)
+		}
+	}
+	if !hasInfoURLs {
+		ec.Add(permanentError{fmt.Errorf("%s: missing valid %s link", s.URL.Redacted(), narInfoRelation)})
+	} else if len(putURLs) == 0 {
+		ec.Add(permanentError{fmt.Errorf("%s: %s links do not permit %s", s.URL.Redacted(), narInfoRelation, http.MethodPut)})
+	}
+	if err := ec.Error(); err != nil {
+		return putURLs, err
+	}
+	return putURLs, zbstore.ErrNotFound
 }
 
 // ensureInfoMatches reports whether the remote [NARInfo]

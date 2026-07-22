@@ -1,0 +1,6 @@
+StorePath: /opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt
+URL: ../hello.txt.nar
+Compression: none
+NarHash: sha256:0000000000000000000000000000000000000000000000000000
+NarSize: 128
+CA: fixed:r:sha256:0000000000000000000000000000000000000000000000000000
