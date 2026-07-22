@@ -166,6 +166,22 @@ func IsTokenChar(c rune) bool {
 	return i < uint(len(tokenChars)) && tokenChars[i]&mask != 0
 }
 
+func isToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, b := range []byte(s) {
+		if !IsTokenChar(rune(b)) {
+			return false
+		}
+	}
+	return true
+}
+
+func isDigit(c rune) bool {
+	return '0' <= c && c <= '9'
+}
+
 // headerValue is equivalent to [http.Header.Get],
 // but skips the overhead of calling [http.CanonicalHeaderKey].
 // Its key parameter should always be a constant string.

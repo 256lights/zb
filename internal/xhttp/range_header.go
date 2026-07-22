@@ -141,7 +141,7 @@ func isDigits(s string) bool {
 		return false
 	}
 	for _, c := range []byte(s) {
-		if !('0' <= c && c <= '9') {
+		if !isDigit(rune(c)) {
 			return false
 		}
 	}
