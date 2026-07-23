@@ -70,12 +70,11 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 	// 3. Do any of the .narinfo URLs specifically advertise not supporting PUT?
 	var ec multierror.Collector
 	var putURLs []*url.URL
-	c := s.client()
 	hasInfoURLs := false
 	hasConflicts := false
 	for u := range s.narInfoURLs(&ec, hr, req.StorePath) {
 		hasInfoURLs = true
-		remoteInfo, putAllowed, err := s.fetchNARInfo(ctx, c, u)
+		remoteInfo, putAllowed, err := s.fetchNARInfo(ctx, u)
 		if putAllowed {
 			putURLs = append(putURLs, u)
 		}
@@ -162,7 +161,7 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 	wc := new(xio.WriteCounter)
 	narContent = io.TeeReader(narContent, io.MultiWriter(wc, hasher, <-verifyWriter))
 	const cacheControl = "max-age=2592000" // 1 week
-	uploadNARError := put(ctx, c, &putRequest{
+	uploadNARError := put(ctx, s.client(), &putRequest{
 		url:           narURL,
 		contentLength: narSize,
 		contentType:   nar.MIMEType,
@@ -218,7 +217,7 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 			cacheControl:  cacheControl,
 			noReplace:     true,
 		}
-		uploadError := put(ctx, c, uploadInfoRequest)
+		uploadError := put(ctx, s.client(), uploadInfoRequest)
 		if uploadError == nil {
 			if err := ec.Error(); err != nil {
 				log.Warnf(ctx, "While uploading %s: %v", req.StorePath, err)

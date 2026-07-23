@@ -100,13 +100,12 @@ func (s *Store) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, 
 		return nil, fmt.Errorf("stat %s: %w", path, err)
 	}
 	var ec multierror.Collector
-	c := s.client()
 	for u := range s.narInfoURLs(&ec, hr, path) {
-		info, _, err := s.fetchNARInfo(ctx, c, u)
+		info, _, err := s.fetchNARInfo(ctx, u)
 		if err == nil {
 			return &httpObject{
 				base:   u,
-				client: c,
+				client: s.client(),
 				info:   info,
 			}, nil
 		}
@@ -140,8 +139,8 @@ func (s *Store) narInfoURLs(ec *multierror.Collector, discoveryDocument *hal.Res
 	})
 }
 
-func (s *Store) fetchNARInfo(ctx context.Context, client Client, u *url.URL) (info *NARInfo, putAllowed bool, err error) {
-	res, err := fetch(ctx, client, &fetchRequest{
+func (s *Store) fetchNARInfo(ctx context.Context, u *url.URL) (info *NARInfo, putAllowed bool, err error) {
+	res, err := fetch(ctx, s.client(), &fetchRequest{
 		url:    u,
 		accept: "text/x-nix-narinfo,text/*;q=0.9,*/*;q=0.8",
 		origin: s.URL,
@@ -270,10 +269,9 @@ func (s *Store) PutRealizations(ctx context.Context, realizations zbstore.Realiz
 }
 
 func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zbstore.RealizationMap) error {
-	c := s.client()
 	var existing zbstore.RealizationMap
 	noReplace := false
-	oldResource, fetchError := fetch(ctx, c, &fetchRequest{
+	oldResource, fetchError := fetch(ctx, s.client(), &fetchRequest{
 		url:    u,
 		accept: "application/json,text/*;q=0.9,*/*;q=0.8",
 		origin: s.URL,
@@ -306,7 +304,7 @@ func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zb
 		return fmt.Errorf("%s: %v", u.Redacted(), err)
 	}
 
-	err = put(ctx, c, &putRequest{
+	err = put(ctx, s.client(), &putRequest{
 		url:           u,
 		contentLength: int64(len(newData)),
 		content:       bytes.NewReader(newData),
