@@ -12,13 +12,14 @@ import (
 	"io"
 
 	"github.com/dsnet/compress/brotli"
+	"github.com/klauspost/compress/zstd"
 )
 
 // Accept is the value of an [Accept-Encoding header field]
 // that advertises the algorithms that [Decode] supports.
 //
 // [Accept-Encoding header field]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Accept-Encoding
-const Accept = "br,gzip,deflate"
+const Accept = "zstd,br,gzip,deflate"
 
 // Decode returns an [io.ReadCloser] that reads from r
 // according to the value of a [Content-Encoding header field].
@@ -34,9 +35,24 @@ func Decode(r io.Reader, contentEncoding string) (io.ReadCloser, error) {
 		return gzip.NewReader(r)
 	case "deflate":
 		return flate.NewReader(r), nil
+	case "zstd":
+		dec, err := zstd.NewReader(r)
+		if err != nil {
+			return nil, err
+		}
+		return zstdReadCloser{dec}, nil
 	default:
 		return nil, unsupportedError{contentEncoding}
 	}
+}
+
+type zstdReadCloser struct {
+	*zstd.Decoder
+}
+
+func (zrc zstdReadCloser) Close() error {
+	zrc.Decoder.Close()
+	return nil
 }
 
 // Encode returns an [io.ReadCloser] that reads from r
@@ -53,6 +69,27 @@ func Encode(r io.Reader, contentEncoding string) (io.ReadCloser, error) {
 		go func() {
 			defer close(done)
 			zw := gzip.NewWriter(pw)
+			if _, err := io.Copy(zw, r); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+			if err := zw.Close(); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+			pw.Close()
+		}()
+		return &goroutineReadCloser{pr, done}, nil
+	case "zstd":
+		pr, pw := io.Pipe()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			zw, err := zstd.NewWriter(pw)
+			if err != nil {
+				pw.CloseWithError(err)
+				return
+			}
 			if _, err := io.Copy(zw, r); err != nil {
 				pw.CloseWithError(err)
 				return
