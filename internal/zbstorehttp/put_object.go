@@ -163,6 +163,7 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 	const cacheControl = "max-age=2592000" // 1 week
 	uploadNARError := put(ctx, s.client(), &putRequest{
 		url:           narURL,
+		origin:        s.URL,
 		contentLength: narSize,
 		contentType:   nar.MIMEType,
 		cacheControl:  cacheControl,
@@ -209,15 +210,15 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 			ec.Add(err)
 			continue
 		}
-		uploadInfoRequest := &putRequest{
+		uploadError := put(ctx, s.client(), &putRequest{
 			url:           u,
+			origin:        s.URL,
 			content:       bytes.NewReader(narinfoData),
 			contentLength: int64(len(narinfoData)),
 			contentType:   NARInfoMIMEType,
 			cacheControl:  cacheControl,
 			noReplace:     true,
-		}
-		uploadError := put(ctx, s.client(), uploadInfoRequest)
+		})
 		if uploadError == nil {
 			if err := ec.Error(); err != nil {
 				log.Warnf(ctx, "While uploading %s: %v", req.StorePath, err)
