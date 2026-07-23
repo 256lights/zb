@@ -4,6 +4,7 @@
 package xhttp
 
 import (
+	"cmp"
 	"fmt"
 	"iter"
 	"slices"
@@ -16,6 +17,7 @@ import (
 //
 // [Accept-Encoding header field]: https://datatracker.ietf.org/doc/html/rfc9110#section-12.5.3
 func EncodingQuality(acceptEncoding []string, coding string) QValue {
+	coding = cmp.Or(coding, "identity")
 	hasValues := false
 	var wildcard QValue
 	wildcardSet := false
