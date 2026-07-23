@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 
 	"zb.256lights.llc/pkg/internal/httpencoding"
@@ -46,13 +47,9 @@ type fetchRequest struct {
 }
 
 type fetchResponse struct {
-	body       []byte
-	allow      sets.Set[string]
-	validators xhttp.ValidatorFields
-}
-
-func (res *fetchResponse) isMethodAllowed(method string) bool {
-	return res == nil || len(res.allow) == 0 || res.allow.Has(method)
+	body               []byte
+	validators         xhttp.ValidatorFields
+	requestNegotiation requestNegotiation
 }
 
 func fetch(ctx context.Context, client Client, req *fetchRequest) (*fetchResponse, error) {
@@ -72,25 +69,14 @@ func fetch(ctx context.Context, client Client, req *fetchRequest) (*fetchRespons
 		return nil, fmt.Errorf("fetch %v: %v", req.url.Redacted(), err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch %v: %w", req.url.Redacted(), httpErrorFromResponse(resp))
+	}
 
 	result := &fetchResponse{
-		validators: xhttp.ExtractValidatorFields(resp.Header),
+		validators:         xhttp.ExtractValidatorFields(resp.Header),
+		requestNegotiation: *requestNegotiationFromResponseHeader(resp.Header),
 	}
-	if allow := resp.Header.Values("Allow"); len(allow) > 0 {
-		result.allow = make(sets.Set[string])
-		for _, value := range allow {
-			for elem := range xhttp.SplitList(value) {
-				result.allow.Add(elem)
-			}
-		}
-	}
-	if resp.StatusCode != http.StatusOK {
-		return result, fmt.Errorf("fetch %v: %w", req.url.Redacted(), &httpError{
-			statusCode: resp.StatusCode,
-			status:     resp.Status,
-		})
-	}
-
 	const mebibyte = 1 << 20
 	const maxSize = 4 * mebibyte
 	if resp.ContentLength >= 0 && resp.ContentLength > maxSize {
@@ -177,10 +163,7 @@ func put(ctx context.Context, client Client, req *putRequest) error {
 		resp.StatusCode != http.StatusOK &&
 		resp.StatusCode != http.StatusCreated &&
 		resp.StatusCode != http.StatusNoContent {
-		err = &httpError{
-			statusCode: resp.StatusCode,
-			status:     resp.Status,
-		}
+		err = httpErrorFromResponse(resp)
 	}
 	if err != nil {
 		return fmt.Errorf("put %s: %v", req.url.Redacted(), err)
@@ -203,9 +186,66 @@ func computeOrigin(method string, u, origin *url.URL) (_ string, include bool) {
 	return origin.Scheme + "://" + origin.Host, include
 }
 
+// requestNegotiation is the combination of the [content negotiation fields]
+// and the [Allow header field].
+// Nil or the zero value is equivalent to the headers being absent.
+//
+// [Allow header field]: https://datatracker.ietf.org/doc/html/rfc9110#section-10.2.1
+// [content negotiation fields]: https://datatracker.ietf.org/doc/html/rfc9110#section-12.5
+type requestNegotiation struct {
+	// allow is the set of methods parsed from the Allow header.
+	// If allow is nil, then no advertisement has been made
+	// and all methods are implicitly allowed.
+	allow sets.Set[string]
+	// acceptEncoding is a list of Accept-Encoding field values.
+	acceptEncoding []string
+}
+
+func requestNegotiationFromResponseHeader(h http.Header) *requestNegotiation {
+	rneg := &requestNegotiation{
+		acceptEncoding: slices.Clone(h.Values("Accept-Encoding")),
+	}
+	if allowValues := h.Values("Allow"); len(allowValues) > 0 {
+		rneg.allow = make(sets.Set[string])
+		for _, value := range allowValues {
+			for elem := range xhttp.SplitList(value) {
+				rneg.allow.Add(elem)
+			}
+		}
+	}
+	return rneg
+}
+
+func requestNegotiationFromFetchResponse(resp *fetchResponse, err error) *requestNegotiation {
+	if resp != nil {
+		return &resp.requestNegotiation
+	}
+	if h, ok := errors.AsType[*httpError](err); ok {
+		return &h.requestNegotiation
+	}
+	return nil
+}
+
+func (rn *requestNegotiation) isMethodAllowed(method string) bool {
+	return rn == nil || rn.allow == nil || rn.allow.Has(method)
+}
+
 type httpError struct {
-	statusCode int
-	status     string
+	statusCode         int
+	status             string
+	requestNegotiation requestNegotiation
+}
+
+func httpErrorFromResponse(resp *http.Response) error {
+	err := &httpError{
+		statusCode:         resp.StatusCode,
+		status:             cmp.Or(resp.Status, http.StatusText(resp.StatusCode)),
+		requestNegotiation: *requestNegotiationFromResponseHeader(resp.Header),
+	}
+	if 100 <= resp.StatusCode && resp.StatusCode < 400 {
+		return fmt.Errorf("unexpected %w", err)
+	}
+	return err
 }
 
 func (e *httpError) Error() string {
