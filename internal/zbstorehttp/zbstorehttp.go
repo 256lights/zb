@@ -140,21 +140,21 @@ func (s *Store) narInfoURLs(ec *multierror.Collector, discoveryDocument *hal.Res
 	})
 }
 
-func (s *Store) fetchNARInfo(ctx context.Context, u *url.URL) (info *NARInfo, putAllowed bool, err error) {
+func (s *Store) fetchNARInfo(ctx context.Context, u *url.URL) (info *NARInfo, rneg *requestNegotiation, err error) {
 	res, err := fetch(ctx, s.client(), &fetchRequest{
 		url:    u,
 		accept: "text/x-nix-narinfo,text/*;q=0.9,*/*;q=0.8",
 		origin: s.URL,
 	})
-	putAllowed = requestNegotiationFromFetchResponse(res, err).isMethodAllowed(http.MethodPut)
+	rneg = requestNegotiationFromFetchResponse(res, err)
 	if err != nil {
-		return nil, putAllowed, err
+		return nil, rneg, err
 	}
 	result := new(NARInfo)
 	if err := result.UnmarshalText(res.body); err != nil {
-		return nil, putAllowed, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
+		return nil, rneg, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
 	}
-	return result, putAllowed, nil
+	return result, rneg, nil
 }
 
 // FetchRealizations implements [zbstore.RealizationFetcher]
@@ -276,7 +276,8 @@ func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zb
 		accept: "application/json,text/*;q=0.9,*/*;q=0.8",
 		origin: s.URL,
 	})
-	if !requestNegotiationFromFetchResponse(oldResource, fetchError).isMethodAllowed(http.MethodPut) {
+	rneg := requestNegotiationFromFetchResponse(oldResource, fetchError)
+	if !rneg.isMethodAllowed(http.MethodPut) {
 		log.Debugf(ctx, "Skipping %s because %s not in Allow header", u.Redacted(), http.MethodPut)
 		return fmt.Errorf("%s: %w", u.Redacted(), methodNotAllowedError{http.MethodPut})
 	}
@@ -308,14 +309,17 @@ func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zb
 	}
 
 	err = put(ctx, s.client(), &putRequest{
-		url:           u,
-		origin:        s.URL,
-		contentLength: int64(len(newData)),
-		content:       bytes.NewReader(newData),
-		contentType:   "application/json",
-		noReplace:     noReplace,
-		precondition:  validators,
-		cacheControl:  s.RealizationsCacheControl,
+		url:    u,
+		origin: s.URL,
+		getContent: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(newData)), nil
+		},
+		contentLength:  int64(len(newData)),
+		contentType:    "application/json",
+		acceptEncoding: rneg.acceptEncoding,
+		noReplace:      noReplace,
+		precondition:   validators,
+		cacheControl:   s.RealizationsCacheControl,
 	})
 	if err != nil {
 		if isMethodNotAllowed(err) {

@@ -17,9 +17,15 @@ import (
 
 	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/xhttp"
+	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/log"
 )
+
+const mebibyte = 1 << 20
+
+// maxMemorySize is the maximum size of a resource to copy into memory.
+const maxMemorySize = 4 * mebibyte
 
 // A Client is an HTTP client that handles redirects, caching, and authentication.
 // Clients are safe for concurrent use by multiple goroutines.
@@ -77,17 +83,15 @@ func fetch(ctx context.Context, client Client, req *fetchRequest) (*fetchRespons
 		validators:         xhttp.ExtractValidatorFields(resp.Header),
 		requestNegotiation: *requestNegotiationFromResponseHeader(resp.Header),
 	}
-	const mebibyte = 1 << 20
-	const maxSize = 4 * mebibyte
-	if resp.ContentLength >= 0 && resp.ContentLength > maxSize {
+	if resp.ContentLength >= 0 && resp.ContentLength > maxMemorySize {
 		return result, fmt.Errorf("fetch %v: response too large (%.1f MiB)",
 			req.url.Redacted(), float64(resp.ContentLength)/mebibyte)
 	}
-	result.body, err = io.ReadAll(io.LimitReader(resp.Body, maxSize))
+	result.body, err = io.ReadAll(io.LimitReader(resp.Body, maxMemorySize))
 	if err != nil {
 		return result, fmt.Errorf("fetch %v: %v", req.url.Redacted(), err)
 	}
-	if resp.ContentLength == -1 && len(result.body) == maxSize {
+	if resp.ContentLength == -1 && len(result.body) == maxMemorySize {
 		if n, _ := resp.Body.Read(make([]byte, 1)); n > 0 {
 			return result, fmt.Errorf("fetch %v: response too large", req.url.Redacted())
 		}
@@ -110,13 +114,111 @@ type putRequest struct {
 	url    *url.URL
 	origin *url.URL
 
-	content       io.Reader
+	getContent    func() (io.ReadCloser, error)
 	contentLength int64
 	contentType   string
 
 	noReplace    bool
 	precondition xhttp.ValidatorFields
 	cacheControl string
+	// acceptEncoding is a slice of Accept-Encoding field values
+	// from a previous response from the same URL.
+	acceptEncoding []string
+}
+
+func (req *putRequest) canContentFitInMemory() bool {
+	return 0 <= req.contentLength && req.contentLength <= maxMemorySize
+}
+
+func (req *putRequest) readContent(ctx context.Context) ([]byte, error) {
+	if req.contentLength < 0 {
+		return nil, fmt.Errorf("put %s: request body: unknown size", req.url.Redacted())
+	}
+	if !req.canContentFitInMemory() {
+		return nil, fmt.Errorf("put %s: request body: too large (%.1fMiB)", req.url.Redacted(), float64(req.contentLength)/mebibyte)
+	}
+	rc, err := req.getContent()
+	if err != nil {
+		return nil, fmt.Errorf("put %s: request body: %v", req.url.Redacted(), err)
+	}
+	defer func() {
+		if err := rc.Close(); err != nil {
+			log.Debugf(ctx, "While closing put %s request body: %v", req.url.Redacted(), err)
+		}
+	}()
+	if req.contentLength >= 0 {
+		rc = http.MaxBytesReader(nil, rc, req.contentLength)
+	}
+	content, err := io.ReadAll(rc)
+	if err != nil {
+		err = fmt.Errorf("put %s: request body: %v", req.url.Redacted(), err)
+	} else if req.contentLength >= 0 && int64(len(content)) != req.contentLength {
+		err = fmt.Errorf("put %s: request body: size (%d bytes) does not match Content-Length (%d bytes)",
+			req.url.Redacted(), len(content), req.contentLength)
+	}
+	return content, err
+}
+
+// encodeContent returns the Content-Length (possibly -1 for unknown)
+// and a function suitable for the GetBody field of [*http.Request]
+// that encodes req.getContent according to the given Content-Encoding.
+func (req *putRequest) encodeContent(ctx context.Context, contentEncoding string) (contentLength int64, getBody func() (io.ReadCloser, error), err error) {
+	if contentEncoding == "" {
+		return req.contentLength, req.getContent, nil
+	}
+	if !req.canContentFitInMemory() {
+		f := req.getContent
+		return -1, func() (io.ReadCloser, error) {
+			uncompressed, err := f()
+			if err != nil {
+				return nil, err
+			}
+			rc, err := httpencoding.Encode(uncompressed, contentEncoding)
+			if err != nil {
+				uncompressed.Close()
+				return nil, err
+			}
+			return &readMultiCloser{
+				Reader: rc,
+				closers: [len(readMultiCloser{}.closers)]io.Closer{
+					rc,
+					uncompressed,
+				},
+			}, nil
+		}, nil
+	}
+
+	uncompressed, err := req.getContent()
+	if err != nil {
+		return -1, nil, err
+	}
+	defer func() {
+		if err := uncompressed.Close(); err != nil {
+			log.Debugf(ctx, "While closing put %s request body: %v", req.url.Redacted(), err)
+		}
+	}()
+	wc := new(xio.WriteCounter)
+	compressed, err := httpencoding.Encode(io.TeeReader(uncompressed, wc), contentEncoding)
+	if err != nil {
+		return -1, nil, fmt.Errorf("put %s: request body: %v", req.url.Redacted(), err)
+	}
+	defer func() {
+		if err := compressed.Close(); err != nil {
+			log.Debugf(ctx, "While closing compressed put %s request body: %v", req.url.Redacted(), err)
+		}
+	}()
+	compressedData, err := io.ReadAll(compressed)
+	if err != nil {
+		return -1, nil, fmt.Errorf("put %s: request body: %v", req.url.Redacted(), err)
+	}
+	if int64(*wc) != req.contentLength {
+		err := fmt.Errorf("put %s: request body: size (%d bytes) does not match Content-Length (%d bytes)",
+			req.url.Redacted(), *wc, req.contentLength)
+		return -1, nil, err
+	}
+	return int64(len(compressedData)), func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(compressedData)), nil
+	}, nil
 }
 
 func put(ctx context.Context, client Client, req *putRequest) error {
@@ -124,6 +226,59 @@ func put(ctx context.Context, client Client, req *putRequest) error {
 		return fmt.Errorf("put %s: precondition combined with If-None-Match:*", req.url.Redacted())
 	}
 
+	if req.canContentFitInMemory() {
+		content, err := req.readContent(ctx)
+		if err != nil {
+			return err
+		}
+		req = new(*req)
+		req.getContent = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(content)), nil
+		}
+	}
+
+	acceptEncoding := req.acceptEncoding
+	compareCodings := func(coding1, coding2 string) int {
+		q1 := xhttp.EncodingQuality(acceptEncoding, coding1)
+		q2 := xhttp.EncodingQuality(acceptEncoding, coding2)
+		return cmp.Compare(q1, q2)
+	}
+
+	codings := []string{"gzip", ""} // Descending preference.
+	nextCoding := slices.MaxFunc(codings, compareCodings)
+	if xhttp.EncodingQuality(acceptEncoding, nextCoding) == 0 {
+		// If server isn't advertising any of the codings we support,
+		// try sending identity encoding anyway.
+		return putEncoding(ctx, client, "", req)
+	}
+	for {
+		codings = slices.DeleteFunc(codings, func(c string) bool { return c == nextCoding })
+
+		err := putEncoding(ctx, client, nextCoding, req)
+		var needsDifferentCoding bool
+		acceptEncoding, needsDifferentCoding = isUnsupportedContentCoding(err)
+		if !needsDifferentCoding || len(codings) == 0 {
+			return err
+		}
+		nextCoding = slices.MaxFunc(codings, compareCodings)
+		if xhttp.EncodingQuality(acceptEncoding, nextCoding) == 0 {
+			// Nothing is acceptable after a fresh PUT.
+			// Return the error from the request.
+			return err
+		}
+	}
+}
+
+func putEncoding(ctx context.Context, client Client, contentEncoding string, req *putRequest) error {
+	contentLength, getContent, err := req.encodeContent(ctx, contentEncoding)
+	if err != nil {
+		return err
+	}
+
+	body, err := getContent()
+	if err != nil {
+		return fmt.Errorf("put %s: %v", req.url.Redacted(), err)
+	}
 	httpRequest := &http.Request{
 		Method: http.MethodPut,
 		URL:    req.url,
@@ -131,11 +286,15 @@ func put(ctx context.Context, client Client, req *putRequest) error {
 			"Content-Type": {req.contentType},
 		},
 		ContentLength: -1,
-		Body:          io.NopCloser(req.content),
+		Body:          body,
+		GetBody:       req.getContent,
 	}
-	if req.contentLength >= 0 {
-		httpRequest.Header.Set("Content-Length", strconv.FormatInt(req.contentLength, 10))
-		httpRequest.ContentLength = req.contentLength
+	if contentEncoding != "" {
+		httpRequest.Header.Set("Content-Encoding", contentEncoding)
+	}
+	if contentLength >= 0 {
+		httpRequest.Header.Set("Content-Length", strconv.FormatInt(contentLength, 10))
+		httpRequest.ContentLength = contentLength
 	}
 	if origin, ok := computeOrigin(http.MethodPut, req.url, req.origin); ok {
 		httpRequest.Header.Set("Origin", origin)
@@ -154,7 +313,7 @@ func put(ctx context.Context, client Client, req *putRequest) error {
 	if req.cacheControl != "" {
 		httpRequest.Header.Set("Cache-Control", req.cacheControl)
 	}
-	log.Debugf(ctx, "PUT %s Content-Length:%d", req.url.Redacted(), req.contentLength)
+	log.Debugf(ctx, "PUT %s Content-Encoding:%s", req.url.Redacted(), contentEncoding)
 	resp, err := client.Do(httpRequest.WithContext(ctx))
 	if resp != nil {
 		resp.Body.Close()
@@ -166,7 +325,7 @@ func put(ctx context.Context, client Client, req *putRequest) error {
 		err = httpErrorFromResponse(resp)
 	}
 	if err != nil {
-		return fmt.Errorf("put %s: %v", req.url.Redacted(), err)
+		return fmt.Errorf("put %s: %w", req.url.Redacted(), err)
 	}
 	return err
 }
@@ -275,6 +434,25 @@ func isNotFound(err error) bool {
 	return code == http.StatusNotFound || code == http.StatusGone
 }
 
+// isUnsupportedContentCoding reports whether err indicates that an HTTP request failed
+// due to an unsupported Content-Encoding header,
+// and if so, returns the values of the Accept-Encoding header field.
+func isUnsupportedContentCoding(err error) (acceptEncoding []string, ok bool) {
+	h, ok := errors.AsType[*httpError](err)
+	if !ok {
+		return nil, false
+	}
+	// As per [RFC 9110 Section 12.5.3]:
+	// "servers that fail a request with a 415 status for reasons unrelated to content codings
+	// MUST NOT include the Accept-Encoding header field."
+	//
+	// [RFC 9110 Section 12.5.3]: https://datatracker.ietf.org/doc/html/rfc9110#section-12.5.3
+	if h.statusCode != http.StatusUnsupportedMediaType || len(h.requestNegotiation.acceptEncoding) == 0 {
+		return nil, false
+	}
+	return h.requestNegotiation.acceptEncoding, true
+}
+
 type methodNotAllowedError struct {
 	method string
 }
@@ -289,4 +467,21 @@ func isMethodNotAllowed(err error) bool {
 	}
 	code, _ := errorStatusCode(err)
 	return code == http.StatusMethodNotAllowed || code == http.StatusNotImplemented
+}
+
+type readMultiCloser struct {
+	io.Reader
+	closers [2]io.Closer
+}
+
+func (rmc *readMultiCloser) Close() error {
+	var firstError error
+	for _, c := range rmc.closers {
+		if c == nil {
+			continue
+		}
+		err := c.Close()
+		firstError = cmp.Or(firstError, err)
+	}
+	return firstError
 }

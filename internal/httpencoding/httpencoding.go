@@ -21,7 +21,7 @@ import (
 const Accept = "br,gzip,deflate"
 
 // Decode returns an [io.ReadCloser] that reads from r
-// according to the value of an [Content-Encoding header field].
+// according to the value of a [Content-Encoding header field].
 //
 // [Content-Encoding header field]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Encoding
 func Decode(r io.Reader, contentEncoding string) (io.ReadCloser, error) {
@@ -39,8 +39,49 @@ func Decode(r io.Reader, contentEncoding string) (io.ReadCloser, error) {
 	}
 }
 
+// Encode returns an [io.ReadCloser] that reads from r
+// and compresses it according to the value of a [Content-Encoding header field].
+//
+// [Content-Encoding header field]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Encoding
+func Encode(r io.Reader, contentEncoding string) (io.ReadCloser, error) {
+	switch contentEncoding {
+	case "":
+		return io.NopCloser(r), nil
+	case "gzip":
+		pr, pw := io.Pipe()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			zw := gzip.NewWriter(pw)
+			if _, err := io.Copy(zw, r); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+			if err := zw.Close(); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+			pw.Close()
+		}()
+		return &goroutineReadCloser{pr, done}, nil
+	default:
+		return nil, unsupportedError{contentEncoding}
+	}
+}
+
+type goroutineReadCloser struct {
+	io.ReadCloser
+	done <-chan struct{}
+}
+
+func (g *goroutineReadCloser) Close() error {
+	err := g.ReadCloser.Close()
+	<-g.done
+	return err
+}
+
 // IsUnsupported reports whether err represents an unknown Content-Encoding value
-// passed to [Decode].
+// passed to [Encode] or [Decode].
 func IsUnsupported(err error) bool {
 	_, ok := errors.AsType[unsupportedError](err)
 	return ok
