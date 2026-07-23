@@ -25,6 +25,7 @@ import (
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/tailscale/hujson"
 	"google.golang.org/api/option"
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/althttp"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/fileurl"
@@ -459,6 +460,7 @@ func (sc *storeConfig) toStore(deps *storeDeps) (backend.Store, error) {
 		}
 		store := &zbstorehttp.Store{
 			HTTPClient: client,
+			CreateTemp: bytebuffer.TempFileCreator{Pattern: contentAddressTempFilePattern},
 		}
 		store.URL, err = url.Parse(props.URL)
 		if err != nil {
