@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"zb.256lights.llc/pkg/internal/xhttp"
-	"zb.256lights.llc/pkg/internal/xslices"
 	"zb.256lights.llc/pkg/internal/xtime"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitefile"
@@ -299,7 +298,9 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			Request: req,
 		}, nil
 	}
-	responses = xslices.Filter(responses, (*storedResponse).responseReceived)
+	responses = slices.DeleteFunc(responses, func(resp *storedResponse) bool {
+		return !resp.responseReceived()
+	})
 
 	startedAt := time.Now()
 	ch := make(chan allocateResourceResult)

@@ -20,20 +20,6 @@ func Pop[S ~[]E, E any](s S, n int) S {
 	return s[:end]
 }
 
-// Filter removes any element x from s for which f(x) reports false,
-// returning the modified slice.
-func Filter[S ~[]E, E any](s S, f func(E) bool) S {
-	n := 0
-	for _, x := range s {
-		if f(x) {
-			s[n] = x
-			n++
-		}
-	}
-	clear(s[n:])
-	return s[:n]
-}
-
 // ClonePointers returns a copy of the slice.
 // The referenced values are copied using assignment,
 // so this is a clone with depth of 1.
