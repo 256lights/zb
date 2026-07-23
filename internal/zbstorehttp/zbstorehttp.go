@@ -306,6 +306,7 @@ func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zb
 
 	err = put(ctx, s.client(), &putRequest{
 		url:           u,
+		origin:        s.URL,
 		contentLength: int64(len(newData)),
 		content:       bytes.NewReader(newData),
 		contentType:   "application/json",
