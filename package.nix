@@ -14,6 +14,9 @@ buildGoModule {
   ldflags = [
     "-s -w -X main.zbVersion=${version}"
   ];
+  tags = [
+    "disable_grpc_modules"
+  ];
 
   nativeBuildInputs = [
     installShellFiles
