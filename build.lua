@@ -109,7 +109,9 @@ function module.new(args)
     busybox = busybox;
 
     preBuild = [[export GOCACHE="$ZB_BUILD_TOP/cache"]];
-    buildPhase = [[go build -trimpath -ldflags="-s -w -X main.zbVersion=$version" zb.256lights.llc/pkg/cmd/zb]];
+    -- See https://pkg.go.dev/cloud.google.com/go/storage#hdr-gRPC_API
+    -- for info about -tags=disable_grpc_modules.
+    buildPhase = [[go build -trimpath -ldflags="-s -w -X main.zbVersion=$version" -tags=disable_grpc_modules zb.256lights.llc/pkg/cmd/zb]];
     installPhase = [=[
 mkdir -p "$out/bin"
 name="zb$(go env GOEXE)"
