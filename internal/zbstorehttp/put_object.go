@@ -96,21 +96,24 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 			req.StorePath, s.URL.Redacted(), narRelation, err)}
 	}
 
-	trailer := &zbstore.ExportTrailer{
-		StorePath:      req.StorePath,
-		References:     req.References,
-		ContentAddress: req.ContentAddress,
+	grp := &narBodyGroup{
+		f: req.GetNAR,
+		trailer: zbstore.ExportTrailer{
+			StorePath:      req.StorePath,
+			References:     req.References,
+			ContentAddress: req.ContentAddress,
+		},
+		wantNARSize: -1,
+		createTemp:  s.CreateTemp,
 	}
-	wantNARSize := int64(-1)
 	if req.NARSize > 0 {
-		wantNARSize = req.NARSize
+		grp.wantNARSize = req.NARSize
 	}
-	grp := newNARBodyGroup(req.GetNAR, trailer, wantNARSize, s.CreateTemp)
 	const cacheControl = "max-age=2592000" // 1 week
 	uploadNARError := put(ctx, s.client(), &putRequest{
 		url:           narURL,
 		origin:        s.URL,
-		contentLength: wantNARSize,
+		contentLength: grp.wantNARSize,
 		contentType:   nar.MIMEType,
 		cacheControl:  cacheControl,
 		getContent:    grp.new,
@@ -268,7 +271,7 @@ func ensureInfoMatches(ec *multierror.Collector, req *PutObjectRequest, u *url.U
 // and attempt to converge on a successful [*narCopyResult].
 type narBodyGroup struct {
 	f           func() (io.ReadCloser, error)
-	trailer     *zbstore.ExportTrailer
+	trailer     zbstore.ExportTrailer
 	wantNARSize int64
 	createTemp  bytebuffer.Creator
 
@@ -285,15 +288,10 @@ type narCopyResult struct {
 	verifyError error
 }
 
-func newNARBodyGroup(f func() (io.ReadCloser, error), trailer *zbstore.ExportTrailer, wantNARSize int64, createTemp bytebuffer.Creator) *narBodyGroup {
-	grp := &narBodyGroup{
-		f:           f,
-		trailer:     trailer,
-		wantNARSize: wantNARSize,
-		createTemp:  createTemp,
+func (grp *narBodyGroup) init() {
+	if grp.cond.L == nil {
+		grp.cond.L = &grp.mu
 	}
-	grp.cond.L = &grp.mu
-	return grp
 }
 
 // new returns a new [*narBody] attached to the group.
@@ -305,6 +303,7 @@ func (grp *narBodyGroup) new() (io.ReadCloser, error) {
 	}
 
 	grp.mu.Lock()
+	grp.init()
 	grp.open++
 	grp.mu.Unlock()
 
@@ -322,7 +321,7 @@ func (grp *narBodyGroup) new() (io.ReadCloser, error) {
 	go func() {
 		defer close(verifyDone)
 		obj := &fakeObject{
-			trailer:   *grp.trailer,
+			trailer:   grp.trailer,
 			writer:    verifyWriter,
 			writeDone: verifyWriteDone,
 		}
@@ -343,6 +342,7 @@ func (grp *narBodyGroup) new() (io.ReadCloser, error) {
 // or an error if no such result exists.
 func (grp *narBodyGroup) wait() (*narCopyResult, error) {
 	grp.mu.Lock()
+	grp.init()
 	for grp.open > 0 {
 		grp.cond.Wait()
 	}
