@@ -274,7 +274,7 @@ type narBodyGroup struct {
 
 	mu     sync.Mutex
 	cond   sync.Cond
-	n      int
+	open   int
 	result *narCopyResult
 }
 
@@ -305,7 +305,7 @@ func (grp *narBodyGroup) new() (io.ReadCloser, error) {
 	}
 
 	grp.mu.Lock()
-	grp.n++
+	grp.open++
 	grp.mu.Unlock()
 
 	verifyWriter := make(chan io.Writer)
@@ -343,7 +343,7 @@ func (grp *narBodyGroup) new() (io.ReadCloser, error) {
 // or an error if no such result exists.
 func (grp *narBodyGroup) wait() (*narCopyResult, error) {
 	grp.mu.Lock()
-	for grp.n > 0 {
+	for grp.open > 0 {
 		grp.cond.Wait()
 	}
 	defer grp.mu.Unlock()
@@ -439,8 +439,8 @@ func (body *narBody) Close() error {
 			verifyError: body.verifyError,
 		}
 	}
-	body.group.n--
-	if body.group.n <= 0 {
+	body.group.open--
+	if body.group.open <= 0 {
 		body.group.cond.Broadcast()
 	}
 	body.group.mu.Unlock()
