@@ -1034,29 +1034,35 @@ func (s *Server) uploadObject(ctx context.Context, obj *ObjectInfo) error {
 	}
 
 	log.Infof(ctx, "Uploading %s to store at %s...", obj.StorePath, s.upload.URL.Redacted())
+	log.Debugf(ctx, "Waiting for lock on %s...", obj.StorePath)
+	unlock, err := s.writing.lock(ctx, obj.StorePath)
+	if err != nil {
+		return fmt.Errorf("upload %s: %w", obj.StorePath, err)
+	}
+	realPath := s.realPath(obj.StorePath)
+	_, statError := os.Lstat(realPath)
+	unlock()
+	if statError != nil {
+		return fmt.Errorf("upload %s: %v", obj.StorePath, err)
+	}
+
 	for t := xtime.NewBackoffTimer(uploadBackoffTable[:], uploadBackoffJitter); ; {
-		log.Debugf(ctx, "Waiting for lock on %s...", obj.StorePath)
-		unlock, err := s.writing.lock(ctx, obj.StorePath)
-		if err != nil {
-			return fmt.Errorf("upload %s: %w", obj.StorePath, err)
-		}
-		pr, pw := io.Pipe()
-		dumpDone := make(chan struct{})
-		go func() {
-			defer close(dumpDone)
-			err := nar.DumpPath(pw, s.realPath(obj.StorePath))
-			pw.CloseWithError(err)
-		}()
-		err = s.upload.PutObject(ctx, &zbstorehttp.PutObjectRequest{
+		var dumpGroup sync.WaitGroup
+		err := s.upload.PutObject(ctx, &zbstorehttp.PutObjectRequest{
 			StorePath:      obj.StorePath,
 			References:     obj.References,
 			ContentAddress: obj.CA,
-			NAR:            pr,
 			NARSize:        obj.NARSize,
+			GetNAR: func() (io.ReadCloser, error) {
+				pr, pw := io.Pipe()
+				dumpGroup.Go(func() {
+					err := nar.DumpPath(pw, realPath)
+					pw.CloseWithError(err)
+				})
+				return pr, nil
+			},
 		})
-		pr.Close()
-		unlock()
-		<-dumpDone
+		dumpGroup.Wait()
 
 		if err == nil {
 			log.Infof(ctx, "Uploaded %s", obj.StorePath)

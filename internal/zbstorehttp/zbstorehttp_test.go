@@ -256,27 +256,43 @@ func testdataPath(tb testing.TB, path string) string {
 
 func copyToDir(tb testing.TB, dstDir string, path string) {
 	tb.Helper()
-
-	src, err := os.Open(testdataPath(tb, path))
-	if err != nil {
+	srcPath := testdataPath(tb, path)
+	dstPath := filepath.Join(dstDir, filepath.ToSlash(path))
+	if err := copyFile(dstPath, srcPath); err != nil {
 		tb.Fatal(err)
+	}
+}
+
+func copyFile(dstPath, srcPath string) error {
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return err
 	}
 	defer src.Close()
-	subpath := filepath.ToSlash(path)
-	if err := os.MkdirAll(filepath.Join(dstDir, filepath.Dir(subpath)), 0o777); err != nil {
-		tb.Fatal(err)
+	if err := os.MkdirAll(filepath.Dir(dstPath), 0o777); err != nil {
+		return err
 	}
-	dst, err := os.Create(filepath.Join(dstDir, subpath))
+	dst, err := os.Create(dstPath)
 	if err != nil {
-		tb.Fatal(err)
+		return err
 	}
 	defer dst.Close()
 	if _, err := io.Copy(dst, src); err != nil {
-		tb.Fatalf("copy %s to %s: %v", src.Name(), dst.Name(), err)
+		return &os.LinkError{
+			Op:  "copy",
+			Old: srcPath,
+			New: dstPath,
+			Err: err,
+		}
 	}
 	if err := dst.Close(); err != nil {
-		tb.Fatalf("write %s: %v", dst.Name(), err)
+		return &os.PathError{
+			Op:   "write",
+			Path: dstPath,
+			Err:  err,
+		}
 	}
+	return nil
 }
 
 func httpStoreForDirectory(tb testing.TB, path string) *Store {
