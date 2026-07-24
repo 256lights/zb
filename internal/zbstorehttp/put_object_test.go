@@ -299,6 +299,7 @@ func TestStorePutObject(t *testing.T) {
 			name           string
 			acceptEncoding string
 		}{
+			{"Zstd", "zstd, *;q=0"},
 			{"Gzip", "gzip, *;q=0"},
 			{"Identity", "identity, *;q=0"},
 		}

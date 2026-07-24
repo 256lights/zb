@@ -17,6 +17,7 @@ require (
 	github.com/googleapis/gax-go/v2 v2.23.0
 	github.com/gorilla/handlers v1.5.2
 	github.com/jotaen/kong-completion v0.0.12
+	github.com/klauspost/compress v1.19.1
 	github.com/tailscale/hujson v0.0.0-20250226034555-ec1d1c113d33
 	go4.org v0.0.0-20230225012048-214862532bf5
 	golang.org/x/sync v0.22.0

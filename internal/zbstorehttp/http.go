@@ -244,7 +244,7 @@ func put(ctx context.Context, client Client, req *putRequest) error {
 		return cmp.Compare(q1, q2)
 	}
 
-	codings := []string{"gzip", ""} // Descending preference.
+	codings := []string{"zstd", "gzip", ""} // Descending preference.
 	nextCoding := slices.MaxFunc(codings, compareCodings)
 	if xhttp.EncodingQuality(acceptEncoding, nextCoding) == 0 {
 		// If server isn't advertising any of the codings we support,
