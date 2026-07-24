@@ -105,6 +105,9 @@ func zbKongOption() kong.Option {
 		if !yield(kong.BindToProvider((*zbCommand).ProvideConfig)) {
 			return
 		}
+		if !yield(kong.BindSingletonProvider(notifyDrainSignal)) {
+			return
+		}
 		if !yield(kong.TypeMapper(reflect.TypeFor[sets.Set[string]](), kong.MapperFunc(mapStringSet))) {
 			return
 		}
@@ -556,6 +559,17 @@ func openInputFile(name string) (fs.File, error) {
 		return stdinInputFile{}, nil
 	}
 	return os.Open(name)
+}
+
+type drainSignalChan <-chan os.Signal
+
+func notifyDrainSignal() drainSignalChan {
+	if drainSignal == nil {
+		return nil
+	}
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, drainSignal)
+	return c
 }
 
 type stdinInputFile struct{}
