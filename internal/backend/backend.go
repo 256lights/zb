@@ -276,13 +276,46 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	return srv
 }
 
-// detach calls f in its own goroutine
+// detachFromRPC calls f in its own goroutine
+// with a [context.Context] whose values are taken from parent
+// and its cancellation from s.backgroundContext.
+// detachFromRPC returns an error if it did not start a goroutine
+// because the server is currently draining.
+func (s *Server) detachFromRPC(parent context.Context, f func(context.Context)) error {
+	s.activeBuildsMu.Lock()
+	draining := s.drained != nil
+	if !draining {
+		s.activeWork++
+	}
+	s.activeBuildsMu.Unlock()
+
+	if draining {
+		return errors.New("server shutting down; not starting new work")
+	}
+
+	s.background.Go(func() {
+		defer func() {
+			s.activeBuildsMu.Lock()
+			s.activeWork--
+			s.lockedUpdateDrained()
+			s.activeBuildsMu.Unlock()
+		}()
+
+		f(splitContext{
+			cancel: s.backgroundContext,
+			values: parent,
+		})
+	})
+	return nil
+}
+
+// detachFromBuild calls f in its own goroutine
 // with a [context.Context] whose values are taken from parent
 // and its cancellation from s.backgroundContext.
 //
-// detach does not check for draining,
-// since it is assumed that detach will only be called during a build.
-func (s *Server) detach(parent context.Context, f func(context.Context)) {
+// detachFromBuild does not check for draining,
+// since detachFromBuild will only be called during a build.
+func (s *Server) detachFromBuild(parent context.Context, f func(context.Context)) {
 	s.activeBuildsMu.Lock()
 	s.activeWork++
 	s.activeBuildsMu.Unlock()
@@ -366,6 +399,7 @@ func (s *Server) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 		zbstorerpc.GetBuildResultMethod: jsonrpc.HandlerFunc(s.getBuildResult),
 		zbstorerpc.CancelBuildMethod:    jsonrpc.HandlerFunc(s.cancelBuild),
 		zbstorerpc.ReadLogMethod:        jsonrpc.HandlerFunc(s.readLog),
+		zbstorerpc.FetchMethod:          jsonrpc.HandlerFunc(s.fetch),
 
 		zbstorerpc.NopMethod: jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 			return &jsonrpc.Response{
@@ -938,6 +972,73 @@ func (s *Server) delete(ctx context.Context, paths sets.Set[zbstore.Path], recur
 		return fmt.Errorf("one or more store paths could not be deleted")
 	}
 	return nil
+}
+
+func (s *Server) fetch(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	var args zbstorerpc.FetchRequest
+	if err := jsonv2.Unmarshal(req.Params, &args); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	if len(args.Paths) == 0 {
+		return marshalResponse(&zbstorerpc.FetchResponse{})
+	}
+
+	// Since the copy can take a while, detach the copy operation from this RPC.
+	// We'll block on it for as long as we can,
+	// and the caller can retry the RPC and it will eventually not block.
+	copyDone := make(chan struct{})
+	err := s.detachFromRPC(ctx, func(ctx context.Context) {
+		defer close(copyDone)
+		conn, err := s.db.Get(ctx)
+		if err != nil {
+			return
+		}
+		defer s.db.Put(conn)
+		err = s.copyFromFallback(ctx, conn, func(yield func(pathAndEquivalenceClass) bool) {
+			for _, path := range args.Paths {
+				pe := pathAndEquivalenceClass{path: path}
+				if !yield(pe) {
+					return
+				}
+			}
+		})
+		if err != nil {
+			log.Infof(ctx, "After fetch: %v", err)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	select {
+	case <-copyDone:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	conn, err := s.db.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer s.db.Put(conn)
+	rollback, err := readonlySavepoint(conn)
+	if err != nil {
+		return nil, err
+	}
+	defer rollback()
+
+	resp := &zbstorerpc.FetchResponse{
+		Found: make(map[zbstore.Path]*zbstorerpc.ObjectInfo, len(args.Paths)),
+	}
+	for _, path := range args.Paths {
+		info, err := pathInfo(conn, path)
+		if err == nil {
+			resp.Found[path] = info.ToRPC()
+		} else if !errors.Is(err, zbstore.ErrNotFound) {
+			return nil, err
+		}
+	}
+	return marshalResponse(resp)
 }
 
 // copyFromFallback imports any store objects identified by paths

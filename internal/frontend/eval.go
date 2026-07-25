@@ -84,6 +84,10 @@ type Store interface {
 	zbstore.Store
 	zbstore.Importer
 
+	// FetchObjects gets information about existing objects
+	// and/or attempts to download objects from another source.
+	FetchObjects(ctx context.Context, paths []zbstore.Path) (map[zbstore.Path]*zbstorerpc.ObjectInfo, error)
+
 	// Realize starts a build for the given derivation paths,
 	// waits for the build to finish,
 	// then returns the results of the build.
@@ -333,10 +337,12 @@ func (eval *Eval) storePathFunction(ctx context.Context, l *lua.State) (int, err
 		return 0, fmt.Errorf("%sstorePath: path %s is not under %s",
 			lua.Where(l, 1), lualex.Quote(rawPath), lualex.Quote(string(eval.storeDir)))
 	}
-	if _, err := eval.store.Object(ctx, path); errors.Is(err, zbstore.ErrNotFound) {
-		return 0, fmt.Errorf("%sstorePath: %s does not exist", lua.Where(l, 1), path)
-	} else if err != nil {
+	objects, err := eval.store.FetchObjects(ctx, []zbstore.Path{path})
+	if err != nil {
 		return 0, fmt.Errorf("%sstorePath: %v", lua.Where(l, 1), err)
+	}
+	if objects[path] == nil {
+		return 0, fmt.Errorf("%sstorePath: %s does not exist", lua.Where(l, 1), path)
 	}
 	l.PushStringContext(rawPath, sets.New(contextValue{path: path}.String()))
 	return 1, nil

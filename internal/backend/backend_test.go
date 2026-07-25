@@ -6,6 +6,7 @@ package backend_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	. "zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
@@ -163,6 +165,140 @@ func TestImport(t *testing.T) {
 
 	t.Run("MappedDir", func(t *testing.T) {
 		runTest(t, zbstore.DefaultDirectory(), t.TempDir())
+	})
+}
+
+func TestFetch(t *testing.T) {
+	dir := zbstore.DefaultDirectory()
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
+	narBuffer := new(bytes.Buffer)
+	if err := storetest.SingleFileNAR(narBuffer, []byte("Hello, World!\n")); err != nil {
+		t.Fatal(err)
+	}
+	narHash := nix.NewHash(nix.SHA256, new(sha256.Sum256(narBuffer.Bytes()))[:])
+	path, ca, err := storetest.ExportSourceNAR(exporter, narBuffer.Bytes(), storetest.SourceExportOptions{
+		Name:      "hello.txt",
+		Directory: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("NotFound", func(t *testing.T) {
+		ctx := testcontext.New(t)
+		realStoreDir := t.TempDir()
+		_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+			TempDir: t.TempDir(),
+			Options: Options{
+				RealStoreDirectory: realStoreDir,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got := new(zbstorerpc.FetchResponse)
+		err = jsonrpc.Do(ctx, client, zbstorerpc.FetchMethod, got, &zbstorerpc.FetchRequest{
+			Paths: []zbstore.Path{path},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := &zbstorerpc.FetchResponse{
+			Found: map[zbstore.Path]*zbstorerpc.ObjectInfo{},
+		}
+		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("response (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("ExistsLocally", func(t *testing.T) {
+		ctx := testcontext.New(t)
+		realStoreDir := t.TempDir()
+		_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+			TempDir: t.TempDir(),
+			Options: Options{
+				RealStoreDirectory: realStoreDir,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		codec, releaseCodec, err := storeCodec(ctx, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = codec.Export(nil, bytes.NewReader(exportBuffer.Bytes()))
+		releaseCodec()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got := new(zbstorerpc.FetchResponse)
+		err = jsonrpc.Do(ctx, client, zbstorerpc.FetchMethod, got, &zbstorerpc.FetchRequest{
+			Paths: []zbstore.Path{path},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := &zbstorerpc.FetchResponse{
+			Found: map[zbstore.Path]*zbstorerpc.ObjectInfo{
+				path: {
+					CA:      ca,
+					NARSize: int64(narBuffer.Len()),
+					NARHash: narHash,
+				},
+			},
+		}
+		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("response (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("FromFallback", func(t *testing.T) {
+		ctx := testcontext.New(t)
+
+		fallback := new(storetest.Store)
+		if err := fallback.StoreImport(ctx, bytes.NewReader(exportBuffer.Bytes())); err != nil {
+			t.Fatal(err)
+		}
+
+		realStoreDir := t.TempDir()
+		_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+			TempDir: t.TempDir(),
+			Options: Options{
+				RealStoreDirectory: realStoreDir,
+				Fallback:           fallback,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got := new(zbstorerpc.FetchResponse)
+		err = jsonrpc.Do(ctx, client, zbstorerpc.FetchMethod, got, &zbstorerpc.FetchRequest{
+			Paths: []zbstore.Path{path},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := &zbstorerpc.FetchResponse{
+			Found: map[zbstore.Path]*zbstorerpc.ObjectInfo{
+				path: {
+					CA:      ca,
+					NARSize: int64(narBuffer.Len()),
+					NARHash: narHash,
+				},
+			},
+		}
+		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("response (-want +got):\n%s", diff)
+		}
 	})
 }
 

@@ -371,6 +371,23 @@ func (resp *ReadLogResponse) SetPayload(src []byte) {
 	}
 }
 
+// FetchMethod is the name of the method that either gets information about existing objects
+// and/or attempts to download objects from another source.
+// [FetchRequest] is used for the request
+// and [FetchResponse] is used for the response.
+const FetchMethod = "zb.fetch"
+
+// FetchRequest is the set of parameters for [FetchMethod].
+type FetchRequest struct {
+	Paths []zbstore.Path `json:"paths"`
+}
+
+// FetchResponse is the result for [FetchMethod].
+type FetchResponse struct {
+	// Found is the information for the objects that exist in the store.
+	Found map[zbstore.Path]*ObjectInfo `json:"found"`
+}
+
 // ExportMethod is the name of the method that triggers an export of store objects.
 // [ExportRequest] is used for the request and the response is null.
 const ExportMethod = "zb.export"
