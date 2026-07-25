@@ -91,14 +91,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 	}
 	defer s.db.Put(conn)
 
-	buildCtx, cancelBuild, err := s.registerBuildID(ctx, conn, buildID)
-	if err != nil {
-		return nil, fmt.Errorf("build %s: %v", drvPathList, err)
-	}
-
-	s.background.Go(func() {
-		defer cancelBuild()
-
+	err = s.startBuild(ctx, conn, buildID, func(ctx context.Context) {
 		wantOutputs := make(sets.Set[zbstore.OutputReference])
 		for _, drvPath := range drvPaths {
 			for outputName := range drvCache[drvPath].Outputs {
@@ -109,12 +102,12 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 			}
 		}
 		b := s.newBuilder(buildID, drvCache, args.Reuse)
-		realizeError := b.realize(buildCtx, wantOutputs, args.KeepFailed)
+		realizeError := b.realize(ctx, wantOutputs, args.KeepFailed)
 		if realizeError != nil && !errors.Is(realizeError, errUnfinishedRealization) {
-			log.Errorf(buildCtx, "Realize internal error: %v", realizeError)
+			log.Errorf(ctx, "Realize internal error: %v", realizeError)
 		}
 
-		recordCtx, cancel := xcontext.KeepAlive(buildCtx, 30*time.Second)
+		recordCtx, cancel := xcontext.KeepAlive(ctx, 30*time.Second)
 		defer cancel()
 		conn, err := s.db.Get(recordCtx)
 		if err != nil {
@@ -126,6 +119,9 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 			log.Errorf(recordCtx, "Unable to record end of build %s: %v. Original error: %v", buildID, err, realizeError)
 		}
 	})
+	if err != nil {
+		return nil, fmt.Errorf("build %s: %v", drvPathList, err)
+	}
 
 	return marshalResponse(&zbstorerpc.RealizeResponse{
 		BuildID: buildID.String(),
@@ -178,24 +174,17 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 	}
 	defer s.db.Put(conn)
 
-	buildCtx, endBuild, err := s.registerBuildID(ctx, conn, buildID)
-	if err != nil {
-		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
-	}
-
-	s.background.Go(func() {
-		defer endBuild()
-
+	err = s.startBuild(ctx, conn, buildID, func(ctx context.Context) {
 		drv := drvCache[drvPath]
 		inputs := sets.Collect(drv.InputDerivationOutputs())
 
 		b := s.newBuilder(buildID, drvCache, args.Reuse)
-		realizeError := b.realize(buildCtx, inputs, false)
+		realizeError := b.realize(ctx, inputs, false)
 		if realizeError != nil && !errors.Is(realizeError, errUnfinishedRealization) {
-			log.Errorf(buildCtx, "Realize internal error: %v", realizeError)
+			log.Errorf(ctx, "Realize internal error: %v", realizeError)
 		}
 
-		recordCtx, cancel := xcontext.KeepAlive(buildCtx, 30*time.Second)
+		recordCtx, cancel := xcontext.KeepAlive(ctx, 30*time.Second)
 		defer cancel()
 		conn, err := s.db.Get(recordCtx)
 		if err != nil {
@@ -243,37 +232,56 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 			return
 		}
 	})
+	if err != nil {
+		return nil, fmt.Errorf("expand %s: %v", drvPath, err)
+	}
 
 	return marshalResponse(&zbstorerpc.ExpandResponse{
 		BuildID: buildID.String(),
 	})
 }
 
-func (s *Server) registerBuildID(parent context.Context, conn *sqlite.Conn, buildID uuid.UUID) (_ context.Context, cleanup func(), err error) {
-	if err := recordBuildStart(conn, buildID); err != nil {
-		return nil, nil, err
-	}
+// startBuild calls f in its own goroutine
+// with a [context.Context] whose values are taken from parent
+// and its cancellation controlled by calls to [*Server.cancelBuild] for the build ID.
+// startBuild returns an error if [*Server.Drain] or [*Server.Close] have been called
+// or the build could not be recorded in the database.
+func (s *Server) startBuild(parent context.Context, conn *sqlite.Conn, buildID uuid.UUID, f func(ctx context.Context)) error {
 	ctx := s.buildContext(context.WithoutCancel(parent), buildID.String())
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(splitContext{
+		cancel: s.backgroundContext,
+		values: ctx,
+	})
+
 	s.activeBuildsMu.Lock()
-	draining := s.draining
+	draining := s.drained != nil
 	if !draining {
 		s.activeBuilds[buildID] = cancel
 	}
 	s.activeBuildsMu.Unlock()
 
 	if draining {
-		// If we're draining, don't worry about updating the status.
-		// An unterminated build that isn't active will show up as unknown.
 		cancel()
-		return nil, nil, errors.New("server shutting down; not starting new builds")
+		return errors.New("server shutting down; not starting new builds")
 	}
-	return ctx, func() {
+
+	endBuild := func() {
 		s.activeBuildsMu.Lock()
 		delete(s.activeBuilds, buildID)
+		s.lockedUpdateDrained()
 		s.activeBuildsMu.Unlock()
 		cancel()
-	}, nil
+	}
+	if err := recordBuildStart(conn, buildID); err != nil {
+		endBuild()
+		return err
+	}
+
+	s.background.Go(func() {
+		defer endBuild()
+		f(ctx)
+	})
+	return nil
 }
 
 type builder struct {
@@ -906,8 +914,8 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 
 	if b.server.upload != nil {
 		srv := b.server
-		srv.background.Go(func() {
-			srv.uploadClosure(srv.backgroundContext, slices.Values(objectsToUpload))
+		srv.detach(ctx, func(ctx context.Context) {
+			srv.uploadClosure(ctx, slices.Values(objectsToUpload))
 		})
 	}
 
@@ -1860,7 +1868,7 @@ func (b *builder) recordRealizations(ctx context.Context, conn *sqlite.Conn, bui
 
 	if b.server.upload != nil {
 		srv := b.server
-		srv.background.Go(func() {
+		srv.detach(ctx, func(ctx context.Context) {
 			srv.uploadRealizations(ctx, outputs)
 		})
 	}

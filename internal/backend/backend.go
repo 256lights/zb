@@ -146,6 +146,7 @@ func CanSandbox() bool {
 
 // Server is a local store.
 // Server implements [jsonrpc.Handler] and is intended to be used with [jsonrpc.Serve].
+// A Server is safe to use from multiple goroutines simultaneously.
 type Server struct {
 	dir             zbstore.Directory
 	realDir         string
@@ -172,9 +173,15 @@ type Server struct {
 	building mutexMap[zbstore.Path] // derivations being built
 	users    *userSet
 
+	// activeBuildsMu protects activeBuilds, activeWork, and drained.
 	activeBuildsMu sync.Mutex
-	activeBuilds   map[uuid.UUID]context.CancelFunc
-	draining       bool
+	// activeBuilds maps build IDs to their cancel functions.
+	activeBuilds map[uuid.UUID]context.CancelFunc
+	// activeWork counts the active non-build background tasks.
+	activeWork int
+	// drained is non-nil if a work drain has been requested,
+	// and closed if the drain has completed.
+	drained chan struct{}
 
 	// launchCheckDone is closed after launchCheckError is set.
 	launchCheckDone chan struct{}
@@ -269,16 +276,74 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	return srv
 }
 
-// Close releases any resources associated with the server.
-func (s *Server) Close() error {
-	s.cancelBackground()
+// detach calls f in its own goroutine
+// with a [context.Context] whose values are taken from parent
+// and its cancellation from s.backgroundContext.
+//
+// detach does not check for draining,
+// since it is assumed that detach will only be called during a build.
+func (s *Server) detach(parent context.Context, f func(context.Context)) {
 	s.activeBuildsMu.Lock()
-	s.draining = true
-	for _, cancel := range s.activeBuilds {
-		cancel()
+	s.activeWork++
+	s.activeBuildsMu.Unlock()
+
+	s.background.Go(func() {
+		defer func() {
+			s.activeBuildsMu.Lock()
+			s.activeWork--
+			s.lockedUpdateDrained()
+			s.activeBuildsMu.Unlock()
+		}()
+
+		f(splitContext{
+			cancel: s.backgroundContext,
+			values: parent,
+		})
+	})
+}
+
+// lockedUpdateDrained closes s.drained if all work has completed.
+// The caller must be holding onto s.activeBuildsMu.
+func (s *Server) lockedUpdateDrained() {
+	if s.drained != nil && s.activeWork == 0 && len(s.activeBuilds) == 0 {
+		close(s.drained)
+	}
+}
+
+// Drain prevents the server from starting more builds
+// and blocks until all builds are complete
+// or [context.Context.Done] is closed,
+// whichever comes first.
+func (s *Server) Drain(ctx context.Context) error {
+	s.activeBuildsMu.Lock()
+	drained := s.drained
+	if drained == nil {
+		drained = make(chan struct{})
+		s.drained = drained
+		s.lockedUpdateDrained()
 	}
 	s.activeBuildsMu.Unlock()
 
+	select {
+	case <-drained:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("drain server: %w", ctx.Err())
+	}
+}
+
+// Close stops any ongoing builds
+// and releases any resources associated with the server.
+// The [*Server] cannot be used after calling Close.
+func (s *Server) Close() error {
+	s.activeBuildsMu.Lock()
+	if s.drained == nil {
+		s.drained = make(chan struct{})
+		s.lockedUpdateDrained()
+	}
+	s.activeBuildsMu.Unlock()
+
+	s.cancelBackground()
 	s.background.Wait()
 
 	return s.db.Close()
@@ -1135,7 +1200,7 @@ func (s *Server) uploadRealizations(ctx context.Context, realizations zbstore.Re
 	}
 
 	for t := xtime.NewBackoffTimer(uploadBackoffTable[:], uploadBackoffJitter); ; {
-		err := s.upload.PutRealizations(s.backgroundContext, realizations)
+		err := s.upload.PutRealizations(ctx, realizations)
 		if err == nil {
 			log.Infof(ctx, "Uploaded realizations for %v", realizations.DerivationHash)
 			return

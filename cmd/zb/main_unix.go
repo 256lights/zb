@@ -19,6 +19,8 @@ var interruptSignals = []os.Signal{
 	unix.SIGINT,
 }
 
+var drainSignal os.Signal = unix.SIGUSR2
+
 func cacheDir() string {
 	return xdgdir.Cache.Path()
 }

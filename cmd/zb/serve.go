@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -68,7 +69,7 @@ func (c *serveCommand) Signature() string {
 	return `help:"Run a build server."`
 }
 
-func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
+func (c *serveCommand) Run(ctx context.Context, g *globalConfig, drain drainSignalChan) error {
 	if !g.Directory.IsNative() {
 		return fmt.Errorf("%s cannot be used on this system", g.Directory)
 	}
@@ -136,6 +137,17 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 		webHandler.staticAssets = ui.StaticAssets()
 	}
 
+	loggedShuttingDown := make(chan struct{})
+	stopShutdownLog := context.AfterFunc(ctx, func() {
+		defer close(loggedShuttingDown)
+		log.Infof(ctx, "Shutting down (signal received)...")
+	})
+	defer func() {
+		if !stopShutdownLog() {
+			<-loggedShuttingDown
+		}
+	}()
+
 	grp, grpCtx := errgroup.WithContext(ctx)
 	backendServer := backend.NewServer(g.Directory, c.DBPath, &backend.Options{
 		BuildDirectory:              c.BuildDir,
@@ -158,7 +170,25 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 	}()
 	webHandler.backend = backendServer
 
-	grp.Go(func() error { return c.listenRPC(grpCtx, backendServer, g) })
+	grp.Go(func() error {
+		return c.listenRPC(grpCtx, backendServer, g)
+	})
+
+	drainFinished := errors.New("drain finished")
+	if drain != nil {
+		grp.Go(func() error {
+			select {
+			case <-drain:
+				log.Infof(ctx, "Draining (signal received)...")
+				err := backendServer.Drain(grpCtx)
+				// Once the drain is complete,
+				// we want to interrupt the listen goroutines by returning a non-nil error.
+				return cmp.Or(err, drainFinished)
+			case <-grpCtx.Done():
+				return grpCtx.Err()
+			}
+		})
+	}
 
 	if c.WebListenAddress != "" {
 		grp.Go(func() error {
@@ -195,15 +225,12 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig) error {
 					log.Infof(ctx, "Listening for HTTP on http://%s", addrString)
 				},
 			})
-			if err == nil {
-				err = net.ErrClosed
-			}
-			return err
+			return cmp.Or(err, net.ErrClosed)
 		})
 	}
 
 	waitError := grp.Wait()
-	if errors.Is(waitError, net.ErrClosed) {
+	if errors.Is(waitError, net.ErrClosed) || errors.Is(waitError, drainFinished) {
 		waitError = nil
 	}
 	return waitError
@@ -251,11 +278,10 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 		cancel()
 		grp.Wait()
 	}()
-	grp.Go(func() {
+	grp.Add(1)
+	context.AfterFunc(ctx, func() {
 		// Once the context is Done, refuse new connections and RPCs.
-		<-ctx.Done()
-		log.Infof(ctx, "Shutting down (signal received)...")
-
+		defer grp.Done()
 		if err := l.Close(); err != nil {
 			log.Errorf(ctx, "Closing Unix socket: %v", err)
 		}
@@ -271,9 +297,6 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 
 	for {
 		conn, err := l.Accept()
-		if errors.Is(err, net.ErrClosed) {
-			return nil
-		}
 		if err != nil {
 			return err
 		}

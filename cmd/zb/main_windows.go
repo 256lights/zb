@@ -10,6 +10,8 @@ import (
 
 var interruptSignals = []os.Signal{os.Interrupt}
 
+var drainSignal os.Signal
+
 func cacheDir() string {
 	dir, err := os.UserCacheDir()
 	if err != nil {
