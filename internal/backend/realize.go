@@ -914,7 +914,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 
 	if b.server.upload != nil {
 		srv := b.server
-		srv.detach(ctx, func(ctx context.Context) {
+		srv.detachFromBuild(ctx, func(ctx context.Context) {
 			srv.uploadClosure(ctx, slices.Values(objectsToUpload))
 		})
 	}
@@ -1868,7 +1868,7 @@ func (b *builder) recordRealizations(ctx context.Context, conn *sqlite.Conn, bui
 
 	if b.server.upload != nil {
 		srv := b.server
-		srv.detach(ctx, func(ctx context.Context) {
+		srv.detachFromBuild(ctx, func(ctx context.Context) {
 			srv.uploadRealizations(ctx, outputs)
 		})
 	}

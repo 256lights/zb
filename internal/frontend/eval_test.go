@@ -4,7 +4,9 @@
 package frontend
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,10 +17,12 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/lualex"
+	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -390,6 +394,121 @@ func TestImportCycle(t *testing.T) {
 	})
 }
 
+func TestStorePath(t *testing.T) {
+	t.Run("ExistsLocally", func(t *testing.T) {
+		ctx := testcontext.New(t)
+
+		storeDir := backendtest.NewStoreDirectory(t)
+		exportBuffer := new(bytes.Buffer)
+		exporter := zbstore.NewExportWriter(exportBuffer)
+		wantPath, _, err := storetest.ExportSourceFile(exporter, []byte("Hello, World!\n"), storetest.SourceExportOptions{
+			Name:      "hello.txt",
+			Directory: storeDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := exporter.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		di := new(zbstorerpc.DeferredImporter)
+		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+			TempDir: t.TempDir(),
+			ClientOptions: zbstorerpc.CodecOptions{
+				Importer: di,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rpcStore := newTestRPCStore(store, di)
+		if err := rpcStore.StoreImport(ctx, exportBuffer); err != nil {
+			t.Fatal(err)
+		}
+
+		eval, err := NewEval(&Options{
+			Store:          rpcStore,
+			StoreDirectory: storeDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := eval.Close(); err != nil {
+				t.Error("eval.Close:", err)
+			}
+		}()
+
+		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := string(wantPath)
+		if !cmp.Equal(want, got) {
+			t.Errorf("storePath(%q) = %#v; want %#v", wantPath, got, want)
+		}
+	})
+
+	t.Run("FromFallback", func(t *testing.T) {
+		ctx := testcontext.New(t)
+
+		storeDir := backendtest.NewStoreDirectory(t)
+		exportBuffer := new(bytes.Buffer)
+		exporter := zbstore.NewExportWriter(exportBuffer)
+		wantPath, _, err := storetest.ExportSourceFile(exporter, []byte("Hello, World!\n"), storetest.SourceExportOptions{
+			Name:      "hello.txt",
+			Directory: storeDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := exporter.Close(); err != nil {
+			t.Fatal(err)
+		}
+		fallback := new(storetest.Store)
+		if err := fallback.StoreImport(ctx, bytes.NewReader(exportBuffer.Bytes())); err != nil {
+			t.Fatal(err)
+		}
+
+		di := new(zbstorerpc.DeferredImporter)
+		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+			TempDir: t.TempDir(),
+			Options: backend.Options{
+				Fallback: fallback,
+			},
+			ClientOptions: zbstorerpc.CodecOptions{
+				Importer: di,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		eval, err := NewEval(&Options{
+			Store:          newTestRPCStore(store, di),
+			StoreDirectory: storeDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := eval.Close(); err != nil {
+				t.Error("eval.Close:", err)
+			}
+		}()
+
+		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := string(wantPath)
+		if !cmp.Equal(want, got) {
+			t.Errorf("storePath(%q) = %#v; want %#v", wantPath, got, want)
+		}
+	})
+}
+
 func TestExtract(t *testing.T) {
 	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
@@ -626,6 +745,17 @@ func (store *testRPCStore) StoreImport(ctx context.Context, r io.Reader) error {
 	return err
 }
 
+func (store *testRPCStore) FetchObjects(ctx context.Context, paths []zbstore.Path) (map[zbstore.Path]*zbstorerpc.ObjectInfo, error) {
+	var resp zbstorerpc.FetchResponse
+	err := jsonrpc.Do(ctx, store.Handler, zbstorerpc.FetchMethod, &resp, &zbstorerpc.FetchRequest{
+		Paths: paths,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Found, nil
+}
+
 func (store *testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
 	var realizeResponse zbstorerpc.RealizeResponse
 	err := jsonrpc.Do(ctx, store.Handler, zbstorerpc.RealizeMethod, &realizeResponse, &zbstorerpc.RealizeRequest{
@@ -660,6 +790,19 @@ func (e exportSpy) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	e.store.mu.Lock()
 	defer e.store.mu.Unlock()
 	e.store.imports = append(e.store.imports, trailer.StorePath)
+}
+
+func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstorerpc.Codec, release func(), err error) {
+	generic, release, err := client.Codec(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	codec, ok := generic.(*zbstorerpc.Codec)
+	if !ok {
+		release()
+		return nil, nil, fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
+	}
+	return codec, release, nil
 }
 
 func TestMain(m *testing.M) {

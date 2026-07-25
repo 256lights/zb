@@ -391,6 +391,17 @@ type rpcStore struct {
 	reuse      *zbstorerpc.ReusePolicy
 }
 
+func (store *rpcStore) FetchObjects(ctx context.Context, paths []zbstore.Path) (map[zbstore.Path]*zbstorerpc.ObjectInfo, error) {
+	var resp zbstorerpc.FetchResponse
+	err := jsonrpc.Do(ctx, store.Handler, zbstorerpc.FetchMethod, &resp, &zbstorerpc.FetchRequest{
+		Paths: paths,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Found, nil
+}
+
 func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
 	var realizeResponse zbstorerpc.RealizeResponse
 	err := jsonrpc.Do(ctx, store.Handler, zbstorerpc.RealizeMethod, &realizeResponse, &zbstorerpc.RealizeRequest{
