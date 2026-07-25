@@ -360,8 +360,11 @@ func (s *Server) info(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Respo
 
 	log.Debugf(ctx, "Looking up path info for %s...", args.Path)
 	info, err := pathInfo(conn, args.Path)
-	if errors.Is(err, zbstore.ErrNotFound) {
-		return marshalResponse(&zbstorerpc.InfoResponse{})
+	if err != nil {
+		if errors.Is(err, zbstore.ErrNotFound) {
+			return marshalResponse(&zbstorerpc.InfoResponse{})
+		}
+		return nil, err
 	}
 	return marshalResponse(&zbstorerpc.InfoResponse{
 		Info: info.ToRPC(),
