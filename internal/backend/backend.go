@@ -287,19 +287,18 @@ func (s *Server) detach(parent context.Context, f func(context.Context)) {
 	s.activeWork++
 	s.activeBuildsMu.Unlock()
 
-	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
-	stopAfterFunc := context.AfterFunc(s.backgroundContext, cancel)
 	s.background.Go(func() {
 		defer func() {
 			s.activeBuildsMu.Lock()
 			s.activeWork--
 			s.lockedUpdateDrained()
 			s.activeBuildsMu.Unlock()
-			stopAfterFunc()
-			cancel()
 		}()
 
-		f(ctx)
+		f(splitContext{
+			cancel: s.backgroundContext,
+			values: parent,
+		})
 	})
 }
 
@@ -337,17 +336,14 @@ func (s *Server) Drain(ctx context.Context) error {
 // and releases any resources associated with the server.
 // The [*Server] cannot be used after calling Close.
 func (s *Server) Close() error {
-	s.cancelBackground()
 	s.activeBuildsMu.Lock()
 	if s.drained == nil {
 		s.drained = make(chan struct{})
 		s.lockedUpdateDrained()
 	}
-	for _, cancel := range s.activeBuilds {
-		cancel()
-	}
 	s.activeBuildsMu.Unlock()
 
+	s.cancelBackground()
 	s.background.Wait()
 
 	return s.db.Close()

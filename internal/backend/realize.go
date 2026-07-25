@@ -248,7 +248,10 @@ func (s *Server) expand(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.R
 // or the build could not be recorded in the database.
 func (s *Server) startBuild(parent context.Context, conn *sqlite.Conn, buildID uuid.UUID, f func(ctx context.Context)) error {
 	ctx := s.buildContext(context.WithoutCancel(parent), buildID.String())
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(splitContext{
+		cancel: s.backgroundContext,
+		values: ctx,
+	})
 
 	s.activeBuildsMu.Lock()
 	draining := s.drained != nil
