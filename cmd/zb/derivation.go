@@ -35,7 +35,8 @@ func (c *derivationCommand) Signature() string {
 
 type derivationShowCommand struct {
 	evalOptions `kong:"embed"`
-	JSONFormat  bool `kong:"name=json,help=Print derivation as JSON."`
+	JSONFormat  bool `kong:"name=json,xor=derivation_show_format,help=Print derivation as JSON."`
+	DOTFormat   bool `kong:"name=dot,xor=derivation_show_format,help=Print the recursive derivation dependency graph as GraphViz DOT."`
 }
 
 func (c *derivationShowCommand) Signature() string {
@@ -65,6 +66,24 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 		}
 		if !slices.Contains(drvPaths, "") {
 			// Fast path: don't connect to the store. All arguments are local paths to .drv files.
+			if c.DOTFormat {
+				roots := make(map[string]*zbstore.Derivation, len(drvPaths))
+				for _, drvPath := range drvPaths {
+					absolutePath, drv, err := parseDerivationFile(drvPath)
+					if err != nil {
+						return err
+					}
+					roots[absolutePath] = drv
+				}
+				closure, err := collectDerivationClosure(ctx, roots, loadLocalDerivations)
+				if err != nil {
+					return err
+				}
+				if _, err := os.Stdout.Write(marshalDerivationDOT(closure)); err != nil {
+					return err
+				}
+				return nil
+			}
 			for _, drvPath := range drvPaths {
 				drvBytes, err := showDerivationFile(drvPath, c.JSONFormat)
 				if err != nil {
@@ -100,9 +119,12 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 	if err != nil {
 		return err
 	}
+	evalClosed := false
 	defer func() {
-		if err := eval.Close(); err != nil {
-			log.Errorf(ctx, "%v", err)
+		if !evalClosed {
+			if err := eval.Close(); err != nil {
+				log.Errorf(ctx, "%v", err)
+			}
 		}
 	}()
 
@@ -125,6 +147,45 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 	}
 	if len(results) == 0 {
 		return fmt.Errorf("no evaluation results")
+	}
+
+	if c.DOTFormat {
+		roots := make(map[string]*zbstore.Derivation, len(c.Args))
+		resultIndex := 0
+		for i := range c.Args {
+			if i < len(drvPaths) && drvPaths[i] != "" {
+				absolutePath, drv, err := parseDerivationFile(drvPaths[i])
+				if err != nil {
+					return err
+				}
+				roots[absolutePath] = drv
+				continue
+			}
+
+			result := results[resultIndex]
+			resultIndex++
+			drv, _ := result.(*frontend.Derivation)
+			if drv == nil {
+				return fmt.Errorf("%v is not a derivation", result)
+			}
+			roots[string(drv.Path)] = drv.Derivation
+		}
+
+		closeError := eval.Close()
+		evalClosed = true
+		if closeError != nil {
+			return closeError
+		}
+		closure, err := collectDerivationClosure(ctx, roots, func(ctx context.Context, paths []zbstore.Path) (map[zbstore.Path]*zbstore.Derivation, error) {
+			return loadLocalOrStoreDerivations(ctx, storeClient, di, paths)
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stdout.Write(marshalDerivationDOT(closure)); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	resultIndex := 0
@@ -156,29 +217,41 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 	return nil
 }
 
-func showDerivationFile(drvPath string, jsonFormat bool) ([]byte, error) {
+func parseDerivationFile(drvPath string) (string, *zbstore.Derivation, error) {
 	drvPath, err := filepath.Abs(drvPath)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	dir, err := zbstore.CleanDirectory(filepath.Dir(drvPath))
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	drvBytes, err := os.ReadFile(drvPath)
 	if err != nil {
-		return nil, err
-	}
-	if !jsonFormat {
-		// If we're not outputting JSON, no need to parse. Pass through, even if it's invalid.
-		return drvBytes, nil
+		return "", nil, err
 	}
 	drv, err := zbstore.ParseDerivation(dir, inferDerivationName(drvPath), drvBytes)
 	if err != nil {
-		return nil, fmt.Errorf("parse %s: %v", drvPath, err)
+		return "", nil, fmt.Errorf("parse %s: %v", drvPath, err)
+	}
+	return drvPath, drv, nil
+}
+
+func showDerivationFile(drvPath string, jsonFormat bool) ([]byte, error) {
+	if !jsonFormat {
+		// If we're not outputting JSON, no need to parse. Pass through, even if it's invalid.
+		absolutePath, err := filepath.Abs(drvPath)
+		if err != nil {
+			return nil, err
+		}
+		return os.ReadFile(absolutePath)
+	}
+	absolutePath, drv, err := parseDerivationFile(drvPath)
+	if err != nil {
+		return nil, err
 	}
 
-	jsonData, err := marshalDerivationJSON(drvPath, drv)
+	jsonData, err := marshalDerivationJSON(absolutePath, drv)
 	if err != nil {
 		return nil, err
 	}
