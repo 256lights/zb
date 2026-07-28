@@ -264,11 +264,11 @@ func TestNewDependencyOrderIterator(t *testing.T) {
 		derivations    []*zbstore.Derivation
 		desiredOutputs map[string]sets.Set[string]
 		roots          []string
-		orderings      [][]string
+		want           []string
 	}{
 		{
-			name:      "Empty",
-			orderings: [][]string{{}},
+			name: "Empty",
+			want: []string{},
 		},
 		{
 			name: "TwoNodes",
@@ -295,10 +295,7 @@ func TestNewDependencyOrderIterator(t *testing.T) {
 				"bar.txt": sets.New("out"),
 			},
 			roots: []string{"foo.txt", "bar.txt"},
-			orderings: [][]string{
-				{"foo.txt", "bar.txt"},
-				{"bar.txt", "foo.txt"},
-			},
+			want:  []string{"foo.txt", "bar.txt"},
 		},
 		{
 			name: "Chain",
@@ -328,9 +325,7 @@ func TestNewDependencyOrderIterator(t *testing.T) {
 				"bar.txt": sets.New("out"),
 			},
 			roots: []string{"foo.txt", "bar.txt"},
-			orderings: [][]string{
-				{"foo.txt", "bar.txt"},
-			},
+			want:  []string{"foo.txt", "bar.txt"},
 		},
 		{
 			name: "Issue224",
@@ -380,9 +375,7 @@ func TestNewDependencyOrderIterator(t *testing.T) {
 				"d.txt": sets.New("out"),
 			},
 			roots: []string{"a.txt", "c.txt"},
-			orderings: [][]string{
-				{"a.txt", "c.txt", "d.txt"},
-			},
+			want:  []string{"a.txt", "c.txt", "d.txt"},
 		},
 	}
 
@@ -408,17 +401,13 @@ func TestNewDependencyOrderIterator(t *testing.T) {
 				}
 				roots.Add(p)
 			}
-			orderings := make([][]zbstore.Path, 0, len(test.orderings))
-			for _, want := range test.orderings {
-				wantPaths := make([]zbstore.Path, 0, len(want))
-				for _, name := range want {
-					p, err := pathForDrvName(maps.Keys(derivations), name)
-					if err != nil {
-						t.Fatal(err)
-					}
-					wantPaths = append(wantPaths, p)
+			want := make([]zbstore.Path, 0, len(test.want))
+			for _, name := range test.want {
+				p, err := pathForDrvName(maps.Keys(derivations), name)
+				if err != nil {
+					t.Fatal(err)
 				}
-				orderings = append(orderings, wantPaths)
+				want = append(want, p)
 			}
 
 			ctx := t.Context()
@@ -436,15 +425,24 @@ func TestNewDependencyOrderIterator(t *testing.T) {
 				it.finish(p, true)
 			}
 
-			isValid := false
-			for _, want := range orderings {
-				if slices.Equal(want, got) {
-					isValid = true
-					break
+			for i, p := range got {
+				if !slices.Contains(want, p) {
+					t.Errorf("unexpected path %s", p)
+					continue
+				}
+				for dep := range derivations[p].InputDerivations {
+					if j := slices.Index(got, dep); i < j {
+						t.Errorf("path %s comes before %s", p, dep)
+					}
 				}
 			}
-			if !isValid {
-				t.Errorf("paths (-want +got):\n%s", cmp.Diff(orderings[0], got, cmpopts.EquateEmpty()))
+			for _, p := range want {
+				if !slices.Contains(got, p) {
+					t.Errorf("missing path %s", p)
+				}
+			}
+			if t.Failed() {
+				t.Log("paths =", got)
 			}
 		})
 	}
