@@ -32,6 +32,9 @@ func TestScanner(t *testing.T) {
 		want  []Token
 		err   bool
 		tail  string
+
+		wantStrict []Token
+		tailStrict string
 	}
 
 	tests := []scannerTest{
@@ -41,6 +44,35 @@ func TestScanner(t *testing.T) {
 				{Kind: LParen},
 				{Kind: RParen},
 			},
+		},
+		{
+			aterm: "() \t\r\n",
+			want: []Token{
+				{Kind: LParen},
+				{Kind: RParen},
+			},
+			tail:       " \t\r\n",
+			tailStrict: " \t\r\n",
+		},
+		{
+			aterm: `  ()`,
+			want: []Token{
+				{Kind: LParen},
+				{Kind: RParen},
+			},
+			wantStrict: []Token{},
+			tailStrict: ` ()`,
+		},
+		{
+			aterm: "( \r\n\t )",
+			want: []Token{
+				{Kind: LParen},
+				{Kind: RParen},
+			},
+			wantStrict: []Token{
+				{Kind: LParen},
+			},
+			tailStrict: "\r\n\t )",
 		},
 		{
 			aterm: `[]`,
@@ -68,6 +100,30 @@ func TestScanner(t *testing.T) {
 			},
 		},
 		{
+			aterm: "" +
+				"(\n" +
+				"\t\"x\",\n" +
+				"\t\"y\",\n" +
+				"\t\"z\"\n" +
+				")\n",
+			want: []Token{
+				{Kind: LParen},
+				{Kind: String, Value: "x"},
+				{Kind: String, Value: "y"},
+				{Kind: String, Value: "z"},
+				{Kind: RParen},
+			},
+			tail: "\n",
+			wantStrict: []Token{
+				{Kind: LParen},
+			},
+			tailStrict: "" +
+				"\t\"x\",\n" +
+				"\t\"y\",\n" +
+				"\t\"z\"\n" +
+				")\n",
+		},
+		{
 			aterm: `("x",)`,
 			want: []Token{
 				{Kind: LParen},
@@ -81,8 +137,9 @@ func TestScanner(t *testing.T) {
 				{Kind: LParen},
 				{Kind: String, Value: "x"},
 			},
-			err:  true,
-			tail: `"y")`,
+			err:        true,
+			tail:       `"y")`,
+			tailStrict: `"y")`,
 		},
 		{
 			aterm: `("x"]`,
@@ -111,6 +168,14 @@ func TestScanner(t *testing.T) {
 			},
 			err: true,
 		},
+		{
+			aterm: "[ \t",
+			want: []Token{
+				{Kind: LBracket},
+			},
+			err:        true,
+			tailStrict: "\t",
+		},
 	}
 	for _, test := range stringTests {
 		tests = append(tests, scannerTest{
@@ -121,30 +186,68 @@ func TestScanner(t *testing.T) {
 		})
 	}
 
-	for _, test := range tests {
-		r := strings.NewReader(test.aterm)
-		s := NewScanner(r)
-		var got []Token
-		for {
-			tok, err := s.ReadToken()
-			if err != nil {
-				if !test.err && err != io.EOF {
-					t.Errorf("While scanning %s: %v", test.aterm, err)
+	t.Run("Default", func(t *testing.T) {
+		for _, test := range tests {
+			r := strings.NewReader(test.aterm)
+			s := NewScanner(r)
+			var got []Token
+			for {
+				tok, err := s.ReadToken()
+				if err != nil {
+					if !test.err && err != io.EOF {
+						if test.wantStrict == nil {
+							t.Errorf("While scanning %s: %v", test.aterm, err)
+						} else {
+							t.Logf("Received error as expected scanning %q: %v", test.aterm, err)
+						}
+					}
+					if test.err && err == io.EOF {
+						t.Errorf("Scanning %s did not result in an error", test.aterm)
+					}
+					break
 				}
-				if test.err && err == io.EOF {
-					t.Errorf("Scanning %s did not result in an error", test.aterm)
-				}
-				break
+				got = append(got, tok)
 			}
-			got = append(got, tok)
+			want := test.wantStrict
+			if want == nil {
+				want = test.want
+			}
+			if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("tokens for %s (-want +got):\n%s", test.aterm, diff)
+			}
+			if got := test.aterm[len(test.aterm)-r.Len():]; got != test.tailStrict {
+				t.Errorf("after scanning %s, remaining data = %q; want %q", test.aterm, got, test.tailStrict)
+			}
 		}
-		if diff := cmp.Diff(test.want, got, cmpopts.EquateEmpty()); diff != "" {
-			t.Errorf("tokens for %s (-want +got):\n%s", test.aterm, diff)
+	})
+
+	t.Run("AllowWhitespace", func(t *testing.T) {
+		for _, test := range tests {
+			r := strings.NewReader(test.aterm)
+			s := NewScanner(r)
+			s.AllowWhitespace()
+			var got []Token
+			for {
+				tok, err := s.ReadToken()
+				if err != nil {
+					if !test.err && err != io.EOF {
+						t.Errorf("While scanning %s: %v", test.aterm, err)
+					}
+					if test.err && err == io.EOF {
+						t.Errorf("Scanning %s did not result in an error", test.aterm)
+					}
+					break
+				}
+				got = append(got, tok)
+			}
+			if diff := cmp.Diff(test.want, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("tokens for %s (-want +got):\n%s", test.aterm, diff)
+			}
+			if got := test.aterm[len(test.aterm)-r.Len():]; got != test.tail {
+				t.Errorf("after scanning %s, remaining data = %q; want %q", test.aterm, got, test.tail)
+			}
 		}
-		if got := test.aterm[len(test.aterm)-r.Len():]; got != test.tail {
-			t.Errorf("after scanning %s, remaining data = %q; want %q", test.aterm, got, test.tail)
-		}
-	}
+	})
 }
 
 func TestAppendString(t *testing.T) {
