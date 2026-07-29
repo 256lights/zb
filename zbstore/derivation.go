@@ -414,6 +414,9 @@ func (drv *Derivation) parseTuple(s *aterm.Scanner) error {
 		if err != nil {
 			return err
 		}
+		if p.Dir() != drv.Dir {
+			return fmt.Errorf("parse %s derivation: input source %s not in directory %s", drv.Name, p, drv.Dir)
+		}
 		drv.InputSources.Add(p)
 		return nil
 	})
