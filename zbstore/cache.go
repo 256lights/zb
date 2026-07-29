@@ -78,11 +78,7 @@ func (c *Cache) makeLocal(ctx context.Context, path Path) error {
 		go func() {
 			defer close(done)
 			w := NewExportWriter(pw)
-			if err := obj.WriteNAR(ctx, w); err != nil {
-				pw.CloseWithError(err)
-				return
-			}
-			if err := w.Trailer(t); err != nil {
+			if err := w.WriteObject(ctx, obj); err != nil {
 				pw.CloseWithError(err)
 				return
 			}
