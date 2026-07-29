@@ -80,10 +80,7 @@ func Export(ctx context.Context, store Store, dst io.Writer, paths sets.Set[Path
 
 	w := NewExportWriter(dst)
 	for _, obj := range objects {
-		if err := obj.WriteNAR(ctx, w); err != nil {
-			return newExportError(slices.Sorted(paths.All()), err)
-		}
-		if err := w.Trailer(obj.Trailer()); err != nil {
+		if err := w.WriteObject(ctx, obj); err != nil {
 			return newExportError(slices.Sorted(paths.All()), err)
 		}
 	}
@@ -196,18 +193,49 @@ func NewExportWriter(w io.Writer) *ExportWriter {
 	return &ExportWriter{w: w}
 }
 
+// WriteObject copies obj to the export.
+func (ew *ExportWriter) WriteObject(ctx context.Context, obj Object) error {
+	if err := ew.writeHeader(); err != nil {
+		return err
+	}
+	if err := obj.WriteNAR(ctx, ew.w); err != nil {
+		return err
+	}
+	if err := ew.Trailer(obj.Trailer()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (ew *ExportWriter) writeHeader() error {
+	if ew.closed {
+		return fmt.Errorf("write to closed exporter")
+	}
+	if ew.header {
+		return nil
+	}
+	if _, err := io.WriteString(ew.w, exportObjectMarker); err != nil {
+		return err
+	}
+	ew.header = true
+	return nil
+}
+
 // Write writes bytes of a store object to the exporter's underlying writer.
 func (ew *ExportWriter) Write(p []byte) (int, error) {
-	if ew.closed {
-		return 0, fmt.Errorf("write to closed exporter")
-	}
-	if !ew.header {
-		if _, err := io.WriteString(ew.w, exportObjectMarker); err != nil {
-			return 0, err
-		}
-		ew.header = true
+	if err := ew.writeHeader(); err != nil {
+		return 0, err
 	}
 	return ew.w.Write(p)
+}
+
+// ReadFrom implements [io.ReaderFrom]
+// by copying store object data from r to the exporter's underlying writer.
+func (ew *ExportWriter) ReadFrom(r io.Reader) (int64, error) {
+	if err := ew.writeHeader(); err != nil {
+		return 0, err
+	}
+	return io.Copy(ew.w, r)
 }
 
 // Trailer marks the end of a store object in the stream.
