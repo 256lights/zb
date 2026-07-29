@@ -619,11 +619,11 @@ func (t *DerivationOutputType) HashType() (_ nix.HashType, ok bool) {
 
 // FixedCA returns a fixed hash output's content address.
 // ok is true only if the output was created by [FixedCAOutput].
-func (out *DerivationOutputType) FixedCA() (_ ContentAddress, ok bool) {
-	if !out.IsFixed() {
+func (t *DerivationOutputType) FixedCA() (_ ContentAddress, ok bool) {
+	if !t.IsFixed() {
 		return ContentAddress{}, false
 	}
-	return out.ca, true
+	return t.ca, true
 }
 
 // IsRecursiveFile reports whether the derivation output
