@@ -15,48 +15,39 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"golang.org/x/tools/txtar"
 	. "zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/storetest"
-	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log/testlog"
 	"zombiezen.com/go/nix"
+	"zombiezen.com/go/nix/nar"
 )
 
 func TestImport(t *testing.T) {
 	runTest := func(t *testing.T, dir zbstore.Directory, realStoreDir string) {
 		ctx := testcontext.New(t)
 
-		const fileContent = "Hello, World!\n"
+		ar, err := txtar.ParseFile(filepath.Join("testdata", "TestImport.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		objects, err := storetest.TxtarObjects(dir, ar.Files)
+		if err != nil {
+			t.Fatal(err)
+		}
+
 		exportBuffer := new(bytes.Buffer)
 		exporter := zbstore.NewExportWriter(exportBuffer)
-		storePath1, ca1, err := storetest.ExportFlatFile(exporter, dir, "hello.txt", []byte(fileContent), nix.SHA256)
-		if err != nil {
-			t.Fatal(err)
-		}
-		drv := &zbstore.Derivation{
-			Dir:          dir,
-			Name:         "a",
-			System:       system.Current().String(),
-			Builder:      "true",
-			InputSources: *sets.NewSorted(storePath1),
-			Outputs: map[string]*zbstore.DerivationOutputType{
-				zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-			},
-		}
-		drvName := drv.Name + zbstore.DerivationExt
-		drvData, err := drv.MarshalText()
-		if err != nil {
-			t.Fatal(err)
-		}
-		storePath2, ca2, err := storetest.ExportText(exporter, dir, drvName, drvData, drv.References().ToSet(""))
-		if err != nil {
-			t.Fatal(err)
+		for _, obj := range objects {
+			if err := exporter.WriteObject(ctx, obj); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if err := exporter.Close(); err != nil {
 			t.Fatal(err)
@@ -82,75 +73,42 @@ func TestImport(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Call exists method.
-		// Exports don't send a response, so this introduces a sync point.
-		var exists bool
-		err = jsonrpc.Do(ctx, client, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
-			Path: string(storePath1),
-		})
-		if err != nil {
-			t.Error(err)
-		}
-		if !exists {
-			t.Errorf("store reports exists=false for %s", storePath1)
-		}
-		err = jsonrpc.Do(ctx, client, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
-			Path: string(storePath2),
-		})
-		if err != nil {
-			t.Error(err)
-		}
-		if !exists {
-			t.Errorf("store reports exists=false for %s", storePath2)
-		}
-
-		// Call info method.
-		var info zbstorerpc.InfoResponse
-		err = jsonrpc.Do(ctx, client, zbstorerpc.InfoMethod, &info, &zbstorerpc.InfoRequest{
-			Path: storePath1,
-		})
-		if err != nil {
-			t.Error(err)
-		} else {
-			want := wantFileObjectInfo(info.Info, []byte(fileContent), ca1, nil)
-			if diff := cmp.Diff(want, info.Info); diff != "" {
-				t.Errorf("%s info (-want +got):\n%s", storePath1, diff)
+		for _, obj := range objects {
+			// Call exists method.
+			// Exports don't send a response, so this introduces a sync point.
+			var exists bool
+			err = jsonrpc.Do(ctx, client, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
+				Path: string(obj.StorePath),
+			})
+			if err != nil {
+				t.Error(err)
 			}
-		}
-		err = jsonrpc.Do(ctx, client, zbstorerpc.InfoMethod, &info, &zbstorerpc.InfoRequest{
-			Path: storePath2,
-		})
-		if err != nil {
-			t.Error(err)
-		} else {
-			want := wantFileObjectInfo(info.Info, []byte(drvData), ca2, drv.References().ToSet(storePath2))
-			if diff := cmp.Diff(want, info.Info); diff != "" {
-				t.Errorf("%s info (-want +got):\n%s", storePath2, diff)
+			if !exists {
+				t.Errorf("store reports exists=false for %s", obj.StorePath)
 			}
-		}
 
-		// Verify that store objects exist on disk.
-		realFilePath := filepath.Join(realStoreDir, storePath1.Base())
-		if got, err := os.ReadFile(realFilePath); err != nil {
-			t.Error(err)
-		} else if string(got) != fileContent {
-			t.Errorf("%s content = %q; want %q", storePath1, got, fileContent)
-		}
-		if info, err := os.Lstat(realFilePath); err != nil {
-			t.Error(err)
-		} else if got := info.Mode(); got&0o111 != 0 {
-			t.Errorf("mode = %v; want non-executable", got)
-		}
-		realFilePath = filepath.Join(realStoreDir, storePath2.Base())
-		if got, err := os.ReadFile(realFilePath); err != nil {
-			t.Error(err)
-		} else if !bytes.Equal(got, drvData) {
-			t.Errorf("%s content = %q; want %q", storePath2, got, fileContent)
-		}
-		if info, err := os.Lstat(realFilePath); err != nil {
-			t.Error(err)
-		} else if got := info.Mode(); got&0o111 != 0 {
-			t.Errorf("mode = %v; want non-executable", got)
+			// Call info method.
+			var info zbstorerpc.InfoResponse
+			err = jsonrpc.Do(ctx, client, zbstorerpc.InfoMethod, &info, &zbstorerpc.InfoRequest{
+				Path: obj.StorePath,
+			})
+			if err != nil {
+				t.Error(err)
+			} else {
+				want := wantObjectInfo(info.Info, obj.NAR, obj.ContentAddress, &obj.References)
+				if diff := cmp.Diff(want, info.Info); diff != "" {
+					t.Errorf("%s info (-want +got):\n%s", obj.StorePath, diff)
+				}
+			}
+
+			// Verify that store object exists on disk.
+			realFilePath := filepath.Join(realStoreDir, obj.StorePath.Base())
+			got := new(bytes.Buffer)
+			if err := nar.DumpPath(got, realFilePath); err != nil {
+				t.Error(err)
+			} else if diff := cmp.Diff(obj.NAR, got.Bytes()); diff != "" {
+				t.Errorf("%s NAR content (-want +got):\n%s", obj.StorePath, diff)
+			}
 		}
 	}
 
