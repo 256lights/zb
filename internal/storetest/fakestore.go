@@ -29,13 +29,13 @@ var _ interface {
 // Realizations can be added with [*Store.AddRealization].
 type Store struct {
 	mu           sync.RWMutex
-	objects      map[zbstore.Path]*storeObject
+	objects      map[zbstore.Path]*Object
 	realizations map[string]map[string][]*zbstore.Realization
 }
 
 // Object implements [zbstore.Store].
 func (store *Store) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, error) {
-	var obj *storeObject
+	var obj *Object
 	if store != nil {
 		store.mu.RLock()
 		obj = store.objects[path]
@@ -116,18 +116,21 @@ func (store *Store) AddRealization(ref zbstore.RealizationOutputReference, r *zb
 	m[ref.OutputName] = append(m[ref.OutputName], cloneRealization(r))
 }
 
-type storeObject struct {
-	nar     []byte
-	trailer zbstore.ExportTrailer
+// Object is an in-memory implementation of the [zbstore.Object] interface.
+type Object struct {
+	NAR []byte
+	zbstore.ExportTrailer
 }
 
-func (obj *storeObject) WriteNAR(ctx context.Context, dst io.Writer) error {
-	_, err := dst.Write(obj.nar)
+// WriteNAR writes obj.NAR to w.
+func (obj *Object) WriteNAR(ctx context.Context, dst io.Writer) error {
+	_, err := dst.Write(obj.NAR)
 	return err
 }
 
-func (obj *storeObject) Trailer() *zbstore.ExportTrailer {
-	return &obj.trailer
+// Trailer returns &obj.ExportTrailer.
+func (obj *Object) Trailer() *zbstore.ExportTrailer {
+	return &obj.ExportTrailer
 }
 
 type storeReceiver struct {
@@ -141,9 +144,9 @@ func (s *storeReceiver) Write(p []byte) (n int, err error) {
 }
 
 func (s *storeReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
-	obj := &storeObject{
-		nar:     s.buf.Bytes(),
-		trailer: *trailer,
+	obj := &Object{
+		NAR:           s.buf.Bytes(),
+		ExportTrailer: *trailer,
 	}
 	if err := zbstore.VerifyObject(context.Background(), obj, nil); err != nil {
 		s.errors.Add(err)
@@ -151,13 +154,13 @@ func (s *storeReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	}
 
 	s.store.mu.Lock()
-	if s.store.objects[obj.trailer.StorePath] == nil {
+	if s.store.objects[obj.StorePath] == nil {
 		if s.store.objects == nil {
-			s.store.objects = make(map[zbstore.Path]*storeObject)
+			s.store.objects = make(map[zbstore.Path]*Object)
 		}
-		obj.nar = bytes.Clone(obj.nar)
-		obj.trailer = *cloneExportTrailer(&obj.trailer)
-		s.store.objects[obj.trailer.StorePath] = obj
+		obj.NAR = bytes.Clone(obj.NAR)
+		obj.ExportTrailer = *cloneExportTrailer(&obj.ExportTrailer)
+		s.store.objects[obj.StorePath] = obj
 	}
 	s.store.mu.Unlock()
 
