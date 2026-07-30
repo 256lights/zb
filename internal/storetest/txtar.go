@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"iter"
-	"slices"
 	"strings"
 
 	"golang.org/x/tools/txtar"
@@ -136,44 +135,50 @@ func copyTxtarToNAR(nw *nar.Writer, file txtar.File) error {
 }
 
 func rewriteTxtarDerivation(dir zbstore.Directory, file txtar.File, rewrites iter.Seq2[string, zbstore.Path]) ([]byte, *sets.Sorted[zbstore.Path], error) {
-	data, err := minimizeDerivation(file.Data)
+	drvName, isDrv := strings.CutSuffix(file.Name, zbstore.DerivationExt)
+	if !isDrv {
+		return file.Data, nil, fmt.Errorf("%s: not a %s file", file.Name, zbstore.DerivationExt)
+	}
+	data, err := MinimizeDerivation(file.Data)
 	if err != nil {
 		return file.Data, nil, fmt.Errorf("%s: %v", file.Name, err)
 	}
-	drv, err := parseTemplateDerivation(file.Name, data)
-	if err != nil {
+	drv := &zbstore.Derivation{Name: drvName}
+	if err := drv.UnmarshalText(data); err != nil {
 		return file.Data, nil, fmt.Errorf("%s: %v", file.Name, err)
 	}
 	oldRefs := drv.References().ToSet("")
 
-	var replacements []string
-	for oldBase, newPath := range rewrites {
-		oldPath, err := drv.Dir.Object(oldBase)
-		if err != nil {
-			return file.Data, oldRefs, fmt.Errorf("%s: cannot replace %q: %v", file.Name, oldBase, err)
+	if drv.Dir != "" {
+		var replacements []string
+		for oldBase, newPath := range rewrites {
+			oldPath, err := drv.Dir.Object(oldBase)
+			if err != nil {
+				return file.Data, oldRefs, fmt.Errorf("%s: cannot replace %q: %v", file.Name, oldBase, err)
+			}
+			replacements = append(replacements, string(oldPath), string(newPath))
+			if drv.InputSources.Has(oldPath) {
+				drv.InputSources.Delete(oldPath)
+				drv.InputSources.Add(newPath)
+			}
+			for outputName := range drv.InputDerivations[oldPath].Values() {
+				oldPlaceholder := zbstore.UnknownCAOutputPlaceholder(zbstore.OutputReference{
+					DrvPath:    oldPath,
+					OutputName: outputName,
+				})
+				newPlaceholder := zbstore.UnknownCAOutputPlaceholder(zbstore.OutputReference{
+					DrvPath:    newPath,
+					OutputName: outputName,
+				})
+				replacements = append(replacements, oldPlaceholder, newPlaceholder)
+			}
+			if outputNames, ok := drv.InputDerivations[oldPath]; ok {
+				drv.InputDerivations[newPath] = outputNames
+				delete(drv.InputDerivations, oldPath)
+			}
 		}
-		replacements = append(replacements, string(oldPath), string(newPath))
-		if drv.InputSources.Has(oldPath) {
-			drv.InputSources.Delete(oldPath)
-			drv.InputSources.Add(newPath)
-		}
-		for outputName := range drv.InputDerivations[oldPath].Values() {
-			oldPlaceholder := zbstore.UnknownCAOutputPlaceholder(zbstore.OutputReference{
-				DrvPath:    oldPath,
-				OutputName: outputName,
-			})
-			newPlaceholder := zbstore.UnknownCAOutputPlaceholder(zbstore.OutputReference{
-				DrvPath:    newPath,
-				OutputName: outputName,
-			})
-			replacements = append(replacements, oldPlaceholder, newPlaceholder)
-		}
-		if outputNames, ok := drv.InputDerivations[oldPath]; ok {
-			drv.InputDerivations[newPath] = outputNames
-			delete(drv.InputDerivations, oldPath)
-		}
+		drv = drv.ReplaceStrings(strings.NewReplacer(replacements...))
 	}
-	drv = drv.ReplaceStrings(strings.NewReplacer(replacements...))
 	drv.Dir = dir
 
 	rewritten, err := drv.MarshalText()
@@ -183,9 +188,9 @@ func rewriteTxtarDerivation(dir zbstore.Directory, file txtar.File, rewrites ite
 	return rewritten, drv.References().ToSet(""), nil
 }
 
-// minimizeDerivation removes all whitespace between tokens in the derivation data.
+// MinimizeDerivation removes all whitespace between tokens in the derivation data.
 // If an error is encountered, then data is returned as-is along with the error.
-func minimizeDerivation(data []byte) ([]byte, error) {
+func MinimizeDerivation(data []byte) ([]byte, error) {
 	const prefix = "Derive"
 	atermData, ok := bytes.CutPrefix(data, []byte(prefix))
 	if !ok {
@@ -239,30 +244,6 @@ func readerLineNumber(r *bytes.Reader) int {
 		}
 	}
 	return lineno
-}
-
-func parseTemplateDerivation(name string, data []byte) (*zbstore.Derivation, error) {
-	// Parse the directory using the current system first.
-	dirs := []zbstore.Directory{
-		zbstore.DefaultDirectory(),
-		zbstore.DefaultUnixDirectory,
-		zbstore.DefaultWindowsDirectory,
-	}
-	dirs = append(dirs[:1], slices.DeleteFunc(dirs[1:], func(dir zbstore.Directory) bool {
-		return dir == dirs[0]
-	})...)
-
-	var firstError error
-	for _, dir := range dirs {
-		drv, err := zbstore.ParseDerivation(dir, name, data)
-		if err == nil {
-			return drv, nil
-		}
-		if firstError == nil {
-			firstError = err
-		}
-	}
-	return nil, firstError
 }
 
 func isBlank(s []byte) bool {
