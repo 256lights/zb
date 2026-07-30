@@ -321,7 +321,7 @@ func rewriteDerivationForSystem(drv *zbstore.Derivation, wantSystem system.Syste
 		if err != nil {
 			panic(err)
 		}
-		newInputSources.Add()
+		newInputSources.Add(newSrc)
 		replacements = append(replacements, string(oldSrc), string(newSrc))
 	}
 
