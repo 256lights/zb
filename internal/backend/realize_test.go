@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"fmt"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"golang.org/x/tools/txtar"
 	. "zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/fileurl"
@@ -45,36 +47,25 @@ func TestRealizeSingleDerivation(t *testing.T) {
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
-	const inputContent = "Hello, World!\n"
+	exportArchive, err := txtar.ParseFile(filepath.Join("testdata", "TestRealizeSingleDerivation.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := storetest.TxtarObjects(dir, exportArchive.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drvObject, err := findObjectWithName(derivationNameForCurrentSystem("hello2.txt"), slices.Values(objects))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExportWriter(exportBuffer)
-	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
-		Name:      "hello.txt",
-		Directory: dir,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	const wantOutputName = "hello2.txt"
-	drvContent := &zbstore.Derivation{
-		Name:   wantOutputName,
-		Dir:    dir,
-		System: system.Current().String(),
-		Env: map[string]string{
-			"in":  string(inputFilePath),
-			"out": zbstore.HashPlaceholder("out"),
-		},
-		InputSources: *sets.NewSorted(
-			inputFilePath,
-		),
-		Outputs: map[string]*zbstore.DerivationOutputType{
-			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-		},
-	}
-	drvContent.Builder, drvContent.Args = catcatBuilder()
-	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
-	if err != nil {
-		t.Fatal(err)
+	for _, obj := range objects {
+		if err := exporter.WriteObject(ctx, obj); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := exporter.Close(); err != nil {
 		t.Fatal(err)
@@ -98,7 +89,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 
 	realizeResponse := new(zbstorerpc.RealizeResponse)
 	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
-		DrvPaths: []zbstore.Path{drvPath},
+		DrvPaths: []zbstore.Path{drvObject.StorePath},
 	})
 	if err != nil {
 		t.Fatal("RPC error:", err)
@@ -111,7 +102,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotLog, err := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvPath); err != nil {
+	if gotLog, err := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, drvObject.StorePath); err != nil {
 		t.Error(err)
 	} else {
 		if want := "catcat\n"; string(gotLog) != want {
@@ -120,11 +111,12 @@ func TestRealizeSingleDerivation(t *testing.T) {
 	}
 
 	const wantOutputContent = "Hello, World!\nHello, World!\n"
-	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, []byte(wantOutputContent), zbstore.References{})
+	outputName, _ := drvObject.StorePath.DerivationName()
+	wantOutputPath, err := singleFileOutputPath(dir, outputName, []byte(wantOutputContent), zbstore.References{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(wantOutputContent), got)
+	checkSingleFileOutput(t, drvObject.StorePath, wantOutputPath, []byte(wantOutputContent), got)
 }
 
 func TestRealizeReuse(t *testing.T) {
@@ -2307,6 +2299,24 @@ func singleFileOutputPath(dir zbstore.Directory, name string, data []byte, refs 
 		return "", err
 	}
 	return p, nil
+}
+
+func derivationNameForCurrentSystem(name string) string {
+	suffixStart := strings.LastIndexByte(name, '.')
+	if suffixStart == -1 {
+		suffixStart = len(name)
+	}
+	return name[:suffixStart] + "-" + system.Current().String() + name[suffixStart:] + zbstore.DerivationExt
+}
+
+func findObjectWithName[O zbstore.Object](name string, objects iter.Seq[O]) (O, error) {
+	for obj := range objects {
+		if obj.Trailer().StorePath.Name() == name {
+			return obj, nil
+		}
+	}
+	var zero O
+	return zero, fmt.Errorf("%s not found", name)
 }
 
 func mustParseHash(tb testing.TB, s string) nix.Hash {

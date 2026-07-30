@@ -1,0 +1,14 @@
+-- 00000000000000000000000000000000-hello.txt --
+Hello, World!
+-- 00000000000000000000000000000000-a.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  ["/opt/zb/store/00000000000000000000000000000000-hello.txt"],
+  "x86_64-unknown-linux",
+  "true",
+  [],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)

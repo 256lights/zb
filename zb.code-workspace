@@ -16,6 +16,10 @@
 		"files.associations": {
 			"*.css": "tailwindcss"
 		},
+		"harper.excludePatterns": [
+			"**/testdata/**/*.txt",
+			"**/testdata/**/*.txtar",
+		],
 
 		// Go
 		"go.alternateTools": {
@@ -59,7 +63,7 @@
 			"editor.codeActionsOnSave": {
 				"source.organizeImports.biome": "explicit",
 			},
-		}
+		},
 	},
 	"launch": {
 		"version": "0.2.0",
