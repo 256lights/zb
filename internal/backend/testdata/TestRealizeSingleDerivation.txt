@@ -51,7 +51,7 @@ Derive(
   [("out", "", "r:sha256", "")],
   [],
   ["/opt/zb/store/00000000000000000000000000000000-hello.txt"],
-  "aarch64-pc-windows",
+  "x86_64-pc-windows",
   "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
   [
     "-Command",
