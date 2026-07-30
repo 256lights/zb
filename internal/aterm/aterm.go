@@ -39,6 +39,27 @@ func (tok Token) String() string {
 	}
 }
 
+// AppendText appends the token in ATerm text format to the byte slice
+// and returns the resulting byte slice.
+func (tok Token) AppendText(dst []byte) ([]byte, error) {
+	switch tok.Kind {
+	case String:
+		if len(tok.Value) > maxStringLength {
+			return dst, fmt.Errorf("marshal aterm token: string too large (%d bytes)", len(tok.Value))
+		}
+		return AppendString(dst, tok.Value), nil
+	case LParen, RParen, LBracket, RBracket:
+		return append(dst, byte(tok.Kind)), nil
+	default:
+		return dst, fmt.Errorf("marshal aterm token: unknown kind %v", tok.Kind)
+	}
+}
+
+// MarshalText is equivalent to calling [Token.AppendText] with a nil byte slice.
+func (tok Token) MarshalText() ([]byte, error) {
+	return tok.AppendText(nil)
+}
+
 // TokenKind is an ATerm text format delimiter.
 // Used to differentiate [Token] values.
 type TokenKind byte
@@ -63,12 +84,13 @@ var closingTokens = map[TokenKind]TokenKind{
 
 // Scanner reads ATerm text format tokens from a stream.
 type Scanner struct {
-	r      io.ByteReader
-	err    error
-	curr   Token
-	stack  []TokenKind
-	first  bool // no comma required
-	unread bool
+	r               io.ByteReader
+	err             error
+	curr            Token
+	stack           []TokenKind
+	first           bool // no comma required
+	unread          bool
+	allowWhitespace bool
 }
 
 // NewScanner returns a new scanner that reads from r.
@@ -77,6 +99,11 @@ func NewScanner(r io.ByteReader) *Scanner {
 		r:     r,
 		first: true,
 	}
+}
+
+// AllowWhitespace causes the Scanner to ignore whitespace between tokens.
+func (s *Scanner) AllowWhitespace() {
+	s.allowWhitespace = true
 }
 
 // ReadToken reads the next token from the underlying reader.
@@ -97,7 +124,7 @@ func (s *Scanner) ReadToken() (Token, error) {
 		s.err = io.EOF
 		return Token{}, s.err
 	}
-	b, err := s.r.ReadByte()
+	b, err := s.readFirstTokenByte()
 	if err == io.EOF {
 		err = io.ErrUnexpectedEOF
 	}
@@ -111,7 +138,7 @@ func (s *Scanner) ReadToken() (Token, error) {
 		term := byte(s.stack[len(s.stack)-1])
 		switch b {
 		case ',':
-			b, err = s.r.ReadByte()
+			b, err = s.readFirstTokenByte()
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
 			}
@@ -165,6 +192,15 @@ func (s *Scanner) ReadToken() (Token, error) {
 		return Token{}, s.err
 	}
 	return s.curr, nil
+}
+
+func (s *Scanner) readFirstTokenByte() (byte, error) {
+	for {
+		b, err := s.r.ReadByte()
+		if !isWhitespace(b) || !s.allowWhitespace || err != nil {
+			return b, err
+		}
+	}
 }
 
 var errInvalidUnreadToken = errors.New("parse aterm: invalid use of UnreadToken")
@@ -259,4 +295,8 @@ func AppendString(dst []byte, s string) []byte {
 	}
 	dst = append(dst, '"')
 	return dst
+}
+
+func isWhitespace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
