@@ -23,8 +23,9 @@ When the backend receives a build request
 1. **Obtain build roots.**
    Walk the derivations in dependency order
    (i.e. derivations with no input derivations first).
-   When we encounter a derivation with outputs in the build request
-   or with missing realizations:
+   When we encounter a derivation with outputs in the build request,
+   a derivation with missing realizations,
+   or a derivation whose dependents are missing realizations:
 
    1. Check if we have the output store object(s) in the store.
       If so, mark as a build root and continue walking.

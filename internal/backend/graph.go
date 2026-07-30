@@ -19,6 +19,7 @@ import (
 
 // dependencyGraph stores indices of a set of derivations that are useful for realization.
 type dependencyGraph struct {
+	want sets.Set[zbstore.OutputReference]
 	// nodes is a map of .drv file path to [*dependencyGraphNode].
 	nodes map[zbstore.Path]*dependencyGraphNode
 	// roots is the set of .drv files that have no input derivations.
@@ -85,6 +86,7 @@ type dependencyGraphNode struct {
 // analyze produces a [dependencyGraph] for the given set of desired outputs.
 func analyze(derivations map[zbstore.Path]*zbstore.Derivation, want sets.Set[zbstore.OutputReference]) (*dependencyGraph, error) {
 	result := &dependencyGraph{
+		want:  want,
 		roots: make(sets.Set[zbstore.Path]),
 		nodes: make(map[zbstore.Path]*dependencyGraphNode),
 	}
