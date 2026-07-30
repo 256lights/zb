@@ -117,17 +117,18 @@ func groupFilesByObject(files []txtar.File) iter.Seq[[]txtar.File] {
 func copyTxtarToNAR(nw *nar.Writer, file txtar.File) error {
 	_, subpath, _ := strings.Cut(file.Name, "/")
 	h := &nar.Header{Path: subpath}
+	data := bytes.ReplaceAll(file.Data, []byte("\r"), nil) // Convert CRLF to LF.
 	isDir := strings.HasSuffix(file.Name, "/")
 	if isDir {
 		h.Mode = fs.ModeDir
 	} else {
-		h.Size = int64(len(file.Data))
+		h.Size = int64(len(data))
 	}
 	if err := nw.WriteHeader(h); err != nil {
 		return fmt.Errorf("serialize %s to nar: %v", file.Name, err)
 	}
 	if !isDir {
-		if _, err := nw.Write(file.Data); err != nil {
+		if _, err := nw.Write(data); err != nil {
 			return fmt.Errorf("serialize %s to nar: %v", file.Name, err)
 		}
 	}
