@@ -163,3 +163,23 @@ func (sys System) String() string {
 		return sys.Arch.String() + "-" + sys.Vendor.String() + "-" + sys.OS.String() + "-" + sys.Env.String()
 	}
 }
+
+// AppendText appends a system in the same format as [System.String] to the byte slice.
+func (sys System) AppendText(dst []byte) ([]byte, error) {
+	return append(dst, sys.String()...), nil
+}
+
+// MarshalText returns a system in the same format as [System.String].
+func (sys System) MarshalText() ([]byte, error) {
+	return sys.AppendText(nil)
+}
+
+// UnmarshalText parses a system using [Parse].
+func (sys *System) UnmarshalText(text []byte) error {
+	newSystem, err := Parse(string(text))
+	if err != nil {
+		return err
+	}
+	*sys = newSystem
+	return nil
+}
