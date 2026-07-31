@@ -38,4 +38,8 @@ jobs:
       - name: Build UI
         run: go generate ./internal/ui
       - name: Run tests
+        if: runner.os != 'Linux'
+        run: go test -mod=readonly ./...
+      - name: Run tests with race detector
+        if: runner.os == 'Linux'
         run: go test -mod=readonly -race ./...
