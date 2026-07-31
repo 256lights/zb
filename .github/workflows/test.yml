@@ -29,11 +29,12 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version-file: internal/ui/package.json
-      - name: 'Set TMP to D:\ drive'
+      - name: 'Set TMP to RUNNER_TEMP'
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          "TMP=D:\tmp" | Out-File -Append -FilePath ${env:GITHUB_ENV} -Encoding ascii
+          "TMP=${env:RUNNER_TEMP}" | Out-File -Append -FilePath ${env:GITHUB_ENV} -Encoding ascii
+          "TEMP=${env:RUNNER_TEMP}" | Out-File -Append -FilePath ${env:GITHUB_ENV} -Encoding ascii
       - name: Build UI
         run: go generate ./internal/ui
       - name: Run tests
