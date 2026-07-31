@@ -30,7 +30,7 @@ jobs:
         with:
           node-version-file: internal/ui/package.json
       - name: 'Set TMP to D:\ drive'
-        if: startsWith(runner.os, 'windows')
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           "TMP=D:\tmp" | Out-File -Append -FilePath ${env:GITHUB_ENV} -Encoding ascii
