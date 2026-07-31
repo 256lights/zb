@@ -9,11 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased][]
 
+Version 0.2 adds support for remote caching.
+This is a foundational feature which allows zb users to reuse build results
+from public caches, continuous integration servers, or even other teammates' machines.
+[256 Lights](https://256lights.llc) runs a public cache for the [standard library](https://github.com/256lights/zb-stdlib),
+which turns the "Hello, World!" build on a new machine
+from roughly 10 minutes to XX seconds with a reasonably fast internet connection.
+
 ### Added
 
-- New `readFile` function
-  ([#148](https://github.com/256lights/zb/issues/148)).
+- `zb serve` can now be [configured](https://zb.256lights.llc/admin/configuration#confval-server.download)
+  to download built artifacts from a [remote cache](https://zb.256lights.llc/binary-cache/).
+  ([#39](https://github.com/256lights/zb/issues/39)
+  and [#43](https://github.com/256lights/zb/issues/43))
+  Thank you to [@Abdiramen](https://github.com/Abdiramen)
+  for the support in getting the algorithm over the finish line.
+  Remote caches can be Google Cloud Storage
+  ([#258](https://github.com/256lights/zb/issues/258)),
+  network filesystems, or any HTTP server.
+- `zb serve` can also be configured to upload built artifacts to a remote cache.
+  ([#165](https://github.com/256lights/zb/issues/165))
+  HTTP remote caches must support PUT requests to be used.
+  Build artifacts are compressed using [zstd][] by default,
+  falling back to gzip or uncompressed if the remote cache does not support zstd.
+  ([#260](https://github.com/256lights/zb/issues/260))
+- `zb serve` now signs realizations using configured keys.
+  ([#159](https://github.com/256lights/zb/issues/159))
+- `zb build` will restrict realizations to public keys it trusts.
+  A new `zb build --clean` flag allows building without using any realizations.
+  ([#20](https://github.com/256lights/zb/issues/20))
+- New [`lazy` function](https://zb.256lights.llc/lua/extensions#lazy).
+  ([#83](https://github.com/256lights/zb/issues/83))
+- New [`readFile` function](https://zb.256lights.llc/lua/extensions#readFile).
+  ([#148](https://github.com/256lights/zb/issues/148))
   Thank you to [@winterqt](https://github.com/winterqt)!
+- HTTP requests can be authenticated via a `.netrc` file.
+- Various settings can now be set in a [configuration file](https://zb.256lights.llc/configuration).
+  ([#162](https://github.com/256lights/zb/issues/162))
+- `zb serve` will reject new build requests
+  and exit successfully after all builds have completed
+  after receiving `SIGUSR2`.
+  ([#259](https://github.com/256lights/zb/issues/259))
+
+[zstd]: https://en.wikipedia.org/wiki/Zstd
+
+### Changed
+
+- Attempting to run multiple `zb serve` processes
+  on a single store database now results in an error.
+  ([#207](https://github.com/256lights/zb/issues/207))
+  Thank you to [@Abdiramen](https://github.com/Abdiramen)!
+- Small HTTP requests are now cached on disk.
+  ([#140](https://github.com/256lights/zb/issues/140))
+  This benefits `zb build` arguments of remote URLs
+  as well as remote caching in `zb serve`.
 
 ### Fixed
 
@@ -22,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Lua operator metamethods now receive their arguments in the correct order
   when one of the operands is a constant
   ([#152](https://github.com/256lights/zb/issues/152)).
+- `string.format` in Lua now handles infinity and NaN
+  ([#78](https://github.com/256lights/zb/issues/78)).
+  Thank you to [@HigherOrderLogic](https://github.com/HigherOrderLogic)!
+- Improved backend disk performance by performing less `fsync` syscalls.
 - Updated to Go 1.26.5.
 
 ## [0.1.0][] - 2025-06-15
