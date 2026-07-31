@@ -2,7 +2,7 @@ module zb.256lights.llc/pkg
 
 go 1.26.0
 
-toolchain go1.26.1
+toolchain go1.26.5
 
 require (
 	cloud.google.com/go/auth v0.20.0
