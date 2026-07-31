@@ -75,7 +75,7 @@ from roughly 10 minutes to XX seconds with a reasonably fast internet connection
   ([#78](https://github.com/256lights/zb/issues/78)).
   Thank you to [@HigherOrderLogic](https://github.com/HigherOrderLogic)!
 - Improved backend disk performance by performing less `fsync` syscalls.
-- Updated to Go 1.25.2.
+- Updated to Go 1.26.5.
 
 ## [0.1.0][] - 2025-06-15
 
