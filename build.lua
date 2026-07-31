@@ -4,8 +4,8 @@
 -- This is the zb build script that builds zb. :)
 
 local stdlib <const> = fetchArchive {
-  url = "https://github.com/256lights/zb-stdlib/releases/download/v0.1.0/zb-stdlib-v0.1.0.tar.gz";
-  hash = "sha256:dd040fe8baad8255e4ca44b7249cddfc24b5980f707a29c3b3e2b47f5193ea48";
+  url = "https://github.com/256lights/zb-stdlib/releases/download/v0.2.0/zb-stdlib-v0.2.0.tar.gz";
+  hash = "sha256:9991a0f854c4302b83b50e731e25e2b3120e23a807794b87c29a2c7e6520469b";
 }
 
 local go <const> = import(stdlib.."/packages/go/go.lua")
@@ -95,7 +95,7 @@ function module.new(args)
   end
   return args.makeDerivation {
     pname = "zb";
-    version = "0.1.0";
+    version = "0.2.0";
     src = module.src;
     buildSystem = args.buildSystem;
 
@@ -155,7 +155,7 @@ for _, buildSystem in ipairs(supportedBuildSystems) do
         makeDerivation = stdenv.makeDerivationNoCC;
         buildSystem = buildSystem;
         targetSystem = targetSystem;
-        go = go[buildSystem]["1.24.2"];
+        go = go[buildSystem]["1.26"];
       }
     end
   end
