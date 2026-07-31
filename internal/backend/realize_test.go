@@ -2029,6 +2029,101 @@ func TestRealizeMultiStepFallbackMissingObject(t *testing.T) {
 	checkSingleFileOutput(t, drv2Path, wantOutputPath2, []byte(wantOutputContent2), got)
 }
 
+// TestRealizeIssue288 is a regression test for https://github.com/256lights/zb/issues/288.
+func TestRealizeIssue288(t *testing.T) {
+	ctx := testcontext.New(t)
+	dir := backendtest.NewStoreDirectory(t)
+
+	exportArchive, err := txtar.ParseFile(filepath.Join("testdata", "TestRealizeIssue288.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := storetest.TxtarObjects(dir, exportArchive.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partialDrvObject, err := findObjectWithName(derivationNameForCurrentSystem("bye2.txt"), slices.Values(objects))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalDrvObject, err := findObjectWithName(derivationNameForCurrentSystem("final.txt"), slices.Values(objects))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
+	for _, obj := range objects {
+		if err := exporter.WriteObject(ctx, obj); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := exporter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = codec.Export(nil, exportBuffer)
+	releaseCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+		DrvPaths: []zbstore.Path{partialDrvObject.StorePath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID); err != nil {
+		t.Errorf("build failed: %v", err)
+		for obj := range derivationsForCurrentSystem(slices.Values(objects)) {
+			gotLog, err := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, obj.StorePath)
+			if err == nil {
+				t.Logf("log for %s:\n%s", obj.StorePath, gotLog)
+			}
+		}
+		t.FailNow()
+	}
+	realizeResponse = new(zbstorerpc.RealizeResponse)
+	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+		DrvPaths: []zbstore.Path{finalDrvObject.StorePath},
+		Reuse:    &zbstorerpc.ReusePolicy{All: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := backendtest.WaitForSuccessfulBuild(ctx, client, realizeResponse.BuildID)
+	if err != nil {
+		t.Errorf("build failed: %v", err)
+		for obj := range derivationsForCurrentSystem(slices.Values(objects)) {
+			gotLog, err := backendtest.ReadLog(ctx, client, realizeResponse.BuildID, obj.StorePath)
+			if err == nil {
+				t.Logf("log for %s:\n%s", obj.StorePath, gotLog)
+			}
+		}
+		t.FailNow()
+	}
+
+	wantOutputContent := strings.Repeat("Hello, World!\n", 4) + strings.Repeat("Good-bye\n", 2)
+	finalDrvOutputName, _ := finalDrvObject.StorePath.DerivationName()
+	wantOutputPath, err := singleFileOutputPath(dir, finalDrvOutputName, []byte(wantOutputContent), zbstore.References{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkSingleFileOutput(t, finalDrvObject.StorePath, wantOutputPath, []byte(wantOutputContent), got)
+}
+
 func TestRealizeUpload(t *testing.T) {
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
@@ -2307,6 +2402,21 @@ func derivationNameForCurrentSystem(name string) string {
 		suffixStart = len(name)
 	}
 	return name[:suffixStart] + "-" + system.Current().String() + name[suffixStart:] + zbstore.DerivationExt
+}
+
+func derivationsForCurrentSystem[O zbstore.Object](objects iter.Seq[O]) iter.Seq[O] {
+	systemString := "-" + system.Current().String()
+	return func(yield func(O) bool) {
+		for obj := range objects {
+			name := obj.Trailer().StorePath.Name()
+			if !strings.Contains(name, systemString) || !strings.HasSuffix(name, zbstore.DerivationExt) {
+				continue
+			}
+			if !yield(obj) {
+				return
+			}
+		}
+	}
 }
 
 func findObjectWithName[O zbstore.Object](name string, objects iter.Seq[O]) (O, error) {

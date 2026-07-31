@@ -355,7 +355,7 @@ func (b *builder) realize(ctx context.Context, want sets.Set[zbstore.OutputRefer
 	if err := b.gatherRealizations(ctx, graph); err != nil {
 		return err
 	}
-	buildRoots, err := b.obtainBuildRoots(ctx, graph, want)
+	buildRoots, err := b.obtainBuildRoots(ctx, graph)
 	if err != nil {
 		return err
 	}
@@ -543,7 +543,7 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 
 // obtainBuildRoots computes the set of derivations that can be used as a basis for building the rest of graph,
 // downloading store objects from the fallback store as needed.
-func (b *builder) obtainBuildRoots(ctx context.Context, graph *dependencyGraph, want sets.Set[zbstore.OutputReference]) (roots sets.Set[zbstore.Path], err error) {
+func (b *builder) obtainBuildRoots(ctx context.Context, graph *dependencyGraph) (roots sets.Set[zbstore.Path], err error) {
 	roots = make(sets.Set[zbstore.Path])
 	for it := graph.iterator(); ; {
 		curr, err := it.next(ctx)
@@ -554,33 +554,10 @@ func (b *builder) obtainBuildRoots(ctx context.Context, graph *dependencyGraph, 
 			return nil, err
 		}
 		log.Debugf(ctx, "Reached %v while obtaining build roots", curr)
-		node := graph.nodes[curr]
-		if node == nil {
-			return nil, fmt.Errorf("obtain build roots for %v: unknown derivation", curr)
+		processDependents, err := b.obtainBuildRootsForDerivation(ctx, graph, roots, curr)
+		if err != nil {
+			return nil, err
 		}
-
-		processDependents := true
-		for outputName := range node.usedOutputs {
-			ref := zbstore.OutputReference{
-				DrvPath:    curr,
-				OutputName: outputName.Value(),
-			}
-			// If this is one of the requested outputs, then we want to ensure the store objects exist locally
-			// or that we can get dependencies as close as possible.
-			// If we haven't recorded realizations for all of the outputs we need for the build,
-			// then we'll get dependencies as close as possible.
-			// (obtainBuildRootsForDerivation will start a BFS on the first iteration in this case.)
-			_, hasRealization := b.lookup(ref)
-			if want.Has(ref) || !hasRealization {
-				var err error
-				processDependents, err = b.obtainBuildRootsForDerivation(ctx, graph, roots, curr)
-				if err != nil {
-					return nil, err
-				}
-				break
-			}
-		}
-
 		it.finish(curr, processDependents)
 	}
 }
@@ -590,6 +567,14 @@ func (b *builder) obtainBuildRoots(ctx context.Context, graph *dependencyGraph, 
 // and attempt to download store objects matching their realizations if possible.
 // It reports whether the outputs of the derivation at drvPath are present in the local store.
 func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *dependencyGraph, roots sets.Set[zbstore.Path], drvPath zbstore.Path) (bool, error) {
+	node := graph.nodes[drvPath]
+	if node == nil {
+		return false, fmt.Errorf("obtain build roots for %s: unknown derivation", drvPath)
+	}
+	if !b.shouldObtainBuildRoots(graph, drvPath, node) {
+		return true, nil
+	}
+
 	log.Debugf(ctx, "Walking back from %s while obtaining build roots", drvPath)
 
 	conn, err := b.server.db.Get(ctx)
@@ -613,21 +598,16 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 		}
 		drvHashKey := makeHashKey(drvHash)
 		paths := make(map[zbstore.Path]sets.Set[equivalenceClass])
-		for handle := range node.usedOutputs {
-			eqClass := equivalenceClass{
-				drvHashKey: drvHashKey,
-				outputName: handle,
+		if b.allUsedRealizationsPresent(graph, curr) {
+			for handle := range node.usedOutputs {
+				eqClass := equivalenceClass{
+					drvHashKey: drvHashKey,
+					outputName: handle,
+				}
+				r := b.realizations[eqClass]
+				addToMultiMap(paths, r.path, eqClass)
 			}
-			r, ok := b.realizations[eqClass]
-			if !ok {
-				// If we don't have a realization for any used output,
-				// then we cannot use this as a build root.
-				goto descend
-			}
-			addToMultiMap(paths, r.path, eqClass)
-		}
 
-		{
 			err := b.server.copyFromFallback(ctx, conn, func(yield func(pathAndEquivalenceClass) bool) {
 				for path, eqClassesForPath := range paths {
 					for eqClass := range eqClassesForPath.All() {
@@ -648,7 +628,6 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 			log.Debugf(ctx, "Use %s as build root: %v", curr, err)
 		}
 
-	descend:
 		ignoreStack = append(ignoreStack, curr)
 		b.ignoreRealizations(graph, roots, &ignoreStack)
 		if len(node.derivation.InputDerivations) == 0 {
@@ -660,6 +639,63 @@ func (b *builder) obtainBuildRootsForDerivation(ctx context.Context, graph *depe
 	}
 
 	return false, nil
+}
+
+func (b *builder) shouldObtainBuildRoots(graph *dependencyGraph, drvPath zbstore.Path, node *dependencyGraphNode) bool {
+	for outputName := range node.usedOutputs {
+		// If this is one of the requested outputs, then we want to ensure the store objects exist locally
+		// or that we can get dependencies as close as possible.
+		ref := zbstore.OutputReference{
+			DrvPath:    drvPath,
+			OutputName: outputName.Value(),
+		}
+		if graph.want.Has(ref) {
+			return true
+		}
+	}
+
+	// If we haven't recorded realizations for all the outputs we need for the build,
+	// then we'll get dependencies as close as possible.
+	// (obtainBuildRootsForDerivation will start a BFS on the first iteration in this case.)
+	if !b.allUsedRealizationsPresent(graph, drvPath) {
+		return true
+	}
+	// If any dependent derivations are missing realizations needed for the build,
+	// then try to use this derivation as a build root.
+	// We may not visit the dependents if another part of the graph's realizations are ignored,
+	// so we preemptively walk.
+	// (See https://github.com/256lights/zb/issues/288)
+	for dependent := range node.dependents.All() {
+		if !b.allUsedRealizationsPresent(graph, dependent) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// allUsedRealizationsPresent reports whether all the outputs used for the derivation path in the graph
+// have realizations set.
+func (b *builder) allUsedRealizationsPresent(graph *dependencyGraph, drvPath zbstore.Path) bool {
+	node := graph.nodes[drvPath]
+	if node == nil {
+		return false
+	}
+	drvHash := b.drvHashes[drvPath]
+	if drvHash.IsZero() {
+		return false
+	}
+	drvHashKey := makeHashKey(drvHash)
+	for outputName := range node.usedOutputs {
+		eqClass := equivalenceClass{
+			drvHashKey: drvHashKey,
+			outputName: outputName,
+		}
+		if _, ok := b.realizations[eqClass]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *builder) ignoreRealizations(graph *dependencyGraph, roots sets.Set[zbstore.Path], drvPaths *[]zbstore.Path) {

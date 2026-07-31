@@ -216,6 +216,19 @@ func TestAnalyze(t *testing.T) {
 
 			want := new(dependencyGraph)
 			*want = *test.want
+			want.want = make(sets.Set[zbstore.OutputReference])
+			for fakePath, outputNames := range test.desiredOutputs {
+				drvPath, err := pathForDrvName(maps.Keys(derivations), string(fakePath))
+				if err != nil {
+					t.Fatal("want.want:", err)
+				}
+				for outputName := range outputNames.All() {
+					want.want.Add(zbstore.OutputReference{
+						DrvPath:    drvPath,
+						OutputName: outputName,
+					})
+				}
+			}
 			want.nodes = make(map[zbstore.Path]*dependencyGraphNode)
 			for fakePath, node := range test.want.nodes {
 				drvPath, err := pathForDrvName(maps.Keys(derivations), string(fakePath))
