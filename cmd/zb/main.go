@@ -79,6 +79,11 @@ func (c *zbCommand) BeforeApply(kc *kong.Context, p *kong.Path) error {
 				return
 			}
 		}
+		for _, path := range slices.Backward(filepath.SplitList(os.Getenv("ZB_CONFIG_FILE"))) {
+			if !yield(path) {
+				return
+			}
+		}
 		for _, path := range c.ExtraConfigs {
 			if !yield(path) {
 				return
