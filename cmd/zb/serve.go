@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/coreos/go-systemd/v22/activation"
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"golang.org/x/sync/errgroup"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
@@ -39,11 +41,6 @@ import (
 )
 
 const contentAddressTempFilePattern = "zb-ca-*"
-
-type serverConfig struct {
-	Download *storeConfig `json:"download"`
-	Upload   *storeConfig `json:"upload"`
-}
 
 type serveCommand struct {
 	storeDatabaseFlags `kong:"embed"`
@@ -79,7 +76,10 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, drain drainSign
 		}
 		return fmt.Errorf("sandboxing requested but unable to use (are you running with admin privileges?)")
 	}
-	keyring, err := readKeyringFromFiles(c.KeyFiles)
+	allKeyFiles := make([]string, 0, len(g.Server.KeyFiles)+len(c.KeyFiles))
+	allKeyFiles = append(allKeyFiles, g.Server.KeyFiles...)
+	allKeyFiles = append(allKeyFiles, c.KeyFiles...)
+	keyring, err := readKeyringFromFiles(allKeyFiles)
 	if err != nil {
 		return err
 	}
@@ -384,6 +384,64 @@ func buildUsersForGroup(ctx context.Context, name string) (gid int, buildUsers [
 		buildUsers = append(buildUsers, buildUser)
 	}
 	return gid, buildUsers, nil
+}
+
+type serverConfig struct {
+	Download *storeConfig `json:"download"`
+	Upload   *storeConfig `json:"upload"`
+	KeyFiles []string     `json:"signingKeyFiles"`
+}
+
+// UnmarshalJSONFrom unmarshals the server configuration object from the JSON decoder,
+// merging any fields in the JSON object with existing values.
+func (sc *serverConfig) UnmarshalJSONFrom(in *jsontext.Decoder) error {
+	tok, err := in.ReadToken()
+	if err != nil {
+		return err
+	}
+	if got := tok.Kind(); got != '{' {
+		return fmt.Errorf("config must be an object not a %v", got)
+	}
+
+	for {
+		keyToken, err := in.ReadToken()
+		if err != nil {
+			return err
+		}
+		switch kind := keyToken.Kind(); kind {
+		case '}':
+			return nil
+		case '"':
+			// Keep going.
+		default:
+			return fmt.Errorf("unexpected non-string key (%v) in object", kind)
+		}
+
+		switch k := keyToken.String(); k {
+		case "download":
+			if err := jsonv2.UnmarshalDecode(in, &sc.Download); err != nil {
+				return fmt.Errorf("unmarshal config.server.download: %w", err)
+			}
+		case "upload":
+			if err := jsonv2.UnmarshalDecode(in, &sc.Upload); err != nil {
+				return fmt.Errorf("unmarshal config.server.upload: %w", err)
+			}
+		case "signingKeyFiles":
+			newKeyFiles := sc.KeyFiles[len(sc.KeyFiles):]
+
+			if err := jsonv2.UnmarshalDecode(in, &newKeyFiles); err != nil {
+				return fmt.Errorf("unmarshal config.server.signingKeyFiles: %w", err)
+			}
+			sc.KeyFiles = append(sc.KeyFiles, newKeyFiles...)
+		default:
+			if reject, _ := jsonv2.GetOption(in.Options(), jsonv2.RejectUnknownMembers); reject {
+				return fmt.Errorf("unmarshal config.server: unknown field %q", k)
+			}
+			if err := in.SkipValue(); err != nil {
+				return fmt.Errorf("unmarshal config.server: %w", err)
+			}
+		}
+	}
 }
 
 type sandboxPathsFlags struct {
