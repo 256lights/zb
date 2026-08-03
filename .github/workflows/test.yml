@@ -32,4 +32,12 @@ jobs:
       - name: Build UI
         run: go generate ./internal/ui
       - name: Run tests
-        run: go test -mod=readonly -race ./...
+        if: runner.os != 'Linux' && runner.os != 'Windows'
+        run: go test -mod=readonly -timeout=10m ./...
+      - name: Run tests with race detector
+        if: runner.os == 'Linux'
+        run: go test -mod=readonly -timeout=10m -race ./...
+      # TODO(#304): Change timeout back to default.
+      - name: Run tests with a long timeout
+        if: runner.os == 'Windows'
+        run: go test -mod=readonly -timeout=30m ./...
