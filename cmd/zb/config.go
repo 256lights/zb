@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -73,12 +74,14 @@ func (g *globalConfig) clone() *globalConfig {
 		return nil
 	}
 	g = new(*g)
+	g.TrustedPublicKeys = slices.Clone(g.TrustedPublicKeys)
 	if g.Server.Download != nil {
 		g.Server.Download = new(*g.Server.Download)
 	}
 	if g.Server.Upload != nil {
 		g.Server.Upload = new(*g.Server.Upload)
 	}
+	g.Server.KeyFiles = slices.Clone(g.Server.KeyFiles)
 	return g
 }
 
@@ -170,6 +173,19 @@ func (g *globalConfig) resolveRelativePaths(dir string, prev *globalConfig) {
 			g.Server.Upload = g.Server.Upload.resolve(baseURL)
 		}
 	}
+	if prev == nil || !slices.Equal(g.Server.KeyFiles, prev.Server.KeyFiles) {
+		// If the previous slice is a prefix of the current slice,
+		// then only resolve the newly added paths.
+		toResolve := g.Server.KeyFiles
+		if len(g.Server.KeyFiles) > len(prev.Server.KeyFiles) &&
+			slices.Equal(g.Server.KeyFiles[:len(prev.Server.KeyFiles)], prev.Server.KeyFiles) {
+			toResolve = g.Server.KeyFiles[len(prev.Server.KeyFiles):]
+		}
+
+		for i, path := range toResolve {
+			toResolve[i] = resolve(path)
+		}
+	}
 }
 
 // UnmarshalJSONFrom unmarshals the configuration object from the JSON decoder,
@@ -241,6 +257,9 @@ func (g *globalConfig) UnmarshalJSONFrom(in *jsontext.Decoder) error {
 		default:
 			if reject, _ := jsonv2.GetOption(in.Options(), jsonv2.RejectUnknownMembers); reject {
 				return fmt.Errorf("unmarshal config: unknown field %q", k)
+			}
+			if err := in.SkipValue(); err != nil {
+				return fmt.Errorf("unmarshal config.server: %w", err)
 			}
 		}
 	}

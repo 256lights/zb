@@ -31,7 +31,7 @@ func TestGlobalConfigMergeFiles(t *testing.T) {
 	tests := []struct {
 		name  string
 		files []string
-		want  globalConfig
+		want  func(dir string) *globalConfig
 	}{
 		{
 			name: "MergeScalar",
@@ -39,9 +39,11 @@ func TestGlobalConfigMergeFiles(t *testing.T) {
 				`{"debug": true, "storeDirectory": "/foo"}` + "\n",
 				`{"storeDirectory": "/bar"}` + "\n",
 			},
-			want: globalConfig{
-				Debug:     true,
-				Directory: "/bar",
+			want: func(dir string) *globalConfig {
+				return &globalConfig{
+					Debug:     true,
+					Directory: "/bar",
+				}
 			},
 		},
 		{
@@ -50,10 +52,12 @@ func TestGlobalConfigMergeFiles(t *testing.T) {
 				`{"allowEnvironment": ["FOO"]}` + "\n",
 				`{"allowEnvironment": ["BAR"]}` + "\n",
 			},
-			want: globalConfig{
-				AllowEnv: stringAllowList{
-					set: sets.New("BAR"),
-				},
+			want: func(dir string) *globalConfig {
+				return &globalConfig{
+					AllowEnv: stringAllowList{
+						set: sets.New("BAR"),
+					},
+				}
 			},
 		},
 		{
@@ -62,8 +66,10 @@ func TestGlobalConfigMergeFiles(t *testing.T) {
 				`{"allowEnvironment": ["FOO"]}` + "\n",
 				`{"allowEnvironment": true}` + "\n",
 			},
-			want: globalConfig{
-				AllowEnv: stringAllowList{all: true},
+			want: func(dir string) *globalConfig {
+				return &globalConfig{
+					AllowEnv: stringAllowList{all: true},
+				}
 			},
 		},
 		{
@@ -72,26 +78,46 @@ func TestGlobalConfigMergeFiles(t *testing.T) {
 				`{"trustedPublicKeys": [{"format": "ed25519", "publicKey": "+NMDNfvjCmdT9mLr9zadYQXwF/mPLsToMw36yX7w6HCVCSK9J2WsMGPCAT9U2Y959NFgAfdiSWGRvWbXYlGUcA=="}]}` + "\n",
 				`{"trustedPublicKeys": [{"format": "foo", "publicKey": "YmFy"}]}` + "\n",
 			},
-			want: globalConfig{
-				TrustedPublicKeys: []*zbstore.RealizationPublicKey{
-					{
-						Format: "ed25519",
-						Data: []byte{
-							0xf8, 0xd3, 0x03, 0x35, 0xfb, 0xe3, 0x0a, 0x67,
-							0x53, 0xf6, 0x62, 0xeb, 0xf7, 0x36, 0x9d, 0x61,
-							0x05, 0xf0, 0x17, 0xf9, 0x8f, 0x2e, 0xc4, 0xe8,
-							0x33, 0x0d, 0xfa, 0xc9, 0x7e, 0xf0, 0xe8, 0x70,
-							0x95, 0x09, 0x22, 0xbd, 0x27, 0x65, 0xac, 0x30,
-							0x63, 0xc2, 0x01, 0x3f, 0x54, 0xd9, 0x8f, 0x79,
-							0xf4, 0xd1, 0x60, 0x01, 0xf7, 0x62, 0x49, 0x61,
-							0x91, 0xbd, 0x66, 0xd7, 0x62, 0x51, 0x94, 0x70,
+			want: func(dir string) *globalConfig {
+				return &globalConfig{
+					TrustedPublicKeys: []*zbstore.RealizationPublicKey{
+						{
+							Format: "ed25519",
+							Data: []byte{
+								0xf8, 0xd3, 0x03, 0x35, 0xfb, 0xe3, 0x0a, 0x67,
+								0x53, 0xf6, 0x62, 0xeb, 0xf7, 0x36, 0x9d, 0x61,
+								0x05, 0xf0, 0x17, 0xf9, 0x8f, 0x2e, 0xc4, 0xe8,
+								0x33, 0x0d, 0xfa, 0xc9, 0x7e, 0xf0, 0xe8, 0x70,
+								0x95, 0x09, 0x22, 0xbd, 0x27, 0x65, 0xac, 0x30,
+								0x63, 0xc2, 0x01, 0x3f, 0x54, 0xd9, 0x8f, 0x79,
+								0xf4, 0xd1, 0x60, 0x01, 0xf7, 0x62, 0x49, 0x61,
+								0x91, 0xbd, 0x66, 0xd7, 0x62, 0x51, 0x94, 0x70,
+							},
+						},
+						{
+							Format: "foo",
+							Data:   []byte{0x62, 0x61, 0x72},
 						},
 					},
-					{
-						Format: "foo",
-						Data:   []byte{0x62, 0x61, 0x72},
+				}
+			},
+		},
+		{
+			name: "MergeServerSigningKeyFiles",
+			files: []string{
+				`{"server": {"signingKeyFiles": ["foo.json", "bar.json"]}}` + "\n",
+				`{"server": {"signingKeyFiles": ["baz.json"]}}` + "\n",
+			},
+			want: func(dir string) *globalConfig {
+				return &globalConfig{
+					Server: serverConfig{
+						KeyFiles: []string{
+							filepath.Join(dir, "foo.json"),
+							filepath.Join(dir, "bar.json"),
+							filepath.Join(dir, "baz.json"),
+						},
 					},
-				},
+				}
 			},
 		},
 	}
@@ -113,7 +139,7 @@ func TestGlobalConfigMergeFiles(t *testing.T) {
 			if err != nil {
 				t.Error("mergeFiles:", err)
 			}
-			if diff := cmp.Diff(&test.want, got, globalConfigCompareOptions); diff != "" {
+			if diff := cmp.Diff(test.want(dir), got, globalConfigCompareOptions); diff != "" {
 				t.Errorf("-want +got:\n%s", diff)
 			}
 		})
@@ -129,6 +155,7 @@ func FuzzConfigMarshal(f *testing.F) {
 	f.Add([]byte(`{"trustedPublicKeys": [{"format": "ed25519", "publicKey": "+NMDNfvjCmdT9mLr9zadYQXwF/mPLsToMw36yX7w6HCVCSK9J2WsMGPCAT9U2Y959NFgAfdiSWGRvWbXYlGUcA=="}]}` + "\n"))
 	f.Add([]byte(`{"trustedPublicKeys": [{"format": "foo", "publicKey": "YmFy"}]}`))
 	f.Add([]byte(`{"netrcFile": "/etc/netrc"}` + "\n"))
+	f.Add([]byte(`{"server": {"signingKeyFiles": ["secret-key.json"]}}` + "\n"))
 
 	f.Fuzz(func(t *testing.T, in []byte) {
 		init := defaultGlobalConfig()
