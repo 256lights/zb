@@ -95,7 +95,7 @@ function module.new(args)
   end
   return args.makeDerivation {
     pname = "zb";
-    version = "0.2.0-beta2";
+    version = "0.2.0-beta3";
     src = module.src;
     buildSystem = args.buildSystem;
 
