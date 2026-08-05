@@ -8,3 +8,6 @@ node_modules/
 .env
 *.js.map
 *.css.map
+zb-v*.tar.gz
+zb-v*.tar.bz2
+zb-v*.zip
