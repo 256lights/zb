@@ -20,6 +20,7 @@ import (
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/system"
+	"zb.256lights.llc/pkg/internal/xhttp"
 	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -186,7 +187,7 @@ func (eval *Eval) importURL(ctx context.Context, u *url.URL) (zbstore.Path, erro
 	respCloser := xio.CloseOnce(resp.Body)
 	defer respCloser.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download %v: http %s", u, resp.Status)
+		return "", fmt.Errorf("download %v: %v", u, xhttp.ErrorFromResponse(resp))
 	}
 
 	// If the server provides a Content-Length header,

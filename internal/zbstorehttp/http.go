@@ -76,7 +76,7 @@ func fetch(ctx context.Context, client Client, req *fetchRequest) (*fetchRespons
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch %v: %w", req.url.Redacted(), httpErrorFromResponse(resp))
+		return nil, fmt.Errorf("fetch %v: %w", req.url.Redacted(), xhttp.ErrorFromResponse(resp))
 	}
 
 	result := &fetchResponse{
@@ -322,7 +322,7 @@ func putEncoding(ctx context.Context, client Client, contentEncoding string, req
 		resp.StatusCode != http.StatusOK &&
 		resp.StatusCode != http.StatusCreated &&
 		resp.StatusCode != http.StatusNoContent {
-		err = httpErrorFromResponse(resp)
+		err = xhttp.ErrorFromResponse(resp)
 	}
 	if err != nil {
 		return fmt.Errorf("put %s: %w", req.url.Redacted(), err)
@@ -379,8 +379,8 @@ func requestNegotiationFromFetchResponse(resp *fetchResponse, err error) *reques
 	if resp != nil {
 		return &resp.requestNegotiation
 	}
-	if h, ok := errors.AsType[*httpError](err); ok {
-		return &h.requestNegotiation
+	if resp, ok := xhttp.ResponseFromError(err); ok {
+		return requestNegotiationFromResponseHeader(resp.Header)
 	}
 	return nil
 }
@@ -389,55 +389,15 @@ func (rn *requestNegotiation) isMethodAllowed(method string) bool {
 	return rn == nil || rn.allow == nil || rn.allow.Has(method)
 }
 
-type httpError struct {
-	statusCode         int
-	status             string
-	requestNegotiation requestNegotiation
-}
-
-func httpErrorFromResponse(resp *http.Response) error {
-	err := &httpError{
-		statusCode:         resp.StatusCode,
-		status:             cmp.Or(resp.Status, xhttp.Status(resp.StatusCode)),
-		requestNegotiation: *requestNegotiationFromResponseHeader(resp.Header),
-	}
-	if 100 <= resp.StatusCode && resp.StatusCode < 400 {
-		return fmt.Errorf("unexpected %w", err)
-	}
-	return err
-}
-
-func (e *httpError) Error() string {
-	status := e.status
-	if status == "" {
-		status = http.StatusText(e.statusCode)
-		if status == "" {
-			status = strconv.Itoa(e.statusCode)
-		}
-	}
-	return "http " + status
-}
-
-func errorStatusCode(err error) (statusCode int, ok bool) {
-	if err == nil {
-		return http.StatusOK, false
-	}
-	var h *httpError
-	if !errors.As(err, &h) {
-		return http.StatusInternalServerError, false
-	}
-	return h.statusCode, true
-}
-
 func isNotFound(err error) bool {
-	code, _ := errorStatusCode(err)
+	code, _ := xhttp.ErrorStatusCode(err)
 	return code == http.StatusNotFound || code == http.StatusGone
 }
 
 // isClientError reports whether the error indicates a client fault
 // and should not be retried.
 func isClientError(err error) bool {
-	code, _ := errorStatusCode(err)
+	code, _ := xhttp.ErrorStatusCode(err)
 	return 400 <= code && code < 500 &&
 		code != http.StatusRequestTimeout &&
 		code != http.StatusPreconditionFailed &&
@@ -448,7 +408,7 @@ func isClientError(err error) bool {
 // due to an unsupported Content-Encoding header,
 // and if so, returns the values of the Accept-Encoding header field.
 func isUnsupportedContentCoding(err error) (acceptEncoding []string, ok bool) {
-	h, ok := errors.AsType[*httpError](err)
+	resp, ok := xhttp.ResponseFromError(err)
 	if !ok {
 		return nil, false
 	}
@@ -457,10 +417,11 @@ func isUnsupportedContentCoding(err error) (acceptEncoding []string, ok bool) {
 	// MUST NOT include the Accept-Encoding header field."
 	//
 	// [RFC 9110 Section 12.5.3]: https://datatracker.ietf.org/doc/html/rfc9110#section-12.5.3
-	if h.statusCode != http.StatusUnsupportedMediaType || len(h.requestNegotiation.acceptEncoding) == 0 {
+	acceptEncoding = resp.Header.Values("Accept-Encoding")
+	if resp.StatusCode != http.StatusUnsupportedMediaType || len(acceptEncoding) == 0 {
 		return nil, false
 	}
-	return h.requestNegotiation.acceptEncoding, true
+	return acceptEncoding, true
 }
 
 type methodNotAllowedError struct {
@@ -475,7 +436,7 @@ func isMethodNotAllowed(err error) bool {
 	if _, ok := errors.AsType[methodNotAllowedError](err); ok {
 		return true
 	}
-	code, _ := errorStatusCode(err)
+	code, _ := xhttp.ErrorStatusCode(err)
 	return code == http.StatusMethodNotAllowed || code == http.StatusNotImplemented
 }
 

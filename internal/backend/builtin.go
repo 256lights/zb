@@ -22,6 +22,7 @@ import (
 
 	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/internal/useragent"
+	"zb.256lights.llc/pkg/internal/xhttp"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 )
@@ -79,7 +80,7 @@ func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("%s returned HTTP %s", href, resp.Status)
+		return fmt.Errorf("get %s: %v", href, xhttp.ErrorFromResponse(resp))
 	}
 	perm := os.FileMode(0o644)
 	if executable {
