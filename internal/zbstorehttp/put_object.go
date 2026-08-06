@@ -126,7 +126,7 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 	copyResult, copyError := grp.wait()
 	if uploadNARError != nil {
 		err := fmt.Errorf("upload %s: %v", req.StorePath, uploadNARError)
-		if isMethodNotAllowed(uploadNARError) {
+		if isClientError(uploadNARError) {
 			err = permanentError{err}
 		}
 		return err
@@ -173,8 +173,10 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 			}
 			return nil
 		}
-		ec.Add(uploadError)
-		if !isMethodNotAllowed(uploadError) {
+		if isClientError(uploadError) {
+			ec.Add(permanentError{uploadError})
+		} else {
+			ec.Add(uploadError)
 			break
 		}
 	}
