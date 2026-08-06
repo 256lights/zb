@@ -398,7 +398,7 @@ type httpError struct {
 func httpErrorFromResponse(resp *http.Response) error {
 	err := &httpError{
 		statusCode:         resp.StatusCode,
-		status:             cmp.Or(resp.Status, http.StatusText(resp.StatusCode)),
+		status:             cmp.Or(resp.Status, xhttp.Status(resp.StatusCode)),
 		requestNegotiation: *requestNegotiationFromResponseHeader(resp.Header),
 	}
 	if 100 <= resp.StatusCode && resp.StatusCode < 400 {

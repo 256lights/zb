@@ -57,7 +57,7 @@ func ServeResponse(req *http.Request, h http.Handler) *http.Response {
 		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
 		ProtoMinor: 1,
-		Status:     http.StatusText(statusCode),
+		Status:     Status(statusCode),
 		StatusCode: statusCode,
 		Header:     header,
 		Body:       rbody,

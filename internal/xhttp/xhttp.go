@@ -7,6 +7,7 @@ Package xhttp provides functions for handling more complicated aspects of the HT
 package xhttp
 
 import (
+	"fmt"
 	"iter"
 	"net/http"
 	"strings"
@@ -36,6 +37,15 @@ func IsSafeMethod(req *http.Request) bool {
 // [final]: https://www.rfc-editor.org/info/rfc9110/#section-15
 func IsFinalStatusCode(code int) bool {
 	return 200 <= code && code < 600
+}
+
+// Status returns the appropriate [http.Response] Status value for a status code.
+func Status(code int) string {
+	text := http.StatusText(code)
+	if text == "" {
+		return fmt.Sprintf("%d", code)
+	}
+	return fmt.Sprintf("%d %s", code, text)
 }
 
 // whitespace is the set of whitespace characters

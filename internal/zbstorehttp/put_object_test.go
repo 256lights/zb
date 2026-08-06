@@ -399,7 +399,7 @@ func (rce *restrictContentEncoding) RoundTrip(req *http.Request) (*http.Response
 				ProtoMajor:    1,
 				ProtoMinor:    1,
 				StatusCode:    code,
-				Status:        http.StatusText(code),
+				Status:        xhttp.Status(code),
 				ContentLength: int64(len(message)),
 				Header: http.Header{
 					"Content-Type":           {"text/plain; charset=utf-8"},
