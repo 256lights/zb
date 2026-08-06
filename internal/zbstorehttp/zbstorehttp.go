@@ -15,7 +15,6 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
-	"time"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"zb.256lights.llc/pkg/bytebuffer"
@@ -24,7 +23,6 @@ import (
 	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/xhttp"
-	"zb.256lights.llc/pkg/internal/xtime"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
@@ -225,34 +223,22 @@ func (s *Store) PutRealizations(ctx context.Context, realizations zbstore.Realiz
 
 	var ec multierror.Collector
 	hasPutAllowed := false
+	hasTemporary := false
 	for u := range s.realizationURLs(&ec, hr, realizations.DerivationHash) {
-		var retries multierror.Collector
-		for attempt := 1; attempt < 50; attempt++ {
-			err := s.putRealizations(ctx, u, realizations)
-			if err == nil {
-				if err := ec.Error(); err != nil {
-					log.Warnf(ctx, "While updating realizations for %v: %v", realizations.DerivationHash, err)
-				}
-				return nil
+		err := s.putRealizations(ctx, u, realizations)
+		if err == nil {
+			if err := ec.Error(); err != nil {
+				log.Warnf(ctx, "While updating realizations for %v: %v", realizations.DerivationHash, err)
 			}
-			retries.Add(errors.New(err.Error()))
-			code, hasResponse := errorStatusCode(err)
-			if hasResponse && !isMethodNotAllowed(err) {
-				hasPutAllowed = true
-			}
-			if code != http.StatusPreconditionFailed {
-				ec.Add(retries.Error())
-				break
-			}
+			return nil
+		}
+		ec.Add(err)
 
-			duration := putBackoffTable[min(attempt, len(putBackoffTable)-1)]
-			log.Debugf(ctx, "%dth retry to update realizations for %v after %v...",
-				attempt, realizations.DerivationHash, duration)
-			if err := xtime.Sleep(ctx, duration); err != nil {
-				ec.Add(retries.Error())
-				ec.Add(err)
-				break
-			}
+		if !isMethodNotAllowed(err) {
+			hasPutAllowed = true
+		}
+		if !isClientError(err) {
+			hasTemporary = true
 		}
 	}
 	if ec.Error() == nil {
@@ -266,7 +252,11 @@ func (s *Store) PutRealizations(ctx context.Context, realizations zbstore.Realiz
 	for err := range multierror.All(ec.Error()) {
 		ec2.Add(fmt.Errorf("update realizations for %v: %w", realizations.DerivationHash, err))
 	}
-	return ec2.Error()
+	err = ec2.Error()
+	if !hasTemporary {
+		err = permanentError{err}
+	}
+	return err
 }
 
 func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zbstore.RealizationMap) error {
@@ -458,13 +448,4 @@ func (te permanentError) Unwrap() error {
 func IsPermanentError(err error) bool {
 	_, ok := errors.AsType[permanentError](err)
 	return ok
-}
-
-var putBackoffTable = [...]time.Duration{
-	0 * time.Millisecond,
-	100 * time.Millisecond,
-	250 * time.Millisecond,
-	500 * time.Millisecond,
-	1000 * time.Millisecond,
-	5000 * time.Millisecond,
 }

@@ -434,6 +434,16 @@ func isNotFound(err error) bool {
 	return code == http.StatusNotFound || code == http.StatusGone
 }
 
+// isClientError reports whether the error indicates a client fault
+// and should not be retried.
+func isClientError(err error) bool {
+	code, _ := errorStatusCode(err)
+	return 400 <= code && code < 500 &&
+		code != http.StatusRequestTimeout &&
+		code != http.StatusPreconditionFailed &&
+		code != http.StatusTooManyRequests
+}
+
 // isUnsupportedContentCoding reports whether err indicates that an HTTP request failed
 // due to an unsupported Content-Encoding header,
 // and if so, returns the values of the Accept-Encoding header field.

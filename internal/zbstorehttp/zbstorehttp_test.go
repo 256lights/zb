@@ -11,7 +11,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/synctest"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/google/go-cmp/cmp"
@@ -245,6 +247,73 @@ func TestStorePutRealizations(t *testing.T) {
 		}
 		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
 			t.Errorf("realizations (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("ClientError", func(t *testing.T) {
+		tests := []struct {
+			code               int
+			wantPermanentError bool
+		}{
+			{http.StatusUnauthorized, true},
+			{http.StatusForbidden, true},
+			{http.StatusPreconditionFailed, false},
+			{http.StatusTooManyRequests, false},
+		}
+
+		for _, test := range tests {
+			name := strings.ReplaceAll(http.StatusText(test.code), " ", "")
+			t.Run(name, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					ctx := testlog.WithTB(t.Context(), t)
+
+					mux := http.NewServeMux()
+					mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+						if r.Method == http.MethodGet || r.Method == http.MethodHead {
+							http.NotFound(w, r)
+						} else {
+							http.Error(w, http.StatusText(test.code), test.code)
+						}
+					})
+					mux.HandleFunc("/discovery.json", func(w http.ResponseWriter, r *http.Request) {
+						http.ServeFile(w, r, testdataPath(t, "../discovery.json"))
+					})
+					srv := httptest.NewServer(mux)
+					t.Cleanup(srv.Close)
+					discoveryURL, err := url.Parse(srv.URL + "/discovery.json")
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					store := &Store{
+						URL:        discoveryURL,
+						HTTPClient: srv.Client(),
+					}
+
+					drvHash := mustParseHash(t, "sha256:bd172e7b837e02a672e417976696642eaabb97847f61a77cf430f515efc97b61")
+					err = store.PutRealizations(ctx, zbstore.RealizationMap{
+						DerivationHash: drvHash,
+						Realizations: map[string][]*zbstore.Realization{
+							zbstore.DefaultDerivationOutputName: {
+								{
+									OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
+								},
+							},
+						},
+					})
+					if err == nil {
+						t.Error("store.PutRealizations did not return an error")
+					} else {
+						t.Log("store.PutRealizations:", err)
+					}
+
+					if got := IsPermanentError(err); got && !test.wantPermanentError {
+						t.Error("Error is permanent")
+					} else if !got && test.wantPermanentError {
+						t.Error("Error is not permanent")
+					}
+				})
+			})
 		}
 	})
 }

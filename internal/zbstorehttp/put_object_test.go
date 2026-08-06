@@ -9,6 +9,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -154,6 +156,85 @@ func TestStorePutObject(t *testing.T) {
 			t.Error("upload directory exists after PutObject")
 		} else if !errors.Is(err, os.ErrNotExist) {
 			t.Error(err)
+		}
+	})
+
+	t.Run("ClientError", func(t *testing.T) {
+		tests := []struct {
+			code               int
+			wantPermanentError bool
+		}{
+			{http.StatusUnauthorized, true},
+			{http.StatusForbidden, true},
+			{http.StatusPreconditionFailed, false},
+			{http.StatusTooManyRequests, false},
+		}
+
+		for _, test := range tests {
+			name := strings.ReplaceAll(http.StatusText(test.code), " ", "")
+			t.Run(name, func(t *testing.T) {
+				ctx := testcontext.New(t)
+
+				narData, err := os.ReadFile(testdataPath(t, "../hello.txt.nar"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ca, _, err := zbstore.SourceSHA256ContentAddress(bytes.NewReader(narData), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				objectPath, err := zbstore.FixedCAOutputPath(zbstore.DefaultUnixDirectory, "hello.txt", ca, zbstore.References{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				const wantDigest = "mv4z5c5znjdnc40fvqfl1qknszgbdyxd"
+				if got := objectPath.Digest(); got != wantDigest {
+					t.Errorf("computed store path = %s; want digest of %s", objectPath, wantDigest)
+				}
+
+				mux := http.NewServeMux()
+				mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodGet || r.Method == http.MethodHead {
+						http.NotFound(w, r)
+					} else {
+						http.Error(w, http.StatusText(test.code), test.code)
+					}
+				})
+				mux.HandleFunc("/discovery.json", func(w http.ResponseWriter, r *http.Request) {
+					http.ServeFile(w, r, testdataPath(t, "../discovery.json"))
+				})
+				srv := httptest.NewServer(mux)
+				t.Cleanup(srv.Close)
+				discoveryURL, err := url.Parse(srv.URL + "/discovery.json")
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				store := &Store{
+					URL:        discoveryURL,
+					HTTPClient: srv.Client(),
+				}
+
+				err = store.PutObject(ctx, &PutObjectRequest{
+					StorePath:      objectPath,
+					ContentAddress: ca,
+					GetNAR: func() (io.ReadCloser, error) {
+						return io.NopCloser(bytes.NewReader(narData)), nil
+					},
+					NARSize: int64(len(narData)),
+				})
+				if err == nil {
+					t.Error("store.PutObject did not return an error")
+				} else {
+					t.Log("store.PutObject:", err)
+				}
+
+				if got := IsPermanentError(err); got && !test.wantPermanentError {
+					t.Error("Error is permanent")
+				} else if !got && test.wantPermanentError {
+					t.Error("Error is not permanent")
+				}
+			})
 		}
 	})
 
