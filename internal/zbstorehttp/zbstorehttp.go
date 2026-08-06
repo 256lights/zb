@@ -77,7 +77,7 @@ func (s *Store) discover(ctx context.Context) (*hal.Resource, error) {
 		accept: "application/hal+json,application/json;q=0.9,text/*;q=0.8,*/*;q=0.7",
 	})
 	if err != nil {
-		code, _ := errorStatusCode(err)
+		code, _ := xhttp.ErrorStatusCode(err)
 		err := fmt.Errorf("get discovery document: %v", err)
 		if code == http.StatusGone {
 			// Gone indicates that retries to obtain this resource will continue to fail.
@@ -409,7 +409,7 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		err := httpErrorFromResponse(resp)
+		err := xhttp.ErrorFromResponse(resp)
 		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
 	}
 	decodedBody, err := httpencoding.Decode(resp.Body, resp.Header.Get("Content-Encoding"))
