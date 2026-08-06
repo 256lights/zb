@@ -501,7 +501,7 @@ func (rt *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		Header:     want.responseHeaders.Clone(),
 		Body:       io.NopCloser(strings.NewReader(want.responseBody)),
 	}
-	resp.Status = http.StatusText(resp.StatusCode)
+	resp.Status = xhttp.Status(resp.StatusCode)
 	if gotMethod == http.MethodHead || resp.StatusCode != http.StatusNotModified {
 		resp.ContentLength, _ = contentLength(want.responseHeaders)
 	}

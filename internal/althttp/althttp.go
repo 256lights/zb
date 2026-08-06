@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"zb.256lights.llc/pkg/internal/fileurl"
+	"zb.256lights.llc/pkg/internal/xhttp"
 )
 
 // FileTransport is an [http.RoundTripper] that serves GET, HEAD, and PUT requests
@@ -35,7 +36,7 @@ func errorResponse(req *http.Request, error string, code int) *http.Response {
 		ProtoMajor:    1,
 		ProtoMinor:    1,
 		StatusCode:    code,
-		Status:        http.StatusText(code),
+		Status:        xhttp.Status(code),
 		ContentLength: int64(len(error)),
 		Header: http.Header{
 			"Content-Type":           {"text/plain; charset=utf-8"},

@@ -176,7 +176,7 @@ func (t Transport) put(req *http.Request) (resp *http.Response) {
 		ProtoMajor: 1,
 		ProtoMinor: 1,
 		StatusCode: code,
-		Status:     http.StatusText(code),
+		Status:     xhttp.Status(code),
 		Header:     responseHeader,
 		Body:       io.NopCloser(bytes.NewReader(nil)),
 	}
@@ -192,7 +192,7 @@ func errorResponse(req *http.Request, error string, code int) *http.Response {
 		ProtoMajor:    1,
 		ProtoMinor:    1,
 		StatusCode:    code,
-		Status:        http.StatusText(code),
+		Status:        xhttp.Status(code),
 		ContentLength: int64(len(error)),
 		Header: http.Header{
 			"Content-Type":           {"text/plain; charset=utf-8"},

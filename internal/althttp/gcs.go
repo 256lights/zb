@@ -79,7 +79,7 @@ func (t *GCSTransport) get(req *http.Request) *http.Response {
 	if statusCode == http.StatusNotModified {
 		resp := &http.Response{
 			StatusCode:    statusCode,
-			Status:        http.StatusText(statusCode),
+			Status:        xhttp.Status(statusCode),
 			Request:       req,
 			Proto:         "HTTP/1.1",
 			ProtoMajor:    1,
@@ -111,7 +111,7 @@ func (t *GCSTransport) get(req *http.Request) *http.Response {
 		},
 		Body: r,
 	}
-	resp.Status = http.StatusText(resp.StatusCode)
+	resp.Status = xhttp.Status(resp.StatusCode)
 	setGCSObjectHeaders(resp.Header, attrs)
 	return resp
 }
@@ -139,7 +139,7 @@ func (t *GCSTransport) head(req *http.Request) *http.Response {
 		},
 		Body: io.NopCloser(bytes.NewReader(nil)),
 	}
-	resp.Status = http.StatusText(resp.StatusCode)
+	resp.Status = xhttp.Status(resp.StatusCode)
 	setGCSObjectHeaders(resp.Header, attrs)
 	return resp
 }
@@ -193,7 +193,7 @@ func (t *GCSTransport) put(req *http.Request) *http.Response {
 
 	resp := &http.Response{
 		StatusCode:    statusCode,
-		Status:        http.StatusText(statusCode),
+		Status:        xhttp.Status(statusCode),
 		Request:       req,
 		Proto:         "HTTP/1.1",
 		ProtoMajor:    1,

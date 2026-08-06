@@ -60,7 +60,7 @@ func (resp *storedResponse) toResponse(body io.ReadCloser) *http.Response {
 
 	return &http.Response{
 		StatusCode:    resp.statusCode,
-		Status:        http.StatusText(resp.statusCode),
+		Status:        xhttp.Status(resp.statusCode),
 		Header:        header,
 		Proto:         "HTTP/1.1",
 		ProtoMajor:    1,

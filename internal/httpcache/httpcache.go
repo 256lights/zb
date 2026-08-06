@@ -286,7 +286,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			ProtoMajor:    1,
 			ProtoMinor:    1,
 			StatusCode:    http.StatusGatewayTimeout,
-			Status:        http.StatusText(http.StatusGatewayTimeout),
+			Status:        xhttp.Status(http.StatusGatewayTimeout),
 			ContentLength: int64(len(message)),
 			Header: http.Header{
 				"Content-Type":           {"text/plain; charset=utf-8"},
