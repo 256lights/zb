@@ -150,7 +150,11 @@ func (s *Store) fetchNARInfo(ctx context.Context, u *url.URL) (info *NARInfo, rn
 	}
 	result := new(NARInfo)
 	if err := result.UnmarshalText(res.body); err != nil {
-		return nil, rneg, fmt.Errorf("fetch %v: %v", u.Redacted(), err)
+		return nil, rneg, &url.Error{
+			Op:  "get",
+			URL: u.Redacted(),
+			Err: err,
+		}
 	}
 	return result, rneg, nil
 }
@@ -405,20 +409,33 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 	}
 	resp, err := obj.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
+		// Errors will already be a [*url.Error].
+		return fmt.Errorf("download %s: %v", obj.info.StorePath, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		err := xhttp.ErrorFromResponse(resp)
-		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
+		return fmt.Errorf("download %s: %v", obj.info.StorePath, &url.Error{
+			Op:  "get",
+			URL: narFileURL.Redacted(),
+			Err: err,
+		})
 	}
 	decodedBody, err := httpencoding.Decode(resp.Body, resp.Header.Get("Content-Encoding"))
 	if err != nil {
-		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
+		return fmt.Errorf("download %s: %v", obj.info.StorePath, &url.Error{
+			Op:  "get",
+			URL: narFileURL.Redacted(),
+			Err: err,
+		})
 	}
 	defer decodedBody.Close()
 	if _, err := io.Copy(dst, decodedBody); err != nil {
-		return fmt.Errorf("download %s: get %s: %v", obj.info.StorePath, narFileURL.Redacted(), err)
+		return fmt.Errorf("download %s: %v", obj.info.StorePath, &url.Error{
+			Op:  "get",
+			URL: narFileURL.Redacted(),
+			Err: err,
+		})
 	}
 	return nil
 }
