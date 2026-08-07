@@ -9,6 +9,7 @@ in the form of [http.RoundTripper] implementations that present an HTTP GET/PUT 
 package althttp
 
 import (
+	"cmp"
 	"io"
 	"net/http"
 	"strconv"
@@ -53,4 +54,21 @@ func hasPreconditions(h http.Header) bool {
 		len(h.Values("If-None-Match")) > 0 ||
 		len(h.Values("If-Modified-Since")) > 0 ||
 		len(h.Values("If-Unmodified-Since")) > 0
+}
+
+type readMultiCloser struct {
+	io.Reader
+	closers [2]io.Closer
+}
+
+func (rmc *readMultiCloser) Close() error {
+	var firstError error
+	for _, c := range rmc.closers {
+		if c == nil {
+			continue
+		}
+		err := c.Close()
+		firstError = cmp.Or(firstError, err)
+	}
+	return firstError
 }

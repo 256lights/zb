@@ -4,6 +4,9 @@
 package althttp
 
 import (
+	"bytes"
+	"compress/gzip"
+	"context"
 	"io"
 	"net/http"
 	"net/url"
@@ -12,7 +15,10 @@ import (
 	"testing"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/option"
 	"zb.256lights.llc/pkg/internal/xhttp"
 )
 
@@ -23,6 +29,7 @@ func TestGCSTransport(t *testing.T) {
 	const etag xhttp.EntityTag = `"xyzzy"`
 	const cacheControl = `max-age=604800`
 	const content = "Hello, World!\n"
+	const compressedObjectName = "compressed"
 	objectCreated := time.Date(2026, time.July, 1, 9, 0, 0, 0, time.UTC)
 
 	gcsServer := fakestorage.NewServer([]fakestorage.Object{
@@ -39,12 +46,35 @@ func TestGCSTransport(t *testing.T) {
 			},
 			Content: []byte(content),
 		},
+		{
+			ObjectAttrs: fakestorage.ObjectAttrs{
+				BucketName:      bucketName,
+				Name:            compressedObjectName,
+				ContentType:     contentType,
+				ContentEncoding: "gzip",
+				Size:            int64(len(gzipCompress([]byte(content)))),
+				Etag:            string(etag[1 : len(etag)-1]),
+				Created:         objectCreated,
+				Updated:         objectCreated,
+				CacheControl:    cacheControl,
+			},
+			Content: gzipCompress([]byte(content)),
+		},
 	})
 	t.Cleanup(gcsServer.Stop)
+	gcsClient, err := storage.NewClient(context.Background(),
+		option.WithHTTPClient(gcsServer.HTTPClient()),
+		option.WithCredentials(&google.Credentials{}),
+		// TODO(https://github.com/googleapis/google-cloud-go/issues/7786): Remove when fixed.
+		storage.WithXMLReads(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	client := &http.Client{
 		Transport: &GCSTransport{
-			Client: gcsServer.Client(),
+			Client: gcsClient,
 		},
 	}
 
@@ -80,6 +110,107 @@ func TestGCSTransport(t *testing.T) {
 		}
 		if got, want := resp.Header.Get("Cache-Control"), cacheControl; got != want {
 			t.Errorf("Cache-Control = %s; want %s", got, want)
+		}
+
+		gotBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Error("io.ReadAll(response.Body):", err)
+		}
+		if string(gotBody) != content {
+			t.Errorf("body = %q; want %q", gotBody, content)
+		}
+	})
+
+	t.Run("Get/GzipCompressed", func(t *testing.T) {
+		resp, err := client.Do(&http.Request{
+			URL: &url.URL{
+				Scheme: GCSScheme,
+				Host:   bucketName,
+				Path:   "/" + compressedObjectName,
+			},
+			Header: http.Header{
+				"Accept-Encoding": {"gzip"},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				t.Error("close response body:", err)
+			}
+		}()
+
+		if got, want := resp.StatusCode, http.StatusOK; got != want {
+			t.Errorf("status code = %d (%s); want %d (%s)",
+				got, http.StatusText(got), want, http.StatusText(want))
+		}
+		if got, want := resp.Header.Get("Content-Type"), contentType; got != want {
+			t.Errorf("Content-Type = %s; want %s", got, want)
+		}
+		if got, want := resp.Header.Get("ETag"), string(etag); got != want {
+			t.Errorf("ETag = %s; want %s", got, want)
+		}
+		if got, want := resp.Header.Get("Last-Modified"), "Wed, 01 Jul 2026 09:00:00 GMT"; got != want {
+			t.Errorf("Last-Modified = %s; want %s", got, want)
+		}
+		if got, want := resp.Header.Get("Cache-Control"), cacheControl; got != want {
+			t.Errorf("Cache-Control = %s; want %s", got, want)
+		}
+		if got, want := resp.Header.Get("Content-Encoding"), "gzip"; got != want {
+			t.Errorf("Content-Encoding = %s; want %s", got, want)
+		}
+		if resp.Uncompressed {
+			t.Error("response.Uncompressed = true; want false")
+		}
+
+		gotBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Error("io.ReadAll(response.Body):", err)
+		}
+		if wantBody := gzipCompress([]byte(content)); !bytes.Equal(gotBody, wantBody) {
+			t.Errorf("body = %q; want %q", gotBody, wantBody)
+		}
+	})
+
+	t.Run("Get/AutomaticDecompression", func(t *testing.T) {
+		resp, err := client.Do(&http.Request{
+			URL: &url.URL{
+				Scheme: GCSScheme,
+				Host:   bucketName,
+				Path:   "/" + compressedObjectName,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				t.Error("close response body:", err)
+			}
+		}()
+
+		if got, want := resp.StatusCode, http.StatusOK; got != want {
+			t.Errorf("status code = %d (%s); want %d (%s)",
+				got, http.StatusText(got), want, http.StatusText(want))
+		}
+		if got, want := resp.Header.Get("Content-Type"), contentType; got != want {
+			t.Errorf("Content-Type = %s; want %s", got, want)
+		}
+		if got, want := resp.Header.Get("ETag"), string(etag); got != want {
+			t.Errorf("ETag = %s; want %s", got, want)
+		}
+		if got, want := resp.Header.Get("Last-Modified"), "Wed, 01 Jul 2026 09:00:00 GMT"; got != want {
+			t.Errorf("Last-Modified = %s; want %s", got, want)
+		}
+		if got, want := resp.Header.Get("Cache-Control"), cacheControl; got != want {
+			t.Errorf("Cache-Control = %s; want %s", got, want)
+		}
+		if got, want := resp.Header.Get("Content-Encoding"), ""; got != want {
+			t.Errorf("Content-Encoding = %s; want %s", got, want)
+		}
+		if !resp.Uncompressed {
+			t.Error("response.Uncompressed = false; want true")
 		}
 
 		gotBody, err := io.ReadAll(resp.Body)
@@ -615,4 +746,16 @@ func TestGCSTransport(t *testing.T) {
 			t.Errorf("Content-Type = %q; want %q", got, want)
 		}
 	})
+}
+
+func gzipCompress(data []byte) []byte {
+	buf := new(bytes.Buffer)
+	zw := gzip.NewWriter(buf)
+	if _, err := zw.Write(data); err != nil {
+		panic(err)
+	}
+	if err := zw.Close(); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
 }
