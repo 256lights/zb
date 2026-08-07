@@ -241,12 +241,9 @@ func TestRealizationMapClone(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},
@@ -268,12 +265,9 @@ func TestRealizationMapClone(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},
@@ -344,12 +338,9 @@ func TestRealizationMapCompact(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},
@@ -371,12 +362,9 @@ func TestRealizationMapCompact(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},
@@ -402,12 +390,9 @@ func TestRealizationMapCompact(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},
@@ -446,12 +431,9 @@ func TestRealizationMapCompact(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},
@@ -473,12 +455,9 @@ func TestRealizationMapCompact(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},
@@ -504,12 +483,9 @@ func TestRealizationMapCompact(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},
@@ -593,12 +569,9 @@ func TestRealizationMapMerge(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},
@@ -628,12 +601,9 @@ func TestRealizationMapMerge(t *testing.T) {
 								ReferenceClasses: []*ReferenceClass{
 									{
 										Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-										Realization: Nullable[RealizationOutputReference]{
-											Valid: true,
-											X: RealizationOutputReference{
-												DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-												OutputName:     "foo",
-											},
+										Realization: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
 										},
 									},
 								},
@@ -660,12 +630,9 @@ func TestRealizationMapMerge(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},
@@ -704,12 +671,9 @@ func TestRealizationMapMerge(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},
@@ -739,12 +703,9 @@ func TestRealizationMapMerge(t *testing.T) {
 								ReferenceClasses: []*ReferenceClass{
 									{
 										Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-										Realization: Nullable[RealizationOutputReference]{
-											Valid: true,
-											X: RealizationOutputReference{
-												DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-												OutputName:     "foo",
-											},
+										Realization: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
 										},
 									},
 								},
@@ -771,12 +732,9 @@ func TestRealizationMapMerge(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},
@@ -819,12 +777,9 @@ func TestRealizationMapMerge(t *testing.T) {
 								ReferenceClasses: []*ReferenceClass{
 									{
 										Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-										Realization: Nullable[RealizationOutputReference]{
-											Valid: true,
-											X: RealizationOutputReference{
-												DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-												OutputName:     "foo",
-											},
+										Realization: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
 										},
 									},
 								},
@@ -843,12 +798,9 @@ func TestRealizationMapMerge(t *testing.T) {
 								ReferenceClasses: []*ReferenceClass{
 									{
 										Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-										Realization: Nullable[RealizationOutputReference]{
-											Valid: true,
-											X: RealizationOutputReference{
-												DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-												OutputName:     "foo",
-											},
+										Realization: RealizationOutputReference{
+											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+											OutputName:     "foo",
 										},
 									},
 								},
@@ -878,12 +830,9 @@ func TestRealizationMapMerge(t *testing.T) {
 							ReferenceClasses: []*ReferenceClass{
 								{
 									Path: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bar",
-									Realization: Nullable[RealizationOutputReference]{
-										Valid: true,
-										X: RealizationOutputReference{
-											DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
-											OutputName:     "foo",
-										},
+									Realization: RealizationOutputReference{
+										DerivationHash: mustParseHash(t, "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA="),
+										OutputName:     "foo",
 									},
 								},
 							},

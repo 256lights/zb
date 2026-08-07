@@ -409,12 +409,3 @@ type ExportRequest struct {
 	// Otherwise, paths that are referenced by those store objects will also be included.
 	ExcludeReferences bool `json:"excludeReferences"`
 }
-
-// Nullable wraps a type to permit a null JSON serialization.
-// The zero value is null.
-type Nullable[T any] = zbstore.Nullable[T]
-
-// NonNull returns a [Nullable] that wraps the given value.
-func NonNull[T any](x T) Nullable[T] {
-	return zbstore.NonNull(x)
-}

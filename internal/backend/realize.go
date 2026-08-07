@@ -933,7 +933,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 				for eqClass := range eqClasses.All() {
 					r.ReferenceClasses = append(r.ReferenceClasses, &zbstore.ReferenceClass{
 						Path:        ref,
-						Realization: zbstore.NonNull(eqClass.toRealizationOutputReference()),
+						Realization: eqClass.toRealizationOutputReference(),
 					})
 				}
 			}

@@ -14,6 +14,7 @@ import (
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
+	"zombiezen.com/go/nix/nar"
 )
 
 var _ interface {
@@ -131,6 +132,32 @@ func (obj *Object) WriteNAR(ctx context.Context, dst io.Writer) error {
 // Trailer returns &obj.ExportTrailer.
 func (obj *Object) Trailer() *zbstore.ExportTrailer {
 	return &obj.ExportTrailer
+}
+
+// ParseDerivation parses a ".drv" object as a [*zbstore.Derivation].
+func (obj *Object) ParseDerivation() (*zbstore.Derivation, error) {
+	drvName, ok := obj.StorePath.DerivationName()
+	if !ok {
+		return nil, fmt.Errorf("parse derivation: %s is not a %s file", obj.StorePath, zbstore.DerivationExt)
+	}
+	nr := nar.NewReader(bytes.NewReader(obj.NAR))
+	hdr, err := nr.Next()
+	if err != nil {
+		return nil, err
+	}
+	if !hdr.Mode.IsRegular() {
+		return nil, fmt.Errorf("parse %s derivation: not a flat file", drvName)
+	}
+	drvData, err := io.ReadAll(nr)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s derivation: %v", drvName, err)
+	}
+	if _, err := nr.Next(); err == nil {
+		return nil, fmt.Errorf("parse %s derivation: more than a single file (bug in NAR reader?)", drvName)
+	} else if err != io.EOF {
+		return nil, fmt.Errorf("parse %s derivation: %v", drvName, err)
+	}
+	return zbstore.ParseDerivation(obj.StorePath.Dir(), drvName, drvData)
 }
 
 type storeReceiver struct {

@@ -280,19 +280,19 @@ func recordRealizations(conn *sqlite.Conn, realizations iter.Seq2[zbstore.Realiz
 			}
 
 			refClassStmt.SetText(":reference_path", string(rc.Path))
-			if !rc.Realization.Valid {
+			if rc.Realization.IsZero() {
 				refClassStmt.SetNull(":reference_drv_hash_algorithm")
 				refClassStmt.SetNull(":reference_drv_hash_bits")
 				refClassStmt.SetNull(":reference_output_name")
 			} else {
-				h := rc.Realization.X.DerivationHash
+				h := rc.Realization.DerivationHash
 				if err := upsertDrvHash(conn, h); err != nil {
 					return fmt.Errorf("record realization for %v: reference %s: %v", ref, rc.Path, err)
 				}
 
 				refClassStmt.SetText(":reference_drv_hash_algorithm", h.Type().String())
 				refClassStmt.SetBytes(":reference_drv_hash_bits", h.Bytes(nil))
-				refClassStmt.SetText(":reference_output_name", rc.Realization.X.OutputName)
+				refClassStmt.SetText(":reference_output_name", rc.Realization.OutputName)
 			}
 
 			if _, err := refClassStmt.Step(); err != nil {
@@ -795,7 +795,7 @@ func findBuildResults(dst []*zbstorerpc.BuildResult, conn *sqlite.Conn, logDir s
 
 				curr = &zbstorerpc.BuildResult{
 					DrvPath: drvPath,
-					DrvHash: zbstore.NonNull(drvHash),
+					DrvHash: zbstorerpc.NonNull(drvHash),
 					Status:  zbstorerpc.BuildStatus(stmt.GetText("status")),
 					Outputs: []*zbstorerpc.RealizeOutput{},
 				}

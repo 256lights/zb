@@ -462,8 +462,8 @@ func realizationKeysEqual(r1, r2 *Realization) bool {
 
 // A ReferenceClass is a mapping of referenced path to optional realization.
 type ReferenceClass struct {
-	Path        Path                                 `json:"path"`
-	Realization Nullable[RealizationOutputReference] `json:"realization"`
+	Path        Path                       `json:"path"`
+	Realization RealizationOutputReference `json:"realization"`
 }
 
 func compareReferenceClasses(rc1, rc2 *ReferenceClass) int {
@@ -471,15 +471,15 @@ func compareReferenceClasses(rc1, rc2 *ReferenceClass) int {
 		return result
 	}
 	switch {
-	case !rc1.Realization.Valid && !rc2.Realization.Valid:
+	case rc1.Realization.IsZero() && rc2.Realization.IsZero():
 		return 0
-	case !rc1.Realization.Valid && rc2.Realization.Valid:
+	case rc1.Realization.IsZero() && !rc2.Realization.IsZero():
 		return -1
-	case rc1.Realization.Valid && !rc2.Realization.Valid:
+	case !rc1.Realization.IsZero() && rc2.Realization.IsZero():
 		return 1
 	}
-	ref1 := rc1.Realization.X
-	ref2 := rc2.Realization.X
+	ref1 := rc1.Realization
+	ref2 := rc2.Realization
 	if result := cmp.Compare(ref1.DerivationHash.Type(), ref2.DerivationHash.Type()); result != 0 {
 		return result
 	}
@@ -487,23 +487,6 @@ func compareReferenceClasses(rc1, rc2 *ReferenceClass) int {
 		bytes.Compare(ref1.DerivationHash.Bytes(nil), ref2.DerivationHash.Bytes(nil)),
 		cmp.Compare(ref1.OutputName, ref2.OutputName),
 	)
-}
-
-// RealizationOutputReference is a reference to an output of an equivalence class of derivations.
-// It is similar to an [OutputReference], but can refers to many derivations.
-type RealizationOutputReference struct {
-	DerivationHash nix.Hash `json:"derivationHash"`
-	OutputName     string   `json:"outputName"`
-}
-
-// IsZero reports whether ref is the zero value.
-func (ref RealizationOutputReference) IsZero() bool {
-	return ref.DerivationHash.IsZero() && ref.OutputName == ""
-}
-
-// String returns the hash and the output name separated by "!".
-func (ref RealizationOutputReference) String() string {
-	return ref.DerivationHash.Base64() + "!" + ref.OutputName
 }
 
 // RealizationSignatureFormat is an enumeration of formats for [RealizationSignature].
@@ -673,6 +656,9 @@ func marshalRealizationForSignature(ref RealizationOutputReference, r *Realizati
 //
 // [realization format]: https://zb.256lights.llc/binary-cache/realizations
 func MarshalHashJSONTo(enc *jsontext.Encoder, hash nix.Hash) error {
+	if hash.IsZero() {
+		return fmt.Errorf("marshal hash: zero hash")
+	}
 	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
 		return fmt.Errorf("marshal hash: %v", err)
 	}
@@ -722,33 +708,26 @@ func compareReferenceClassesForSignature(rc1, rc2 *ReferenceClass) int {
 	if result := cmp.Compare(rc1.Path, rc2.Path); result != 0 {
 		return result
 	}
-	if rc1.Realization.Valid != rc2.Realization.Valid {
-		if rc1.Realization.Valid {
-			return 1
-		} else {
-			return -1
-		}
-	}
 	switch {
-	case !rc1.Realization.Valid && !rc2.Realization.Valid:
+	case rc1.Realization.IsZero() && rc2.Realization.IsZero():
 		return 0
-	case !rc1.Realization.Valid && rc2.Realization.Valid:
+	case rc1.Realization.IsZero() && !rc2.Realization.IsZero():
 		return -1
-	case rc1.Realization.Valid && !rc2.Realization.Valid:
+	case !rc1.Realization.IsZero() && rc2.Realization.IsZero():
 		return 1
 	}
 	return cmp.Or(
 		cmp.Compare(
-			rc1.Realization.X.DerivationHash.Type().String(),
-			rc2.Realization.X.DerivationHash.Type().String(),
+			rc1.Realization.DerivationHash.Type().String(),
+			rc2.Realization.DerivationHash.Type().String(),
 		),
 		cmp.Compare(
-			rc1.Realization.X.DerivationHash.RawBase64(),
-			rc2.Realization.X.DerivationHash.RawBase64(),
+			rc1.Realization.DerivationHash.RawBase64(),
+			rc2.Realization.DerivationHash.RawBase64(),
 		),
 		cmp.Compare(
-			rc1.Realization.X.OutputName,
-			rc2.Realization.X.OutputName,
+			rc1.Realization.OutputName,
+			rc2.Realization.OutputName,
 		),
 	)
 }
