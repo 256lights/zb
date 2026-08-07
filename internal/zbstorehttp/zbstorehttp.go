@@ -273,7 +273,11 @@ func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zb
 	rneg := requestNegotiationFromFetchResponse(oldResource, fetchError)
 	if !rneg.isMethodAllowed(http.MethodPut) {
 		log.Debugf(ctx, "Skipping %s because %s not in Allow header", u.Redacted(), http.MethodPut)
-		return fmt.Errorf("%s: %w", u.Redacted(), methodNotAllowedError{http.MethodPut})
+		return &url.Error{
+			Op:  "put",
+			URL: u.Redacted(),
+			Err: methodNotAllowedError{http.MethodPut},
+		}
 	}
 	noReplace := false
 	var validators xhttp.ValidatorFields
@@ -281,13 +285,19 @@ func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zb
 	case fetchError == nil:
 		unmarshalers := jsonv2.UnmarshalFromFunc(zbstore.UnmarshalHashJSONFrom)
 		if err := jsonv2.Unmarshal(oldResource.body, &existing, jsonv2.WithUnmarshalers(unmarshalers)); err != nil {
-			return fmt.Errorf("%s: %v", u.Redacted(), err)
+			return &url.Error{
+				Op:  "get",
+				URL: u.Redacted(),
+				Err: err,
+			}
 		}
 		existing.Compact()
 		validators = oldResource.validators
 	case isNotFound(fetchError):
 		existing = zbstore.RealizationMap{DerivationHash: realizations.DerivationHash}
 		noReplace = true
+	case isClientError(fetchError):
+		return fetchError
 	default:
 		// Make error opaque.
 		return errors.New(fetchError.Error())
@@ -299,7 +309,11 @@ func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zb
 	marshalers := jsonv2.MarshalToFunc(zbstore.MarshalHashJSONTo)
 	newData, err := jsonv2.Marshal(existing, jsonv2.WithMarshalers(marshalers))
 	if err != nil {
-		return fmt.Errorf("%s: %v", u.Redacted(), err)
+		return &url.Error{
+			Op:  "rewrite",
+			URL: u.Redacted(),
+			Err: err,
+		}
 	}
 
 	err = put(ctx, s.client(), &putRequest{
@@ -318,9 +332,13 @@ func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zb
 	if err != nil {
 		if isMethodNotAllowed(err) {
 			log.Debugf(ctx, "Skipping %s: %v", u.Redacted(), err)
-			err = methodNotAllowedError{http.MethodPut}
+			err = &url.Error{
+				Op:  "put",
+				URL: u.Redacted(),
+				Err: methodNotAllowedError{http.MethodPut},
+			}
 		}
-		return fmt.Errorf("%s: %w", u.Redacted(), err)
+		return err
 	}
 	return nil
 }
