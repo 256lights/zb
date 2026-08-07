@@ -17,6 +17,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/googleapis/gax-go/v2/apierror"
+	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/xhttp"
 )
 
@@ -113,6 +114,22 @@ func (t *GCSTransport) get(req *http.Request) *http.Response {
 	}
 	resp.Status = xhttp.Status(resp.StatusCode)
 	setGCSObjectHeaders(resp.Header, attrs)
+	acceptEncoding := req.Header.Values("Accept-Encoding")
+	if len(acceptEncoding) == 0 || xhttp.EncodingQuality(acceptEncoding, attrs.ContentEncoding) == 0 {
+		if decoded, err := httpencoding.Decode(r, attrs.ContentEncoding); err == nil {
+			resp.Uncompressed = len(acceptEncoding) == 0
+			resp.Header.Del("Content-Encoding")
+			resp.Header.Del("Content-Length")
+			resp.Body = &readMultiCloser{
+				Reader:  decoded,
+				closers: [len(readMultiCloser{}.closers)]io.Closer{decoded, r},
+			}
+			resp.ContentLength = -1
+		} else if !httpencoding.IsUnsupported(err) {
+			r.Close()
+			return errorResponse(req, err.Error(), http.StatusInternalServerError)
+		}
+	}
 	return resp
 }
 
