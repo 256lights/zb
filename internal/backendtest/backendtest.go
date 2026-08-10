@@ -127,7 +127,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 
 	clientCodec := zbstorerpc.NewCodec(clientConn, &opts.ClientOptions)
 	var usedClientCodec atomic.Bool
-	client := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
+	client := jsonrpc.NewClient(ctx, func(ctx context.Context) (jsonrpc.ClientCodec, error) {
 		usedClientCodec.Store(true)
 		return clientCodec, nil
 	})

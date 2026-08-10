@@ -209,7 +209,7 @@ func TestClient(t *testing.T) {
 			openCount := 0
 
 			codec := newTestClientCodec(t, test.wire)
-			client := NewClient(func(ctx context.Context) (ClientCodec, error) {
+			client := NewClient(ctx, func(ctx context.Context) (ClientCodec, error) {
 				openCount++
 				if openCount > 1 {
 					t.Errorf("OpenFunc called %d times", openCount)
@@ -278,7 +278,7 @@ func TestClientCancel(t *testing.T) {
 			},
 		},
 	})
-	client := NewClient(func(ctx context.Context) (ClientCodec, error) {
+	client := NewClient(ctx, func(ctx context.Context) (ClientCodec, error) {
 		openCount++
 		if openCount > 1 {
 			t.Errorf("OpenFunc called %d times", openCount)
@@ -318,7 +318,7 @@ func TestClientCodec(t *testing.T) {
 			},
 		},
 	})
-	client := NewClient(func(ctx context.Context) (ClientCodec, error) {
+	client := NewClient(ctx, func(ctx context.Context) (ClientCodec, error) {
 		openCount++
 		if openCount > 1 {
 			t.Errorf("OpenFunc called %d times", openCount)
