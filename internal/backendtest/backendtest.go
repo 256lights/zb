@@ -13,12 +13,14 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
 )
@@ -113,13 +115,20 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 	serverCodec := zbstorerpc.NewCodec(serverConn, &zbstorerpc.CodecOptions{
 		Importer: zbstorerpc.NewReceiverImporter(serverReceiver),
 	})
+	serverCodecCloser := xio.CloseOnce(serverCodec)
+	stopServerCodecClose := context.AfterFunc(serveCtx, func() {
+		serverCodecCloser.Close()
+	})
 	wg.Go(func() {
 		jsonrpc.Serve(backend.WithExporter(serveCtx, serverCodec), serverCodec, srv)
-		serverCodec.Close()
+		stopServerCodecClose()
+		serverCodecCloser.Close()
 	})
 
 	clientCodec := zbstorerpc.NewCodec(clientConn, &opts.ClientOptions)
+	var usedClientCodec atomic.Bool
 	client := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
+		usedClientCodec.Store(true)
 		return clientCodec, nil
 	})
 
@@ -127,6 +136,12 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 		if err := client.Close(); err != nil {
 			tb.Logf("client.Close: %v", err)
 			tb.Fail()
+		}
+		if !usedClientCodec.Load() {
+			if err := clientCodec.Close(); err != nil {
+				tb.Logf("client.Close: %v", err)
+				tb.Fail()
+			}
 		}
 
 		stopServe()

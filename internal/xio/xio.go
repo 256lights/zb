@@ -4,7 +4,10 @@
 // Package xio provides I/O utilities.
 package xio
 
-import "io"
+import (
+	"io"
+	"sync"
+)
 
 // A WriteCounter counts the number of bytes written to it.
 type WriteCounter int64
@@ -22,22 +25,16 @@ func (wc *WriteCounter) WriteString(s string) (n int, err error) {
 }
 
 type onceCloser struct {
-	c      io.Closer
-	err    error
-	closed bool
+	f func() error
 }
 
 // CloseOnce returns an [io.Closer] that calls c at most once.
 func CloseOnce(c io.Closer) io.Closer {
-	return &onceCloser{c: c}
+	return &onceCloser{f: sync.OnceValue(c.Close)}
 }
 
 func (oc *onceCloser) Close() error {
-	if !oc.closed {
-		oc.err = oc.c.Close()
-		oc.closed = true
-	}
-	return oc.err
+	return oc.f()
 }
 
 type emptyReader struct{}
