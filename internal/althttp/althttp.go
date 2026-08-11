@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"zb.256lights.llc/pkg/internal/fileurl"
+	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/xhttp"
 )
 
@@ -26,6 +27,37 @@ type FileTransport = fileurl.Transport
 
 // FileScheme is the URL scheme for [FileTransport].
 const FileScheme = fileurl.Scheme
+
+// decodeResponse performs Content-Encoding negotiation
+// and rewrites the response body if necessary.
+func decodeResponse(req *http.Request, resp *http.Response) {
+	contentEncoding := resp.Header.Get("Content-Encoding")
+	if contentEncoding == "" {
+		return
+	}
+	acceptEncoding := req.Header.Values("Accept-Encoding")
+	if len(acceptEncoding) > 0 && xhttp.EncodingQuality(acceptEncoding, contentEncoding) != 0 {
+		return
+	}
+	decoded, err := httpencoding.Decode(resp.Body, contentEncoding)
+	if httpencoding.IsUnsupported(err) {
+		return
+	}
+	if err != nil {
+		resp.Body.Close()
+		*resp = *errorResponse(req, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp.Uncompressed = true
+	resp.Header.Del("Content-Encoding")
+	resp.Header.Del("Content-Length")
+	resp.ContentLength = -1
+	resp.Body = &readMultiCloser{
+		Reader:  decoded,
+		closers: [len(readMultiCloser{}.closers)]io.Closer{decoded, resp.Body},
+	}
+}
 
 func errorResponse(req *http.Request, error string, code int) *http.Response {
 	if error != "" {
