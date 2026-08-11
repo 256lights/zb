@@ -20,12 +20,14 @@ import (
 	"testing/synctest"
 	"time"
 
+	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"golang.org/x/tools/txtar"
 	. "zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/fileurl"
+	"zb.256lights.llc/pkg/internal/hal"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/system"
@@ -564,48 +566,64 @@ func TestRealizeInputReference(t *testing.T) {
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
-	const inputContent = "Hello, World!\n"
-	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExportWriter(exportBuffer)
-	inputFilePath, _, err := storetest.ExportSourceFile(exporter, []byte(inputContent), storetest.SourceExportOptions{
-		Name:      "hello.txt",
-		Directory: dir,
-	})
+	exportArchive, err := txtar.ParseFile(filepath.Join("testdata", "TestRealizeInputReference.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := storetest.TxtarObjects(dir, exportArchive.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputObject, err := findObjectWithName("hello.txt", slices.Values(objects))
+	if err != nil {
+		t.Fatal(err)
+	}
+	drvObject, err := findObjectWithName(derivationNameForCurrentSystem("hello-path.txt"), slices.Values(objects))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	const wantOutputName = "hello-path.txt"
-	drvContent := &zbstore.Derivation{
-		Name:   wantOutputName,
-		Dir:    dir,
-		System: system.Current().String(),
-		Env: map[string]string{
-			"in":  string(inputFilePath),
-			"out": zbstore.HashPlaceholder("out"),
-		},
-		InputSources: *sets.NewSorted(inputFilePath),
-		Outputs: map[string]*zbstore.DerivationOutputType{
-			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-		},
-	}
-	if runtime.GOOS == "windows" {
-		drvContent.Builder = powershellPath
-		drvContent.Args = []string{"-Command", "\"${env:in}`n\" | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"}
-	} else {
-		drvContent.Builder = shPath
-		drvContent.Args = []string{"-c", `echo "$in" > "$out"`}
-	}
-	drvPath, _, err := storetest.ExportDerivation(exporter, drvContent)
-	if err != nil {
-		t.Fatal(err)
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
+	for _, obj := range objects {
+		if err := exporter.WriteObject(ctx, obj); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := exporter.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	uploadDir, err := filepath.Abs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	discoveryDocument := hal.Resource{
+		Links: map[string]hal.ArrayOrObject[*hal.Link]{
+			"https://zb-build.dev/api/rel/realization": hal.Array([]*hal.Link{
+				{HRef: "realizations/{hashDigest}.json", Templated: true},
+			}),
+		},
+	}
+	discoveryJSON, err := jsonv2.Marshal(discoveryDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discoveryPath := filepath.Join(uploadDir, "discovery.json")
+	if err := os.WriteFile(discoveryPath, discoveryJSON, 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
+		Options: Options{
+			Upload: &zbstorehttp.Store{
+				URL: fileurl.FromPath(discoveryPath),
+				HTTPClient: &http.Client{
+					Transport: fileurl.Transport{},
+				},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -622,7 +640,7 @@ func TestRealizeInputReference(t *testing.T) {
 
 	realizeResponse := new(zbstorerpc.RealizeResponse)
 	err = jsonrpc.Do(ctx, client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
-		DrvPaths: []zbstore.Path{drvPath},
+		DrvPaths: []zbstore.Path{drvObject.StorePath},
 	})
 	if err != nil {
 		t.Fatal("RPC error:", err)
@@ -635,14 +653,58 @@ func TestRealizeInputReference(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantOutputContent := inputFilePath + "\n"
+	wantOutputContent := string(inputObject.StorePath) + "\n"
+	wantOutputName, _ := drvObject.StorePath.DerivationName()
 	wantOutputPath, err := singleFileOutputPath(dir, wantOutputName, []byte(wantOutputContent), zbstore.References{
-		Others: *sets.NewSorted(inputFilePath),
+		Others: *sets.NewSorted(inputObject.StorePath),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkSingleFileOutput(t, drvPath, wantOutputPath, []byte(wantOutputContent), got)
+	checkSingleFileOutput(t, drvObject.StorePath, wantOutputPath, []byte(wantOutputContent), got)
+
+	// Wait until server has finished uploading.
+	if err := server.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify that the realizations document that is uploaded is valid.
+	if drv, err := drvObject.ParseDerivation(); err != nil {
+		t.Error(err)
+	} else {
+		drvHash, err := drv.SHA256RealizationHash(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		realizationsFilename := drvHash.RawBase32() + ".json"
+		realizationsPath := filepath.Join(uploadDir, "realizations", realizationsFilename)
+		if realizationsJSON, err := os.ReadFile(realizationsPath); err != nil {
+			t.Error(err)
+		} else {
+			var got zbstore.RealizationMap
+			want := zbstore.RealizationMap{
+				DerivationHash: drvHash,
+				Realizations: map[string][]*zbstore.Realization{
+					zbstore.DefaultDerivationOutputName: {{
+						OutputPath: wantOutputPath,
+						ReferenceClasses: []*zbstore.ReferenceClass{
+							{Path: inputObject.StorePath},
+						},
+					}},
+				},
+			}
+			err := jsonv2.Unmarshal(
+				realizationsJSON, &got,
+				jsonv2.RejectUnknownMembers(true),
+				jsonv2.WithUnmarshalers(jsonv2.UnmarshalFromFunc(zbstore.UnmarshalHashJSONFrom)),
+			)
+			if err != nil {
+				t.Error(err)
+			} else if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("%s (-want +got):\n%s", realizationsFilename, diff)
+			}
+		}
+	}
 }
 
 func TestRealizeSelfReference(t *testing.T) {
