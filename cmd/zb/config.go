@@ -383,8 +383,8 @@ func (t *fileSplitTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return t.fallback.RoundTrip(req)
 }
 
-func (g *globalConfig) storeClient(opts *zbstorerpc.CodecOptions) *jsonrpc.Client {
-	return jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
+func (g *globalConfig) storeClient(ctx context.Context, opts *zbstorerpc.CodecOptions) *jsonrpc.Client {
+	return jsonrpc.NewClient(ctx, func(ctx context.Context) (jsonrpc.ClientCodec, error) {
 		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", g.StoreSocket)
 		if err != nil {
 			return nil, err

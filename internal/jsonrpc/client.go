@@ -67,14 +67,14 @@ type Client struct {
 // NewClient will start opening a connection in the background,
 // but will return before the connection is established.
 // The first call to [Client.JSONRPC] will block on the connection.
-func NewClient(open OpenFunc) *Client {
+func NewClient(ctx context.Context, open OpenFunc) *Client {
 	c := &Client{
 		comms:         make(chan clientRequest),
 		commsDone:     make(chan struct{}),
 		codecRequests: make(chan clientCodecRequest),
 	}
 	var commsCtx context.Context
-	commsCtx, c.cancelComms = context.WithCancel(context.Background())
+	commsCtx, c.cancelComms = context.WithCancel(context.WithoutCancel(ctx))
 	go func() {
 		defer close(c.commsDone)
 		c.communicate(commsCtx, open)

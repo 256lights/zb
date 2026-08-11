@@ -270,7 +270,7 @@ func (c *evalCommand) Run(ctx context.Context, g *globalConfig) error {
 		}
 	}()
 	di := new(zbstorerpc.DeferredImporter)
-	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
+	storeClient := g.storeClient(ctx, &zbstorerpc.CodecOptions{
 		Importer: di,
 	})
 	defer storeClient.Close()
@@ -323,7 +323,7 @@ func (c *buildCommand) Run(ctx context.Context, g *globalConfig) error {
 		}
 	}()
 	di := new(zbstorerpc.DeferredImporter)
-	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
+	storeClient := g.storeClient(ctx, &zbstorerpc.CodecOptions{
 		Importer: di,
 	})
 	defer storeClient.Close()

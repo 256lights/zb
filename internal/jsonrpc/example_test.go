@@ -16,6 +16,8 @@ import (
 )
 
 func Example() {
+	ctx := context.Background()
+
 	// Set up a server handler.
 	srv := jsonrpc.ServeMux{
 		"subtract": jsonrpc.HandlerFunc(subtractHandler),
@@ -27,7 +29,7 @@ func Example() {
 	go func() {
 		defer close(srvDone)
 		defer srvConn.Close()
-		jsonrpc.Serve(context.Background(), newCodec(srvConn), srv)
+		jsonrpc.Serve(ctx, newCodec(srvConn), srv)
 	}()
 	defer func() {
 		// Wait for server to finish.
@@ -35,13 +37,13 @@ func Example() {
 	}()
 
 	// Create a client that communicates on the in-memory pipe.
-	client := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
+	client := jsonrpc.NewClient(ctx, func(ctx context.Context) (jsonrpc.ClientCodec, error) {
 		return newCodec(clientConn), nil
 	})
 	defer client.Close()
 
 	// Call the server using the client.
-	response, err := client.JSONRPC(context.Background(), &jsonrpc.Request{
+	response, err := client.JSONRPC(ctx, &jsonrpc.Request{
 		Method: "subtract",
 		Params: jsontext.Value(`[42, 23]`),
 	})

@@ -16,6 +16,7 @@ import (
 )
 
 func TestCodec(t *testing.T) {
+	ctx := t.Context()
 	c1, c2 := net.Pipe()
 	serverCodec := NewCodec(c1, nil)
 	clientCodec := NewCodec(c2, nil)
@@ -32,7 +33,7 @@ func TestCodec(t *testing.T) {
 
 	go func() {
 		defer close(serveDone)
-		jsonrpc.Serve(context.Background(), serverCodec, jsonrpc.ServeMux{
+		jsonrpc.Serve(ctx, serverCodec, jsonrpc.ServeMux{
 			"subtract": jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 				var params []int64
 				if err := jsonv2.Unmarshal(req.Params, &params); err != nil {
@@ -52,11 +53,11 @@ func TestCodec(t *testing.T) {
 		})
 	}()
 
-	client := jsonrpc.NewClient(func(ctx context.Context) (jsonrpc.ClientCodec, error) {
+	client := jsonrpc.NewClient(ctx, func(ctx context.Context) (jsonrpc.ClientCodec, error) {
 		return clientCodec, nil
 	})
 	var got int64
-	err := jsonrpc.Do(context.Background(), client, "subtract", &got, []int64{42, 23})
+	err := jsonrpc.Do(ctx, client, "subtract", &got, []int64{42, 23})
 	if want := int64(19); got != want || err != nil {
 		t.Errorf("subtract[42, 23] = %d, %v; want %d, <nil>", got, err, want)
 	}

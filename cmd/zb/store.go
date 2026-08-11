@@ -62,7 +62,7 @@ func (c *storeObjectInfoCommand) Signature() string {
 }
 
 func (c *storeObjectInfoCommand) Run(ctx context.Context, g *globalConfig) error {
-	storeClient := g.storeClient(nil)
+	storeClient := g.storeClient(ctx, nil)
 	defer storeClient.Close()
 
 	const errNotExist = "does not exist"
@@ -151,7 +151,7 @@ func (c *storeObjectExportCommand) Run(ctx context.Context, g *globalConfig) err
 	toOutput := zbstorerpc.ImportFunc(func(header jsonrpc.Header, body io.Reader) error {
 		return zbstore.ReceiveExport(nopReceiver{}, io.TeeReader(body, output))
 	})
-	storeClient := g.storeClient(&zbstorerpc.CodecOptions{
+	storeClient := g.storeClient(ctx, &zbstorerpc.CodecOptions{
 		Importer: toOutput,
 	})
 	defer storeClient.Close()
@@ -193,7 +193,7 @@ func (c *storeObjectImportCommand) Signature() string {
 }
 
 func (c *storeObjectImportCommand) Run(ctx context.Context, g *globalConfig) error {
-	storeClient := g.storeClient(nil)
+	storeClient := g.storeClient(ctx, nil)
 	defer storeClient.Close()
 
 	inputPaths := c.Paths
