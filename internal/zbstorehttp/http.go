@@ -58,7 +58,17 @@ type fetchResponse struct {
 	requestNegotiation requestNegotiation
 }
 
-func fetch(ctx context.Context, client Client, req *fetchRequest) (*fetchResponse, error) {
+func fetch(ctx context.Context, client Client, req *fetchRequest) (_ *fetchResponse, err error) {
+	defer func() {
+		if _, isURLError := err.(*url.Error); err != nil && !isURLError {
+			err = &url.Error{
+				Op:  "get",
+				URL: req.url.Redacted(),
+				Err: err,
+			}
+		}
+	}()
+
 	httpRequest := (&http.Request{
 		Method: http.MethodGet,
 		URL:    req.url,
@@ -72,11 +82,11 @@ func fetch(ctx context.Context, client Client, req *fetchRequest) (*fetchRespons
 	}
 	resp, err := client.Do(httpRequest)
 	if err != nil {
-		return nil, fmt.Errorf("fetch %v: %v", req.url.Redacted(), err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch %v: %w", req.url.Redacted(), xhttp.ErrorFromResponse(resp))
+		return nil, xhttp.ErrorFromResponse(resp)
 	}
 
 	result := &fetchResponse{
@@ -84,27 +94,26 @@ func fetch(ctx context.Context, client Client, req *fetchRequest) (*fetchRespons
 		requestNegotiation: *requestNegotiationFromResponseHeader(resp.Header),
 	}
 	if resp.ContentLength >= 0 && resp.ContentLength > maxMemorySize {
-		return result, fmt.Errorf("fetch %v: response too large (%.1f MiB)",
-			req.url.Redacted(), float64(resp.ContentLength)/mebibyte)
+		return result, fmt.Errorf("response too large (%.1f MiB)", float64(resp.ContentLength)/mebibyte)
 	}
 	result.body, err = io.ReadAll(io.LimitReader(resp.Body, maxMemorySize))
 	if err != nil {
-		return result, fmt.Errorf("fetch %v: %v", req.url.Redacted(), err)
+		return result, err
 	}
 	if resp.ContentLength == -1 && len(result.body) == maxMemorySize {
 		if n, _ := resp.Body.Read(make([]byte, 1)); n > 0 {
-			return result, fmt.Errorf("fetch %v: response too large", req.url.Redacted())
+			return result, fmt.Errorf("response too large")
 		}
 	}
 	if e := resp.Header.Get("Content-Encoding"); e != "" {
 		dec, err := httpencoding.Decode(bytes.NewReader(result.body), e)
 		if err != nil {
-			return result, fmt.Errorf("fetch %v: %v", req.url.Redacted(), err)
+			return result, err
 		}
 		defer dec.Close()
 		result.body, err = io.ReadAll(dec)
 		if err != nil {
-			return result, fmt.Errorf("fetch %v: %v", req.url.Redacted(), err)
+			return result, err
 		}
 	}
 	return result, nil
@@ -132,14 +141,14 @@ func (req *putRequest) canContentFitInMemory() bool {
 
 func (req *putRequest) readContent(ctx context.Context) ([]byte, error) {
 	if req.contentLength < 0 {
-		return nil, fmt.Errorf("put %s: request body: unknown size", req.url.Redacted())
+		return nil, fmt.Errorf("request body: unknown size")
 	}
 	if !req.canContentFitInMemory() {
-		return nil, fmt.Errorf("put %s: request body: too large (%.1fMiB)", req.url.Redacted(), float64(req.contentLength)/mebibyte)
+		return nil, fmt.Errorf("request body: too large (%.1fMiB)", float64(req.contentLength)/mebibyte)
 	}
 	rc, err := req.getContent()
 	if err != nil {
-		return nil, fmt.Errorf("put %s: request body: %v", req.url.Redacted(), err)
+		return nil, fmt.Errorf("request body: %v", err)
 	}
 	defer func() {
 		if err := rc.Close(); err != nil {
@@ -151,10 +160,10 @@ func (req *putRequest) readContent(ctx context.Context) ([]byte, error) {
 	}
 	content, err := io.ReadAll(rc)
 	if err != nil {
-		err = fmt.Errorf("put %s: request body: %v", req.url.Redacted(), err)
+		err = fmt.Errorf("request body: %v", err)
 	} else if req.contentLength >= 0 && int64(len(content)) != req.contentLength {
-		err = fmt.Errorf("put %s: request body: size (%d bytes) does not match Content-Length (%d bytes)",
-			req.url.Redacted(), len(content), req.contentLength)
+		err = fmt.Errorf("request body: size (%d bytes) does not match Content-Length (%d bytes)",
+			len(content), req.contentLength)
 	}
 	return content, err
 }
@@ -200,7 +209,7 @@ func (req *putRequest) encodeContent(ctx context.Context, contentEncoding string
 	wc := new(xio.WriteCounter)
 	compressed, err := httpencoding.Encode(io.TeeReader(uncompressed, wc), contentEncoding)
 	if err != nil {
-		return -1, nil, fmt.Errorf("put %s: request body: %v", req.url.Redacted(), err)
+		return -1, nil, fmt.Errorf("request body: %v", err)
 	}
 	defer func() {
 		if err := compressed.Close(); err != nil {
@@ -209,11 +218,11 @@ func (req *putRequest) encodeContent(ctx context.Context, contentEncoding string
 	}()
 	compressedData, err := io.ReadAll(compressed)
 	if err != nil {
-		return -1, nil, fmt.Errorf("put %s: request body: %v", req.url.Redacted(), err)
+		return -1, nil, fmt.Errorf("request body: %v", err)
 	}
 	if int64(*wc) != req.contentLength {
-		err := fmt.Errorf("put %s: request body: size (%d bytes) does not match Content-Length (%d bytes)",
-			req.url.Redacted(), *wc, req.contentLength)
+		err := fmt.Errorf("request body: size (%d bytes) does not match Content-Length (%d bytes)",
+			*wc, req.contentLength)
 		return -1, nil, err
 	}
 	return int64(len(compressedData)), func() (io.ReadCloser, error) {
@@ -221,9 +230,19 @@ func (req *putRequest) encodeContent(ctx context.Context, contentEncoding string
 	}, nil
 }
 
-func put(ctx context.Context, client Client, req *putRequest) error {
+func put(ctx context.Context, client Client, req *putRequest) (err error) {
+	defer func() {
+		if _, isURLError := err.(*url.Error); err != nil && !isURLError {
+			err = &url.Error{
+				Op:  "put",
+				URL: req.url.Redacted(),
+				Err: err,
+			}
+		}
+	}()
+
 	if req.noReplace && !req.precondition.IsZero() {
-		return fmt.Errorf("put %s: precondition combined with If-None-Match:*", req.url.Redacted())
+		return fmt.Errorf("precondition combined with If-None-Match:*")
 	}
 
 	if req.canContentFitInMemory() {
@@ -277,7 +296,7 @@ func putEncoding(ctx context.Context, client Client, contentEncoding string, req
 
 	body, err := getContent()
 	if err != nil {
-		return fmt.Errorf("put %s: %v", req.url.Redacted(), err)
+		return err
 	}
 	httpRequest := &http.Request{
 		Method: http.MethodPut,
@@ -323,9 +342,6 @@ func putEncoding(ctx context.Context, client Client, contentEncoding string, req
 		resp.StatusCode != http.StatusCreated &&
 		resp.StatusCode != http.StatusNoContent {
 		err = xhttp.ErrorFromResponse(resp)
-	}
-	if err != nil {
-		return fmt.Errorf("put %s: %w", req.url.Redacted(), err)
 	}
 	return err
 }
