@@ -4,7 +4,11 @@
 package zbstore
 
 import (
+	"bytes"
+	"cmp"
+	"encoding/base64"
 	"fmt"
+	"slices"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
@@ -108,4 +112,44 @@ func (ref *RealizationOutputReference) UnmarshalJSONFrom(dec *jsontext.Decoder) 
 	default:
 		return fmt.Errorf("unmarshal realization output reference: must be object or null (got %v)", kind)
 	}
+}
+
+// compareRealizationOutputReferences returns
+//
+//   - -1 if ref1 is less than ref2
+//   - 0 if ref1 equals ref2
+//   - 1 if ref1 is greater than ref2
+//
+// according to the rules in https://zb.256lights.llc/binary-cache/realizations#signatures.
+func compareRealizationOutputReferences(ref1, ref2 RealizationOutputReference) int {
+	switch {
+	case ref1.IsZero() && ref2.IsZero():
+		return 0
+	case ref1.IsZero() && !ref2.IsZero():
+		return -1
+	case !ref1.IsZero() && ref2.IsZero():
+		return 1
+	}
+
+	htype1 := ref1.DerivationHash.Type()
+	htype2 := ref2.DerivationHash.Type()
+	if result := cmp.Compare(htype1.String(), htype2.String()); result != 0 {
+		return result
+	}
+
+	decodedLen := htype1.Size()
+	encodedLen := base64.StdEncoding.EncodedLen(decodedLen)
+	buf := make([]byte, decodedLen+encodedLen*2)
+	hashBytes := slices.Clip(buf[:decodedLen])
+	digest1 := slices.Clip(buf[decodedLen : decodedLen+encodedLen])
+	digest2 := slices.Clip(buf[decodedLen+encodedLen:])
+	hashBytes = ref1.DerivationHash.Bytes(hashBytes[:0])
+	base64.StdEncoding.Encode(digest1, hashBytes)
+	hashBytes = ref2.DerivationHash.Bytes(hashBytes[:0])
+	base64.StdEncoding.Encode(digest2, hashBytes)
+	if result := bytes.Compare(digest1, digest2); result != 0 {
+		return result
+	}
+
+	return cmp.Compare(ref1.OutputName, ref2.OutputName)
 }
