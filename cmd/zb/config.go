@@ -351,7 +351,8 @@ func (g *globalConfig) newGCSTransport(baseRoundTripper http.RoundTripper) http.
 	gcsClient, err := storage.NewClient(
 		context.Background(),
 		option.WithHTTPClient(authHTTPClient),
-		storage.WithJSONReads(),
+		// TODO(https://github.com/googleapis/google-cloud-go/issues/7786): Remove when fixed.
+		storage.WithXMLReads(),
 	)
 	if err != nil {
 		return stubRoundTripper{err}
