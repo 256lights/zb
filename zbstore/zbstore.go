@@ -466,27 +466,18 @@ type ReferenceClass struct {
 	Realization RealizationOutputReference `json:"realization"`
 }
 
+// compareReferenceClasses returns
+//
+//   - -1 if rc1 is less than rc2
+//   - 0 if rc1 equals rc2
+//   - 1 if rc1 is greater than rc2
+//
+// according to the rules in https://zb.256lights.llc/binary-cache/realizations#signatures.
 func compareReferenceClasses(rc1, rc2 *ReferenceClass) int {
 	if result := cmp.Compare(rc1.Path, rc2.Path); result != 0 {
 		return result
 	}
-	switch {
-	case rc1.Realization.IsZero() && rc2.Realization.IsZero():
-		return 0
-	case rc1.Realization.IsZero() && !rc2.Realization.IsZero():
-		return -1
-	case !rc1.Realization.IsZero() && rc2.Realization.IsZero():
-		return 1
-	}
-	ref1 := rc1.Realization
-	ref2 := rc2.Realization
-	if result := cmp.Compare(ref1.DerivationHash.Type(), ref2.DerivationHash.Type()); result != 0 {
-		return result
-	}
-	return cmp.Or(
-		bytes.Compare(ref1.DerivationHash.Bytes(nil), ref2.DerivationHash.Bytes(nil)),
-		cmp.Compare(ref1.OutputName, ref2.OutputName),
-	)
+	return compareRealizationOutputReferences(rc1.Realization, rc2.Realization)
 }
 
 // RealizationSignatureFormat is an enumeration of formats for [RealizationSignature].
@@ -633,9 +624,9 @@ func marshalRealizationForSignature(ref RealizationOutputReference, r *Realizati
 		OutputPath:       r.OutputPath,
 		ReferenceClasses: r.ReferenceClasses,
 	}
-	if !slices.IsSortedFunc(rsig.ReferenceClasses, compareReferenceClassesForSignature) {
+	if !slices.IsSortedFunc(rsig.ReferenceClasses, compareReferenceClasses) {
 		rsig.ReferenceClasses = slices.Clone(rsig.ReferenceClasses)
-		slices.SortFunc(rsig.ReferenceClasses, compareReferenceClassesForSignature)
+		slices.SortFunc(rsig.ReferenceClasses, compareReferenceClasses)
 	}
 	firstPass, err := jsonv2.Marshal(
 		rsig,
@@ -702,34 +693,6 @@ func UnmarshalHashJSONFrom(dec *jsontext.Decoder, hash *nix.Hash) error {
 	}
 	*hash = nix.NewHash(ht, parsed.Bits)
 	return nil
-}
-
-func compareReferenceClassesForSignature(rc1, rc2 *ReferenceClass) int {
-	if result := cmp.Compare(rc1.Path, rc2.Path); result != 0 {
-		return result
-	}
-	switch {
-	case rc1.Realization.IsZero() && rc2.Realization.IsZero():
-		return 0
-	case rc1.Realization.IsZero() && !rc2.Realization.IsZero():
-		return -1
-	case !rc1.Realization.IsZero() && rc2.Realization.IsZero():
-		return 1
-	}
-	return cmp.Or(
-		cmp.Compare(
-			rc1.Realization.DerivationHash.Type().String(),
-			rc2.Realization.DerivationHash.Type().String(),
-		),
-		cmp.Compare(
-			rc1.Realization.DerivationHash.RawBase64(),
-			rc2.Realization.DerivationHash.RawBase64(),
-		),
-		cmp.Compare(
-			rc1.Realization.OutputName,
-			rc2.Realization.OutputName,
-		),
-	)
 }
 
 // ErrNotFound is the error returned by various [Store] methods
