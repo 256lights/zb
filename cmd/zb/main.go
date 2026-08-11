@@ -284,9 +284,9 @@ func (c *evalCommand) Run(ctx context.Context, g *globalConfig) error {
 		}
 	}()
 
-	var results []any
+	var results []*frontend.Output
 	if c.Expression {
-		results = make([]any, 1)
+		results = make([]*frontend.Output, 1)
 		results[0], err = eval.Expression(ctx, c.Args[0])
 	} else {
 		results, err = eval.URLs(ctx, c.Args)
@@ -337,27 +337,24 @@ func (c *buildCommand) Run(ctx context.Context, g *globalConfig) error {
 		}
 	}()
 
-	var results []any
+	var results frontend.OutputMap
 	if c.Expression {
-		results = make([]any, 1)
-		results[0], err = eval.Expression(ctx, c.Args[0])
+		results, err = eval.ExpressionOutputs(ctx, c.Args[0])
 	} else {
-		results, err = eval.URLs(ctx, c.Args)
+		results, err = eval.URLOutputs(ctx, c.Args)
 	}
 	if err != nil {
 		return err
 	}
-	if len(results) == 0 {
-		return fmt.Errorf("no evaluation results")
-	}
 
-	drvPaths := make([]zbstore.Path, 0, len(results))
-	for _, result := range results {
-		drv, _ := result.(*frontend.Derivation)
-		if drv == nil {
-			return fmt.Errorf("%v is not a derivation", result)
+	var drvPaths []zbstore.Path
+	for ref := range results.OutputReferences() {
+		if !slices.Contains(drvPaths, ref.DrvPath) {
+			drvPaths = append(drvPaths, ref.DrvPath)
 		}
-		drvPaths = append(drvPaths, drv.Path)
+	}
+	if len(drvPaths) == 0 {
+		return fmt.Errorf("no evaluation results")
 	}
 	realizeResponse := new(zbstorerpc.RealizeResponse)
 	err = jsonrpc.Do(ctx, storeClient, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
@@ -370,16 +367,20 @@ func (c *buildCommand) Run(ctx context.Context, g *globalConfig) error {
 	}
 	build, _, buildError := waitForBuild(ctx, storeClient, realizeResponse.BuildID)
 	if build != nil {
-		for _, drvPath := range drvPaths {
-			result, err := build.ResultForPath(drvPath)
+		allRefs := make(map[zbstore.OutputReference]zbstore.Path)
+		for ref := range results.OutputReferences() {
+			outputPath, _ := build.FindRealizeOutput(ref)
+			if outputPath.Valid {
+				allRefs[ref] = outputPath.X
+			}
+		}
+		for name, out := range results.All() {
+			s, _, err := out.Evaluate(allRefs)
 			if err != nil {
+				log.Warnf(ctx, "%s: %v", name, err)
 				continue
 			}
-			for _, output := range result.Outputs {
-				if output.Path.Valid {
-					fmt.Println(output.Path.X)
-				}
-			}
+			fmt.Println(s)
 		}
 	}
 	return buildError

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -46,8 +45,8 @@ func TestLazy(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", expr, err)
 		}
-		if diff := cmp.Diff(int64(34), got); diff != "" {
-			t.Errorf("%s (-want +got):\n%s", expr, diff)
+		if want := "34"; got.String() != want {
+			t.Errorf("%s = %q; want %q", expr, got, want)
 		}
 	})
 

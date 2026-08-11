@@ -31,10 +31,50 @@ import (
 
 // URLs imports the Lua file for each URL,
 // and uses the fragment from each URL (see [parseFragment])
-// to determine the Lua value to return.
-func (eval *Eval) URLs(ctx context.Context, urls []string) ([]any, error) {
+// to determine the Lua value to convert to a string.
+func (eval *Eval) URLs(ctx context.Context, urls []string) ([]*Output, error) {
+	result := make([]*Output, 0, len(urls))
+	err := eval.urls(ctx, urls, func(ctx context.Context, l *lua.State) error {
+		s, sctx, err := lua.ToString(ctx, l, 1)
+		if err != nil {
+			return err
+		}
+		out, err := newOutput(s, sctx)
+		if err != nil {
+			return err
+		}
+		result = append(result, out)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// URLOutputs imports the Lua file for each URL,
+// and uses the fragment from each URL (see [parseFragment])
+// to determine the Lua value to add to [OutputMap].
+// Output groups are 1:1 with the urls slice.
+func (eval *Eval) URLOutputs(ctx context.Context, urls []string) (OutputMap, error) {
+	var result OutputMap
+	err := eval.urls(ctx, urls, func(ctx context.Context, l *lua.State) error {
+		urlOutputs, err := objectOutputs(ctx, l, 1, system.Current())
+		if err != nil {
+			return err
+		}
+		result.groups = append(result.groups, urlOutputs)
+		return nil
+	})
+	if err != nil {
+		return OutputMap{}, err
+	}
+	return result, nil
+}
+
+func (eval *Eval) urls(ctx context.Context, urls []string, f func(ctx context.Context, l *lua.State) error) error {
 	if len(urls) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	// Parse URLs first before doing any expensive operations.
@@ -42,18 +82,18 @@ func (eval *Eval) URLs(ctx context.Context, urls []string) ([]any, error) {
 	for i, s := range urls {
 		u, err := ParseURL(s)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		archiveEntry, _, err := parseFragment(u.Fragment)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %v", s, err)
+			return fmt.Errorf("%s: %v", s, err)
 		}
 		if u.Scheme == "" || u.Scheme == fileurl.Scheme {
 			if _, err := URLToPath(u); err != nil {
-				return nil, err
+				return err
 			}
 			if archiveEntry != "" {
-				return nil, fmt.Errorf("%s: archive path not valid for local file", s)
+				return fmt.Errorf("%s: archive path not valid for local file", s)
 			}
 		}
 		parsedURLs[i] = u
@@ -90,23 +130,23 @@ func (eval *Eval) URLs(ctx context.Context, urls []string) ([]any, error) {
 		})
 	}
 	if err := grp.Wait(); err != nil {
-		return nil, err
+		return err
 	}
 
 	// Start imports. These will run concurrently.
 	l, err := eval.newState()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer l.Close()
 	l.CreateTable(len(parsedURLs), 0)
 	tableStackIndex := l.Top()
 	if _, err := l.Global(ctx, "import"); err != nil {
-		return nil, fmt.Errorf("internal error: _G.import: %v", err)
+		return fmt.Errorf("internal error: _G.import: %v", err)
 	}
 	importStackIndex := l.Top()
 	if _, err := l.Global(ctx, "extract"); err != nil {
-		return nil, fmt.Errorf("internal error: _G.extract: %v", err)
+		return fmt.Errorf("internal error: _G.extract: %v", err)
 	}
 	extractStackIndex := l.Top()
 	for i, u := range parsedURLs {
@@ -115,7 +155,7 @@ func (eval *Eval) URLs(ctx context.Context, urls []string) ([]any, error) {
 			path, err := URLToPath(u)
 			if err != nil {
 				// Should have already been verified above.
-				return nil, fmt.Errorf("internal error: %v", err)
+				return fmt.Errorf("internal error: %v", err)
 			}
 			l.PushString(path)
 		} else {
@@ -126,49 +166,52 @@ func (eval *Eval) URLs(ctx context.Context, urls []string) ([]any, error) {
 				l.CreateTable(0, 1)
 				l.Insert(-2)
 				if err := l.RawSetField(-2, "src"); err != nil {
-					return nil, fmt.Errorf("internal error: {src=%s}: %v", lualex.Quote(string(storePath)), err)
+					return fmt.Errorf("internal error: {src=%s}: %v", lualex.Quote(string(storePath)), err)
 				}
 				l.PushValue(extractStackIndex)
 				l.Insert(-2)
 				if err := l.PCall(ctx, 1, 1, 0); err != nil {
-					return nil, fmt.Errorf("extract{src=%s}: %v", lualex.Quote(string(storePath)), err)
+					return fmt.Errorf("extract{src=%s}: %v", lualex.Quote(string(storePath)), err)
 				}
 				l.PushString("/" + archiveFile)
 				if err := l.Concat(ctx, 2); err != nil {
-					return nil, fmt.Errorf("internal error: concat extract{...}..%s: %v",
+					return fmt.Errorf("internal error: concat extract{...}..%s: %v",
 						lualex.Quote(archiveFile), err)
 				}
 			}
 		}
 		if err := l.PCall(ctx, 1, 1, 0); err != nil {
-			return nil, err
+			return err
 		}
 		l.RawSetIndex(tableStackIndex, int64(i+1))
 	}
 
 	// Perform lookups on each import.
-	result := make([]any, len(urls))
-	sys := system.Current()
-	sysTriple := SystemTriple(sys)
 	l.PushClosure(0, messageHandler)
+	messageHandlerIndex := l.Top()
+	l.PushClosure(0, func(ctx context.Context, l *lua.State) (int, error) {
+		l.SetTop(2)
+		fieldPath, _ := l.ToString(2)
+		l.Pop(1)
+		if fieldPath != "" {
+			if err := searchKeyPath(ctx, l, fieldPath); err != nil {
+				return 0, err
+			}
+			l.Remove(-2)
+		}
+		err := f(ctx, l)
+		return 0, err
+	})
 	for i, u := range parsedURLs {
+		l.PushValue(-1)
 		l.RawIndex(tableStackIndex, int64(i+1))
 		_, fieldPath, _ := parseFragment(u.Fragment)
-		if fieldPath == "" {
-			l.PushValue(-1)
-		} else {
-			if err := searchKeyPaths(ctx, l, fieldPath, []string{sysTriple}, -2); err != nil {
-				return nil, fmt.Errorf("%s: %v", urls[i], err)
-			}
+		l.PushString(fieldPath)
+		if err := l.PCall(ctx, 2, 0, messageHandlerIndex); err != nil {
+			return fmt.Errorf("%s: %v", u.Redacted(), err)
 		}
-		val, err := luaToGo(ctx, l)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %v", urls[i], err)
-		}
-		result[i] = val
-		l.Pop(2)
 	}
-	return result, nil
+	return nil
 }
 
 func (eval *Eval) importURL(ctx context.Context, u *url.URL) (zbstore.Path, error) {
@@ -261,67 +304,23 @@ func (eval *Eval) importFlatFile(ctx context.Context, name string, size int64, f
 	return path, nil
 }
 
-// searchKeyPaths pushes the value at the slash-separated field path onto the stack.
-// If fieldPath as written results in nil or triggers an error,
-// then the field paths in prefixes are searched in-order.
-// If no non-nil value could be found, searchKeyPaths returns the first error encountered.
-//
-// If msgHandler is non-zero, it is used to format the error
-// but nothing will be pushed onto the stack.
-func searchKeyPaths(ctx context.Context, l *lua.State, fieldPath string, prefixes []string, msgHandler int) error {
-	if !l.CheckStack(4) {
+// searchKeyPath pushes the value at the slash-separated field path onto the stack.
+func searchKeyPath(ctx context.Context, l *lua.State, fieldPath string) error {
+	if !l.CheckStack(3) {
 		return errors.New("internal error: lua stack overflow")
 	}
-	if msgHandler != 0 {
-		msgHandler = l.AbsIndex(msgHandler)
-	}
-	tableIndex := l.Top()
-
-	// Push the function onto the stack once, then clone as needed.
 	l.PushClosure(0, followKeyPath)
-	followFieldPathIndex := tableIndex + 1
-	// Remove followFieldPath function before returning to caller.
-	defer l.Remove(followFieldPathIndex)
-
-	// Try the fieldPath as written first.
-	l.PushValue(followFieldPathIndex)
-	l.PushValue(tableIndex)
+	l.PushValue(-2)
 	l.PushString(fieldPath)
-	firstError := l.PCall(ctx, 2, 1, msgHandler)
-	if firstError == nil && l.Type(-1) != lua.TypeNil {
-		// Found!
+	if err := l.Call(ctx, 2, 1); err != nil {
+		return err
+	}
+	if l.Type(-1) == lua.TypeNil {
+		log.Debugf(ctx, "%s not found", fieldPath)
+	} else {
 		log.Debugf(ctx, "Found non-nil at %s", fieldPath)
-		return nil
 	}
-	log.Debugf(ctx, "%s not found", fieldPath)
-	l.SetTop(followFieldPathIndex)
-
-	// Try alternative prefixes.
-	for _, prefix := range prefixes {
-		l.PushValue(followFieldPathIndex)
-		l.PushValue(tableIndex)
-		l.PushString(prefix + "/" + fieldPath)
-
-		if err := l.PCall(ctx, 2, 1, msgHandler); err != nil {
-			if msgHandler != 0 {
-				l.Pop(1)
-			}
-			if firstError == nil {
-				firstError = fmt.Errorf("in %s/%s: %w", prefix, fieldPath, err)
-			} else {
-				log.Debugf(ctx, "Error when trying %s/%s: %v", prefix, fieldPath, err)
-			}
-		} else if l.Type(-1) == lua.TypeNil {
-			log.Debugf(ctx, "%s/%s not found", prefix, fieldPath)
-			l.Pop(1)
-		} else {
-			// Found!
-			log.Debugf(ctx, "Found non-nil at %s/%s", prefix, fieldPath)
-			return nil
-		}
-	}
-	l.PushNil()
-	return firstError
+	return nil
 }
 
 // followKeyPath is a [lua.Function] that accesses a slash-separated field path
@@ -409,15 +408,6 @@ func splitKeyPath(s string) iter.Seq[string] {
 			}
 		}
 	}
-}
-
-// SystemTriple returns the key used to find a system-specific object for a URL.
-func SystemTriple(sys system.System) string {
-	result := sys.Arch.String() + "-" + sys.Vendor.String() + "-" + sys.OS.String()
-	if !sys.Env.IsUnknown() && !(sys.Env == "msvc" && sys.OS.IsWindows()) {
-		result += "-" + sys.Env.String()
-	}
-	return result
 }
 
 // inferDownloadName converts baseName into a store-object-appropriate name.

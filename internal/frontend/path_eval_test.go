@@ -59,11 +59,7 @@ func TestPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			gotString, ok := got.(string)
-			if !ok {
-				t.Fatalf("expression result is %T; want string", got)
-			}
-			gotPath, gotSubpath, err := storeDir.ParsePath(gotString)
+			gotPath, gotSubpath, err := storeDir.ParsePath(got.String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -126,11 +122,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString1, ok := got1.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got1)
-		}
-		gotPath1, gotSubpath1, err := storeDir.ParsePath(gotString1)
+		gotPath1, gotSubpath1, err := storeDir.ParsePath(got1.String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,14 +145,10 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString2, ok := got2.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got2)
+		if got1 == got2 {
+			t.Errorf("first path (%q) == second path", got1)
 		}
-		if gotString1 == gotString2 {
-			t.Errorf("first path (%q) == second path", gotString1)
-		}
-		gotPath2, gotSubpath2, err := storeDir.ParsePath(gotString2)
+		gotPath2, gotSubpath2, err := storeDir.ParsePath(got2.String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -210,11 +198,7 @@ func TestPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			gotString, ok := got.(string)
-			if !ok {
-				t.Fatalf("expression result is %T; want string", got)
-			}
-			gotPath, gotSubpath, err := storeDir.ParsePath(gotString)
+			gotPath, gotSubpath, err := storeDir.ParsePath(got.String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -266,11 +250,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString1, ok := got1.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got1)
-		}
-		gotPath1, gotSubpath1, err := storeDir.ParsePath(gotString1)
+		gotPath1, gotSubpath1, err := storeDir.ParsePath(got1.String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -287,11 +267,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString2, ok := got2.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got2)
-		}
-		gotPath2, gotSubpath2, err := storeDir.ParsePath(gotString2)
+		gotPath2, gotSubpath2, err := storeDir.ParsePath(got2.String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -340,11 +316,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString1, ok := got1.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got1)
-		}
-		gotPath1, gotSubpath1, err := storeDir.ParsePath(gotString1)
+		gotPath1, gotSubpath1, err := storeDir.ParsePath(got1.String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -361,11 +333,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString2, ok := got2.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got2)
-		}
-		gotPath2, gotSubpath2, err := storeDir.ParsePath(gotString2)
+		gotPath2, gotSubpath2, err := storeDir.ParsePath(got2.String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -406,11 +374,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString, ok := got.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got)
-		}
-		gotPath, gotSubpath, err := storeDir.ParsePath(gotString)
+		gotPath, gotSubpath, err := storeDir.ParsePath(got.String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -457,11 +421,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString, ok := got.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got)
-		}
-		gotPath, gotSubpath, err := storeDir.ParsePath(gotString)
+		gotPath, gotSubpath, err := storeDir.ParsePath(got.String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -516,13 +476,8 @@ func TestReadFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotString, ok := got.(string)
-	if !ok {
-		t.Fatalf("expression result is %T; want string", got)
-	}
-
-	if !bytes.Equal([]byte(gotString), wantContent) {
-		t.Errorf("gotString = %q; want %q", gotString, wantContent)
+	if !bytes.Equal([]byte(got.String()), wantContent) {
+		t.Errorf("got = %q; want %q", got, wantContent)
 	}
 }
 
