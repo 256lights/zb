@@ -4,6 +4,7 @@
 package frontend
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -39,12 +40,25 @@ func TestLazy(t *testing.T) {
 		}
 	}()
 
-	expr := `lazy(function(fib, i) if math.type(i) ~= "integer" or i < 3 then return nil end; return fib[i-2] + fib[i-1]; end, {0, 1})[10]`
-	got, err := eval.Expression(ctx, expr)
-	if err != nil {
-		t.Fatalf("%s: %v", expr, err)
-	}
-	if diff := cmp.Diff(int64(34), got); diff != "" {
-		t.Errorf("%s (-want +got):\n%s", expr, diff)
-	}
+	t.Run("Fibonacci", func(t *testing.T) {
+		expr := `lazy(function(fib, i) if math.type(i) ~= "integer" or i < 3 then return nil end; return fib[i-2] + fib[i-1]; end, {0, 1})[10]`
+		got, err := eval.Expression(ctx, expr)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		if diff := cmp.Diff(int64(34), got); diff != "" {
+			t.Errorf("%s (-want +got):\n%s", expr, diff)
+		}
+	})
+
+	t.Run("Error", func(t *testing.T) {
+		expr := `lazy(function() error("B".."O".."R".."K"); end)["foo"]`
+		if _, err := eval.Expression(ctx, expr); err == nil {
+			t.Errorf("%s did not raise error", expr)
+		} else if got := err.Error(); !strings.Contains(got, "BORK") {
+			t.Errorf("%s: %s; want to contain BORK", expr, got)
+		} else {
+			t.Logf("%s: %s", expr, got)
+		}
+	})
 }
