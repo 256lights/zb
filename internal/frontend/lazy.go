@@ -199,6 +199,10 @@ func indexLazy(ctx context.Context, l *lua.State) (int, error) {
 	}
 
 	close(done)
+	if callError != nil {
+		keyString, _, _ := lua.ToString(ctx, l, 2)
+		return 0, fmt.Errorf("%sindex %s: %w", lua.Where(l, 1), keyString, callError)
+	}
 	return 1, nil
 }
 
