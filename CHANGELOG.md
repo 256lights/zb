@@ -83,14 +83,16 @@ from roughly 10 minutes to XX seconds with a reasonably fast internet connection
 
 ### Fixed
 
-- `zb store object delete` is no longer flaky
-  ([#135](https://github.com/256lights/zb/issues/135)).
+- `zb store object delete` is no longer flaky.
+  ([#135](https://github.com/256lights/zb/issues/135))
+- `zb build --out-link` is now respected.
+  ([#324](https://github.com/256lights/zb/issues/324))
 - Lua operator metamethods now receive their arguments in the correct order
-  when one of the operands is a constant
-  ([#152](https://github.com/256lights/zb/issues/152)).
-- `string.format` in Lua now handles infinity and NaN
-  ([#78](https://github.com/256lights/zb/issues/78)).
+  when one of the operands is a constant.
+  ([#152](https://github.com/256lights/zb/issues/152))
+- `string.format` in Lua now handles infinity and NaN.
   Thank you to [@HigherOrderLogic](https://github.com/HigherOrderLogic)!
+  ([#78](https://github.com/256lights/zb/issues/78))
 - Improved backend disk performance by performing less `fsync` syscalls.
 - Updated to Go 1.26.5.
 
