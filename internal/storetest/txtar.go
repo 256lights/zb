@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"maps"
 	"strings"
 
 	"golang.org/x/tools/txtar"
@@ -22,32 +23,23 @@ import (
 
 // TxtarObjects converts the source files and .drv files in a txtar archive to a slice of [*Object],
 // rewriting their paths to the named directory.
-func TxtarObjects(dir zbstore.Directory, files []txtar.File) ([]*Object, error) {
+// TxtarObjects also returns a map of file names to store paths.
+func TxtarObjects(dir zbstore.Directory, files []txtar.File) ([]*Object, map[string]zbstore.Path, error) {
 	objects := make([]*Object, 0, len(files))
-	var rewrites iter.Seq2[string, zbstore.Path] = func(yield func(string, zbstore.Path) bool) {
-		nextFileGroup, stop := iter.Pull(groupFilesByObject(files))
-		defer stop()
-		for _, obj := range objects {
-			objectFiles, _ := nextFileGroup()
-			objectName, _, _ := strings.Cut(objectFiles[0].Name, "/")
-			if !yield(objectName, obj.StorePath) {
-				return
-			}
-		}
-	}
+	rewrites := make(map[string]zbstore.Path)
 
 	for objectFiles := range groupFilesByObject(files) {
 		objectName, _, hasSubpath := strings.Cut(objectFiles[0].Name, "/")
 		fakePath, err := dir.Object(objectName)
 		if err != nil {
-			return objects, err
+			return objects, rewrites, err
 		}
 
 		// Special case: derivations.
 		if !hasSubpath && strings.HasSuffix(objectName, zbstore.DerivationExt) {
-			data, refs, err := rewriteTxtarDerivation(dir, objectFiles[0], rewrites)
+			data, refs, err := rewriteTxtarDerivation(dir, objectFiles[0], maps.All(rewrites))
 			if err != nil {
-				return objects, err
+				return objects, rewrites, err
 			}
 			obj := &Object{
 				ExportTrailer: zbstore.ExportTrailer{
@@ -59,14 +51,15 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) ([]*Object, error) 
 				Others: *refs,
 			})
 			if err != nil {
-				return objects, err
+				return objects, rewrites, err
 			}
 			buf := new(bytes.Buffer)
 			if err := SingleFileNAR(buf, data); err != nil {
-				return objects, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
+				return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
 			}
 			obj.NAR = buf.Bytes()
 			objects = append(objects, obj)
+			rewrites[objectName] = obj.StorePath
 			continue
 		}
 
@@ -74,25 +67,26 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) ([]*Object, error) 
 		nw := nar.NewWriter(buf)
 		for _, file := range objectFiles {
 			if err := copyTxtarToNAR(nw, file); err != nil {
-				return objects, err
+				return objects, rewrites, err
 			}
 		}
 		if err := nw.Close(); err != nil {
-			return objects, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
+			return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
 		}
 		// TODO(someday): References.
 		obj := &Object{NAR: buf.Bytes()}
 		obj.ContentAddress, _, err = zbstore.SourceSHA256ContentAddress(bytes.NewReader(buf.Bytes()), nil)
 		if err != nil {
-			return objects, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
+			return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
 		}
 		obj.StorePath, err = zbstore.FixedCAOutputPath(dir, fakePath.Name(), obj.ContentAddress, zbstore.References{})
 		if err != nil {
-			return objects, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
+			return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
 		}
 		objects = append(objects, obj)
+		rewrites[objectName] = obj.StorePath
 	}
-	return objects, nil
+	return objects, rewrites, nil
 }
 
 func groupFilesByObject(files []txtar.File) iter.Seq[[]txtar.File] {

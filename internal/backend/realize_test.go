@@ -53,7 +53,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	objects, err := storetest.TxtarObjects(dir, exportArchive.Files)
+	objects, _, err := storetest.TxtarObjects(dir, exportArchive.Files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +570,7 @@ func TestRealizeInputReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	objects, err := storetest.TxtarObjects(dir, exportArchive.Files)
+	objects, _, err := storetest.TxtarObjects(dir, exportArchive.Files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2100,7 +2100,7 @@ func TestRealizeIssue288(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	objects, err := storetest.TxtarObjects(dir, exportArchive.Files)
+	objects, _, err := storetest.TxtarObjects(dir, exportArchive.Files)
 	if err != nil {
 		t.Fatal(err)
 	}
