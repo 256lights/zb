@@ -266,7 +266,7 @@ func TestImportFromDerivation(t *testing.T) {
 	}()
 
 	results, err := eval.URLs(ctx, []string{
-		filepath.Join("testdata", "ifd.lua") + `#` + system.Current().String(),
+		filepath.Join("testdata", "TestImportFromDerivation", "ifd.lua") + `#` + system.Current().String(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -352,7 +352,7 @@ func TestImportCycle(t *testing.T) {
 	}
 
 	t.Run("Self", func(t *testing.T) {
-		path := filepath.Join("testdata", "cycle", "self.lua")
+		path := filepath.Join("testdata", "TestImportCycle", "self.lua")
 		results, err := eval.URLs(ctx, []string{path})
 		if err != nil {
 			t.Fatal(err)
@@ -367,7 +367,7 @@ func TestImportCycle(t *testing.T) {
 	})
 
 	t.Run("MultipleFiles", func(t *testing.T) {
-		path := filepath.Join("testdata", "cycle", "a.lua")
+		path := filepath.Join("testdata", "TestImportCycle", "a.lua")
 		results, err := eval.URLs(ctx, []string{path})
 		if err != nil {
 			t.Fatal(err)
@@ -382,7 +382,7 @@ func TestImportCycle(t *testing.T) {
 	})
 
 	t.Run("Defer", func(t *testing.T) {
-		path := filepath.Join("testdata", "cycle", "defer_a.lua")
+		path := filepath.Join("testdata", "TestImportCycle", "defer_a.lua")
 		got, err := eval.URLs(ctx, []string{path + "#4"})
 		if err != nil {
 			t.Fatal(err)
@@ -536,7 +536,7 @@ func TestExtract(t *testing.T) {
 		}
 	}()
 
-	path := filepath.Join("testdata", "extract.lua")
+	path := filepath.Join("testdata", "TestExtract", "extract.lua")
 	results, err := eval.URLs(ctx, []string{
 		path + "#full",
 		path + "#stripped",

@@ -22,7 +22,7 @@ import (
 
 func TestPath(t *testing.T) {
 	t.Run("SingleFile", func(t *testing.T) {
-		wantContent, err := os.ReadFile(filepath.Join("testdata", "hello.txt"))
+		wantContent, err := os.ReadFile(filepath.Join("testdata", "TestPath", "hello.txt"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,7 +55,7 @@ func TestPath(t *testing.T) {
 		}()
 
 		for range 3 {
-			got, err := eval.Expression(ctx, `path("testdata/hello.txt")`)
+			got, err := eval.Expression(ctx, `path("testdata/TestPath/hello.txt")`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -206,7 +206,7 @@ func TestPath(t *testing.T) {
 		}()
 
 		for range 3 {
-			got, err := eval.Expression(ctx, `path("testdata/dir")`)
+			got, err := eval.Expression(ctx, `path("testdata/TestPath/dir")`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -232,7 +232,7 @@ func TestPath(t *testing.T) {
 
 	t.Run("DirectoryAdd", func(t *testing.T) {
 		myDir := t.TempDir()
-		if err := copyFile(filepath.Join("testdata", "dir", "a.txt"), filepath.Join(myDir, "a.txt")); err != nil {
+		if err := copyFile(filepath.Join("testdata", "TestPath", "dir", "a.txt"), filepath.Join(myDir, "a.txt")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -279,7 +279,7 @@ func TestPath(t *testing.T) {
 		}
 		compareDirectoryToTestdata(t, string(gotPath1), "a.txt")
 
-		if err := copyFile(filepath.Join("testdata", "dir", "b.txt"), filepath.Join(myDir, "b.txt")); err != nil {
+		if err := copyFile(filepath.Join("testdata", "TestPath", "dir", "b.txt"), filepath.Join(myDir, "b.txt")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -303,10 +303,10 @@ func TestPath(t *testing.T) {
 
 	t.Run("DirectoryRemove", func(t *testing.T) {
 		myDir := t.TempDir()
-		if err := copyFile(filepath.Join("testdata", "dir", "a.txt"), filepath.Join(myDir, "a.txt")); err != nil {
+		if err := copyFile(filepath.Join("testdata", "TestPath", "dir", "a.txt"), filepath.Join(myDir, "a.txt")); err != nil {
 			t.Fatal(err)
 		}
-		if err := copyFile(filepath.Join("testdata", "dir", "b.txt"), filepath.Join(myDir, "b.txt")); err != nil {
+		if err := copyFile(filepath.Join("testdata", "TestPath", "dir", "b.txt"), filepath.Join(myDir, "b.txt")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -402,7 +402,7 @@ func TestPath(t *testing.T) {
 			}
 		}()
 
-		got, err := eval.Expression(ctx, `path{path = "testdata/dir"; filter = function(name) return name ~= "c/d.txt" end }`)
+		got, err := eval.Expression(ctx, `path{path = "testdata/TestPath/dir"; filter = function(name) return name ~= "c/d.txt" end }`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -422,7 +422,7 @@ func TestPath(t *testing.T) {
 	})
 
 	t.Run("FilteredFile", func(t *testing.T) {
-		wantContent, err := os.ReadFile(filepath.Join("testdata", "hello.txt"))
+		wantContent, err := os.ReadFile(filepath.Join("testdata", "TestPath", "hello.txt"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -453,7 +453,7 @@ func TestPath(t *testing.T) {
 			}
 		}()
 
-		got, err := eval.Expression(ctx, `path{path = "testdata/hello.txt"; filter = function() return false end }`)
+		got, err := eval.Expression(ctx, `path{path = "testdata/TestPath/hello.txt"; filter = function() return false end }`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -480,7 +480,7 @@ func TestPath(t *testing.T) {
 }
 
 func TestReadFile(t *testing.T) {
-	wantContent, err := os.ReadFile(filepath.Join("testdata", "hello.txt"))
+	wantContent, err := os.ReadFile(filepath.Join("testdata", "TestPath", "hello.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +512,7 @@ func TestReadFile(t *testing.T) {
 		}
 	}()
 
-	got, err := eval.Expression(ctx, `readFile("testdata/hello.txt")`)
+	got, err := eval.Expression(ctx, `readFile("testdata/TestPath/hello.txt")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +533,7 @@ func compareDirectoryToTestdata(tb testing.TB, dir string, wantFiles ...string) 
 	tb.Helper()
 
 	for _, name := range wantFiles {
-		goldenPath := filepath.Join("testdata", "dir", filepath.FromSlash(name))
+		goldenPath := filepath.Join("testdata", "TestPath", "dir", filepath.FromSlash(name))
 		wantInfo, err := os.Lstat(goldenPath)
 		if err != nil {
 			tb.Error(err)
