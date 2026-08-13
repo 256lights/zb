@@ -1,0 +1,56 @@
+zb eval --system=x86_64-linux m3i7j7prcgqjy03a6ahg3j5c6jvybbsj-hello.lua#foo m3i7j7prcgqjy03a6ahg3j5c6jvybbsj-hello.lua#bar
+result ⸂vrvkczdk25qk2anj2lbwbdyskr4b8nbs-foo.txt.drv!out⸃
+result-2 ⸂m0jz77r5ppimxxxbjm5rd7mp3biqm866-bar.txt.drv!out⸃
+
+-- m3i7j7prcgqjy03a6ahg3j5c6jvybbsj-hello.lua --
+foo = derivation {
+  name = "foo.txt";
+  builder = "/bin/sh";
+  args = {
+    "-c",
+    [[echo foo > $out]],
+  };
+  system = "x86_64-unknown-linux";
+}
+
+bar = derivation {
+  name = "bar.txt";
+  builder = "/bin/sh";
+  args = {
+    "-c",
+    [[echo bar > $out]],
+  };
+  system = "x86_64-unknown-linux";
+}
+-- vrvkczdk25qk2anj2lbwbdyskr4b8nbs-foo.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  ["-c", "echo foo > $out"],
+  [
+    ("args", "-c echo foo > $out"),
+    ("builder", "/bin/sh"),
+    ("name", "foo.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9"),
+    ("system", "x86_64-unknown-linux")
+  ]
+)
+-- m0jz77r5ppimxxxbjm5rd7mp3biqm866-bar.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  ["-c", "echo bar > $out"],
+  [
+    ("args", "-c echo bar > $out"),
+    ("builder", "/bin/sh"),
+    ("name", "bar.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9"),
+    ("system", "x86_64-unknown-linux")
+  ]
+)

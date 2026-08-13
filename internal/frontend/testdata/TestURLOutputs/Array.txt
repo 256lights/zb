@@ -1,0 +1,6 @@
+zb eval --system=x86_64-linux 5yi37q47y87h1qmy8bn5rkn9b2piq4sx-hello.lua
+result Hello, World!
+result-2 Secondary
+
+-- 5yi37q47y87h1qmy8bn5rkn9b2piq4sx-hello.lua --
+return {"Hello, World!", "Secondary"}

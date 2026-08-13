@@ -1,0 +1,5 @@
+zb eval --system=x86_64-linux f02ln9490wddy7l0mgkdnklmh7l9ndqx-hello.lua
+result Hello, World!
+
+-- f02ln9490wddy7l0mgkdnklmh7l9ndqx-hello.lua --
+return "Hello, World!"

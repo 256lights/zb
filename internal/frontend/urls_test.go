@@ -4,9 +4,174 @@
 package frontend
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"golang.org/x/tools/txtar"
+	"zb.256lights.llc/pkg/internal/backendtest"
+	"zb.256lights.llc/pkg/internal/storetest"
+	"zb.256lights.llc/pkg/internal/system"
+	"zb.256lights.llc/pkg/internal/testcontext"
+	"zb.256lights.llc/pkg/internal/zbstorerpc"
+	"zb.256lights.llc/pkg/zbstore"
 )
+
+func TestURLOutputs(t *testing.T) {
+	dir := filepath.Join("testdata", "TestURLOutputs")
+	listing, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, entry := range listing {
+		fileName := entry.Name()
+		if strings.HasPrefix(fileName, ".") {
+			continue
+		}
+		testName, isTXTAR := strings.CutSuffix(fileName, ".txt")
+		if !isTXTAR {
+			continue
+		}
+		fileName = filepath.Join(dir, fileName)
+
+		t.Run(testName, func(t *testing.T) {
+			ctx := testcontext.New(t)
+			storeDir := backendtest.NewStoreDirectory(t)
+			archive, err := txtar.ParseFile(fileName)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			lines := strings.Split(string(archive.Comment), "\n")
+			lines = slices.DeleteFunc(lines, func(line string) bool {
+				return strings.TrimSpace(line) == ""
+			})
+			if len(lines) == 0 {
+				t.Fatal("missing zb eval line")
+			}
+			evalArgv := strings.Fields(lines[0])
+			const systemFlagPrefix = "--system="
+			if len(evalArgv) < 3 || evalArgv[0] != "zb" || evalArgv[1] != "eval" || !strings.HasPrefix(evalArgv[2], systemFlagPrefix) {
+				t.Fatalf("first line of test = %s; must start with `zb eval --system=`", lines[0])
+			}
+			sys, err := system.Parse(evalArgv[2][len(systemFlagPrefix):])
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			objects, storePaths, err := storetest.TxtarObjects(storeDir, archive.Files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			exportBuffer := new(bytes.Buffer)
+			exportWriter := zbstore.NewExportWriter(exportBuffer)
+			urls := make([]string, 0, len(evalArgv)-3)
+			for _, arg := range evalArgv[3:] {
+				u, err := ParseURL(arg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				objectBase, subpath, _ := strings.Cut(u.Path, "/")
+				i := slices.IndexFunc(objects, func(obj *storetest.Object) bool {
+					return obj.StorePath == storePaths[objectBase]
+				})
+				if i == -1 {
+					t.Fatalf("unknown object %s in zb eval arguments", objectBase)
+				}
+
+				urlstr := string(objects[i].StorePath)
+				if subpath != "" {
+					urlstr += "/" + subpath
+				}
+				if u.Fragment != "" {
+					urlstr += "#" + u.Fragment
+				}
+				urls = append(urls, urlstr)
+				if err := exportWriter.WriteObject(ctx, objects[i]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := exportWriter.Close(); err != nil {
+				t.Fatal(err)
+			}
+			replacements := make([]string, 0, len(storePaths)*2)
+			for originalName, path := range storePaths {
+				replacements = append(replacements, originalName, string(path))
+			}
+			replacer := strings.NewReplacer(replacements...)
+
+			di := new(zbstorerpc.DeferredImporter)
+			_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+				TempDir: t.TempDir(),
+				ClientOptions: zbstorerpc.CodecOptions{
+					Importer: di,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			evalStore := newTestRPCStore(store, di)
+			if err := evalStore.StoreImport(ctx, exportBuffer); err != nil {
+				t.Fatal(err)
+			}
+			eval, err := NewEval(&Options{
+				Store:          evalStore,
+				StoreDirectory: storeDir,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := eval.Close(); err != nil {
+					t.Error("eval.Close:", err)
+				}
+			}()
+
+			outputMap, err := eval.URLOutputs(ctx, urls, sys)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			i := 1
+			for key, out := range outputMap.All() {
+				fullKey := "result"
+				if key != "" {
+					fullKey += "-" + key
+				}
+				if i >= len(lines) {
+					t.Errorf("unexpected output %s %v", fullKey, out)
+					continue
+				}
+
+				line := strings.TrimLeft(lines[i], " \t")
+				wantKeyEnd := strings.IndexAny(line, " \t")
+				if i == -1 {
+					t.Errorf("invalid line %s", lines[i])
+				} else {
+					wantKey := line[:wantKeyEnd]
+					wantOutput := replacer.Replace(strings.Trim(line[wantKeyEnd:], " \t\r"))
+					if fullKey != wantKey || out.String() != wantOutput {
+						t.Errorf("%s %v != %s %s", fullKey, out, wantKey, wantOutput)
+						for ref := range out.OutputReferences() {
+							got, err := os.ReadFile(string(ref.DrvPath))
+							if err == nil {
+								t.Errorf("%s = %s", ref.DrvPath, got)
+							}
+						}
+					}
+				}
+				i++
+			}
+			if i < len(lines) {
+				t.Errorf("missing outputs:\n%s", strings.Join(lines[i:], "\n"))
+			}
+		})
+	}
+}
 
 func TestParseFragment(t *testing.T) {
 	tests := []struct {
