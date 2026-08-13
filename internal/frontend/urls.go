@@ -56,10 +56,10 @@ func (eval *Eval) URLs(ctx context.Context, urls []string) ([]*Output, error) {
 // and uses the fragment from each URL (see [parseFragment])
 // to determine the Lua value to add to [OutputMap].
 // Output groups are 1:1 with the urls slice.
-func (eval *Eval) URLOutputs(ctx context.Context, urls []string) (OutputMap, error) {
+func (eval *Eval) URLOutputs(ctx context.Context, urls []string, sys system.System) (OutputMap, error) {
 	var result OutputMap
 	err := eval.urls(ctx, urls, func(ctx context.Context, l *lua.State) error {
-		urlOutputs, err := objectOutputs(ctx, l, 1, system.Current())
+		urlOutputs, err := objectOutputs(ctx, l, 1, sys)
 		if err != nil {
 			return err
 		}

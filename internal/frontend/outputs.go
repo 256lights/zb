@@ -9,6 +9,7 @@ import (
 	"iter"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"zb.256lights.llc/pkg/internal/lua"
@@ -88,6 +89,39 @@ func (outs OutputMap) All() iter.Seq2[string, *Output] {
 			}
 		}
 	}
+}
+
+// Get returns the output in the map with the given name or nil if none exists.
+func (outs OutputMap) Get(name string) *Output {
+	switch n := outs.groupCount(); {
+	case n == 0:
+		return nil
+	case n == 1 || name == "":
+		return outs.groups[0][name]
+	case !('1' <= name[0] && name[0] <= '9'):
+		return nil
+	}
+
+	seqEnd := 1
+	for ; seqEnd < len(name) && name[seqEnd] != '-'; seqEnd++ {
+		if !('0' <= name[seqEnd] && name[seqEnd] <= '9') {
+			return nil
+		}
+	}
+	keyStart := seqEnd + 1
+	if keyStart > len(name) {
+		// Entirely numeric.
+		keyStart = len(name)
+	} else if keyStart == len(name) {
+		// Invalid key: we drop the hyphen if the remaining key is empty.
+		return nil
+	}
+
+	i, err := strconv.Atoi(name[:seqEnd])
+	if err != nil || i < 0 || i >= len(outs.groups) {
+		return nil
+	}
+	return outs.groups[i][name[keyStart:]]
 }
 
 // DerivationPaths returns the derivation paths that appear in the i'th group,

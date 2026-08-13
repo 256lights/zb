@@ -18,6 +18,7 @@ import (
 	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -109,7 +110,7 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 
 	var results frontend.OutputMap
 	if c.Expression {
-		results, err = eval.ExpressionOutputs(ctx, c.Args[0])
+		results, err = eval.ExpressionOutputs(ctx, c.Args[0], system.Current())
 	} else {
 		urls := make([]string, 0, len(c.Args))
 		for i, arg := range c.Args {
@@ -118,7 +119,7 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 			}
 			urls = append(urls, arg)
 		}
-		results, err = eval.URLOutputs(ctx, urls)
+		results, err = eval.URLOutputs(ctx, urls, system.Current())
 	}
 	if err != nil {
 		return err
@@ -337,9 +338,9 @@ func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
 
 	var results frontend.OutputMap
 	if c.Expression {
-		results, err = eval.ExpressionOutputs(ctx, c.Args[0])
+		results, err = eval.ExpressionOutputs(ctx, c.Args[0], system.Current())
 	} else {
-		results, err = eval.URLOutputs(ctx, c.Args)
+		results, err = eval.URLOutputs(ctx, c.Args, system.Current())
 	}
 	if err != nil {
 		return err

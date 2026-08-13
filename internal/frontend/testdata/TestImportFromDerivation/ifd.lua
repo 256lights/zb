@@ -35,11 +35,11 @@ local function forSystem(_, currentSystem)
     }
   end
 
-  return import(drv.out)
+  return await(import(drv.out))
 end
 
 local t = {}
 setmetatable(t, {
-  __index = forSystem;
+  __outputs = forSystem;
 })
 return t

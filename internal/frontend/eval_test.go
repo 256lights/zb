@@ -243,17 +243,14 @@ func TestImportFromDerivation(t *testing.T) {
 		}
 	}()
 
-	results, err := eval.URLs(ctx, []string{
-		filepath.Join("testdata", "TestImportFromDerivation", "ifd.lua") + `#` + system.Current().String(),
-	})
+	results, err := eval.URLOutputs(ctx, []string{
+		filepath.Join("testdata", "TestImportFromDerivation", "ifd.lua"),
+	}, system.Current())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) == 0 {
-		t.Error("No returned values")
-	}
 	const want = "Hello, World!"
-	if got := results[0].String(); got != want {
+	if got := results.Get("").String(); got != want {
 		t.Errorf("result = %q; want %q", got, want)
 	}
 }
@@ -513,7 +510,7 @@ func TestExtract(t *testing.T) {
 	results, err := eval.URLOutputs(ctx, []string{
 		path + "#full",
 		path + "#stripped",
-	})
+	}, system.Current())
 	if err != nil {
 		t.Fatal(err)
 	}

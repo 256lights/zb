@@ -501,13 +501,13 @@ func (eval *Eval) Expression(ctx context.Context, expr string) (*Output, error) 
 
 // ExpressionOutputs evaluates a single Lua expression
 // and returns the result converted to an [OutputMap].
-func (eval *Eval) ExpressionOutputs(ctx context.Context, expr string) (OutputMap, error) {
+func (eval *Eval) ExpressionOutputs(ctx context.Context, expr string, sys system.System) (OutputMap, error) {
 	outputs := OutputMap{
 		groups: []map[string]*Output{nil},
 	}
 	err := eval.expression(ctx, expr, func(ctx context.Context, l *lua.State) error {
 		var err error
-		outputs.groups[0], err = objectOutputs(ctx, l, 1, system.Current())
+		outputs.groups[0], err = objectOutputs(ctx, l, 1, sys)
 		return err
 	})
 	return outputs, err

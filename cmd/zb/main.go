@@ -30,6 +30,7 @@ import (
 	"zb.256lights.llc/pkg/internal/luac"
 	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/osutil"
+	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -339,9 +340,9 @@ func (c *buildCommand) Run(ctx context.Context, g *globalConfig) error {
 
 	var results frontend.OutputMap
 	if c.Expression {
-		results, err = eval.ExpressionOutputs(ctx, c.Args[0])
+		results, err = eval.ExpressionOutputs(ctx, c.Args[0], system.Current())
 	} else {
-		results, err = eval.URLOutputs(ctx, c.Args)
+		results, err = eval.URLOutputs(ctx, c.Args, system.Current())
 	}
 	if err != nil {
 		return err
