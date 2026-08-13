@@ -1,0 +1,32 @@
+zb eval --system=x86_64-linux bcf33vyvv74k388zc4g6jan7l9yr8d98-hello.lua
+result ⸂c4k8icwadfifxxj4i41wlbfgcahapwxc-hello.txt.drv!out⸃
+
+-- bcf33vyvv74k388zc4g6jan7l9yr8d98-hello.lua --
+local drv = derivation {
+  name = "hello.txt";
+  builder = "/bin/sh";
+  args = {
+    "-c",
+    [[echo 'Hello, World!' > $out]],
+  };
+  system = "x86_64-unknown-linux";
+}
+return setmetatable({}, {
+  __outputs = drv;
+})
+-- c4k8icwadfifxxj4i41wlbfgcahapwxc-hello.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  ["-c", "echo 'Hello, World!' > $out"],
+  [
+    ("args", "-c echo 'Hello, World!' > $out"),
+    ("builder", "/bin/sh"),
+    ("name", "hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9"),
+    ("system", "x86_64-unknown-linux")
+  ]
+)
