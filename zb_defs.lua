@@ -49,6 +49,12 @@ function storePath(path) end
 ---@return string # store path
 function toFile(name, s) end
 
+---Return the __outputs field of a value or the value itself.
+---@param x any
+---@param system string
+---@return any
+function outputs(x, system) end
+
 ---Create a derivation that downloads a URL.
 ---@param args {url: string, hash: string, name: string?, executable: boolean?}
 ---@return derivation
