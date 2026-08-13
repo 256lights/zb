@@ -207,6 +207,7 @@ func (eval *Eval) initZygote() error {
 		"import":     eval.importFunction,
 		"lazy":       lazyFunction,
 		"toFile":     eval.toFileFunction,
+		"outputs":    outputsFunction,
 		"path":       eval.pathFunction,
 		"readFile":   eval.readFileFunction,
 		"storePath":  eval.storePathFunction,

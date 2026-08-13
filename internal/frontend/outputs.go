@@ -284,6 +284,17 @@ func outputsMeta(ctx context.Context, l *lua.State, idx int, sys string) (lua.Ty
 	return lua.TypeNil, fmt.Errorf("%s'__outputs' chain too long; possible loop", lua.Where(l, 1))
 }
 
+func outputsFunction(ctx context.Context, l *lua.State) (int, error) {
+	sys, err := lua.CheckString(l, 2)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := outputsMeta(ctx, l, 1, sys); err != nil {
+		return 0, err
+	}
+	return 1, nil
+}
+
 // objectOutputs gets the output group for the value on the index
 // by triggering the __outputs event.
 func objectOutputs(ctx context.Context, l *lua.State, idx int, sys system.System) (map[string]*Output, error) {

@@ -35,7 +35,7 @@ local function forSystem(_, currentSystem)
     }
   end
 
-  return await(import(drv.out))
+  return outputs(import(drv.out), currentSystem)
 end
 
 local t = {}
