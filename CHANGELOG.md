@@ -50,8 +50,11 @@ from roughly 10 minutes to XX seconds with a reasonably fast internet connection
   and exit successfully after all builds have completed
   after receiving `SIGUSR2`.
   ([#259](https://github.com/256lights/zb/issues/259))
-- `zb build` now uses an `__outputs` metamethod to determine what derivations to build
+- `zb build` now [uses an `__outputs` metamethod](https://zb.256lights.llc/build-args)
+  to determine what derivations to build
   rather than requiring the result to be a `derivation` function result.
+  A new [built-in `outputs` function](https://zb.256lights.llc/lua/extensions#outputs)
+  serves to access the metatable field.
   Thank you to [@ocurr](https://github.com/ocurr) for the design feedback!
   ([#117](https://github.com/256lights/zb/issues/117))
 
