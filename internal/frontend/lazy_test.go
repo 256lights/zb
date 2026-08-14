@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"zb.256lights.llc/pkg/internal/backendtest"
+	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 )
@@ -41,18 +42,18 @@ func TestLazy(t *testing.T) {
 
 	t.Run("Fibonacci", func(t *testing.T) {
 		expr := `lazy(function(fib, i) if math.type(i) ~= "integer" or i < 3 then return nil end; return fib[i-2] + fib[i-1]; end, {0, 1})[10]`
-		got, err := eval.Expression(ctx, expr)
+		got, err := eval.Expression(ctx, expr, system.Current())
 		if err != nil {
 			t.Fatalf("%s: %v", expr, err)
 		}
-		if want := "34"; got.String() != want {
+		if want := "34"; got.Get("").String() != want {
 			t.Errorf("%s = %q; want %q", expr, got, want)
 		}
 	})
 
 	t.Run("Error", func(t *testing.T) {
 		expr := `lazy(function() error("B".."O".."R".."K"); end)["foo"]`
-		if _, err := eval.Expression(ctx, expr); err == nil {
+		if _, err := eval.Expression(ctx, expr, system.Current()); err == nil {
 			t.Errorf("%s did not raise error", expr)
 		} else if got := err.Error(); !strings.Contains(got, "BORK") {
 			t.Errorf("%s: %s; want to contain BORK", expr, got)

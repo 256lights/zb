@@ -251,70 +251,69 @@ func (out *Output) String() string {
 	return strings.NewReplacer(replacements...).Replace(out.template)
 }
 
-// outputsMeta triggers the __outputs event on the value at idx on Lua state l.
-// The result of the event is pushed to the top of the stack
-// and outputsMeta returns its type.
+// outputsMeta triggers the __outputs metamethod
+// for the value at the index on the Lua stack
+// with the system argument at the top of the stack.
+// outputsMeta pops the system argument from the top of the stack
+// and replaces it with the result of the metamethod.
+// outputsMeta always pops the system argument,
+// even if there is an error.
 //
 // The metavalue for the __outputs event can be any value.
 // If the metavalue is a function, it is called with the value and system as arguments,
 // and the result of the call (adjusted to one value) is the result of the operation.
 // If the metavalue is nil, the result of the operation is the value.
 // Otherwise, outputsMeta applies the rules above recursively to the metavalue.
-func outputsMeta(ctx context.Context, l *lua.State, idx int, sys string) (lua.Type, error) {
-	if !l.CheckStack(3) {
-		return lua.TypeNil, fmt.Errorf("%s'__outputs': stack overflow", lua.Where(l, 1))
+func outputsMeta(ctx context.Context, l *lua.State, idx int) error {
+	if !l.CheckStack(2) {
+		return fmt.Errorf("%s'__outputs': stack overflow", lua.Where(l, 1))
 	}
 	l.PushValue(idx)
 	for range 200 {
 		switch lua.Metafield(l, -1, "__outputs") {
-		case lua.TypeFunction:
-			l.Insert(-2)
-			l.PushString(sys)
-			if err := l.Call(ctx, 2, 1); err != nil {
-				return lua.TypeNil, err
-			}
-			fallthrough
 		case lua.TypeNil:
-			return l.Type(-1), nil
+			l.Remove(-2) // Pop system argument.
+			return nil
+		case lua.TypeFunction:
+			l.Insert(-3)    // Move function before arguments.
+			l.Rotate(-2, 1) // Swap system and self argument.
+			if err := l.Call(ctx, 2, 1); err != nil {
+				return err
+			}
+			return nil
 		default:
-			l.Remove(-2)
+			l.Remove(-2) // Remove previous value.
 		}
 	}
-	l.Pop(1)
-	return lua.TypeNil, fmt.Errorf("%s'__outputs' chain too long; possible loop", lua.Where(l, 1))
+	l.Pop(2)
+	return fmt.Errorf("%s'__outputs' chain too long; possible loop", lua.Where(l, 1))
 }
 
-func outputsFunction(ctx context.Context, l *lua.State) (int, error) {
-	sys, err := lua.CheckString(l, 2)
-	if err != nil {
-		return 0, err
-	}
-	if _, err := outputsMeta(ctx, l, 1, sys); err != nil {
-		return 0, err
-	}
-	return 1, nil
-}
+// objectOutputs gets the group of outputs
+// for the value at the index on the Lua stack
+// with the system argument at the top of the stack.
+// objectOutputs pops the system argument from the top of the stack.
+func objectOutputs(ctx context.Context, l *lua.State, idx int) (map[string]*Output, error) {
+	defer l.SetTop(l.Top() - 1)
 
-// objectOutputs gets the output group for the value on the index
-// by triggering the __outputs event.
-func objectOutputs(ctx context.Context, l *lua.State, idx int, sys system.System) (map[string]*Output, error) {
-	defer l.SetTop(l.Top())
-
-	tp, err := outputsMeta(ctx, l, idx, SystemTriple(sys))
-	if err != nil {
+	if err := outputsMeta(ctx, l, idx); err != nil {
 		return nil, err
 	}
 
-	switch tp {
-	case lua.TypeNil:
-		return nil, nil
-	case lua.TypeString, lua.TypeNumber:
-		s, _ := l.ToString(-1)
-		out, err := newOutput(s, l.StringContext(-1))
+	if l.Type(-1) != lua.TypeTable {
+		s, sctx, err := lua.ToString(ctx, l, -1)
+		if err != nil {
+			return nil, err
+		}
+		out, err := newOutput(s, sctx)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]*Output{"": out}, nil
+	}
+
+	if !l.CheckStack(5) {
+		return nil, fmt.Errorf("get outputs: stack overflow")
 	}
 
 	if lua.Metafield(l, -1, "__pairs") != lua.TypeNil {
@@ -322,23 +321,9 @@ func objectOutputs(ctx context.Context, l *lua.State, idx int, sys system.System
 		if err := l.Call(ctx, 1, 3); err != nil {
 			return nil, err
 		}
-	} else if lua.Metafield(l, -1, "__tostring") != lua.TypeNil {
-		l.Insert(-2)
-		if err := l.Call(ctx, 1, 1); err != nil {
-			return nil, err
-		}
-		if !l.IsString(-1) {
-			return nil, fmt.Errorf("lua: '__tostring' must return a string")
-		}
-		s, _ := l.ToString(-1)
-		out, err := newOutput(s, l.StringContext(-1))
-		if err != nil {
-			return nil, err
-		}
-		return map[string]*Output{"": out}, nil
 	} else {
 		l.PushPureFunction(0, baseNext)
-		l.Rotate(-2, -1)
+		l.Insert(-2) // Move baseNext before table.
 		l.PushNil()
 	}
 
@@ -381,6 +366,42 @@ func objectOutputs(ctx context.Context, l *lua.State, idx int, sys system.System
 		result[key] = out
 		l.Pop(1) // Pop value.
 	}
+}
+
+func outputsFunction(ctx context.Context, l *lua.State) (int, error) {
+	l.SetTop(2)
+	outputs, err := objectOutputs(ctx, l, 1)
+	if err != nil {
+		return 0, fmt.Errorf("%soutputs: %v", lua.Where(l, 1), err)
+	}
+	l.CreateTable(0, len(outputs))
+	for k, v := range outputs {
+		pushOutput(l, v)
+		if err := l.RawSetField(-2, k); err != nil {
+			return 0, fmt.Errorf("%soutputs: %v", lua.Where(l, 1), err)
+		}
+	}
+	return 1, nil
+}
+
+func pushOutput(l *lua.State, out *Output) {
+	if out == nil {
+		l.PushString("")
+		return
+	}
+	n := out.paths.Len() + out.OutputReferences().Len()
+	if n == 0 {
+		l.PushString(out.template)
+		return
+	}
+	sctx := make(sets.Set[string], n)
+	for p := range out.paths {
+		sctx.Add(contextValue{path: p}.String())
+	}
+	for ref := range out.refs {
+		sctx.Add(contextValue{outputReference: ref}.String())
+	}
+	l.PushStringContext(out.template, sctx)
 }
 
 // SystemTriple returns the string passed to the __outputs metamethod for a given system.

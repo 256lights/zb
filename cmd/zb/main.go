@@ -285,18 +285,17 @@ func (c *evalCommand) Run(ctx context.Context, g *globalConfig) error {
 		}
 	}()
 
-	var results []*frontend.Output
+	var results frontend.OutputMap
 	if c.Expression {
-		results = make([]*frontend.Output, 1)
-		results[0], err = eval.Expression(ctx, c.Args[0])
+		results, err = eval.Expression(ctx, c.Args[0], system.Current())
 	} else {
-		results, err = eval.URLs(ctx, c.Args)
+		results, err = eval.URLs(ctx, c.Args, system.Current())
 	}
 	if err != nil {
 		return err
 	}
 
-	for _, result := range results {
+	for _, result := range results.All() {
 		fmt.Println(result)
 	}
 
@@ -340,9 +339,9 @@ func (c *buildCommand) Run(ctx context.Context, g *globalConfig) error {
 
 	var results frontend.OutputMap
 	if c.Expression {
-		results, err = eval.ExpressionOutputs(ctx, c.Args[0], system.Current())
+		results, err = eval.Expression(ctx, c.Args[0], system.Current())
 	} else {
-		results, err = eval.URLOutputs(ctx, c.Args, system.Current())
+		results, err = eval.URLs(ctx, c.Args, system.Current())
 	}
 	if err != nil {
 		return err
@@ -354,36 +353,37 @@ func (c *buildCommand) Run(ctx context.Context, g *globalConfig) error {
 			drvPaths = append(drvPaths, ref.DrvPath)
 		}
 	}
-	if len(drvPaths) == 0 {
-		return fmt.Errorf("no evaluation results")
-	}
-	realizeResponse := new(zbstorerpc.RealizeResponse)
-	err = jsonrpc.Do(ctx, storeClient, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
-		DrvPaths:   drvPaths,
-		KeepFailed: c.KeepFailed,
-		Reuse:      c.reusePolicy(g),
-	})
-	if err != nil {
-		return err
-	}
-	build, _, buildError := waitForBuild(ctx, storeClient, realizeResponse.BuildID)
-	if build != nil {
-		allRefs := make(map[zbstore.OutputReference]zbstore.Path)
+	allRefs := make(map[zbstore.OutputReference]zbstore.Path)
+	var buildError error
+	if len(drvPaths) > 0 {
+		realizeResponse := new(zbstorerpc.RealizeResponse)
+		err = jsonrpc.Do(ctx, storeClient, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+			DrvPaths:   drvPaths,
+			KeepFailed: c.KeepFailed,
+			Reuse:      c.reusePolicy(g),
+		})
+		if err != nil {
+			return err
+		}
+		var build *zbstorerpc.Build
+		build, _, buildError = waitForBuild(ctx, storeClient, realizeResponse.BuildID)
 		for ref := range results.OutputReferences() {
 			outputPath, _ := build.FindRealizeOutput(ref)
 			if outputPath.Valid {
 				allRefs[ref] = outputPath.X
 			}
 		}
-		for name, out := range results.All() {
-			s, _, err := out.Evaluate(allRefs)
-			if err != nil {
-				log.Warnf(ctx, "%s: %v", name, err)
-				continue
-			}
-			fmt.Println(s)
-		}
 	}
+
+	for name, out := range results.All() {
+		s, _, err := out.Evaluate(allRefs)
+		if err != nil {
+			log.Warnf(ctx, "%s: %v", name, err)
+			continue
+		}
+		fmt.Println(s)
+	}
+
 	return buildError
 }
 

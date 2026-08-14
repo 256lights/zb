@@ -223,14 +223,12 @@ func modulePairs(ctx context.Context, l *lua.State) (int, error) {
 }
 
 func moduleOutputs(ctx context.Context, l *lua.State) (int, error) {
-	sys, err := lua.CheckString(l, 2)
-	if err != nil {
-		return 0, err
-	}
+	l.SetTop(2)
 	if err := waitForModuleArg(ctx, l); err != nil {
 		return 0, err
 	}
-	if _, err := outputsMeta(ctx, l, -1, sys); err != nil {
+	l.Insert(-2)
+	if err := outputsMeta(ctx, l, -2); err != nil {
 		return 0, err
 	}
 	return 1, nil

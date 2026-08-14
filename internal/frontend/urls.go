@@ -31,50 +31,11 @@ import (
 
 // URLs imports the Lua file for each URL,
 // and uses the fragment from each URL (see [parseFragment])
-// to determine the Lua value to convert to a string.
-func (eval *Eval) URLs(ctx context.Context, urls []string) ([]*Output, error) {
-	result := make([]*Output, 0, len(urls))
-	err := eval.urls(ctx, urls, func(ctx context.Context, l *lua.State) error {
-		s, sctx, err := lua.ToString(ctx, l, 1)
-		if err != nil {
-			return err
-		}
-		out, err := newOutput(s, sctx)
-		if err != nil {
-			return err
-		}
-		result = append(result, out)
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-// URLOutputs imports the Lua file for each URL,
-// and uses the fragment from each URL (see [parseFragment])
-// to determine the Lua value to add to [OutputMap].
+// to determine the Lua value to convert to outputs.
 // Output groups are 1:1 with the urls slice.
-func (eval *Eval) URLOutputs(ctx context.Context, urls []string, sys system.System) (OutputMap, error) {
-	var result OutputMap
-	err := eval.urls(ctx, urls, func(ctx context.Context, l *lua.State) error {
-		urlOutputs, err := objectOutputs(ctx, l, 1, sys)
-		if err != nil {
-			return err
-		}
-		result.groups = append(result.groups, urlOutputs)
-		return nil
-	})
-	if err != nil {
-		return OutputMap{}, err
-	}
-	return result, nil
-}
-
-func (eval *Eval) urls(ctx context.Context, urls []string, f func(ctx context.Context, l *lua.State) error) error {
+func (eval *Eval) URLs(ctx context.Context, urls []string, sys system.System) (OutputMap, error) {
 	if len(urls) == 0 {
-		return nil
+		return OutputMap{}, nil
 	}
 
 	// Parse URLs first before doing any expensive operations.
@@ -82,18 +43,18 @@ func (eval *Eval) urls(ctx context.Context, urls []string, f func(ctx context.Co
 	for i, s := range urls {
 		u, err := ParseURL(s)
 		if err != nil {
-			return err
+			return OutputMap{}, err
 		}
 		archiveEntry, _, err := parseFragment(u.Fragment)
 		if err != nil {
-			return fmt.Errorf("%s: %v", s, err)
+			return OutputMap{}, fmt.Errorf("%s: %v", s, err)
 		}
 		if u.Scheme == "" || u.Scheme == fileurl.Scheme {
 			if _, err := URLToPath(u); err != nil {
-				return err
+				return OutputMap{}, err
 			}
 			if archiveEntry != "" {
-				return fmt.Errorf("%s: archive path not valid for local file", s)
+				return OutputMap{}, fmt.Errorf("%s: archive path not valid for local file", s)
 			}
 		}
 		parsedURLs[i] = u
@@ -130,23 +91,23 @@ func (eval *Eval) urls(ctx context.Context, urls []string, f func(ctx context.Co
 		})
 	}
 	if err := grp.Wait(); err != nil {
-		return err
+		return OutputMap{}, err
 	}
 
 	// Start imports. These will run concurrently.
 	l, err := eval.newState()
 	if err != nil {
-		return err
+		return OutputMap{}, err
 	}
 	defer l.Close()
 	l.CreateTable(len(parsedURLs), 0)
 	tableStackIndex := l.Top()
 	if _, err := l.Global(ctx, "import"); err != nil {
-		return fmt.Errorf("internal error: _G.import: %v", err)
+		return OutputMap{}, fmt.Errorf("internal error: _G.import: %v", err)
 	}
 	importStackIndex := l.Top()
 	if _, err := l.Global(ctx, "extract"); err != nil {
-		return fmt.Errorf("internal error: _G.extract: %v", err)
+		return OutputMap{}, fmt.Errorf("internal error: _G.extract: %v", err)
 	}
 	extractStackIndex := l.Top()
 	for i, u := range parsedURLs {
@@ -155,7 +116,7 @@ func (eval *Eval) urls(ctx context.Context, urls []string, f func(ctx context.Co
 			path, err := URLToPath(u)
 			if err != nil {
 				// Should have already been verified above.
-				return fmt.Errorf("internal error: %v", err)
+				return OutputMap{}, fmt.Errorf("internal error: %v", err)
 			}
 			l.PushString(path)
 		} else {
@@ -166,22 +127,22 @@ func (eval *Eval) urls(ctx context.Context, urls []string, f func(ctx context.Co
 				l.CreateTable(0, 1)
 				l.Insert(-2)
 				if err := l.RawSetField(-2, "src"); err != nil {
-					return fmt.Errorf("internal error: {src=%s}: %v", lualex.Quote(string(storePath)), err)
+					return OutputMap{}, fmt.Errorf("internal error: {src=%s}: %v", lualex.Quote(string(storePath)), err)
 				}
 				l.PushValue(extractStackIndex)
 				l.Insert(-2)
 				if err := l.PCall(ctx, 1, 1, 0); err != nil {
-					return fmt.Errorf("extract{src=%s}: %v", lualex.Quote(string(storePath)), err)
+					return OutputMap{}, fmt.Errorf("extract{src=%s}: %v", lualex.Quote(string(storePath)), err)
 				}
 				l.PushString("/" + archiveFile)
 				if err := l.Concat(ctx, 2); err != nil {
-					return fmt.Errorf("internal error: concat extract{...}..%s: %v",
+					return OutputMap{}, fmt.Errorf("internal error: concat extract{...}..%s: %v",
 						lualex.Quote(archiveFile), err)
 				}
 			}
 		}
 		if err := l.PCall(ctx, 1, 1, 0); err != nil {
-			return err
+			return OutputMap{}, err
 		}
 		l.RawSetIndex(tableStackIndex, int64(i+1))
 	}
@@ -189,6 +150,9 @@ func (eval *Eval) urls(ctx context.Context, urls []string, f func(ctx context.Co
 	// Perform lookups on each import.
 	l.PushClosure(0, messageHandler)
 	messageHandlerIndex := l.Top()
+
+	var result OutputMap
+	sysString := SystemTriple(sys)
 	l.PushClosure(0, func(ctx context.Context, l *lua.State) (int, error) {
 		l.SetTop(2)
 		fieldPath, _ := l.ToString(2)
@@ -199,19 +163,25 @@ func (eval *Eval) urls(ctx context.Context, urls []string, f func(ctx context.Co
 			}
 			l.Remove(-2)
 		}
-		err := f(ctx, l)
-		return 0, err
+		l.PushString(sysString)
+		urlOutputs, err := objectOutputs(ctx, l, 1)
+		if err != nil {
+			return 0, err
+		}
+		result.groups = append(result.groups, urlOutputs)
+		return 0, nil
 	})
+
 	for i, u := range parsedURLs {
 		l.PushValue(-1)
 		l.RawIndex(tableStackIndex, int64(i+1))
 		_, fieldPath, _ := parseFragment(u.Fragment)
 		l.PushString(fieldPath)
 		if err := l.PCall(ctx, 2, 0, messageHandlerIndex); err != nil {
-			return fmt.Errorf("%s: %v", u.Redacted(), err)
+			return OutputMap{}, fmt.Errorf("%s: %v", u.Redacted(), err)
 		}
 	}
-	return nil
+	return result, nil
 }
 
 func (eval *Eval) importURL(ctx context.Context, u *url.URL) (zbstore.Path, error) {

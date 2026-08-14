@@ -21,8 +21,8 @@ import (
 	"zb.256lights.llc/pkg/zbstore"
 )
 
-func TestURLOutputs(t *testing.T) {
-	dir := filepath.Join("testdata", "TestURLOutputs")
+func TestURLs(t *testing.T) {
+	dir := filepath.Join("testdata", "TestURLs")
 	listing, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestURLOutputs(t *testing.T) {
 				}
 			}()
 
-			outputMap, err := eval.URLOutputs(ctx, urls, sys)
+			outputMap, err := eval.URLs(ctx, urls, sys)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -110,7 +110,7 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 
 	var results frontend.OutputMap
 	if c.Expression {
-		results, err = eval.ExpressionOutputs(ctx, c.Args[0], system.Current())
+		results, err = eval.Expression(ctx, c.Args[0], system.Current())
 	} else {
 		urls := make([]string, 0, len(c.Args))
 		for i, arg := range c.Args {
@@ -119,7 +119,7 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 			}
 			urls = append(urls, arg)
 		}
-		results, err = eval.URLOutputs(ctx, urls, system.Current())
+		results, err = eval.URLs(ctx, urls, system.Current())
 	}
 	if err != nil {
 		return err
@@ -338,9 +338,9 @@ func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
 
 	var results frontend.OutputMap
 	if c.Expression {
-		results, err = eval.ExpressionOutputs(ctx, c.Args[0], system.Current())
+		results, err = eval.Expression(ctx, c.Args[0], system.Current())
 	} else {
-		results, err = eval.URLOutputs(ctx, c.Args, system.Current())
+		results, err = eval.URLs(ctx, c.Args, system.Current())
 	}
 	if err != nil {
 		return err

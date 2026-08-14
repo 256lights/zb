@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
@@ -30,35 +32,43 @@ import (
 func TestExpression(t *testing.T) {
 	tests := []struct {
 		expr string
-		want string
+		want map[string]string
 	}{
 		{
 			expr: "nil",
-			want: "nil",
+			want: map[string]string{"": "nil"},
 		},
 		{
 			expr: "true",
-			want: "true",
+			want: map[string]string{"": "true"},
 		},
 		{
 			expr: "false",
-			want: "false",
+			want: map[string]string{"": "false"},
 		},
 		{
 			expr: `"foo"`,
-			want: "foo",
+			want: map[string]string{"": "foo"},
 		},
 		{
 			expr: `"foo".."bar"`,
-			want: "foobar",
+			want: map[string]string{"": "foobar"},
 		},
 		{
 			expr: "42",
-			want: "42",
+			want: map[string]string{"": "42"},
 		},
 		{
 			expr: "3.14",
-			want: "3.14",
+			want: map[string]string{"": "3.14"},
+		},
+		{
+			expr: "{123,456,789}",
+			want: map[string]string{
+				"":  "123",
+				"2": "456",
+				"3": "789",
+			},
 		},
 	}
 
@@ -89,13 +99,17 @@ func TestExpression(t *testing.T) {
 	}()
 
 	for _, test := range tests {
-		got, err := eval.Expression(ctx, test.expr)
+		outputs, err := eval.Expression(ctx, test.expr, system.Current())
 		if err != nil {
 			t.Errorf("%s: %v", test.expr, err)
 			continue
 		}
-		if got.String() != test.want {
-			t.Errorf("%s = %s; want %s", test.expr, got, test.want)
+		got := make(map[string]string)
+		for k, out := range outputs.All() {
+			got[k] = out.String()
+		}
+		if diff := cmp.Diff(test.want, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("%s (-want +got):\n%s", test.expr, diff)
 		}
 	}
 }
@@ -165,11 +179,11 @@ func TestGetenv(t *testing.T) {
 			}()
 
 			expr := "os.getenv('" + wantKey + "')"
-			got, err := eval.Expression(ctx, expr)
+			got, err := eval.Expression(ctx, expr, system.Current())
 			if err != nil {
 				t.Fatalf("%s: %v", expr, err)
 			}
-			if got.String() != test.want {
+			if got.Get("").String() != test.want {
 				t.Errorf("%s = %q; want %q", expr, got, test.want)
 			}
 		})
@@ -204,12 +218,12 @@ func TestStringMethod(t *testing.T) {
 	}()
 
 	const expr = `("abcdef"):sub(2, 4)`
-	got, err := eval.Expression(ctx, expr)
+	got, err := eval.Expression(ctx, expr, system.Current())
 	if err != nil {
 		t.Fatal(err)
 	}
 	const want = "bcd"
-	if got.String() != want {
+	if got.Get("").String() != want {
 		t.Errorf("%s = %s; want %s", expr, got, want)
 	}
 }
@@ -248,7 +262,7 @@ func TestImportExitStore(t *testing.T) {
 
 	fContent := `return import(` + lualex.Quote(secretPath) + `)`
 	expr := `local f = toFile("f.lua", ` + lualex.Quote(fContent) + `); local m = await(import(f)); assert(m == nil, string.format("%s is not nil", type(m)))`
-	if _, err := eval.Expression(ctx, expr); err != nil {
+	if _, err := eval.Expression(ctx, expr, system.Current()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -299,11 +313,11 @@ func TestStorePath(t *testing.T) {
 			}
 		}()
 
-		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")")
+		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")", system.Current())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.String() != string(wantPath) {
+		if got.Get("").String() != string(wantPath) {
 			t.Errorf("storePath(%q) = %s; want %s", wantPath, got, wantPath)
 		}
 	})
@@ -356,11 +370,11 @@ func TestStorePath(t *testing.T) {
 			}
 		}()
 
-		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")")
+		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")", system.Current())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.String() != string(wantPath) {
+		if got.Get("").String() != string(wantPath) {
 			t.Errorf("storePath(%q) = %s; want %s", wantPath, got, wantPath)
 		}
 	})
@@ -394,7 +408,7 @@ func TestExtract(t *testing.T) {
 	}()
 
 	path := filepath.Join("testdata", "TestExtract", "extract.lua")
-	results, err := eval.URLOutputs(ctx, []string{
+	results, err := eval.URLs(ctx, []string{
 		path + "#full",
 		path + "#stripped",
 	}, system.Current())

@@ -486,57 +486,41 @@ func (eval *Eval) Close() error {
 	return eval.cachePool.Close()
 }
 
-// Expression evaluates a single Lua expression and returns the result converted to a string.
-func (eval *Eval) Expression(ctx context.Context, expr string) (*Output, error) {
-	var out *Output
-	err := eval.expression(ctx, expr, func(ctx context.Context, l *lua.State) error {
-		s, sctx, err := lua.ToString(ctx, l, 1)
-		if err != nil {
-			return err
-		}
-		out, err = newOutput(s, sctx)
-		return err
-	})
-	return out, err
-}
-
-// ExpressionOutputs evaluates a single Lua expression
+// Expression evaluates a single Lua expression
 // and returns the result converted to an [OutputMap].
-func (eval *Eval) ExpressionOutputs(ctx context.Context, expr string, sys system.System) (OutputMap, error) {
-	outputs := OutputMap{
-		groups: []map[string]*Output{nil},
-	}
-	err := eval.expression(ctx, expr, func(ctx context.Context, l *lua.State) error {
-		var err error
-		outputs.groups[0], err = objectOutputs(ctx, l, 1, sys)
-		return err
-	})
-	return outputs, err
-}
-
-func (eval *Eval) expression(ctx context.Context, expr string, f func(ctx context.Context, l *lua.State) error) error {
+func (eval *Eval) Expression(ctx context.Context, expr string, sys system.System) (OutputMap, error) {
 	l, err := eval.newState()
 	if err != nil {
-		return err
+		return OutputMap{}, err
 	}
 	defer l.Close()
 
 	l.PushPureFunction(0, messageHandler)
 	messageHandlerIndex := l.Top()
-	if err := loadExpression(l, expr); err != nil {
-		return err
-	}
-	if err := l.PCall(ctx, 0, 1, messageHandlerIndex); err != nil {
-		return err
-	}
 
-	// Convert to string.
+	result := OutputMap{
+		groups: []map[string]*Output{nil},
+	}
 	l.PushClosure(0, func(ctx context.Context, l *lua.State) (int, error) {
-		err := f(ctx, l)
-		return 0, err
+		l.SetTop(1)
+		if err := l.Call(ctx, 0, 1); err != nil {
+			return 0, err
+		}
+		l.PushString(SystemTriple(sys))
+		var err error
+		result.groups[0], err = objectOutputs(ctx, l, -2)
+		if err != nil {
+			return 0, err
+		}
+		return 0, nil
 	})
-	l.Insert(-2)
-	return l.PCall(ctx, 1, 0, messageHandlerIndex)
+	if err := loadExpression(l, expr); err != nil {
+		return OutputMap{}, err
+	}
+	if err := l.PCall(ctx, 1, 0, messageHandlerIndex); err != nil {
+		return OutputMap{}, err
+	}
+	return result, nil
 }
 
 func loadFile(l *lua.State, path string) error {
