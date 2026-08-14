@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -54,13 +55,21 @@ func TestURLOutputs(t *testing.T) {
 				t.Fatal("missing zb eval line")
 			}
 			evalArgv := strings.Fields(lines[0])
-			const systemFlagPrefix = "--system="
-			if len(evalArgv) < 3 || evalArgv[0] != "zb" || evalArgv[1] != "eval" || !strings.HasPrefix(evalArgv[2], systemFlagPrefix) {
-				t.Fatalf("first line of test = %s; must start with `zb eval --system=`", lines[0])
+			if len(evalArgv) < 2 || evalArgv[0] != "zb" || evalArgv[1] != "eval" {
+				t.Fatalf("first line of test = %s; must start with zb eval", lines[0])
 			}
-			sys, err := system.Parse(evalArgv[2][len(systemFlagPrefix):])
-			if err != nil {
-				t.Fatal(err)
+			urls := evalArgv[2:]
+			sys := system.Current()
+			if len(urls) > 0 {
+				sysString, isSystemFlag := strings.CutPrefix(urls[0], "--system=")
+				if isSystemFlag {
+					var err error
+					sys, err = system.Parse(sysString)
+					if err != nil {
+						t.Fatal(err)
+					}
+					urls = urls[1:]
+				}
 			}
 
 			objects, storePaths, err := storetest.TxtarObjects(storeDir, archive.Files)
@@ -69,29 +78,28 @@ func TestURLOutputs(t *testing.T) {
 			}
 			exportBuffer := new(bytes.Buffer)
 			exportWriter := zbstore.NewExportWriter(exportBuffer)
-			urls := make([]string, 0, len(evalArgv)-3)
-			for _, arg := range evalArgv[3:] {
+			for i, arg := range urls {
 				u, err := ParseURL(arg)
 				if err != nil {
 					t.Fatal(err)
 				}
 				objectBase, subpath, _ := strings.Cut(u.Path, "/")
-				i := slices.IndexFunc(objects, func(obj *storetest.Object) bool {
+				objectIndex := slices.IndexFunc(objects, func(obj *storetest.Object) bool {
 					return obj.StorePath == storePaths[objectBase]
 				})
-				if i == -1 {
+				if objectIndex == -1 {
 					t.Fatalf("unknown object %s in zb eval arguments", objectBase)
 				}
 
-				urlstr := string(objects[i].StorePath)
+				urlstr := string(objects[objectIndex].StorePath)
 				if subpath != "" {
 					urlstr += "/" + subpath
 				}
 				if u.Fragment != "" {
 					urlstr += "#" + u.Fragment
 				}
-				urls = append(urls, urlstr)
-				if err := exportWriter.WriteObject(ctx, objects[i]); err != nil {
+				urls[i] = urlstr
+				if err := exportWriter.WriteObject(ctx, objects[objectIndex]); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -154,8 +162,19 @@ func TestURLOutputs(t *testing.T) {
 				} else {
 					wantKey := line[:wantKeyEnd]
 					wantOutput := replacer.Replace(strings.Trim(line[wantKeyEnd:], " \t\r"))
-					if fullKey != wantKey || out.String() != wantOutput {
+					failed := false
+					if strings.HasPrefix(wantOutput, "^") {
+						if re, err := regexp.Compile("(?m)" + wantOutput); err != nil {
+							t.Errorf("invalid pattern for %s: %v", wantKey, err)
+						} else if fullKey != wantKey || !re.MatchString(out.String()) {
+							t.Errorf("%s %v does not match %s %s", fullKey, out, wantKey, wantOutput)
+							failed = true
+						}
+					} else if fullKey != wantKey || out.String() != wantOutput {
 						t.Errorf("%s %v != %s %s", fullKey, out, wantKey, wantOutput)
+						failed = true
+					}
+					if failed {
 						for ref := range out.OutputReferences() {
 							got, err := os.ReadFile(string(ref.DrvPath))
 							if err == nil {

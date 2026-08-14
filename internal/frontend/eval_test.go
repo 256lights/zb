@@ -10,11 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
@@ -216,45 +214,6 @@ func TestStringMethod(t *testing.T) {
 	}
 }
 
-func TestImportFromDerivation(t *testing.T) {
-	ctx := testcontext.New(t)
-	storeDir := backendtest.NewStoreDirectory(t)
-
-	di := new(zbstorerpc.DeferredImporter)
-	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
-		TempDir: t.TempDir(),
-		ClientOptions: zbstorerpc.CodecOptions{
-			Importer: di,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	eval, err := NewEval(&Options{
-		Store:          newTestRPCStore(store, di),
-		StoreDirectory: storeDir,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := eval.Close(); err != nil {
-			t.Error("eval.Close:", err)
-		}
-	}()
-
-	results, err := eval.URLOutputs(ctx, []string{
-		filepath.Join("testdata", "TestImportFromDerivation", "ifd.lua"),
-	}, system.Current())
-	if err != nil {
-		t.Fatal(err)
-	}
-	const want = "Hello, World!"
-	if got := results.Get("").String(); got != want {
-		t.Errorf("result = %q; want %q", got, want)
-	}
-}
-
 func TestImportExitStore(t *testing.T) {
 	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
@@ -292,78 +251,6 @@ func TestImportExitStore(t *testing.T) {
 	if _, err := eval.Expression(ctx, expr); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func TestImportCycle(t *testing.T) {
-	ctx := testcontext.New(t)
-	storeDir := backendtest.NewStoreDirectory(t)
-
-	di := new(zbstorerpc.DeferredImporter)
-	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
-		TempDir: t.TempDir(),
-		ClientOptions: zbstorerpc.CodecOptions{
-			Importer: di,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	eval, err := NewEval(&Options{
-		Store:          newTestRPCStore(store, di),
-		StoreDirectory: storeDir,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := eval.Close(); err != nil {
-			t.Error("eval.Close:", err)
-		}
-	}()
-
-	t.Run("Self", func(t *testing.T) {
-		path := filepath.Join("testdata", "TestImportCycle", "self.lua")
-		got, err := eval.URLs(ctx, []string{path})
-		if err != nil {
-			t.Fatal(err)
-		}
-		const want = "import cycle"
-		if len(got) != 1 || !strings.Contains(got[0].String(), want) {
-			t.Errorf("import(%q) = %v; want string containing %q", path, got, want)
-		} else {
-			t.Logf("Error message: %s", got[0])
-		}
-	})
-
-	t.Run("MultipleFiles", func(t *testing.T) {
-		path := filepath.Join("testdata", "TestImportCycle", "a.lua")
-		got, err := eval.URLs(ctx, []string{path})
-		if err != nil {
-			t.Fatal(err)
-		}
-		const want = "import cycle"
-		if len(got) != 1 || !strings.Contains(got[0].String(), want) {
-			t.Errorf("import(%q) = %q; want string containing %q", path, got, want)
-		} else {
-			t.Logf("Error message: %s", got[0])
-		}
-	})
-
-	t.Run("Defer", func(t *testing.T) {
-		path := filepath.Join("testdata", "TestImportCycle", "defer_a.lua")
-		gotOutputs, err := eval.URLs(ctx, []string{path + "#4"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := make([]string, len(gotOutputs))
-		for i, out := range gotOutputs {
-			got[i] = out.String()
-		}
-		want := []string{"7"}
-		if diff := cmp.Diff(want, got); diff != "" {
-			t.Errorf("import(%q) (-want +got):\n%s", path, diff)
-		}
-	})
 }
 
 func TestStorePath(t *testing.T) {

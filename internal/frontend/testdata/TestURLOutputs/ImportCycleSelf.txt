@@ -1,0 +1,6 @@
+zb eval --system=x86_64-linux ddpqx4mf6sg9g25hig14ggqhhb0iswcp-src/self.lua
+result ^.*import cycle.*$
+
+-- ddpqx4mf6sg9g25hig14ggqhhb0iswcp-src/self.lua --
+local _, err = import("self.lua")
+return err

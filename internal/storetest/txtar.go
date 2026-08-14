@@ -96,7 +96,7 @@ func groupFilesByObject(files []txtar.File) iter.Seq[[]txtar.File] {
 			objectName, _, hasSubpath := strings.Cut(files[firstFileIndex].Name, "/")
 			i++
 			if hasSubpath {
-				prefix := files[firstFileIndex].Name[len(objectName)+len("/"):]
+				prefix := files[firstFileIndex].Name[:len(objectName)+len("/")]
 				for i < len(files) && strings.HasPrefix(files[i].Name, prefix) {
 					i++
 				}

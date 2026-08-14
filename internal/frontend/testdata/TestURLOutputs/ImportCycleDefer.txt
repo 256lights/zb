@@ -1,0 +1,28 @@
+zb eval --system=x86_64-linux blvcb333mby85gyrnf5nkpqangmdnbiz-src/a.lua#4
+result 7
+
+-- blvcb333mby85gyrnf5nkpqangmdnbiz-src/a.lua --
+local b = import "b.lua"
+
+local x = {
+  offset = 3,
+}
+return setmetatable(x, {
+  -- Accessing each number key calls the b function.
+  __index = function(_, k)
+    local n = tonumber(k)
+    if n then
+      return b(n)
+    else
+      return nil
+    end
+  end,
+})
+-- blvcb333mby85gyrnf5nkpqangmdnbiz-src/b.lua --
+return function (x)
+  -- Importing inside a function
+  -- called after the module is imported
+  -- breaks the cycle.
+  local a = import "a.lua"
+  return x + a.offset
+end
