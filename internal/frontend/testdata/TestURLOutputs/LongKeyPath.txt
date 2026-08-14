@@ -1,0 +1,29 @@
+zb eval --system=x86_64-linux gjpw6nllzwq97c5grqybfnjpjkp3lhqr-vars.lua#foo/bar/baz
+result ⸂pqifgbb9r0jn1iiywrf3w2yn2dx324d6-foobarbaz.txt.drv!out⸃
+
+-- gjpw6nllzwq97c5grqybfnjpjkp3lhqr-vars.lua --
+foo = { bar = { baz = derivation {
+  name = "foobarbaz.txt";
+  builder = "/bin/sh";
+  args = {
+    "-c",
+    [[echo foobarbaz > $out]],
+  };
+  system = "x86_64-unknown-linux";
+} } }
+-- pqifgbb9r0jn1iiywrf3w2yn2dx324d6-foobarbaz.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  ["-c", "echo foobarbaz > $out"],
+  [
+    ("args", "-c echo foobarbaz > $out"),
+    ("builder", "/bin/sh"),
+    ("name", "foobarbaz.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9"),
+    ("system", "x86_64-unknown-linux")
+  ]
+)
