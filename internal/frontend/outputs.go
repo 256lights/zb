@@ -4,6 +4,7 @@
 package frontend
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"iter"
@@ -51,18 +52,21 @@ func (outs OutputMap) All() iter.Seq2[string, *Output] {
 		if n := outs.groupCount(); n == 0 {
 			return
 		} else if n == 1 {
-			for k, v := range xmaps.Sorted(outs.groups[0]) {
-				if !yield(k, v) {
+			for _, k := range appendSortedOutputKeys([]string(nil), outs.groups[0]) {
+				if !yield(k, outs.groups[0][k]) {
 					return
 				}
 			}
 			return
 		}
 
-		var keys []string
-		keys = appendKeys(keys, outs.groups[0])
-		slices.Sort(keys)
-		for _, k := range keys {
+		maxKeys := 0
+		for _, group := range outs.groups {
+			maxKeys = max(maxKeys, len(group))
+		}
+		keys := make([]string, 0, maxKeys)
+
+		for _, k := range appendSortedOutputKeys(keys, outs.groups[0]) {
 			v := outs.groups[0][k]
 			if k != "" {
 				k = "1-" + k
@@ -73,10 +77,7 @@ func (outs OutputMap) All() iter.Seq2[string, *Output] {
 		}
 		for i, group := range outs.groups[1:] {
 			clear(keys)
-			keys = appendKeys(keys[:0], group)
-			slices.Sort(keys)
-
-			for _, k := range keys {
+			for _, k := range appendSortedOutputKeys(keys[:0], group) {
 				v := group[k]
 				if k == "" {
 					k = fmt.Sprintf("%d", i+2)
@@ -425,7 +426,40 @@ func baseNext(ctx context.Context, l *lua.State) (int, error) {
 	return 2, nil
 }
 
-func appendKeys[K comparable, V any, Map ~map[K]V, Slice ~[]K](dst Slice, m Map) Slice {
+func appendSortedOutputKeys[K ~string, V any, Map ~map[K]V, Slice ~[]K](dst Slice, m Map) Slice {
 	dst = slices.Grow(dst, len(m))
-	return slices.AppendSeq(dst, maps.Keys(m))
+	start := len(dst)
+	dst = slices.AppendSeq(dst, maps.Keys(m))
+	slices.SortFunc(dst[start:], func(k1, k2 K) int {
+		rank1 := outputKeyRank(string(k1))
+		rank2 := outputKeyRank(string(k2))
+		switch {
+		case rank1 != rank2:
+			return cmp.Compare(rank1, rank2)
+		case rank1 == 1:
+			// Array indices.
+			return cmp.Or(
+				cmp.Compare(len(k1), len(k2)),
+				cmp.Compare(k1, k2),
+			)
+		default:
+			return cmp.Compare(k1, k2)
+		}
+	})
+	return dst
+}
+
+func outputKeyRank(s string) int {
+	if len(s) == 0 {
+		return 0
+	}
+	if !('1' <= s[0] && s[0] <= '9') {
+		return 2
+	}
+	for _, b := range []byte(s) {
+		if !('0' <= b && b <= '9') {
+			return 2
+		}
+	}
+	return 1
 }
