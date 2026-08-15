@@ -52,7 +52,7 @@ function toFile(name, s) end
 ---Return the __outputs field of a value or the value itself.
 ---@param x any
 ---@param system string
----@return any
+---@return table<string, string>
 function outputs(x, system) end
 
 ---Create a derivation that downloads a URL.
