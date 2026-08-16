@@ -1,0 +1,9 @@
+zb eval --system=x86_64-linux 7sl608lkj81rscsgam5myrp7xjf18qa2-conflict.lua
+result Number
+result-1 String
+
+-- 7sl608lkj81rscsgam5myrp7xjf18qa2-conflict.lua --
+return {
+  [1] = "Number",
+  ["1"] = "String",
+}

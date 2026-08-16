@@ -202,15 +202,16 @@ func (eval *Eval) initZygote() error {
 
 	// Set other built-ins.
 	extraBaseFunctions := map[string]lua.Function{
-		"await":      awaitFunction,
-		"derivation": eval.derivationFunction,
-		"import":     eval.importFunction,
-		"lazy":       lazyFunction,
-		"toFile":     eval.toFileFunction,
-		"outputs":    outputsFunction,
-		"path":       eval.pathFunction,
-		"readFile":   eval.readFileFunction,
-		"storePath":  eval.storePathFunction,
+		"await":         awaitFunction,
+		"defaultOutput": defaultOutputFunction,
+		"derivation":    eval.derivationFunction,
+		"import":        eval.importFunction,
+		"lazy":          lazyFunction,
+		"toFile":        eval.toFileFunction,
+		"outputs":       outputsFunction,
+		"path":          eval.pathFunction,
+		"readFile":      eval.readFileFunction,
+		"storePath":     eval.storePathFunction,
 	}
 	if err := lua.SetPureFunctions(ctx, l, 0, extraBaseFunctions); err != nil {
 		return err

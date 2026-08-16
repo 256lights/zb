@@ -183,7 +183,7 @@ func TestGetenv(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", expr, err)
 			}
-			if got.Get("").String() != test.want {
+			if got.Default().String() != test.want {
 				t.Errorf("%s = %q; want %q", expr, got, test.want)
 			}
 		})
@@ -223,7 +223,7 @@ func TestStringMethod(t *testing.T) {
 		t.Fatal(err)
 	}
 	const want = "bcd"
-	if got.Get("").String() != want {
+	if got.Default().String() != want {
 		t.Errorf("%s = %s; want %s", expr, got, want)
 	}
 }
@@ -317,7 +317,7 @@ func TestStorePath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Get("").String() != string(wantPath) {
+		if got.Default().String() != string(wantPath) {
 			t.Errorf("storePath(%q) = %s; want %s", wantPath, got, wantPath)
 		}
 	})
@@ -374,7 +374,7 @@ func TestStorePath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Get("").String() != string(wantPath) {
+		if got.Default().String() != string(wantPath) {
 			t.Errorf("storePath(%q) = %s; want %s", wantPath, got, wantPath)
 		}
 	})

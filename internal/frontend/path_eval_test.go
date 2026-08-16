@@ -60,7 +60,7 @@ func TestPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			gotPath, gotSubpath, err := storeDir.ParsePath(got.Get("").String())
+			gotPath, gotSubpath, err := storeDir.ParsePath(got.Default().String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +123,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotPath1, gotSubpath1, err := storeDir.ParsePath(got1.Get("").String())
+		gotPath1, gotSubpath1, err := storeDir.ParsePath(got1.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,10 +146,10 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got1.Get("").String() == got2.Get("").String() {
+		if got1.Default().String() == got2.Default().String() {
 			t.Errorf("first path (%q) == second path", got1)
 		}
-		gotPath2, gotSubpath2, err := storeDir.ParsePath(got2.Get("").String())
+		gotPath2, gotSubpath2, err := storeDir.ParsePath(got2.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -199,7 +199,7 @@ func TestPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			gotPath, gotSubpath, err := storeDir.ParsePath(got.Get("").String())
+			gotPath, gotSubpath, err := storeDir.ParsePath(got.Default().String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -251,7 +251,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotPath1, gotSubpath1, err := storeDir.ParsePath(got1.Get("").String())
+		gotPath1, gotSubpath1, err := storeDir.ParsePath(got1.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -268,7 +268,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotPath2, gotSubpath2, err := storeDir.ParsePath(got2.Get("").String())
+		gotPath2, gotSubpath2, err := storeDir.ParsePath(got2.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -317,7 +317,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotPath1, gotSubpath1, err := storeDir.ParsePath(got1.Get("").String())
+		gotPath1, gotSubpath1, err := storeDir.ParsePath(got1.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -334,7 +334,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotPath2, gotSubpath2, err := storeDir.ParsePath(got2.Get("").String())
+		gotPath2, gotSubpath2, err := storeDir.ParsePath(got2.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -375,7 +375,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotPath, gotSubpath, err := storeDir.ParsePath(got.Get("").String())
+		gotPath, gotSubpath, err := storeDir.ParsePath(got.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -422,7 +422,7 @@ func TestPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotPath, gotSubpath, err := storeDir.ParsePath(got.Get("").String())
+		gotPath, gotSubpath, err := storeDir.ParsePath(got.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -477,7 +477,7 @@ func TestReadFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal([]byte(got.Get("").String()), wantContent) {
+	if !bytes.Equal([]byte(got.Default().String()), wantContent) {
 		t.Errorf("got = %q; want %q", got, wantContent)
 	}
 }

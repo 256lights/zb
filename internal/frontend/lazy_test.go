@@ -46,7 +46,7 @@ func TestLazy(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", expr, err)
 		}
-		if want := "34"; got.Get("").String() != want {
+		if want := "34"; got.Default().String() != want {
 			t.Errorf("%s = %q; want %q", expr, got, want)
 		}
 	})

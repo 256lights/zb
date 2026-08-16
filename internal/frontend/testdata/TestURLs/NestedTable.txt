@@ -1,0 +1,13 @@
+zb eval --system=x86_64-linux r7fivhkj0mk9ny8grv1c598g73ax8180-nested.lua
+result-array first
+result-nested Hello, World!
+result-other nil
+result-withOut /path/to/thing
+
+-- r7fivhkj0mk9ny8grv1c598g73ax8180-nested.lua --
+return {
+  nested = {[""] = "Hello, World!"},
+  array = {"first", "second"},
+  withOut = {a = "abc", out = "/path/to/thing"},
+  other = {foo = "Secondary"},
+}

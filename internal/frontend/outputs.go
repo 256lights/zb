@@ -12,19 +12,34 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"zb.256lights.llc/pkg/internal/lua"
+	"zb.256lights.llc/pkg/internal/luacode"
+	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 )
 
+const maxOutputsRecursionDepth = 200
+
 // OutputMap is an immutable map of names to [*Output] values.
 // Names are organized into numbered groups.
 // The zero value is an empty map.
 type OutputMap struct {
 	groups []map[string]*Output
+}
+
+// defaultOutputKey is the canonical key for the default output in a group.
+const defaultOutputKey = ""
+
+// Default returns the [*Output] with the empty string name in the map.
+// If not present, then Default returns an [*Output] that evaluates to "nil".
+func (outs OutputMap) Default() *Output {
+	out, _ := outs.Get(defaultOutputKey)
+	return out
 }
 
 // Group returns a map of the outputs in the i'th group,
@@ -68,7 +83,7 @@ func (outs OutputMap) All() iter.Seq2[string, *Output] {
 
 		for _, k := range appendSortedOutputKeys(keys, outs.groups[0]) {
 			v := outs.groups[0][k]
-			if k != "" {
+			if k != defaultOutputKey {
 				k = "1-" + k
 			}
 			if !yield(k, v) {
@@ -79,7 +94,7 @@ func (outs OutputMap) All() iter.Seq2[string, *Output] {
 			clear(keys)
 			for _, k := range appendSortedOutputKeys(keys[:0], group) {
 				v := group[k]
-				if k == "" {
+				if k == defaultOutputKey {
 					k = fmt.Sprintf("%d", i+2)
 				} else {
 					k = fmt.Sprintf("%d-%s", i+2, k)
@@ -92,21 +107,26 @@ func (outs OutputMap) All() iter.Seq2[string, *Output] {
 	}
 }
 
-// Get returns the output in the map with the given name or nil if none exists.
-func (outs OutputMap) Get(name string) *Output {
+// Get returns the output in the map with the given name.
+// If there is no such output, Get returns ("nil", false).
+func (outs OutputMap) Get(name string) (_ *Output, ok bool) {
 	switch n := outs.groupCount(); {
 	case n == 0:
-		return nil
-	case n == 1 || name == "":
-		return outs.groups[0][name]
+		return nilOutput(), false
+	case n == 1 || name == defaultOutputKey:
+		out, ok := outs.groups[0][name]
+		if !ok {
+			return nilOutput(), false
+		}
+		return out, true
 	case !('1' <= name[0] && name[0] <= '9'):
-		return nil
+		return nilOutput(), false
 	}
 
 	seqEnd := 1
 	for ; seqEnd < len(name) && name[seqEnd] != '-'; seqEnd++ {
 		if !('0' <= name[seqEnd] && name[seqEnd] <= '9') {
-			return nil
+			return nilOutput(), false
 		}
 	}
 	keyStart := seqEnd + 1
@@ -115,14 +135,18 @@ func (outs OutputMap) Get(name string) *Output {
 		keyStart = len(name)
 	} else if keyStart == len(name) {
 		// Invalid key: we drop the hyphen if the remaining key is empty.
-		return nil
+		return nilOutput(), false
 	}
 
 	i, err := strconv.Atoi(name[:seqEnd])
 	if err != nil || i < 0 || i >= len(outs.groups) {
-		return nil
+		return nilOutput(), false
 	}
-	return outs.groups[i][name[keyStart:]]
+	out, ok := outs.groups[i][name[keyStart:]]
+	if !ok {
+		return nilOutput(), false
+	}
+	return out, true
 }
 
 // DerivationPaths returns the derivation paths that appear in the i'th group,
@@ -175,6 +199,12 @@ type Output struct {
 	paths    sets.Set[zbstore.Path]
 	refs     map[zbstore.OutputReference]string
 }
+
+// nilOutput is the result of calling newOutput on tostring(nil).
+var nilOutput = sync.OnceValue(func() *Output {
+	nilString := luacode.Value{}.String()
+	return &Output{template: nilString}
+})
 
 func newOutput(s string, sctx sets.Set[string]) (*Output, error) {
 	out := &Output{template: s}
@@ -267,10 +297,10 @@ func (out *Output) String() string {
 // Otherwise, outputsMeta applies the rules above recursively to the metavalue.
 func outputsMeta(ctx context.Context, l *lua.State, idx int) error {
 	if !l.CheckStack(2) {
-		return fmt.Errorf("%s'__outputs': stack overflow", lua.Where(l, 1))
+		return fmt.Errorf("'__outputs': stack overflow")
 	}
 	l.PushValue(idx)
-	for range 200 {
+	for range maxOutputsRecursionDepth {
 		switch lua.Metafield(l, -1, "__outputs") {
 		case lua.TypeNil:
 			l.Remove(-2) // Pop system argument.
@@ -287,7 +317,7 @@ func outputsMeta(ctx context.Context, l *lua.State, idx int) error {
 		}
 	}
 	l.Pop(2)
-	return fmt.Errorf("%s'__outputs' chain too long; possible loop", lua.Where(l, 1))
+	return fmt.Errorf("'__outputs' chain too long; possible loop")
 }
 
 // objectOutputs gets the group of outputs
@@ -295,8 +325,11 @@ func outputsMeta(ctx context.Context, l *lua.State, idx int) error {
 // with the system argument at the top of the stack.
 // objectOutputs pops the system argument from the top of the stack.
 func objectOutputs(ctx context.Context, l *lua.State, idx int) (map[string]*Output, error) {
-	defer l.SetTop(l.Top() - 1)
+	systemArgument := l.Top()
+	defer l.SetTop(systemArgument - 1)
 
+	idx = l.AbsIndex(idx)
+	l.PushValue(systemArgument)
 	if err := outputsMeta(ctx, l, idx); err != nil {
 		return nil, err
 	}
@@ -310,10 +343,10 @@ func objectOutputs(ctx context.Context, l *lua.State, idx int) (map[string]*Outp
 		if err != nil {
 			return nil, err
 		}
-		return map[string]*Output{"": out}, nil
+		return map[string]*Output{defaultOutputKey: out}, nil
 	}
 
-	if !l.CheckStack(5) {
+	if !l.CheckStack(7) {
 		return nil, fmt.Errorf("get outputs: stack overflow")
 	}
 
@@ -329,6 +362,8 @@ func objectOutputs(ctx context.Context, l *lua.State, idx int) (map[string]*Outp
 	}
 
 	result := make(map[string]*Output)
+	var string1Output *Output
+	var number1Output *Output
 	for {
 		l.PushValue(-3)  // iterator function
 		l.PushValue(-3)  // state
@@ -336,17 +371,9 @@ func objectOutputs(ctx context.Context, l *lua.State, idx int) (map[string]*Outp
 		if err := l.Call(ctx, 2, 2); err != nil {
 			return nil, err
 		}
-		if l.IsNil(-2) {
-			if result[""] == nil {
-				for _, name := range [...]string{"1", zbstore.DefaultDerivationOutputName} {
-					if out := result[name]; out != nil {
-						result[""] = out
-						delete(result, name)
-						break
-					}
-				}
-			}
-			return result, nil
+		keyType := l.Type(-2)
+		if keyType == lua.TypeNil {
+			break
 		}
 
 		l.PushValue(-2) // Copy key to avoid mutation.
@@ -356,24 +383,54 @@ func objectOutputs(ctx context.Context, l *lua.State, idx int) (map[string]*Outp
 			continue
 		}
 		l.Pop(1) // Pop key copy.
-		s, sctx, err := lua.ToString(ctx, l, -1)
+
+		l.PushValue(systemArgument)
+		out, err := defaultOutput(ctx, l, -2)
 		if err != nil {
+			// TODO(someday): Add key information.
+			// Probably need to add a PCall?
 			return nil, err
 		}
-		out, err := newOutput(s, sctx)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %v", key, err)
-		}
 		result[key] = out
+		if key == "1" {
+			switch keyType {
+			case lua.TypeNumber:
+				number1Output = out
+			case lua.TypeString:
+				string1Output = out
+			}
+		}
 		l.Pop(1) // Pop value.
 	}
+
+	nextKey, stopKeys := iter.Pull(defaultOutputKeys)
+	defer stopKeys()
+	if firstKey, _ := nextKey(); result[firstKey] == nil {
+		for {
+			k, ok := nextKey()
+			if !ok {
+				break
+			}
+			if k == "1" && number1Output != nil && string1Output != nil {
+				result[firstKey] = number1Output
+				result["1"] = string1Output
+				break
+			}
+			if out := result[k]; out != nil {
+				result[firstKey] = out
+				delete(result, k)
+				break
+			}
+		}
+	}
+	return result, nil
 }
 
 func outputsFunction(ctx context.Context, l *lua.State) (int, error) {
 	l.SetTop(2)
 	outputs, err := objectOutputs(ctx, l, 1)
 	if err != nil {
-		return 0, fmt.Errorf("%soutputs: %v", lua.Where(l, 1), err)
+		return 0, err
 	}
 	l.CreateTable(0, len(outputs))
 	for k, v := range outputs {
@@ -403,6 +460,85 @@ func pushOutput(l *lua.State, out *Output) {
 		sctx.Add(contextValue{outputReference: ref}.String())
 	}
 	l.PushStringContext(out.template, sctx)
+}
+
+// defaultOutputKeys is an [iter.Seq] over the table keys for the default output
+// in descending order.
+func defaultOutputKeys(yield func(string) bool) {
+	if !yield(defaultOutputKey) {
+		return
+	}
+	if !yield("1") {
+		return
+	}
+	if !yield(zbstore.DefaultDerivationOutputName) {
+		return
+	}
+}
+
+// defaultOutput gets the default output
+// for the value at the index on the Lua stack
+// with the system argument at the top of the stack.
+// defaultOutput pops the system argument from the top of the stack.
+func defaultOutput(ctx context.Context, l *lua.State, idx int) (*Output, error) {
+	systemArgument := l.Top()
+	defer l.SetTop(systemArgument - 1)
+
+	l.PushValue(idx)
+descend:
+	for range maxOutputsRecursionDepth {
+		l.PushValue(systemArgument)
+		if err := outputsMeta(ctx, l, -2); err != nil {
+			return nil, err
+		}
+		l.Remove(-2) // Remove old value.
+
+		if l.Type(-1) != lua.TypeTable {
+			s, sctx, err := lua.ToString(ctx, l, -1)
+			if err != nil {
+				return nil, err
+			}
+			out, err := newOutput(s, sctx)
+			if err != nil {
+				return nil, err
+			}
+			return out, nil
+		}
+
+		for name := range defaultOutputKeys {
+			if i, err := lualex.ParseInt(name); err == nil {
+				switch tp, err := l.Index(ctx, -1, i); {
+				case err != nil:
+					return nil, err
+				case tp != lua.TypeNil:
+					continue descend
+				}
+				l.Pop(1)
+			}
+
+			switch tp, err := l.Field(ctx, -1, name); {
+			case err != nil:
+				return nil, err
+			case tp != lua.TypeNil:
+				continue descend
+			}
+			l.Pop(1)
+		}
+
+		return nilOutput(), nil
+	}
+
+	return nil, fmt.Errorf("default output chain too long; possible loop")
+}
+
+func defaultOutputFunction(ctx context.Context, l *lua.State) (int, error) {
+	l.SetTop(2)
+	out, err := defaultOutput(ctx, l, 1)
+	if err != nil {
+		return 0, err
+	}
+	pushOutput(l, out)
+	return 1, nil
 }
 
 // SystemTriple returns the string passed to the __outputs metamethod for a given system.
