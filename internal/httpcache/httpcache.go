@@ -213,7 +213,9 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 				defer endFn(&err)
 				return clearURL(conn, req.URL.String())
 			}()
-			rt.reportError(req, err)
+			if err != nil {
+				rt.reportError(req, fmt.Errorf("invalidate cache: %v", err))
+			}
 		}
 		return resp, err
 	}
@@ -322,6 +324,9 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	result, forwardError := forward(rt.roundTripper, req, responses)
 	idResult := <-ch
 	if forwardError != nil || idResult.error != nil || result.serveBodyFromCache || requestDirectives.noStore || req.Method == http.MethodHead || !rt.canStore(result) {
+		if idResult.error != nil {
+			rt.reportError(req, idResult.error)
+		}
 		if idResult.error == nil || (result != nil && len(result.freshenResponses)+len(result.staleResponseIDs) > 0) {
 			err := func() (err error) {
 				endFn, err := sqlitex.ImmediateTransaction(conn)
@@ -342,7 +347,9 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 				}
 				return nil
 			}()
-			rt.reportError(req, err)
+			if err != nil {
+				rt.reportError(req, fmt.Errorf("update after request forward: %v", err))
+			}
 		}
 		if result != nil && result.serveBodyFromCache {
 			// forward already cleared result.response.Body, so no need to close.
@@ -387,7 +394,9 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			return nil
 		}()
-		rt.reportError(req, err)
+		if err != nil {
+			rt.reportError(req, fmt.Errorf("abandon caching: %v", err))
+		}
 
 		result.response.Body = rt.newBufferedResponseBody(conn, bodyBuffer, result.response.Body)
 		bodyBufferInUse = true
