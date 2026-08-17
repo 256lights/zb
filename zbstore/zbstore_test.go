@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"zb.256lights.llc/pkg/internal/testcontext"
+	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
@@ -133,7 +134,7 @@ func TestVerifyObject(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		badCA, _, err := SourceSHA256ContentAddress(bytes.NewReader(nil), nil)
+		badCA, _, err := SourceSHA256ContentAddress(xio.Null(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,7 +164,7 @@ func TestVerifyObject(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		badCA, _, err := SourceSHA256ContentAddress(bytes.NewReader(nil), nil)
+		badCA, _, err := SourceSHA256ContentAddress(xio.Null(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
