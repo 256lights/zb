@@ -313,7 +313,10 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 			codec := zbstorerpc.NewCodec(nopCloser{conn}, &zbstorerpc.CodecOptions{
 				Importer: zbstorerpc.NewReceiverImporter(recv),
 			})
-			jsonrpc.Serve(backend.WithExporter(ctx, codec), codec, server)
+			err := jsonrpc.Serve(backend.WithExporter(ctx, codec), codec, server)
+			if err != nil {
+				log.Debugf(ctx, "Disconnecting from %v: %v", conn.RemoteAddr(), err)
+			}
 			codec.Close()
 
 			openConnsMu.Lock()
