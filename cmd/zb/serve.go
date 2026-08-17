@@ -114,7 +114,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, drain drainSign
 	case *zbstorehttp.Store:
 		uploadHTTPStore = uploadStore
 	default:
-		return fmt.Errorf("unsupported type %q for upload store", g.Server.Upload.Type)
+		return fmt.Errorf("unsupported type %q for upload store", g.Server.Upload.storeType)
 	}
 
 	webHandler := new(webServer)

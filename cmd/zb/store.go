@@ -15,13 +15,17 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/go-json-experiment/json/jsontext"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
+	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xio"
+	"zb.256lights.llc/pkg/internal/zbstorehttp"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -44,6 +48,7 @@ type storeObjectCommand struct {
 	Info     storeObjectInfoCommand     `kong:"cmd"`
 	Import   storeObjectImportCommand   `kong:"cmd"`
 	Export   storeObjectExportCommand   `kong:"cmd"`
+	Copy     storeObjectCopyCommand     `kong:"cmd,aliases=cp"`
 	Delete   storeObjectDeleteCommand   `kong:"cmd,aliases=rm"`
 	Register storeObjectRegisterCommand `kong:"cmd,hidden"`
 }
@@ -393,6 +398,158 @@ func (rec *exportPathRecorder) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	if rec.wrapped != nil {
 		rec.wrapped.ReceiveNAR(trailer)
 	}
+}
+
+type storeObjectCopyCommand struct {
+	Paths       []zbstore.Path `kong:"arg,name=path,required,help=Store object paths."`
+	Source      *storeConfig   `kong:"name=from,short=f,help=Store to copy from (default to local)"`
+	Destination *storeConfig   `kong:"name=to,short=t,help=Store to copy to (default to local)"`
+}
+
+func (c *storeObjectCopyCommand) Signature() string {
+	return `kong:"help=Copy one or more store objects to/from a remote store."`
+}
+
+func (c *storeObjectCopyCommand) Validate() error {
+	if c.Source.isNull() && c.Destination.isNull() {
+		return fmt.Errorf("--from or --to must be specified")
+	}
+	return nil
+}
+
+func (c *storeObjectCopyCommand) Run(ctx context.Context, g *globalConfig) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	base := fileurl.FromPath(cwd)
+	base.Path = strings.TrimRight(base.Path, "/") + "/"
+	sourceConfig := c.Source.resolve(base)
+	destinationConfig := c.Destination.resolve(base)
+	storeDeps, cleanup := g.storeDeps()
+	defer cleanup()
+	paths := sets.Collect(slices.Values(c.Paths))
+
+	switch {
+	case sourceConfig.isNull() && !destinationConfig.isNull():
+		di := new(zbstorerpc.DeferredImporter)
+		localStoreClient := g.storeClient(ctx, &zbstorerpc.CodecOptions{
+			Importer: di,
+		})
+		defer localStoreClient.Close()
+		localStore := &zbstorerpc.Store{Handler: localStoreClient}
+		di.SetImporter(localStore)
+		destinationStore, err := destinationConfig.toStore(storeDeps)
+		if err != nil {
+			return err
+		}
+		return storeCopy(ctx, destinationStore, localStore, paths)
+	case !sourceConfig.isNull() && destinationConfig.isNull():
+		di := new(zbstorerpc.DeferredImporter)
+		localStoreClient := g.storeClient(ctx, &zbstorerpc.CodecOptions{
+			Importer: di,
+		})
+		defer localStoreClient.Close()
+		localStore := &zbstorerpc.Store{Handler: localStoreClient}
+		di.SetImporter(localStore)
+		sourceStore, err := sourceConfig.toStore(storeDeps)
+		if err != nil {
+			return err
+		}
+		return storeCopy(ctx, localStore, sourceStore, paths)
+	case !sourceConfig.isNull() && !destinationConfig.isNull():
+		sourceStore, err := sourceConfig.toStore(storeDeps)
+		if err != nil {
+			return err
+		}
+		destinationStore, err := destinationConfig.toStore(storeDeps)
+		if err != nil {
+			return err
+		}
+		return storeCopy(ctx, destinationStore, sourceStore, paths)
+	default:
+		return c.Validate()
+	}
+}
+
+func storeCopy(ctx context.Context, dst, src zbstore.Store, paths sets.Set[zbstore.Path]) error {
+	switch dst := dst.(type) {
+	case *zbstorehttp.Store:
+		// TODO(someday): Unify with backend logic.
+		objects, err := zbstore.ObjectClosure(ctx, src, paths, 2)
+		if err != nil {
+			return err
+		}
+		// TODO(someday): Make concurrent.
+		for _, obj := range objects {
+			log.Infof(ctx, "Copying %s...", obj.Trailer().StorePath)
+			err := dst.PutObject(ctx, &zbstorehttp.PutObjectRequest{
+				StorePath:      obj.Trailer().StorePath,
+				References:     obj.Trailer().References,
+				ContentAddress: obj.Trailer().ContentAddress,
+				GetNAR: func() (io.ReadCloser, error) {
+					pr, pw := io.Pipe()
+					done := make(chan struct{})
+					go func() {
+						defer close(done)
+						err := obj.WriteNAR(ctx, pw)
+						pw.CloseWithError(err)
+					}()
+					return xio.ReadFuncCloser{
+						Reader: pr,
+						CloseFunc: func() error {
+							err := pr.Close()
+							<-done
+							return err
+						},
+					}, nil
+				},
+			})
+			if err != nil {
+				return err
+			}
+		}
+	case zbstore.Importer:
+		grp, ctx := errgroup.WithContext(ctx)
+		pr, pw := io.Pipe()
+		spyReader, spyWriter := io.Pipe()
+		grp.Go(func() error {
+			err := zbstore.Export(ctx, src, pw, paths, nil)
+			pw.CloseWithError(err)
+			return err
+		})
+		grp.Go(func() error {
+			err := dst.StoreImport(ctx, io.TeeReader(pr, spyWriter))
+			pr.CloseWithError(err)
+			spyWriter.CloseWithError(err)
+			return err
+		})
+		grp.Go(func() error {
+			defer spyReader.Close()
+			zbstore.ReceiveExport(loggingNARReceiver{ctx}, spyReader)
+			io.Copy(io.Discard, spyReader) // Drain any remaining data from the pipe.
+			return nil
+		})
+		if err := grp.Wait(); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("internal error: unable to copy to %T", dst)
+	}
+
+	return nil
+}
+
+type loggingNARReceiver struct {
+	ctx context.Context
+}
+
+func (lnr loggingNARReceiver) ReceiveNAR(t *zbstore.ExportTrailer) {
+	log.Infof(lnr.ctx, "Copying %s...", t.StorePath)
+}
+
+func (lnr loggingNARReceiver) Write(p []byte) (int, error) {
+	return len(p), nil
 }
 
 type storeObjectDeleteCommand struct {
