@@ -4,7 +4,6 @@
 package althttp
 
 import (
-	"bytes"
 	"cmp"
 	"errors"
 	"fmt"
@@ -18,6 +17,7 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/googleapis/gax-go/v2/apierror"
 	"zb.256lights.llc/pkg/internal/xhttp"
+	"zb.256lights.llc/pkg/internal/xio"
 )
 
 // GCSScheme is the URL scheme for [GCSTransport].
@@ -88,7 +88,7 @@ func (t *GCSTransport) get(req *http.Request) *http.Response {
 			Header: http.Header{
 				"Date": {time.Now().UTC().Format(http.TimeFormat)},
 			},
-			Body: io.NopCloser(bytes.NewReader(nil)),
+			Body: io.NopCloser(xio.Null()),
 		}
 		setGCSObjectHeaders(resp.Header, attrs)
 		return resp
@@ -138,7 +138,7 @@ func (t *GCSTransport) head(req *http.Request) *http.Response {
 		Header: http.Header{
 			"Date": {time.Now().UTC().Format(http.TimeFormat)},
 		},
-		Body: io.NopCloser(bytes.NewReader(nil)),
+		Body: io.NopCloser(xio.Null()),
 	}
 	resp.Status = xhttp.Status(resp.StatusCode)
 	setGCSObjectHeaders(resp.Header, attrs)
@@ -203,7 +203,7 @@ func (t *GCSTransport) put(req *http.Request) *http.Response {
 		Header: http.Header{
 			"Date": {time.Now().UTC().Format(http.TimeFormat)},
 		},
-		Body: io.NopCloser(bytes.NewReader(nil)),
+		Body: io.NopCloser(xio.Null()),
 	}
 	setGCSObjectHeaders(resp.Header, w.Attrs())
 	resp.Header.Del("Content-Type")
