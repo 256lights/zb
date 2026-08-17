@@ -306,7 +306,7 @@ func putEncoding(ctx context.Context, client Client, contentEncoding string, req
 		},
 		ContentLength: -1,
 		Body:          body,
-		GetBody:       req.getContent,
+		GetBody:       getContent,
 	}
 	if contentEncoding != "" {
 		httpRequest.Header.Set("Content-Encoding", contentEncoding)
