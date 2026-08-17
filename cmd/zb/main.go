@@ -604,7 +604,7 @@ func inputFileName(name string) string {
 // openOutputFile opens a file for writing using [os.Create].
 // If name is "-", then it returns [os.Stdout].
 func openOutputFile(name string) (io.WriteCloser, error) {
-	if name == "-" {
+	if name == "" || name == "-" {
 		return nopWriteCloser{os.Stdout}, nil
 	}
 	return os.Create(name)
