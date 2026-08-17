@@ -74,6 +74,42 @@ func TestClient(t *testing.T) {
 			},
 		},
 		{
+			name: "Extra",
+			calls: []clientCall{
+				{
+					request: &Request{
+						Method: "subtract",
+						Params: jsontext.Value(`[42, 23]`),
+						Extra: map[string]jsontext.Value{
+							"magic": jsontext.Value(`"xyzzy"`),
+						},
+					},
+					wantResponse: &Response{
+						Result: jsontext.Value(`19`),
+					},
+				},
+			},
+			wire: []clientTestWireInteraction{
+				{
+					wantRequests: []any{
+						map[string]any{
+							"jsonrpc": "2.0",
+							"method":  "subtract",
+							"params": []any{
+								42.0,
+								23.0,
+							},
+							"id":    "1",
+							"magic": "xyzzy",
+						},
+					},
+					responses: []jsontext.Value{
+						jsontext.Value(`{"jsonrpc": "2.0", "result": 19, "id": "1"}`),
+					},
+				},
+			},
+		},
+		{
 			name: "Notification",
 			calls: []clientCall{
 				{
