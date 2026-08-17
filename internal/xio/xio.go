@@ -24,6 +24,20 @@ func (wc *WriteCounter) WriteString(s string) (n int, err error) {
 	return len(s), nil
 }
 
+// ReadFuncCloser is an [io.ReadCloser] that calls a custom close function.
+type ReadFuncCloser struct {
+	io.Reader
+	CloseFunc func() error
+}
+
+// Close calls rfc.CloseFunc.
+func (rfc ReadFuncCloser) Close() error {
+	if rfc.CloseFunc == nil {
+		return nil
+	}
+	return rfc.CloseFunc()
+}
+
 type onceCloser struct {
 	f func() error
 }

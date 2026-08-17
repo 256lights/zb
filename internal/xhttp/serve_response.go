@@ -4,10 +4,11 @@
 package xhttp
 
 import (
-	"bytes"
 	"io"
 	"net/http"
 	"strconv"
+
+	"zb.256lights.llc/pkg/internal/xio"
 )
 
 // ServeResponse calls h.ServeHTTP and converts the result into an [*http.Response].
@@ -17,9 +18,9 @@ func ServeResponse(req *http.Request, h http.Handler) *http.Response {
 	var wbody io.WriteCloser
 	serveDone := make(chan struct{})
 	if req.Method == http.MethodHead {
-		rbody = &customReadCloser{
-			Reader: bytes.NewReader(nil),
-			close: func() error {
+		rbody = xio.ReadFuncCloser{
+			Reader: xio.Null(),
+			CloseFunc: func() error {
 				<-serveDone
 				return nil
 			},
@@ -28,9 +29,9 @@ func ServeResponse(req *http.Request, h http.Handler) *http.Response {
 	} else {
 		var pr *io.PipeReader
 		pr, wbody = io.Pipe()
-		rbody = &customReadCloser{
+		rbody = xio.ReadFuncCloser{
 			Reader: pr,
-			close: func() error {
+			CloseFunc: func() error {
 				err := pr.Close()
 				<-serveDone
 				return err
@@ -117,13 +118,4 @@ func (discardCloser) ReadFrom(r io.Reader) (n int64, err error) {
 
 func (discardCloser) Close() error {
 	return nil
-}
-
-type customReadCloser struct {
-	io.Reader
-	close func() error
-}
-
-func (crc *customReadCloser) Close() error {
-	return crc.close()
 }
