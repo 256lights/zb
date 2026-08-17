@@ -82,7 +82,7 @@ func (s *Store) StoreImport(ctx context.Context, r io.Reader) error {
 	exportError := codec.Export(nil, r)
 	releaseConn()
 	if exportError != nil {
-		return err
+		return exportError
 	}
 
 	// Add sync point via doing a no-op RPC.
@@ -225,14 +225,41 @@ func (obj *object) Trailer() *zbstore.ExportTrailer {
 }
 
 func (obj *object) WriteNAR(ctx context.Context, dst io.Writer) error {
-	err := obj.store.export(ctx, dst, &ExportRequest{
-		Paths:             []zbstore.Path{obj.info.StorePath},
-		ExcludeReferences: true,
+	pr, pw := io.Pipe()
+	grp, ctx := errgroup.WithContext(ctx)
+	grp.Go(func() error {
+		err := obj.store.export(ctx, pw, &ExportRequest{
+			Paths:             []zbstore.Path{obj.info.StorePath},
+			ExcludeReferences: true,
+		})
+		pw.CloseWithError(err)
+		return err
 	})
-	if err != nil {
+	grp.Go(func() error {
+		err := zbstore.ReceiveExport(&singleNARReceiver{w: dst}, pr)
+		pr.CloseWithError(err)
+		return err
+	})
+	if err := grp.Wait(); err != nil {
 		return fmt.Errorf("write nar for %s: %w", obj.info.StorePath, err)
 	}
 	return nil
+}
+
+type singleNARReceiver struct {
+	w        io.Writer
+	received bool
+}
+
+func (snr *singleNARReceiver) Write(p []byte) (n int, err error) {
+	if snr.received {
+		return 0, fmt.Errorf("received multiple store objects from export")
+	}
+	return snr.w.Write(p)
+}
+
+func (snr *singleNARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
+	snr.received = true
 }
 
 // errorCaptureWriter passes through writes to another [io.Writer]
