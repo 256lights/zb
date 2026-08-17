@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -364,6 +365,26 @@ func marshalClientRequestJSONTo(enc *jsontext.Encoder, id int64, req clientReque
 		}
 		if err := enc.WriteValue(req.Params); err != nil {
 			return err
+		}
+	}
+
+	if len(req.Extra) > 0 {
+		for k := range req.Extra {
+			if isReservedRequestField(k) {
+				return fmt.Errorf("extra field %q not permitted", k)
+			}
+		}
+		keys := maps.Keys(req.Extra)
+		if deterministic, ok := jsonv2.GetOption(enc.Options(), jsonv2.Deterministic); ok && deterministic {
+			keys = slices.Values(slices.Sorted(keys))
+		}
+		for k := range keys {
+			if err := enc.WriteToken(jsontext.String(k)); err != nil {
+				return err
+			}
+			if err := enc.WriteValue(req.Extra[k]); err != nil {
+				return err
+			}
 		}
 	}
 
