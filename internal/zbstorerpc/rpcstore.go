@@ -16,9 +16,11 @@ import (
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
+	"golang.org/x/sync/errgroup"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
+	"zombiezen.com/go/log"
 )
 
 // Store implements [zbstore.Store], [zbstore.Importer], and [zbstore.Exporter] via JSON-RPC.
@@ -32,9 +34,8 @@ type Store struct {
 }
 
 type pendingExport struct {
-	w     io.Writer
-	ready chan<- struct{}
-	done  chan<- error
+	w    <-chan io.Writer
+	done chan<- error
 }
 
 // Object implements [zbstore.Store] by making a [InfoRequest] to s.Handler.
@@ -52,6 +53,7 @@ func (s *Store) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, 
 		return nil, fmt.Errorf("stat %s: %w", path, zbstore.ErrNotFound)
 	}
 	return &object{
+		store: s,
 		info: zbstore.ExportTrailer{
 			StorePath:      path,
 			References:     *sets.NewSorted(resp.Info.References...),
@@ -119,48 +121,36 @@ func (s *Store) export(ctx context.Context, dst io.Writer, req *ExportRequest) e
 	if s.pendingExports == nil {
 		s.pendingExports = make(map[string]pendingExport)
 	}
-	ready := make(chan struct{})
+	writerChan := make(chan io.Writer)
 	done := make(chan error)
 	s.pendingExports[id] = pendingExport{
-		w:     dst,
-		ready: ready,
-		done:  done,
+		w:    writerChan,
+		done: done,
 	}
 	s.mu.Unlock()
 
-	if err := sendExportRequest(ctx, s.Handler, id, req); err != nil {
-		s.mu.Lock()
-		_, stillPending := s.pendingExports[id]
-		delete(s.pendingExports, id)
-		s.mu.Unlock()
+	grp, ctx := errgroup.WithContext(ctx)
 
-		if !stillPending {
-			// The error from the RPC is more important than any I/O error.
-			// However, we still need to wait for the copy to finish
+	grp.Go(func() error {
+		// This RPC blocks until the export is finished,
+		// so we run concurrently handing off the writer to [*Store.Import].
+		return sendExportRequest(ctx, s.Handler, id, req)
+	})
+
+	grp.Go(func() error {
+		select {
+		case writerChan <- dst:
+			// If [*Store.Import] started writing to dst,
+			// then we need to wait until it is done before returning
 			// to avoid writing to dst after export returns.
-			<-done
-		}
-		return err
-	}
-
-	select {
-	case <-ready:
-		return <-done
-	case <-ctx.Done():
-		// Remove the export from the map, unregistering our interest in it.
-		// If the export was already removed from the map,
-		// then [*Store.Import] already started writing to it.
-		s.mu.Lock()
-		_, stillPending := s.pendingExports[id]
-		delete(s.pendingExports, id)
-		s.mu.Unlock()
-
-		if stillPending {
-			return ctx.Err()
-		} else {
 			return <-done
+		case <-ctx.Done():
+			close(writerChan)
+			return ctx.Err()
 		}
-	}
+	})
+
+	return grp.Wait()
 }
 
 func sendExportRequest(ctx context.Context, h jsonrpc.Handler, id string, params *ExportRequest) error {
@@ -172,6 +162,7 @@ func sendExportRequest(ctx context.Context, h jsonrpc.Handler, id string, params
 	if err != nil {
 		return fmt.Errorf("call json rpc %s: %v", ExportMethod, err)
 	}
+	log.Debugf(ctx, "Sending export request for %v with id=%+q...", params.Paths, id)
 	_, err = h.JSONRPC(ctx, &jsonrpc.Request{
 		Method: ExportMethod,
 		Params: paramsJSON,
@@ -179,6 +170,7 @@ func sendExportRequest(ctx context.Context, h jsonrpc.Handler, id string, params
 			ExportIDExtraFieldName: idJSON,
 		},
 	})
+	log.Debugf(ctx, "Export RPC finished: id=%+q err=%v", id, err)
 	return err
 }
 
@@ -186,31 +178,37 @@ func sendExportRequest(ctx context.Context, h jsonrpc.Handler, id string, params
 // to dispatch `nix-store --export` JSON-RPC messages
 // to other methods that request exports, like [*Store.StoreExport].
 func (s *Store) Import(header jsonrpc.Header, body io.Reader) error {
+	ctx := context.Background()
 	id := header.Get(ExportIDHeaderName)
 
 	var done chan<- error
 	var ecw *errorCaptureWriter
-	if id != "" {
+	if id == "" {
+		log.Warnf(ctx, "Received unsolicited export over RPC without ID")
+	} else {
 		s.mu.Lock()
-		e, ok := s.pendingExports[id]
+		e, idKnown := s.pendingExports[id]
 		delete(s.pendingExports, id)
-		if ok {
-			close(e.ready)
-		}
 		s.mu.Unlock()
 
-		if ok {
+		if !idKnown {
+			log.Warnf(ctx, "Received unsolicited export over RPC with id=%+q", id)
+		} else if w, ok := <-e.w; !ok {
+			log.Debugf(ctx, "Received export over RPC with id=%+q. No longer interested.", id)
+		} else {
+			log.Debugf(ctx, "Receiving export over RPC with id=%+q...", id)
 			// The Importer.Import method determines the boundary of the body.
 			// When we tee, we don't want copy failures downstream
 			// to mess up our JSON-RPC connection.
 			// We swallow the errors and try to read the `nix-store --export` data to the end.
-			ecw = &errorCaptureWriter{w: e.w}
+			ecw = &errorCaptureWriter{w: w}
 			body = io.TeeReader(body, ecw)
 			done = e.done
 		}
 	}
 
 	readError := zbstore.ReceiveExport(nopReceiver{}, body)
+	log.Debugf(ctx, "Finished receiving RPC export id=%+q err=%v", id, readError)
 	if done != nil {
 		done <- cmp.Or(readError, ecw.err)
 	}
