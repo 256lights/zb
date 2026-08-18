@@ -1,0 +1,6 @@
+zb eval --system=x86_64-linux 8av211axgkhicvcci4b6hihjdp0lncmf-hello.lua
+result-bar Secondary
+result-foo Hello, World!
+
+-- 8av211axgkhicvcci4b6hihjdp0lncmf-hello.lua --
+return {foo = "Hello, World!", bar = "Secondary"}

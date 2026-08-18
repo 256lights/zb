@@ -1,0 +1,27 @@
+zb eval --system=x86_64-linux 5yi37q47y87h1qmy8bn5rkn9b2piq4sx-hello.lua
+result Hello, World!
+result-2 Secondary
+result-3 Tertiary
+result-4 Ummmm
+result-5 Five Golden Rings
+result-6 Six
+result-7 Seven!
+result-8 Ate
+result-9 Nine
+result-10 Tennis
+result-11 It goes to eleven
+
+-- 5yi37q47y87h1qmy8bn5rkn9b2piq4sx-hello.lua --
+return {
+  "Hello, World!",
+  "Secondary",
+  "Tertiary",
+  "Ummmm",
+  "Five Golden Rings",
+  "Six",
+  "Seven!",
+  "Ate",
+  "Nine",
+  "Tennis",
+  "It goes to eleven",
+}

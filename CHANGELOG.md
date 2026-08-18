@@ -53,11 +53,20 @@ from roughly 10 minutes to XX seconds with a reasonably fast internet connection
   and exit successfully after all builds have completed
   after receiving `SIGUSR2`.
   ([#259](https://github.com/256lights/zb/issues/259))
+- `zb build` now [uses an `__outputs` metamethod](https://zb.256lights.llc/build-args)
+  to determine what derivations to build
+  rather than requiring the result to be a `derivation` function result.
+  A new [built-in `outputs` function](https://zb.256lights.llc/lua/extensions#outputs)
+  serves to access the metatable field.
+  Thank you to [@ocurr](https://github.com/ocurr) for the design feedback!
+  ([#117](https://github.com/256lights/zb/issues/117))
 
 [zstd]: https://en.wikipedia.org/wiki/Zstd
 
 ### Changed
 
+- `zb eval` now prints its output using Lua's `tostring` rules
+  instead of its own formatting logic.
 - Attempting to run multiple `zb serve` processes
   on a single store database now results in an error.
   ([#207](https://github.com/256lights/zb/issues/207))
@@ -66,6 +75,11 @@ from roughly 10 minutes to XX seconds with a reasonably fast internet connection
   ([#140](https://github.com/256lights/zb/issues/140))
   This benefits `zb build` arguments of remote URLs
   as well as remote caching in `zb serve`.
+
+### Removed
+
+- URL arguments no longer search top-level tables with the current system string.
+  This wasn't documented, but the standard library assumed its usage.
 
 ### Fixed
 

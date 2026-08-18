@@ -1,0 +1,7 @@
+zb eval --system=x86_64-linux xsnvj51rwyiyyl1rlw04707is2mcwhd7-hello.lua
+result Hello, World!
+
+-- xsnvj51rwyiyyl1rlw04707is2mcwhd7-hello.lua --
+return setmetatable({}, {
+  __outputs = "Hello, World!";
+})

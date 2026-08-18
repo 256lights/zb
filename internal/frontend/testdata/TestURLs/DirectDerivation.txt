@@ -1,0 +1,29 @@
+zb eval --system=x86_64-linux ak062jbp6bh64b7kzr5p3f758kkf692m-hello.lua
+result ⸂c4k8icwadfifxxj4i41wlbfgcahapwxc-hello.txt.drv!out⸃
+
+-- ak062jbp6bh64b7kzr5p3f758kkf692m-hello.lua --
+return derivation {
+  name = "hello.txt";
+  builder = "/bin/sh";
+  args = {
+    "-c",
+    [[echo 'Hello, World!' > $out]],
+  };
+  system = "x86_64-unknown-linux";
+}
+-- c4k8icwadfifxxj4i41wlbfgcahapwxc-hello.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  ["-c", "echo 'Hello, World!' > $out"],
+  [
+    ("args", "-c echo 'Hello, World!' > $out"),
+    ("builder", "/bin/sh"),
+    ("name", "hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9"),
+    ("system", "x86_64-unknown-linux")
+  ]
+)

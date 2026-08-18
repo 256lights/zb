@@ -1,8 +1,7 @@
--- Copyright 2024 The zb Authors
--- SPDX-License-Identifier: MIT
+zb eval h7jc2j6l24y70r1rcsia4czwcxsjaxi3-ifd.lua
+result Hello, World!
 
----@param system string
----@return boolean
+-- h7jc2j6l24y70r1rcsia4czwcxsjaxi3-ifd.lua --
 local function isWindows(system)
   return system:find("-windows$") ~= nil
 end
@@ -35,11 +34,11 @@ local function forSystem(_, currentSystem)
     }
   end
 
-  return import(drv.out)
+  return await(import(drv.out))
 end
 
 local t = {}
 setmetatable(t, {
-  __index = forSystem;
+  __outputs = forSystem;
 })
 return t

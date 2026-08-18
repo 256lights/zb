@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,6 +24,7 @@ import (
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/lualex"
+	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -202,14 +202,16 @@ func (eval *Eval) initZygote() error {
 
 	// Set other built-ins.
 	extraBaseFunctions := map[string]lua.Function{
-		"await":      awaitFunction,
-		"derivation": eval.derivationFunction,
-		"import":     eval.importFunction,
-		"lazy":       lazyFunction,
-		"toFile":     eval.toFileFunction,
-		"path":       eval.pathFunction,
-		"readFile":   eval.readFileFunction,
-		"storePath":  eval.storePathFunction,
+		"await":         awaitFunction,
+		"defaultOutput": defaultOutputFunction,
+		"derivation":    eval.derivationFunction,
+		"import":        eval.importFunction,
+		"lazy":          lazyFunction,
+		"toFile":        eval.toFileFunction,
+		"outputs":       outputsFunction,
+		"path":          eval.pathFunction,
+		"readFile":      eval.readFileFunction,
+		"storePath":     eval.storePathFunction,
 	}
 	if err := lua.SetPureFunctions(ctx, l, 0, extraBaseFunctions); err != nil {
 		return err
@@ -485,152 +487,39 @@ func (eval *Eval) Close() error {
 	return eval.cachePool.Close()
 }
 
-// Expression evaluates a single Lua expression and returns the result.
-func (eval *Eval) Expression(ctx context.Context, expr string) (any, error) {
+// Expression evaluates a single Lua expression
+// and returns the result converted to an [OutputMap].
+func (eval *Eval) Expression(ctx context.Context, expr string, sys system.System) (OutputMap, error) {
 	l, err := eval.newState()
 	if err != nil {
-		return nil, err
+		return OutputMap{}, err
 	}
 	defer l.Close()
 
 	l.PushPureFunction(0, messageHandler)
-	if err := loadExpression(l, expr); err != nil {
-		return nil, err
-	}
-	if err := l.PCall(ctx, 0, 1, -2); err != nil {
-		return nil, err
-	}
-	return luaToGo(ctx, l)
-}
+	messageHandlerIndex := l.Top()
 
-func luaToGo(ctx context.Context, l *lua.State) (any, error) {
-	for {
-		// Resolve modules, if any.
-		for {
-			mod := testModule(l, -1)
-			if mod == nil {
-				break
-			}
-			l.Pop(1)
-			if err := waitForModule(ctx, l, mod); err != nil {
-				return nil, err
-			}
+	result := OutputMap{
+		groups: []map[string]*Output{nil},
+	}
+	l.PushClosure(0, func(ctx context.Context, l *lua.State) (int, error) {
+		l.SetTop(1)
+		if err := l.Call(ctx, 0, 1); err != nil {
+			return 0, err
 		}
-
-		switch typ := l.Type(-1); typ {
-		case lua.TypeNil:
-			return nil, nil
-		case lua.TypeNumber:
-			if l.IsInteger(-1) {
-				i, _ := l.ToInteger(-1)
-				return i, nil
-			}
-			n, _ := l.ToNumber(-1)
-			return n, nil
-		case lua.TypeBoolean:
-			return l.ToBoolean(-1), nil
-		case lua.TypeString:
-			s, _ := l.ToString(-1)
-			return s, nil
-		case lua.TypeTable:
-			// Check first if table is an array.
-			if arr, err := luaTableToGoSlice(ctx, l); err == nil {
-				return arr, nil
-			} else if err != errNotASequence {
-				return nil, err
-			}
-
-			// Otherwise it's an object.
-			m := make(map[string]any)
-			l.PushNil()
-			for l.Next(-2) {
-				if l.Type(-2) != lua.TypeString {
-					l.Pop(1)
-					continue
-				}
-
-				k, _ := l.ToString(-2)
-				v, err := luaToGo(ctx, l)
-				if err != nil {
-					return nil, fmt.Errorf("[%q]: %v", k, err)
-				}
-				l.Pop(1)
-				m[k] = v
-			}
-			return m, nil
-		default:
-			drv := testDerivation(l, -1)
-			if drv != nil {
-				return drv, nil
-			}
-			if typ == lua.TypeUserdata {
-				x, _ := l.ToUserdata(-1)
-				return nil, fmt.Errorf("cannot convert %T userdata to Go", x)
-			}
-			return nil, fmt.Errorf("cannot convert %v to Go", typ)
-		}
-	}
-}
-
-var errNotASequence = errors.New("table is not a sequence")
-
-func luaTableToGoSlice(ctx context.Context, l *lua.State) ([]any, error) {
-	defer l.SetTop(l.Top())
-	if !l.CheckStack(2) {
-		return nil, errors.New("depth exceeded")
-	}
-
-	// Arrays must have all integer keys
-	// except an "n" integer field is permitted
-	// (to support nils).
-	// This generally follows the pattern of table.pack.
-	n := int64(-1)
-	l.PushNil()
-	for l.Next(-2) {
-		switch l.Type(-2) {
-		case lua.TypeNumber:
-			// Only integer keys for a table.
-			i, ok := l.ToInteger(-2)
-			if !ok || i < 1 || i > math.MaxInt {
-				return nil, errNotASequence
-			}
-		case lua.TypeString:
-			// Only "n" allowed.
-			if s, _ := l.ToString(-2); s != "n" {
-				return nil, errNotASequence
-			}
-			var ok bool
-			n, ok = l.ToInteger(-1)
-			if !ok || n < 0 || n > math.MaxInt {
-				return nil, errNotASequence
-			}
-		default:
-			return nil, errNotASequence
-		}
-		l.Pop(1)
-	}
-
-	var result []any
-	l.PushNil()
-	for l.Next(-2) {
-		i, ok := l.ToInteger(-2)
-		if !ok {
-			// "n" field.
-			l.Pop(1)
-			continue
-		}
-		result = appendZero(result, int(i-1)-len(result))
-		x, err := luaToGo(ctx, l)
+		l.PushString(SystemTriple(sys))
+		var err error
+		result.groups[0], err = objectOutputs(ctx, l, -2)
 		if err != nil {
-			return nil, fmt.Errorf("[%d]: %w", i, err)
+			return 0, err
 		}
-		result = append(result, x)
-		l.Pop(1)
+		return 0, nil
+	})
+	if err := loadExpression(l, expr); err != nil {
+		return OutputMap{}, err
 	}
-	if n >= 0 {
-		result = appendZero(result, int(n)-len(result))
-	} else if len(result) == 0 {
-		return nil, errNotASequence
+	if err := l.PCall(ctx, 1, 0, messageHandlerIndex); err != nil {
+		return OutputMap{}, err
 	}
 	return result, nil
 }
@@ -762,11 +651,6 @@ func forEachSharedMetatableType(l *lua.State, f func() bool) {
 		return 0, nil
 	})
 	f()
-}
-
-// appendZero appends n copies of the zero value to a slice.
-func appendZero[S ~[]E, E any](s S, n int) S {
-	return append(s, make(S, n)...)
 }
 
 //go:embed cache_sql

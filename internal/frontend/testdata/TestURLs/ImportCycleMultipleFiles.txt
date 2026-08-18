@@ -1,0 +1,8 @@
+zb eval --system=x86_64-linux v5bcwrgmjc1ym4bmymyn1a4lks0xqdl1-src/a.lua
+result ^.*import cycle.*$
+
+-- v5bcwrgmjc1ym4bmymyn1a4lks0xqdl1-src/a.lua --
+return import("b.lua")
+-- v5bcwrgmjc1ym4bmymyn1a4lks0xqdl1-src/b.lua --
+local _, err = import("a.lua")
+return err

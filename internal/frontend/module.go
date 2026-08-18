@@ -42,6 +42,7 @@ func registerModuleMetatable(ctx context.Context, l *lua.State) error {
 		"__len":       moduleLen,
 		"__call":      callModule,
 		"__tostring":  moduleToString,
+		"__outputs":   moduleOutputs,
 		"__pairs":     modulePairs,
 		"__metatable": nil, // prevent Lua access to metatable
 	}
@@ -219,6 +220,18 @@ func modulePairs(ctx context.Context, l *lua.State) (int, error) {
 
 	l.PushNil()
 	return 3, nil
+}
+
+func moduleOutputs(ctx context.Context, l *lua.State) (int, error) {
+	l.SetTop(2)
+	if err := waitForModuleArg(ctx, l); err != nil {
+		return 0, err
+	}
+	l.Insert(-2)
+	if err := outputsMeta(ctx, l, -2); err != nil {
+		return 0, err
+	}
+	return 1, nil
 }
 
 func moduleToString(ctx context.Context, l *lua.State) (int, error) {

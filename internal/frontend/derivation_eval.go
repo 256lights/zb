@@ -19,12 +19,12 @@ import (
 
 const derivationTypeName = "derivation"
 
-type Derivation struct {
+type derivation struct {
 	*zbstore.Derivation
-	Path zbstore.Path
+	path zbstore.Path
 }
 
-func (drv *Derivation) Freeze() error { return nil }
+func (drv *derivation) Freeze() error { return nil }
 
 func registerDerivationMetatable(ctx context.Context, l *lua.State) error {
 	lua.NewMetatable(l, derivationTypeName)
@@ -32,6 +32,7 @@ func registerDerivationMetatable(ctx context.Context, l *lua.State) error {
 		"__index":     indexDerivation,
 		"__pairs":     derivationPairs,
 		"__tostring":  derivationToString,
+		"__outputs":   derivationOutputs,
 		"__concat":    concatDerivation,
 		"__metatable": nil, // prevent Lua access to metatable
 	})
@@ -46,7 +47,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 	if !l.IsTable(1) {
 		return 0, lua.NewTypeError(l, 1, lua.TypeTable.String())
 	}
-	drv := &Derivation{
+	drv := &derivation{
 		Derivation: &zbstore.Derivation{
 			Dir: eval.storeDir,
 			Env: make(map[string]string),
@@ -187,12 +188,12 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 		}
 	}
 	var err error
-	drv.Path, err = writeDerivation(ctx, eval.store, drv.Derivation)
+	drv.path, err = writeDerivation(ctx, eval.store, drv.Derivation)
 	if err != nil {
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
 
-	pushStorePath(l, drv.Path)
+	pushStorePath(l, drv.path)
 	if err := l.SetField(ctx, tableCopyIndex, "drvPath"); err != nil {
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
@@ -201,7 +202,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 		switch {
 		case outType.IsFloating():
 			placeholder = zbstore.UnknownCAOutputPlaceholder(zbstore.OutputReference{
-				DrvPath:    drv.Path,
+				DrvPath:    drv.path,
 				OutputName: zbstore.DefaultDerivationOutputName,
 			})
 		case outType.IsFixed():
@@ -213,7 +214,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 			placeholder = string(p)
 		}
 		ref := zbstore.OutputReference{
-			DrvPath:    drv.Path,
+			DrvPath:    drv.path,
 			OutputName: outputName,
 		}
 		l.PushStringContext(placeholder, sets.New(contextValue{outputReference: ref}.String()))
@@ -352,7 +353,7 @@ func writeDerivation(ctx context.Context, store Store, drv *zbstore.Derivation) 
 	return trailer.StorePath, nil
 }
 
-func toDerivation(l *lua.State) (*Derivation, error) {
+func toDerivation(l *lua.State) (*derivation, error) {
 	const idx = 1
 	if _, err := lua.CheckUserdata(l, idx, derivationTypeName); err != nil {
 		return nil, err
@@ -364,9 +365,9 @@ func toDerivation(l *lua.State) (*Derivation, error) {
 	return drv, nil
 }
 
-func testDerivation(l *lua.State, idx int) *Derivation {
+func testDerivation(l *lua.State, idx int) *derivation {
 	x, _ := lua.TestUserdata(l, idx, derivationTypeName)
-	drv, _ := x.(*Derivation)
+	drv, _ := x.(*derivation)
 	return drv
 }
 
@@ -407,6 +408,18 @@ func derivationPairNext(ctx context.Context, l *lua.State) (int, error) {
 
 // derivationToString handles the __tostring metamethod on derivations.
 func derivationToString(ctx context.Context, l *lua.State) (int, error) {
+	if _, err := toDerivation(l); err != nil {
+		return 0, err
+	}
+	l.UserValue(1, 1) // Push derivation argument table.
+	if _, err := l.Field(ctx, -1, "out"); err != nil {
+		return 0, err
+	}
+	return 1, nil
+}
+
+// derivationOutputs handles the __outputs metamethod on derivations.
+func derivationOutputs(ctx context.Context, l *lua.State) (int, error) {
 	if _, err := toDerivation(l); err != nil {
 		return 0, err
 	}

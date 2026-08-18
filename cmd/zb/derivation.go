@@ -18,6 +18,8 @@ import (
 	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/frontend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/system"
+	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
@@ -106,10 +108,9 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 		}
 	}()
 
-	var results []any
+	var results frontend.OutputMap
 	if c.Expression {
-		results = make([]any, 1)
-		results[0], err = eval.Expression(ctx, c.Args[0])
+		results, err = eval.Expression(ctx, c.Args[0], system.Current())
 	} else {
 		urls := make([]string, 0, len(c.Args))
 		for i, arg := range c.Args {
@@ -118,38 +119,40 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 			}
 			urls = append(urls, arg)
 		}
-		results, err = eval.URLs(ctx, urls)
+		results, err = eval.URLs(ctx, urls, system.Current())
 	}
 	if err != nil {
 		return err
 	}
-	if len(results) == 0 {
-		return fmt.Errorf("no evaluation results")
-	}
+	hasMultiple := len(c.Args) > 1 || len(results.DerivationPaths(1)) > 1
 
-	resultIndex := 0
+	groupIndex := 1
 	for i := range c.Args {
-		var drvBytes []byte
-		var err error
+		var curr iter.Seq[string]
 		if i < len(drvPaths) && drvPaths[i] != "" {
-			drvBytes, err = showDerivationFile(drvPaths[i], c.JSONFormat)
+			curr = slices.Values(drvPaths[i : i+1])
 		} else {
-			result := results[resultIndex]
-			resultIndex++
-			drv, _ := result.(*frontend.Derivation)
-			if drv == nil {
-				return fmt.Errorf("%v is not a derivation", result)
+			storePaths := results.DerivationPaths(groupIndex)
+			groupIndex++
+			curr = func(yield func(string) bool) {
+				for _, p := range storePaths {
+					if !yield(string(p)) {
+						return
+					}
+				}
 			}
-			drvBytes, err = showDerivation(drv, c.JSONFormat)
 		}
-		if err != nil {
-			return err
-		}
-		if !c.JSONFormat && len(results) > 1 {
-			drvBytes = append(drvBytes, '\n')
-		}
-		if _, err := os.Stdout.Write(drvBytes); err != nil {
-			return err
+		for p := range curr {
+			drvBytes, err := showDerivationFile(p, c.JSONFormat)
+			if err != nil {
+				return err
+			}
+			if !c.JSONFormat && hasMultiple {
+				drvBytes = append(drvBytes, '\n')
+			}
+			if _, err := os.Stdout.Write(drvBytes); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -179,18 +182,6 @@ func showDerivationFile(drvPath string, jsonFormat bool) ([]byte, error) {
 	}
 
 	jsonData, err := marshalDerivationJSON(drvPath, drv)
-	if err != nil {
-		return nil, err
-	}
-	jsonData = append(jsonData, '\n')
-	return jsonData, nil
-}
-
-func showDerivation(drv *frontend.Derivation, jsonFormat bool) ([]byte, error) {
-	if !jsonFormat {
-		return drv.MarshalText()
-	}
-	jsonData, err := marshalDerivationJSON(string(drv.Path), drv.Derivation)
 	if err != nil {
 		return nil, err
 	}
@@ -312,6 +303,13 @@ func (c *derivationEnvCommand) Signature() string {
 	return `help:"Show the environment of one or more derivations."`
 }
 
+func (c *derivationEnvCommand) Validate() error {
+	if len(c.Args) != 1 {
+		return fmt.Errorf("accepts 1 arg, received %d", len(c.Args))
+	}
+	return nil
+}
+
 func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
 	httpClient, httpCloser, err := g.newHTTPClient()
 	if err != nil {
@@ -338,30 +336,23 @@ func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
 		}
 	}()
 
-	var results []any
+	var results frontend.OutputMap
 	if c.Expression {
-		results = make([]any, 1)
-		results[0], err = eval.Expression(ctx, c.Args[0])
+		results, err = eval.Expression(ctx, c.Args[0], system.Current())
 	} else {
-		results, err = eval.URLs(ctx, c.Args)
+		results, err = eval.URLs(ctx, c.Args, system.Current())
 	}
 	if err != nil {
 		return err
 	}
-	if len(results) == 0 {
-		return fmt.Errorf("no evaluation results")
-	}
-	if len(results) > 1 {
-		return fmt.Errorf("can only expand one derivation")
+	drvPath, err := xiter.Single(slices.Values(results.DerivationPaths(1)))
+	if err != nil {
+		return fmt.Errorf("get derivation: %v", err)
 	}
 
-	drv, _ := results[0].(*frontend.Derivation)
-	if drv == nil {
-		return fmt.Errorf("%v is not a derivation", results[0])
-	}
 	expandResponse := new(zbstorerpc.RealizeResponse)
 	err = jsonrpc.Do(ctx, storeClient, zbstorerpc.ExpandMethod, expandResponse, &zbstorerpc.ExpandRequest{
-		DrvPath:            drv.Path,
+		DrvPath:            drvPath,
 		TemporaryDirectory: c.TempDir,
 		Reuse:              c.reusePolicy(g),
 	})
@@ -381,10 +372,10 @@ func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
 			Expand jsontext.Value `json:"expand"`
 		}
 		if err := jsonv2.Unmarshal(rawBuild, &parsed); err != nil {
-			return fmt.Errorf("%s: %v", drv.Path, err)
+			return fmt.Errorf("%s: %v", drvPath, err)
 		}
 		if err := parsed.Expand.Compact(); err != nil {
-			return fmt.Errorf("%s: %v", drv.Path, err)
+			return fmt.Errorf("%s: %v", drvPath, err)
 		}
 		jsonBytes := append(slices.Clip([]byte(parsed.Expand)), '\n')
 		if _, err := os.Stdout.Write(jsonBytes); err != nil {

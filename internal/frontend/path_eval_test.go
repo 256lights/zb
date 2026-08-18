@@ -15,6 +15,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/lualex"
+	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
@@ -55,15 +56,11 @@ func TestPath(t *testing.T) {
 		}()
 
 		for range 3 {
-			got, err := eval.Expression(ctx, `path("testdata/TestPath/hello.txt")`)
+			got, err := eval.Expression(ctx, `path("testdata/TestPath/hello.txt")`, system.Current())
 			if err != nil {
 				t.Fatal(err)
 			}
-			gotString, ok := got.(string)
-			if !ok {
-				t.Fatalf("expression result is %T; want string", got)
-			}
-			gotPath, gotSubpath, err := storeDir.ParsePath(gotString)
+			gotPath, gotSubpath, err := storeDir.ParsePath(got.Default().String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,15 +119,11 @@ func TestPath(t *testing.T) {
 			}
 		}()
 
-		got1, err := eval.Expression(ctx, "path("+lualex.Quote(myPath)+")")
+		got1, err := eval.Expression(ctx, "path("+lualex.Quote(myPath)+")", system.Current())
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString1, ok := got1.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got1)
-		}
-		gotPath1, gotSubpath1, err := storeDir.ParsePath(gotString1)
+		gotPath1, gotSubpath1, err := storeDir.ParsePath(got1.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -149,18 +142,14 @@ func TestPath(t *testing.T) {
 		if err := os.WriteFile(myPath, []byte(wantContent2), 0o666); err != nil {
 			t.Fatal(err)
 		}
-		got2, err := eval.Expression(ctx, "path("+lualex.Quote(myPath)+")")
+		got2, err := eval.Expression(ctx, "path("+lualex.Quote(myPath)+")", system.Current())
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString2, ok := got2.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got2)
+		if got1.Default().String() == got2.Default().String() {
+			t.Errorf("first path (%q) == second path", got1)
 		}
-		if gotString1 == gotString2 {
-			t.Errorf("first path (%q) == second path", gotString1)
-		}
-		gotPath2, gotSubpath2, err := storeDir.ParsePath(gotString2)
+		gotPath2, gotSubpath2, err := storeDir.ParsePath(got2.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -206,15 +195,11 @@ func TestPath(t *testing.T) {
 		}()
 
 		for range 3 {
-			got, err := eval.Expression(ctx, `path("testdata/TestPath/dir")`)
+			got, err := eval.Expression(ctx, `path("testdata/TestPath/dir")`, system.Current())
 			if err != nil {
 				t.Fatal(err)
 			}
-			gotString, ok := got.(string)
-			if !ok {
-				t.Fatalf("expression result is %T; want string", got)
-			}
-			gotPath, gotSubpath, err := storeDir.ParsePath(gotString)
+			gotPath, gotSubpath, err := storeDir.ParsePath(got.Default().String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -262,15 +247,11 @@ func TestPath(t *testing.T) {
 			}
 		}()
 
-		got1, err := eval.Expression(ctx, "path("+lualex.Quote(myDir)+")")
+		got1, err := eval.Expression(ctx, "path("+lualex.Quote(myDir)+")", system.Current())
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString1, ok := got1.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got1)
-		}
-		gotPath1, gotSubpath1, err := storeDir.ParsePath(gotString1)
+		gotPath1, gotSubpath1, err := storeDir.ParsePath(got1.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -283,15 +264,11 @@ func TestPath(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		got2, err := eval.Expression(ctx, "path("+lualex.Quote(myDir)+")")
+		got2, err := eval.Expression(ctx, "path("+lualex.Quote(myDir)+")", system.Current())
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString2, ok := got2.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got2)
-		}
-		gotPath2, gotSubpath2, err := storeDir.ParsePath(gotString2)
+		gotPath2, gotSubpath2, err := storeDir.ParsePath(got2.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -336,15 +313,11 @@ func TestPath(t *testing.T) {
 			}
 		}()
 
-		got1, err := eval.Expression(ctx, "path("+lualex.Quote(myDir)+")")
+		got1, err := eval.Expression(ctx, "path("+lualex.Quote(myDir)+")", system.Current())
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString1, ok := got1.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got1)
-		}
-		gotPath1, gotSubpath1, err := storeDir.ParsePath(gotString1)
+		gotPath1, gotSubpath1, err := storeDir.ParsePath(got1.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -357,15 +330,11 @@ func TestPath(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		got2, err := eval.Expression(ctx, "path("+lualex.Quote(myDir)+")")
+		got2, err := eval.Expression(ctx, "path("+lualex.Quote(myDir)+")", system.Current())
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString2, ok := got2.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got2)
-		}
-		gotPath2, gotSubpath2, err := storeDir.ParsePath(gotString2)
+		gotPath2, gotSubpath2, err := storeDir.ParsePath(got2.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -402,15 +371,11 @@ func TestPath(t *testing.T) {
 			}
 		}()
 
-		got, err := eval.Expression(ctx, `path{path = "testdata/TestPath/dir"; filter = function(name) return name ~= "c/d.txt" end }`)
+		got, err := eval.Expression(ctx, `path{path = "testdata/TestPath/dir"; filter = function(name) return name ~= "c/d.txt" end }`, system.Current())
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString, ok := got.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got)
-		}
-		gotPath, gotSubpath, err := storeDir.ParsePath(gotString)
+		gotPath, gotSubpath, err := storeDir.ParsePath(got.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -453,15 +418,11 @@ func TestPath(t *testing.T) {
 			}
 		}()
 
-		got, err := eval.Expression(ctx, `path{path = "testdata/TestPath/hello.txt"; filter = function() return false end }`)
+		got, err := eval.Expression(ctx, `path{path = "testdata/TestPath/hello.txt"; filter = function() return false end }`, system.Current())
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotString, ok := got.(string)
-		if !ok {
-			t.Fatalf("expression result is %T; want string", got)
-		}
-		gotPath, gotSubpath, err := storeDir.ParsePath(gotString)
+		gotPath, gotSubpath, err := storeDir.ParsePath(got.Default().String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -512,17 +473,12 @@ func TestReadFile(t *testing.T) {
 		}
 	}()
 
-	got, err := eval.Expression(ctx, `readFile("testdata/TestPath/hello.txt")`)
+	got, err := eval.Expression(ctx, `readFile("testdata/TestPath/hello.txt")`, system.Current())
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotString, ok := got.(string)
-	if !ok {
-		t.Fatalf("expression result is %T; want string", got)
-	}
-
-	if !bytes.Equal([]byte(gotString), wantContent) {
-		t.Errorf("gotString = %q; want %q", gotString, wantContent)
+	if !bytes.Equal([]byte(got.Default().String()), wantContent) {
+		t.Errorf("got = %q; want %q", got, wantContent)
 	}
 }
 

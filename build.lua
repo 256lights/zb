@@ -10,11 +10,14 @@ local stdlib <const> = fetchArchive {
 
 local go <const> = import(stdlib.."/packages/go/go.lua")
 local seeds <const> = import(stdlib.."/bootstrap/seeds.lua")
+local stdenv <const> = import(stdlib.."/stdenv/stdenv.lua")
 local strings <const> = import(stdlib.."/strings.lua")
 local tables <const> = import(stdlib.."/tables.lua")
 
 local module <const> = {}
 local getters <const> = {}
+
+local version <const> = "0.2.0-beta5"
 
 module.gomod = path {
   path = ".";
@@ -60,26 +63,44 @@ function getters.src()
   }
 end
 
+local zbTarget = {}
+
 ---@param args {
 ---makeDerivation: (fun(args: table<string, any>): derivation),
 ---makeDerivationNoCC: (fun(args: table<string, any>): derivation)?,
----go: derivation|string,
----buildSystem: string,
+---go: any,
 ---targetSystem: string?,
 ---}
 ---@return derivation
 function module.new(args)
-  local goEnv = go.envForSystem(args.targetSystem or args.buildSystem)
+  local t = tables.clone(args)
+  t.version = version
+  t.gomod = module.gomod
+  return setmetatable(t, zbTarget)
+end
 
-  local modules = (args.makeDerivationNoCC or args.makeDerivation) {
+function zbTarget:__index(key)
+  if key == "src" then
+    return module.src
+  else
+    return nil
+  end
+end
+
+function zbTarget:__outputs(buildSystem)
+  local goEnv = go.envForSystem(self.targetSystem or buildSystem)
+
+  local goToolchain = outputs(self.go, buildSystem)[""]
+
+  local modules = (self.makeDerivationNoCC or self.makeDerivation) {
     pname = "zb-go-modules";
     src = module.gomod;
-    buildSystem = args.buildSystem;
+    buildSystem = buildSystem;
 
     -- GOOS/GOARCH not needed for downloading.
     -- Omitting it allows all targets to reuse the same derivation.
     PATH = strings.makeBinPath {
-      args.go,
+      goToolchain,
     };
 
     __network = true;
@@ -89,21 +110,21 @@ function module.new(args)
     installPhase = [[cp --reflink=auto -R "$GOMODCACHE" "$out"]];
   }
   local busybox
-  local seedsForSystem = seeds[args.targetSystem or args.buildSystem]
+  local seedsForSystem = seeds[self.targetSystem or buildSystem]
   if seedsForSystem then
     busybox = seedsForSystem.busybox
   end
-  return args.makeDerivation {
+  return self.makeDerivation {
     pname = "zb";
-    version = "0.2.0-beta5";
+    version = version;
     src = module.src;
-    buildSystem = args.buildSystem;
+    buildSystem = buildSystem;
 
     GOOS = goEnv.GOOS;
     GOARCH = goEnv.GOARCH;
     GOMODCACHE = modules;
     PATH = strings.makeBinPath {
-      args.go,
+      goToolchain,
     };
 
     busybox = busybox;
@@ -134,37 +155,28 @@ fi
   }
 end
 
-local supportedBuildSystems <const> = {
-  "x86_64-unknown-linux",
-  "aarch64-apple-macos",
-}
-
 local supportedTargetSystems <const> = {
   "x86_64-unknown-linux",
   "x86_64-pc-windows",
   "aarch64-apple-macos",
 }
 
-for _, buildSystem in ipairs(supportedBuildSystems) do
-  local modTable = {}
-  local function new(buildSystem, targetSystem)
-    return function()
-      local stdenv <const> = import(stdlib.."/stdenv/stdenv.lua")
+local mygo = setmetatable({}, {
+  __outputs = function(_, system)
+    return go[system]["1.26"]
+  end;
+})
 
-      return module.new {
-        makeDerivation = stdenv.makeDerivationNoCC;
-        buildSystem = buildSystem;
-        targetSystem = targetSystem;
-        go = go[buildSystem]["1.26"];
-      }
-    end
-  end
-  modTable.zb = new(buildSystem, buildSystem)
-  for _, targetSystem in ipairs(supportedTargetSystems) do
-    modTable["zb-"..targetSystem] = new(buildSystem, targetSystem)
-  end
-
-  module[buildSystem] = tables.lazyModule(modTable)
+module.zb = module.new {
+  makeDerivation = stdenv.makeDerivationNoCC;
+  go = mygo;
+}
+for _, targetSystem in ipairs(supportedTargetSystems) do
+  module["zb-"..targetSystem] = module.new {
+    makeDerivation = stdenv.makeDerivationNoCC;
+    go = mygo;
+    targetSystem = targetSystem;
+  }
 end
 
 return setmetatable(module, { __index = tables.lazyModule(getters) })

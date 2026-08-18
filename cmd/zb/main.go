@@ -30,6 +30,7 @@ import (
 	"zb.256lights.llc/pkg/internal/luac"
 	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/osutil"
+	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -284,18 +285,17 @@ func (c *evalCommand) Run(ctx context.Context, g *globalConfig) error {
 		}
 	}()
 
-	var results []any
+	var results frontend.OutputMap
 	if c.Expression {
-		results = make([]any, 1)
-		results[0], err = eval.Expression(ctx, c.Args[0])
+		results, err = eval.Expression(ctx, c.Args[0], system.Current())
 	} else {
-		results, err = eval.URLs(ctx, c.Args)
+		results, err = eval.URLs(ctx, c.Args, system.Current())
 	}
 	if err != nil {
 		return err
 	}
 
-	for _, result := range results {
+	for _, result := range results.All() {
 		fmt.Println(result)
 	}
 
@@ -337,51 +337,53 @@ func (c *buildCommand) Run(ctx context.Context, g *globalConfig) error {
 		}
 	}()
 
-	var results []any
+	var results frontend.OutputMap
 	if c.Expression {
-		results = make([]any, 1)
-		results[0], err = eval.Expression(ctx, c.Args[0])
+		results, err = eval.Expression(ctx, c.Args[0], system.Current())
 	} else {
-		results, err = eval.URLs(ctx, c.Args)
+		results, err = eval.URLs(ctx, c.Args, system.Current())
 	}
 	if err != nil {
 		return err
-	}
-	if len(results) == 0 {
-		return fmt.Errorf("no evaluation results")
 	}
 
-	drvPaths := make([]zbstore.Path, 0, len(results))
-	for _, result := range results {
-		drv, _ := result.(*frontend.Derivation)
-		if drv == nil {
-			return fmt.Errorf("%v is not a derivation", result)
+	var drvPaths []zbstore.Path
+	for ref := range results.OutputReferences() {
+		if !slices.Contains(drvPaths, ref.DrvPath) {
+			drvPaths = append(drvPaths, ref.DrvPath)
 		}
-		drvPaths = append(drvPaths, drv.Path)
 	}
-	realizeResponse := new(zbstorerpc.RealizeResponse)
-	err = jsonrpc.Do(ctx, storeClient, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
-		DrvPaths:   drvPaths,
-		KeepFailed: c.KeepFailed,
-		Reuse:      c.reusePolicy(g),
-	})
-	if err != nil {
-		return err
-	}
-	build, _, buildError := waitForBuild(ctx, storeClient, realizeResponse.BuildID)
-	if build != nil {
-		for _, drvPath := range drvPaths {
-			result, err := build.ResultForPath(drvPath)
-			if err != nil {
-				continue
-			}
-			for _, output := range result.Outputs {
-				if output.Path.Valid {
-					fmt.Println(output.Path.X)
-				}
+	allRefs := make(map[zbstore.OutputReference]zbstore.Path)
+	var buildError error
+	if len(drvPaths) > 0 {
+		realizeResponse := new(zbstorerpc.RealizeResponse)
+		err = jsonrpc.Do(ctx, storeClient, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+			DrvPaths:   drvPaths,
+			KeepFailed: c.KeepFailed,
+			Reuse:      c.reusePolicy(g),
+		})
+		if err != nil {
+			return err
+		}
+		var build *zbstorerpc.Build
+		build, _, buildError = waitForBuild(ctx, storeClient, realizeResponse.BuildID)
+		for ref := range results.OutputReferences() {
+			outputPath, _ := build.FindRealizeOutput(ref)
+			if outputPath.Valid {
+				allRefs[ref] = outputPath.X
 			}
 		}
 	}
+
+	for name, out := range results.All() {
+		s, _, err := out.Evaluate(allRefs)
+		if err != nil {
+			log.Warnf(ctx, "%s: %v", name, err)
+			continue
+		}
+		fmt.Println(s)
+	}
+
 	return buildError
 }
 

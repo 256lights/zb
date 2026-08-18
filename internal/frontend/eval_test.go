@@ -6,12 +6,10 @@ package frontend
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 
@@ -31,58 +29,74 @@ import (
 	"zombiezen.com/go/log/testlog"
 )
 
-func TestLuaToGo(t *testing.T) {
+func TestExpression(t *testing.T) {
 	tests := []struct {
 		expr string
-		want any
+		want map[string]string
 	}{
 		{
 			expr: "nil",
-			want: nil,
+			want: map[string]string{"": "nil"},
 		},
 		{
 			expr: "true",
-			want: true,
+			want: map[string]string{"": "true"},
 		},
 		{
 			expr: "false",
-			want: false,
+			want: map[string]string{"": "false"},
 		},
 		{
 			expr: `"foo"`,
-			want: "foo",
+			want: map[string]string{"": "foo"},
+		},
+		{
+			expr: `"foo".."bar"`,
+			want: map[string]string{"": "foobar"},
 		},
 		{
 			expr: "42",
-			want: int64(42),
+			want: map[string]string{"": "42"},
 		},
 		{
 			expr: "3.14",
-			want: 3.14,
+			want: map[string]string{"": "3.14"},
 		},
 		{
 			expr: `{n=0}`,
-			want: []any{},
+			want: map[string]string{"n": "0"},
 		},
 		{
 			expr: "{123, 456}",
-			want: []any{int64(123), int64(456)},
+			want: map[string]string{
+				"":  "123",
+				"2": "456",
+			},
 		},
 		{
 			expr: "{123, nil, 456}",
-			want: []any{int64(123), nil, int64(456)},
+			want: map[string]string{
+				"":  "123",
+				"3": "456",
+			},
 		},
 		{
 			expr: "{n=3, 123}",
-			want: []any{int64(123), nil, nil},
+			want: map[string]string{
+				"":  "123",
+				"n": "3",
+			},
 		},
 		{
 			expr: `{}`,
-			want: map[string]any{},
+			want: map[string]string{},
 		},
 		{
 			expr: `{foo="bar", baz=42}`,
-			want: map[string]any{"foo": "bar", "baz": int64(42)},
+			want: map[string]string{
+				"foo": "bar",
+				"baz": "42",
+			},
 		},
 	}
 
@@ -113,10 +127,14 @@ func TestLuaToGo(t *testing.T) {
 	}()
 
 	for _, test := range tests {
-		got, err := eval.Expression(ctx, test.expr)
+		outputs, err := eval.Expression(ctx, test.expr, system.Current())
 		if err != nil {
 			t.Errorf("%s: %v", test.expr, err)
 			continue
+		}
+		got := make(map[string]string)
+		for k, out := range outputs.All() {
+			got[k] = out.String()
 		}
 		if diff := cmp.Diff(test.want, got, cmpopts.EquateEmpty()); diff != "" {
 			t.Errorf("%s (-want +got):\n%s", test.expr, diff)
@@ -129,7 +147,7 @@ func TestGetenv(t *testing.T) {
 		name     string
 		envValue string
 		envOK    bool
-		want     any
+		want     string
 	}{
 		{
 			name:     "Success",
@@ -141,7 +159,7 @@ func TestGetenv(t *testing.T) {
 			name:     "Missing",
 			envValue: "",
 			envOK:    false,
-			want:     nil,
+			want:     "nil",
 		},
 		{
 			name:     "Empty",
@@ -189,12 +207,12 @@ func TestGetenv(t *testing.T) {
 			}()
 
 			expr := "os.getenv('" + wantKey + "')"
-			got, err := eval.Expression(ctx, expr)
+			got, err := eval.Expression(ctx, expr, system.Current())
 			if err != nil {
 				t.Fatalf("%s: %v", expr, err)
 			}
-			if diff := cmp.Diff(test.want, got, cmpopts.EquateEmpty()); diff != "" {
-				t.Errorf("%s (-want +got):\n%s", expr, diff)
+			if got.Default().String() != test.want {
+				t.Errorf("%s = %q; want %q", expr, got, test.want)
 			}
 		})
 	}
@@ -228,55 +246,13 @@ func TestStringMethod(t *testing.T) {
 	}()
 
 	const expr = `("abcdef"):sub(2, 4)`
-	got, err := eval.Expression(ctx, expr)
+	got, err := eval.Expression(ctx, expr, system.Current())
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := any("bcd")
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("%s (-want +got):\n%s", expr, diff)
-	}
-}
-
-func TestImportFromDerivation(t *testing.T) {
-	ctx := testcontext.New(t)
-	storeDir := backendtest.NewStoreDirectory(t)
-
-	di := new(zbstorerpc.DeferredImporter)
-	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
-		TempDir: t.TempDir(),
-		ClientOptions: zbstorerpc.CodecOptions{
-			Importer: di,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	eval, err := NewEval(&Options{
-		Store:          newTestRPCStore(store, di),
-		StoreDirectory: storeDir,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := eval.Close(); err != nil {
-			t.Error("eval.Close:", err)
-		}
-	}()
-
-	results, err := eval.URLs(ctx, []string{
-		filepath.Join("testdata", "TestImportFromDerivation", "ifd.lua") + `#` + system.Current().String(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) == 0 {
-		t.Error("No returned values")
-	}
-	const want = "Hello, World!"
-	if results[0] != want {
-		t.Errorf("result = %#v; want %#v", results[0], want)
+	const want = "bcd"
+	if got.Default().String() != want {
+		t.Errorf("%s = %s; want %s", expr, got, want)
 	}
 }
 
@@ -314,84 +290,9 @@ func TestImportExitStore(t *testing.T) {
 
 	fContent := `return import(` + lualex.Quote(secretPath) + `)`
 	expr := `local f = toFile("f.lua", ` + lualex.Quote(fContent) + `); local m = await(import(f)); assert(m == nil, string.format("%s is not nil", type(m)))`
-	if _, err := eval.Expression(ctx, expr); err != nil {
+	if _, err := eval.Expression(ctx, expr, system.Current()); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func TestImportCycle(t *testing.T) {
-	ctx := testcontext.New(t)
-	storeDir := backendtest.NewStoreDirectory(t)
-
-	di := new(zbstorerpc.DeferredImporter)
-	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
-		TempDir: t.TempDir(),
-		ClientOptions: zbstorerpc.CodecOptions{
-			Importer: di,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	eval, err := NewEval(&Options{
-		Store:          newTestRPCStore(store, di),
-		StoreDirectory: storeDir,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := eval.Close(); err != nil {
-			t.Error("eval.Close:", err)
-		}
-	}()
-
-	toString := func(x any) string {
-		s, _ := x.(string)
-		return s
-	}
-
-	t.Run("Self", func(t *testing.T) {
-		path := filepath.Join("testdata", "TestImportCycle", "self.lua")
-		results, err := eval.URLs(ctx, []string{path})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, _ := results[0].([]any)
-		const want = "import cycle"
-		if len(got) != 2 || got[0] != nil || !strings.Contains(toString(got[1]), want) {
-			t.Errorf("import(%q) = %v; want nil, (string containing %q)", path, got, want)
-		} else {
-			t.Logf("Error message: %s", toString(got[1]))
-		}
-	})
-
-	t.Run("MultipleFiles", func(t *testing.T) {
-		path := filepath.Join("testdata", "TestImportCycle", "a.lua")
-		results, err := eval.URLs(ctx, []string{path})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, _ := results[0].([]any)
-		const want = "import cycle"
-		if len(got) != 2 || got[0] != nil || !strings.Contains(toString(got[1]), want) {
-			t.Errorf("import(%q) = %v; want nil, (string containing %q)", path, got, want)
-		} else {
-			t.Logf("Error message: %s", toString(got[1]))
-		}
-	})
-
-	t.Run("Defer", func(t *testing.T) {
-		path := filepath.Join("testdata", "TestImportCycle", "defer_a.lua")
-		got, err := eval.URLs(ctx, []string{path + "#4"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := []any{int64(7)}
-		if diff := cmp.Diff(want, got); diff != "" {
-			t.Errorf("import(%q) (-want +got):\n%s", path, diff)
-		}
-	})
 }
 
 func TestStorePath(t *testing.T) {
@@ -440,13 +341,12 @@ func TestStorePath(t *testing.T) {
 			}
 		}()
 
-		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")")
+		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")", system.Current())
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := string(wantPath)
-		if !cmp.Equal(want, got) {
-			t.Errorf("storePath(%q) = %#v; want %#v", wantPath, got, want)
+		if got.Default().String() != string(wantPath) {
+			t.Errorf("storePath(%q) = %s; want %s", wantPath, got, wantPath)
 		}
 	})
 
@@ -498,13 +398,12 @@ func TestStorePath(t *testing.T) {
 			}
 		}()
 
-		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")")
+		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")", system.Current())
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := string(wantPath)
-		if !cmp.Equal(want, got) {
-			t.Errorf("storePath(%q) = %#v; want %#v", wantPath, got, want)
+		if got.Default().String() != string(wantPath) {
+			t.Errorf("storePath(%q) = %s; want %s", wantPath, got, wantPath)
 		}
 	})
 }
@@ -540,24 +439,27 @@ func TestExtract(t *testing.T) {
 	results, err := eval.URLs(ctx, []string{
 		path + "#full",
 		path + "#stripped",
-	})
+	}, system.Current())
 	if err != nil {
 		t.Fatal(err)
-	}
-	if got, want := len(results), 2; got != want {
-		t.Fatalf("len(results) = %d; want %d", got, want)
 	}
 
 	t.Run("Full", func(t *testing.T) {
 		ctx := testcontext.New(t)
 
-		drv, ok := results[0].(*Derivation)
-		if !ok {
-			t.Fatalf("result is %T; want *Derivation", results[0])
+		refs := results.Group(1).OutputReferences()
+		if len(refs) == 0 {
+			t.Fatal("No output references for result")
 		}
 		var response zbstorerpc.RealizeResponse
 		err := jsonrpc.Do(ctx, store, zbstorerpc.RealizeMethod, &response, &zbstorerpc.RealizeRequest{
-			DrvPaths: []zbstore.Path{drv.Path},
+			DrvPaths: slices.Collect(func(yield func(zbstore.Path) bool) {
+				for ref := range refs {
+					if !yield(ref.DrvPath) {
+						return
+					}
+				}
+			}),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -566,35 +468,40 @@ func TestExtract(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		outputPath, err := build.FindRealizeOutput(zbstore.OutputReference{
-			DrvPath:    drv.Path,
-			OutputName: zbstore.DefaultDerivationOutputName,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !outputPath.Valid {
-			t.Fatalf("missing path for %s", drv.Path)
-		}
-		got, err := os.ReadFile(filepath.Join(string(outputPath.X), "foo", "bar.txt"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if want := "Hello, World!\n"; string(got) != want {
-			t.Errorf("content of %s = %q; want %q", outputPath.X, got, want)
+		for ref := range refs {
+			outputPath, err := build.FindRealizeOutput(ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !outputPath.Valid {
+				t.Fatalf("missing path for %v", ref)
+			}
+			got, err := os.ReadFile(filepath.Join(string(outputPath.X), "foo", "bar.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "Hello, World!\n"; string(got) != want {
+				t.Errorf("content of %s = %q; want %q", outputPath.X, got, want)
+			}
 		}
 	})
 
 	t.Run("Stripped", func(t *testing.T) {
 		ctx := testcontext.New(t)
 
-		drv, ok := results[1].(*Derivation)
-		if !ok {
-			t.Fatalf("result is %T; want *Derivation", results[1])
+		refs := results.Group(2).OutputReferences()
+		if len(refs) == 0 {
+			t.Fatal("No output references for result-2")
 		}
 		var response zbstorerpc.RealizeResponse
 		err := jsonrpc.Do(ctx, store, zbstorerpc.RealizeMethod, &response, &zbstorerpc.RealizeRequest{
-			DrvPaths: []zbstore.Path{drv.Path},
+			DrvPaths: slices.Collect(func(yield func(zbstore.Path) bool) {
+				for ref := range refs {
+					if !yield(ref.DrvPath) {
+						return
+					}
+				}
+			}),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -603,22 +510,21 @@ func TestExtract(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		outputPath, err := build.FindRealizeOutput(zbstore.OutputReference{
-			DrvPath:    drv.Path,
-			OutputName: zbstore.DefaultDerivationOutputName,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !outputPath.Valid {
-			t.Fatalf("missing path for %s", drv.Path)
-		}
-		got, err := os.ReadFile(filepath.Join(string(outputPath.X), "bar.txt"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if want := "Hello, World!\n"; string(got) != want {
-			t.Errorf("content of %s = %q; want %q", outputPath.X, got, want)
+		for ref := range refs {
+			outputPath, err := build.FindRealizeOutput(ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !outputPath.Valid {
+				t.Fatalf("missing path for %v", ref)
+			}
+			got, err := os.ReadFile(filepath.Join(string(outputPath.X), "bar.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "Hello, World!\n"; string(got) != want {
+				t.Errorf("content of %s = %q; want %q", outputPath.X, got, want)
+			}
 		}
 	})
 }
@@ -790,19 +696,6 @@ func (e exportSpy) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	e.store.mu.Lock()
 	defer e.store.mu.Unlock()
 	e.store.imports = append(e.store.imports, trailer.StorePath)
-}
-
-func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstorerpc.Codec, release func(), err error) {
-	generic, release, err := client.Codec(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	codec, ok := generic.(*zbstorerpc.Codec)
-	if !ok {
-		release()
-		return nil, nil, fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
-	}
-	return codec, release, nil
 }
 
 func TestMain(m *testing.M) {

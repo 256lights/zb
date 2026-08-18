@@ -37,7 +37,7 @@ func TestImport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		objects, err := storetest.TxtarObjects(dir, ar.Files)
+		objects, _, err := storetest.TxtarObjects(dir, ar.Files)
 		if err != nil {
 			t.Fatal(err)
 		}
