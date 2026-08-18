@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -31,6 +32,7 @@ import (
 	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/internal/system"
+	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -375,16 +377,95 @@ func (c *buildCommand) Run(ctx context.Context, g *globalConfig) error {
 		}
 	}
 
-	for name, out := range results.All() {
-		s, _, err := out.Evaluate(allRefs)
+	for outputName, out := range results.All() {
+		s, paths, err := out.Evaluate(allRefs)
 		if err != nil {
-			log.Warnf(ctx, "%s: %v", name, err)
+			log.Warnf(ctx, "%s: %v", outputName, err)
 			continue
 		}
 		fmt.Println(s)
+		if err := createOutputLink(c.OutLink, outputName, paths); err != nil {
+			log.Warnf(ctx, "%v", err)
+		}
 	}
 
 	return buildError
+}
+
+func createOutputLink(base string, outputName string, paths sets.Set[zbstore.Path]) error {
+	if base == "" {
+		return nil
+	}
+	linkName, err := outputLinkName(base, outputName)
+	if err != nil {
+		return err
+	}
+	p, err := xiter.Single(paths.All())
+	if err != nil {
+		return fmt.Errorf("create %s: output paths: %v", linkName, err)
+	}
+	return forceSymlink(string(p), linkName)
+}
+
+func outputLinkName(base string, outputName string) (string, error) {
+	base = filepath.Clean(base)
+	if baseName := filepath.Base(base); baseName == "." || baseName == ".." || baseName == string(filepath.Separator) {
+		return "", errors.New("missing link base name")
+	}
+	if outputName == "" {
+		return base, nil
+	}
+	result := base + "-" + outputName
+	for _, b := range []byte(outputName) {
+		if os.IsPathSeparator(b) {
+			return "", fmt.Errorf("cannot create link %s", result)
+		}
+	}
+	return result, nil
+}
+
+func forceSymlink(oldname, newname string) error {
+	root, err := os.OpenRoot(filepath.Dir(newname))
+	if err != nil {
+		return &os.LinkError{
+			Op:  "symlink",
+			Old: oldname,
+			New: newname,
+			Err: err,
+		}
+	}
+	defer root.Close()
+
+	baseNewName := filepath.Base(newname)
+	originalError := root.Symlink(oldname, baseNewName)
+	if !errors.Is(originalError, os.ErrExist) {
+		return originalError
+	}
+
+	// Remove existing file if and only if it's a symlink.
+	// This is racy, but we're assuming low contention
+	// and the root guarantees we're operating on the same directory.
+	switch info, err := root.Lstat(baseNewName); {
+	case err != nil && !errors.Is(err, os.ErrNotExist):
+		return &os.LinkError{
+			Op:  "symlink",
+			Old: oldname,
+			New: newname,
+			Err: err,
+		}
+	case err == nil && info.Mode().Type() != os.ModeSymlink:
+		return originalError
+	case err == nil && info.Mode().Type() == os.ModeSymlink:
+		if err := root.Remove(baseNewName); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return &os.LinkError{
+				Op:  "symlink",
+				Old: oldname,
+				New: newname,
+				Err: err,
+			}
+		}
+	}
+	return root.Symlink(oldname, baseNewName)
 }
 
 // rpcStore is an implementation of [frontend.Store]
