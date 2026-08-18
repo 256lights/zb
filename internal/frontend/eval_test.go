@@ -63,11 +63,39 @@ func TestExpression(t *testing.T) {
 			want: map[string]string{"": "3.14"},
 		},
 		{
-			expr: "{123,456,789}",
+			expr: `{n=0}`,
+			want: map[string]string{"n": "0"},
+		},
+		{
+			expr: "{123, 456}",
 			want: map[string]string{
 				"":  "123",
 				"2": "456",
-				"3": "789",
+			},
+		},
+		{
+			expr: "{123, nil, 456}",
+			want: map[string]string{
+				"":  "123",
+				"3": "456",
+			},
+		},
+		{
+			expr: "{n=3, 123}",
+			want: map[string]string{
+				"":  "123",
+				"n": "3",
+			},
+		},
+		{
+			expr: `{}`,
+			want: map[string]string{},
+		},
+		{
+			expr: `{foo="bar", baz=42}`,
+			want: map[string]string{
+				"foo": "bar",
+				"baz": "42",
 			},
 		},
 	}
