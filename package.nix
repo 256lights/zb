@@ -4,7 +4,7 @@
 }:
 
 let
-  version = "0.2.0-beta5";
+  version = "0.2.0-beta6";
 in
 
 buildGoModule {
