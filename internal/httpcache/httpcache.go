@@ -25,7 +25,6 @@ import (
 	"zb.256lights.llc/pkg/internal/xhttp"
 	"zb.256lights.llc/pkg/internal/xtime"
 	"zombiezen.com/go/sqlite"
-	"zombiezen.com/go/sqlite/sqlitefile"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -362,7 +361,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		return result.response, nil
 	}
 
-	bodyBuffer, err := sqlitefile.NewBuffer(conn)
+	bodyBuffer, err := newBuffer(conn)
 	if err != nil {
 		rt.reportError(req, deleteResource(conn, idResult.id))
 		return result.response, nil
@@ -884,11 +883,11 @@ func (hu headerUpserter) upsert(key, value string) (id int64, err error) {
 type bufferedResponseBody struct {
 	db     *sqlitemigration.Pool
 	conn   *sqlite.Conn
-	buffer *sqlitefile.Buffer
+	buffer *buffer
 	body   io.ReadCloser
 }
 
-func (rt *RoundTripper) newBufferedResponseBody(conn *sqlite.Conn, buffer *sqlitefile.Buffer, body io.ReadCloser) *bufferedResponseBody {
+func (rt *RoundTripper) newBufferedResponseBody(conn *sqlite.Conn, buffer *buffer, body io.ReadCloser) *bufferedResponseBody {
 	return &bufferedResponseBody{
 		db:     rt.db,
 		conn:   conn,

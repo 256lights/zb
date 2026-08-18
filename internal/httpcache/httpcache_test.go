@@ -252,7 +252,14 @@ func TestRoundTripperVaryAuthorization(t *testing.T) {
 
 func TestRoundTripperLargeUnsizedBody(t *testing.T) {
 	testTime := time.Now().UTC()
-	const wantBody = "Hello, User!\n"
+	const maxResponseSize = bufferPageSize*2 + 1
+	wantBodyBuilder := new(strings.Builder)
+	wantBodyBuilder.Grow(maxResponseSize + 1)
+	for range maxResponseSize {
+		wantBodyBuilder.WriteByte('x')
+	}
+	wantBodyBuilder.WriteByte('\n')
+	wantBody := wantBodyBuilder.String()
 	mockServer := &mockRoundTripper{
 		tb: t,
 		responses: []*testRequestResponse{
@@ -273,7 +280,7 @@ func TestRoundTripperLargeUnsizedBody(t *testing.T) {
 
 	dbPath := filepath.Join(t.TempDir(), "http-cache.sqlite")
 	cache := Open(dbPath, mockServer, &Options{
-		MaxResponseSize: 8,
+		MaxResponseSize: maxResponseSize,
 		ErrorReporter: ErrorReporterFunc(func(ctx context.Context, info *RequestInfo, err error) {
 			if info != nil {
 				t.Errorf("Cache error on %s %v: %v", info.Method, info.URL, err)
