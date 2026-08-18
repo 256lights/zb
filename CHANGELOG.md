@@ -38,6 +38,9 @@ from roughly 10 minutes to XX seconds with a reasonably fast internet connection
 - `zb build` will restrict realizations to public keys it trusts.
   A new `zb build --clean` flag allows building without using any realizations.
   ([#20](https://github.com/256lights/zb/issues/20))
+- A new `zb store object copy` command
+  enables copying objects to and from remote stores.
+  ([#337](https://github.com/256lights/zb/pull/337))
 - New [`lazy` function](https://zb.256lights.llc/lua/extensions#lazy).
   ([#83](https://github.com/256lights/zb/issues/83))
 - New [`readFile` function](https://zb.256lights.llc/lua/extensions#readFile).

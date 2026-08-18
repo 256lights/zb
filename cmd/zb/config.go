@@ -429,13 +429,20 @@ type storeDeps struct {
 	httpClientProvider func() (*httpClient, error)
 }
 
+type storeConfigType string
+
+const (
+	storeConfigNullType storeConfigType = "null"
+	storeConfigHTTPType storeConfigType = "http"
+)
+
 type storeConfig struct {
-	Type       string         `json:"type"`
-	Properties jsontext.Value `json:",inline"`
+	storeType  storeConfigType
+	properties jsontext.Value
 }
 
 func (sc *storeConfig) isNull() bool {
-	return sc == nil || sc.Type == "null"
+	return sc == nil || sc.storeType == storeConfigNullType
 }
 
 func (sc *storeConfig) Equal(other *storeConfig) bool {
@@ -445,33 +452,139 @@ func (sc *storeConfig) Equal(other *storeConfig) bool {
 	if other.isNull() {
 		return false
 	}
-	if sc.Type != other.Type {
+	if sc.storeType != other.storeType {
 		return false
 	}
-	if bytes.Equal(sc.Properties, other.Properties) {
+	if bytes.Equal(sc.properties, other.properties) {
 		return true
 	}
-	p1 := sc.Properties.Clone()
+	p1 := sc.properties.Clone()
 	if err := p1.Canonicalize(); err != nil {
 		return false
 	}
-	p2 := other.Properties.Clone()
+	p2 := other.properties.Clone()
 	if err := p2.Canonicalize(); err != nil {
 		return false
 	}
 	return bytes.Equal(p1, p2)
 }
 
+func (sc *storeConfig) MarshalJSONTo(enc *jsontext.Encoder) error {
+	if sc == nil {
+		return enc.WriteToken(jsontext.Null)
+	}
+	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.String("type")); err != nil {
+		return err
+	}
+	if err := enc.WriteToken(jsontext.String(string(sc.storeType))); err != nil {
+		return err
+	}
+	if len(sc.properties) == 0 {
+		return enc.WriteToken(jsontext.EndObject)
+	}
+
+	dec := jsontext.NewDecoder(bytes.NewBuffer(sc.properties))
+	if first, err := dec.ReadToken(); err != nil {
+		return fmt.Errorf("marshal store configuration: unmarshal properties: %v", err)
+	} else if first.Kind() != '{' {
+		return fmt.Errorf("marshal store configuration: unmarshal properties: not an object")
+	}
+	for {
+		keyToken, err := dec.ReadToken()
+		if err != nil {
+			return fmt.Errorf("marshal store configuration: unmarshal properties: %v", err)
+		}
+		if keyToken.Kind() == '"' && keyToken.String() == "type" {
+			return fmt.Errorf("marshal store configuration: unmarshal properties: duplicate \"type\" key")
+		}
+		if err := enc.WriteToken(keyToken); err != nil {
+			return err
+		}
+		if keyToken.Kind() == '}' {
+			return nil
+		}
+
+		value, err := dec.ReadValue()
+		if err != nil {
+			return fmt.Errorf("marshal store configuration: unmarshal %+q property: %v", keyToken, err)
+		}
+		if err := enc.WriteValue(value); err != nil {
+			return fmt.Errorf("marshal store configuration: %w", err)
+		}
+	}
+}
+
+func (sc *storeConfig) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
+	switch dec.PeekKind() {
+	case 'n':
+		if _, err := dec.ReadToken(); err != nil {
+			return fmt.Errorf("unmarshal store configuration: %w", err)
+		}
+		*sc = storeConfig{storeType: storeConfigNullType}
+		return nil
+	case '"':
+		tok, err := dec.ReadToken()
+		if err != nil {
+			return fmt.Errorf("unmarshal store configuration: %w", err)
+		}
+		return sc.UnmarshalText([]byte(tok.String()))
+	}
+
+	var parsed struct {
+		Type       storeConfigType `json:"type"`
+		Properties jsontext.Value  `json:",inline"`
+	}
+	if err := jsonv2.UnmarshalDecode(dec, &parsed); err != nil {
+		return fmt.Errorf("unmarshal store configuration: %w", err)
+	}
+	switch parsed.Type {
+	case "":
+		return fmt.Errorf("unmarshal store configuration: type not set")
+	case storeConfigNullType, storeConfigHTTPType:
+	default:
+		return fmt.Errorf("unmarshal store configuration: unknown type %+q", parsed.Type)
+	}
+	*sc = storeConfig{
+		storeType:  parsed.Type,
+		properties: parsed.Properties,
+	}
+	return nil
+}
+
+func (sc *storeConfig) UnmarshalText(text []byte) error {
+	if len(text) == 0 {
+		*sc = storeConfig{storeType: storeConfigNullType}
+		return nil
+	}
+	if _, err := url.Parse(string(text)); err != nil {
+		return fmt.Errorf("unmarshal store configuration string: %v", err)
+	}
+	props, err := jsonv2.Marshal(storeConfigHTTPProperties{
+		URL: string(text),
+	})
+	if err != nil {
+		return fmt.Errorf("unmarshal store configuration string: convert properties: %v", err)
+	}
+	*sc = storeConfig{
+		storeType:  storeConfigHTTPType,
+		properties: props,
+	}
+	return nil
+}
+
 func (sc *storeConfig) toStore(deps *storeDeps) (backend.Store, error) {
 	if sc == nil {
 		return zbstore.Null{}, nil
 	}
-	switch sc.Type {
-	case "null":
+	switch sc.storeType {
+	case storeConfigNullType:
 		return zbstore.Null{}, nil
-	case "http":
+	case storeConfigHTTPType:
 		var props storeConfigHTTPProperties
-		if err := jsonv2.Unmarshal(sc.Properties, &props); err != nil {
+		if err := jsonv2.Unmarshal(sc.properties, &props); err != nil {
 			return nil, fmt.Errorf("unmarshal http store configuration: %v", err)
 		}
 		client, err := deps.httpClientProvider()
@@ -491,7 +604,7 @@ func (sc *storeConfig) toStore(deps *storeDeps) (backend.Store, error) {
 		}
 		return store, nil
 	default:
-		return nil, fmt.Errorf("unmarshal store configuration: unknown type %q", sc.Type)
+		return nil, fmt.Errorf("unmarshal store configuration: unknown type %q", sc.storeType)
 	}
 }
 
@@ -501,10 +614,10 @@ func (sc *storeConfig) resolve(base *url.URL) *storeConfig {
 	if sc == nil {
 		return nil
 	}
-	switch sc.Type {
-	case "http":
+	switch sc.storeType {
+	case storeConfigHTTPType:
 		var props storeConfigHTTPProperties
-		if err := jsonv2.Unmarshal(sc.Properties, &props); err != nil {
+		if err := jsonv2.Unmarshal(sc.properties, &props); err != nil {
 			return sc
 		}
 		u, err := url.Parse(props.URL)
@@ -517,15 +630,17 @@ func (sc *storeConfig) resolve(base *url.URL) *storeConfig {
 			return sc
 		}
 		return &storeConfig{
-			Type:       sc.Type,
-			Properties: newProps,
+			storeType:  sc.storeType,
+			properties: newProps,
 		}
 	default:
+		sc = new(*sc)
+		sc.properties = bytes.Clone(sc.properties)
 		return sc
 	}
 }
 
-// storeConfigHTTPProperties is the set of properties in [storeConfig] for the "http" type.
+// storeConfigHTTPProperties is the set of properties in [storeConfig] for [storeConfigHTTPType].
 type storeConfigHTTPProperties struct {
 	URL string `json:"url"`
 }
