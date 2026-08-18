@@ -17,7 +17,7 @@ local tables <const> = import(stdlib.."/tables.lua")
 local module <const> = {}
 local getters <const> = {}
 
-local version <const> = "0.2.0-beta5"
+local version <const> = "0.2.0-beta6"
 
 module.gomod = path {
   path = ".";
