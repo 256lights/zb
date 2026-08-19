@@ -131,7 +131,7 @@ func (s *Server) fetchInfoForExport(ctx context.Context, paths []zbstore.Path) (
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, info.ToExportTrailer())
+		result = append(result, info.ExportTrailer())
 	}
 	return result, nil
 }
@@ -170,12 +170,12 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 			if hasPath(result, pe.path) {
 				return true
 			}
-			var info *ObjectInfo
+			var info *zbstore.ObjectInfo
 			info, infoError = pathInfo(conn, pe.path)
 			if infoError != nil {
 				return false
 			}
-			result = append(result, info.ToExportTrailer())
+			result = append(result, info.ExportTrailer())
 			return true
 		})
 		if infoError != nil {

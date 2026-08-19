@@ -902,7 +902,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		DerivationHash: state.derivationHash,
 		Realizations:   make(map[string][]*zbstore.Realization),
 	}
-	objectsToUpload := make([]*ObjectInfo, 0, len(tempOutPaths))
+	objectsToUpload := make([]*zbstore.ObjectInfo, 0, len(tempOutPaths))
 	for outputName, tempOutputPath := range tempOutPaths {
 		ref := zbstore.OutputReference{
 			DrvPath:    drvPath,
@@ -1575,7 +1575,7 @@ func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.Derivatio
 // and unlockBuildPath must be the unlock function obtained from b.server.writing.
 // If the outputType is floating,
 // then postprocess will move the store object at buildPath to its computed path.
-func (b *builder) postprocess(ctx context.Context, conn *sqlite.Conn, output zbstore.OutputReference, buildPath zbstore.Path, unlockBuildPath func(), inputs *sets.Sorted[zbstore.Path]) (*ObjectInfo, error) {
+func (b *builder) postprocess(ctx context.Context, conn *sqlite.Conn, output zbstore.OutputReference, buildPath zbstore.Path, unlockBuildPath func(), inputs *sets.Sorted[zbstore.Path]) (*zbstore.ObjectInfo, error) {
 	drv := b.derivations[output.DrvPath]
 	if drv == nil {
 		return nil, fmt.Errorf("post-process %v: unknown derivation", output)
@@ -1585,7 +1585,7 @@ func (b *builder) postprocess(ctx context.Context, conn *sqlite.Conn, output zbs
 		return nil, fmt.Errorf("post-process %v: no such output", output)
 	}
 
-	var info *ObjectInfo
+	var info *zbstore.ObjectInfo
 	var err error
 	if ca, ok := outputType.FixedCA(); ok {
 		if unlockBuildPath == nil {
@@ -1607,7 +1607,7 @@ func (b *builder) postprocess(ctx context.Context, conn *sqlite.Conn, output zbs
 
 // postprocessFixedOutput computes the NAR hash of the given store path
 // and verifies that it matches the content address.
-func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn, outputPath zbstore.Path, ca zbstore.ContentAddress) (info *ObjectInfo, err error) {
+func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn, outputPath zbstore.Path, ca zbstore.ContentAddress) (info *zbstore.ObjectInfo, err error) {
 	log.Debugf(ctx, "Verifying fixed output %s...", outputPath)
 
 	realOutputPath := b.server.realPath(outputPath)
@@ -1632,11 +1632,11 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn,
 		return nil, err
 	}
 
-	info = &ObjectInfo{
-		StorePath: outputPath,
-		NARHash:   h.SumHash(),
-		NARSize:   int64(*wc),
-		CA:        ca,
+	info = &zbstore.ObjectInfo{
+		StorePath:      outputPath,
+		NARHash:        h.SumHash(),
+		NARSize:        int64(*wc),
+		ContentAddress: ca,
 	}
 	err = func() (err error) {
 		endFn, err := sqlitex.ImmediateTransaction(conn)
@@ -1655,7 +1655,7 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn,
 	return info, nil
 }
 
-func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Conn, buildPath zbstore.Path, inputs *sets.Sorted[zbstore.Path]) (*ObjectInfo, error) {
+func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Conn, buildPath zbstore.Path, inputs *sets.Sorted[zbstore.Path]) (*zbstore.ObjectInfo, error) {
 	log.Debugf(ctx, "Processing floating output %s...", buildPath)
 	realBuildPath := b.server.realPath(buildPath)
 	scan, err := scanFloatingOutput(ctx, realBuildPath, buildPath.Digest(), inputs, b.server.caCreateTemp)
@@ -1675,11 +1675,11 @@ func (b *builder) postprocessFloatingOutput(ctx context.Context, conn *sqlite.Co
 	defer unlock()
 	log.Debugf(ctx, "Acquired lock on %s", finalPath)
 
-	info := &ObjectInfo{
-		StorePath:  finalPath,
-		NARSize:    scan.narSize,
-		References: *scan.refs.ToSet(finalPath),
-		CA:         scan.ca,
+	info := &zbstore.ObjectInfo{
+		StorePath:      finalPath,
+		NARSize:        scan.narSize,
+		References:     *scan.refs.ToSet(finalPath),
+		ContentAddress: scan.ca,
 	}
 	if !scan.refs.Self {
 		info.NARHash = scan.narHash

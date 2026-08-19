@@ -24,6 +24,7 @@ import (
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/multierror"
+	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/xslices"
 	"zb.256lights.llc/pkg/internal/xtime"
@@ -32,6 +33,7 @@ import (
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
+	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
@@ -466,7 +468,7 @@ func (s *Server) info(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Respo
 		return nil, err
 	}
 	return marshalResponse(&zbstorerpc.InfoResponse{
-		Info: info.ToRPC(),
+		Info: zbstorerpc.NewObjectInfo(info),
 	})
 }
 
@@ -785,6 +787,76 @@ func (s *Server) RecentBuildIDs(ctx context.Context, limit int) ([]string, error
 	return result, nil
 }
 
+// Register adds the info for a store object that is already present in the store directory
+// to the store's database.
+// If the store path is already in the database
+// and the information matches what is already there,
+// then Register is a no-op and returns nil.
+func (s *Server) Register(ctx context.Context, info *zbstore.ObjectInfo) error {
+	if info.ContentAddress.IsZero() {
+		return fmt.Errorf("register %s: missing content address (CA) assertion", info.StorePath)
+	}
+
+	unlock, err := s.writing.lock(ctx, info.StorePath)
+	if err != nil {
+		return fmt.Errorf("register %s: %v", info.StorePath, err)
+	}
+	realPath := s.realPath(info.StorePath)
+	_, statError := os.Lstat(realPath)
+	unlock()
+	if statError != nil {
+		return fmt.Errorf("register %s: %v", info.StorePath, statError)
+	}
+
+	conn, err := s.db.Get(ctx)
+	if err != nil {
+		return err
+	}
+	defer s.db.Put(conn)
+
+	existingInfo, err := pathInfo(conn, info.StorePath)
+	if err == nil {
+		if !existingInfo.Equal(info) {
+			return fmt.Errorf("register %s: does not match existing data", info.StorePath)
+		}
+		return nil
+	}
+	if !errors.Is(err, zbstore.ErrNotFound) {
+		return fmt.Errorf("register %s: %v", info.StorePath, err)
+	}
+
+	pr, pw := io.Pipe()
+	done := make(chan struct{})
+	wc := new(xio.WriteCounter)
+	hasher := nix.NewHasher(info.NARHash.Type())
+	go func() {
+		err := nar.DumpPath(io.MultiWriter(wc, hasher, pw), realPath)
+		pw.CloseWithError(err)
+		close(done)
+	}()
+	_, err = verifyContentAddress(ctx, info.StorePath, pr, &info.References, info.ContentAddress, s.caCreateTemp)
+	pr.Close()
+	<-done
+	if err != nil {
+		return fmt.Errorf("register %s: %v", info.StorePath, err)
+	}
+
+	// TODO(maybe): Is it important to validate these fields?
+	// As long as we know the content address,
+	// these two fields are computed.
+	if want := int64(*wc); want != info.NARSize {
+		return fmt.Errorf("register %s: nar size %d does not match %d from filesystem", info.StorePath, info.NARSize, want)
+	}
+	if want := hasher.SumHash(); !want.Equal(info.NARHash) {
+		return fmt.Errorf("register %s: nar hash %v does not match %v from filesystem", info.StorePath, info.NARHash, want)
+	}
+
+	if err := insertObject(ctx, conn, info); err != nil {
+		return fmt.Errorf("register %s: %v", info.StorePath, err)
+	}
+	return nil
+}
+
 // Delete deletes the set of store paths.
 // Delete will return an error if any of the named paths do not exist
 // or there are store objects beyond those named that refer to the named store objects.
@@ -1033,7 +1105,7 @@ func (s *Server) fetch(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Resp
 	for _, path := range args.Paths {
 		info, err := pathInfo(conn, path)
 		if err == nil {
-			resp.Found[path] = info.ToRPC()
+			resp.Found[path] = zbstorerpc.NewObjectInfo(info)
 		} else if !errors.Is(err, zbstore.ErrNotFound) {
 			return nil, err
 		}
@@ -1157,7 +1229,7 @@ func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths 
 // uploadClosure will attempt to upload as many objects as possible
 // without uploading any objects
 // where their referenced objects have not been confirmed to be uploaded.
-func (s *Server) uploadClosure(ctx context.Context, batch iter.Seq[*ObjectInfo]) {
+func (s *Server) uploadClosure(ctx context.Context, batch iter.Seq[*zbstore.ObjectInfo]) {
 	if s.upload == nil {
 		return
 	}
@@ -1165,7 +1237,7 @@ func (s *Server) uploadClosure(ctx context.Context, batch iter.Seq[*ObjectInfo])
 	objectMap := s.makeObjectInfoMap(ctx, batch, func(err error) {
 		log.Warnf(ctx, "%v", err)
 	})
-	stack := make([]*ObjectInfo, 0, len(objectMap))
+	stack := make([]*zbstore.ObjectInfo, 0, len(objectMap))
 	for _, obj := range objectMap {
 		if obj.References.Len() == 0 {
 			stack = append(stack, obj)
@@ -1197,7 +1269,7 @@ func (s *Server) uploadClosure(ctx context.Context, batch iter.Seq[*ObjectInfo])
 }
 
 // uploadObject uploads a single object to the s.upload store, retrying as necessary.
-func (s *Server) uploadObject(ctx context.Context, obj *ObjectInfo) error {
+func (s *Server) uploadObject(ctx context.Context, obj *zbstore.ObjectInfo) error {
 	if s.upload == nil {
 		return nil
 	}
@@ -1220,7 +1292,7 @@ func (s *Server) uploadObject(ctx context.Context, obj *ObjectInfo) error {
 		err := s.upload.PutObject(ctx, &zbstorehttp.PutObjectRequest{
 			StorePath:      obj.StorePath,
 			References:     obj.References,
-			ContentAddress: obj.CA,
+			ContentAddress: obj.ContentAddress,
 			NARSize:        obj.NARSize,
 			GetNAR: func() (io.ReadCloser, error) {
 				pr, pw := io.Pipe()
@@ -1247,10 +1319,10 @@ func (s *Server) uploadObject(ctx context.Context, obj *ObjectInfo) error {
 	}
 }
 
-// makeObjectInfoMap builds a map of the transitive closure of [*ObjectInfo] values
+// makeObjectInfoMap builds a map of the transitive closure of [*zbstore.ObjectInfo] values
 // for the objects sequence.
-func (s *Server) makeObjectInfoMap(ctx context.Context, objects iter.Seq[*ObjectInfo], onError func(error)) map[zbstore.Path]*ObjectInfo {
-	result := make(map[zbstore.Path]*ObjectInfo)
+func (s *Server) makeObjectInfoMap(ctx context.Context, objects iter.Seq[*zbstore.ObjectInfo], onError func(error)) map[zbstore.Path]*zbstore.ObjectInfo {
+	result := make(map[zbstore.Path]*zbstore.ObjectInfo)
 	for obj := range objects {
 		result[obj.StorePath] = obj
 	}
