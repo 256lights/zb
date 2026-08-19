@@ -14,7 +14,6 @@ import (
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/nix/nar"
 )
 
 var _ interface {
@@ -30,13 +29,13 @@ var _ interface {
 // Realizations can be added with [*Store.AddRealization].
 type Store struct {
 	mu           sync.RWMutex
-	objects      map[zbstore.Path]*Object
+	objects      map[zbstore.Path]*zbstore.Blob
 	realizations map[string]map[string][]*zbstore.Realization
 }
 
 // Object implements [zbstore.Store].
 func (store *Store) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, error) {
-	var obj *Object
+	var obj *zbstore.Blob
 	if store != nil {
 		store.mu.RLock()
 		obj = store.objects[path]
@@ -117,56 +116,6 @@ func (store *Store) AddRealization(ref zbstore.RealizationOutputReference, r *zb
 	m[ref.OutputName] = append(m[ref.OutputName], cloneRealization(r))
 }
 
-// Object is an in-memory implementation of the [zbstore.Object] interface.
-type Object struct {
-	NAR     []byte
-	NARHash nix.Hash
-	zbstore.ExportTrailer
-}
-
-// WriteNAR writes obj.NAR to w.
-func (obj *Object) WriteNAR(ctx context.Context, dst io.Writer) error {
-	_, err := dst.Write(obj.NAR)
-	return err
-}
-
-// Info returns converts obj.ExportTrailer to [*zbstore.ObjectInfo].
-func (obj *Object) Info() *zbstore.ObjectInfo {
-	return &zbstore.ObjectInfo{
-		StorePath:      obj.StorePath,
-		NARSize:        int64(len(obj.NAR)),
-		NARHash:        obj.NARHash,
-		References:     obj.References,
-		ContentAddress: obj.ContentAddress,
-	}
-}
-
-// ParseDerivation parses a ".drv" object as a [*zbstore.Derivation].
-func (obj *Object) ParseDerivation() (*zbstore.Derivation, error) {
-	drvName, ok := obj.StorePath.DerivationName()
-	if !ok {
-		return nil, fmt.Errorf("parse derivation: %s is not a %s file", obj.StorePath, zbstore.DerivationExt)
-	}
-	nr := nar.NewReader(bytes.NewReader(obj.NAR))
-	hdr, err := nr.Next()
-	if err != nil {
-		return nil, err
-	}
-	if !hdr.Mode.IsRegular() {
-		return nil, fmt.Errorf("parse %s derivation: not a flat file", drvName)
-	}
-	drvData, err := io.ReadAll(nr)
-	if err != nil {
-		return nil, fmt.Errorf("parse %s derivation: %v", drvName, err)
-	}
-	if _, err := nr.Next(); err == nil {
-		return nil, fmt.Errorf("parse %s derivation: more than a single file (bug in NAR reader?)", drvName)
-	} else if err != io.EOF {
-		return nil, fmt.Errorf("parse %s derivation: %v", drvName, err)
-	}
-	return zbstore.ParseDerivation(obj.StorePath.Dir(), drvName, drvData)
-}
-
 type storeReceiver struct {
 	store  *Store
 	buf    bytes.Buffer
@@ -178,7 +127,7 @@ func (s *storeReceiver) Write(p []byte) (n int, err error) {
 }
 
 func (s *storeReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
-	obj := &Object{
+	obj := &zbstore.Blob{
 		NAR:           s.buf.Bytes(),
 		ExportTrailer: *trailer,
 	}
@@ -190,7 +139,7 @@ func (s *storeReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	s.store.mu.Lock()
 	if s.store.objects[obj.StorePath] == nil {
 		if s.store.objects == nil {
-			s.store.objects = make(map[zbstore.Path]*Object)
+			s.store.objects = make(map[zbstore.Path]*zbstore.Blob)
 		}
 		obj.NAR = bytes.Clone(obj.NAR)
 		obj.ExportTrailer = *cloneExportTrailer(&obj.ExportTrailer)
