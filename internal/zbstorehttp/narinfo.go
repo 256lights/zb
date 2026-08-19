@@ -71,7 +71,7 @@ func (info *NARInfo) Clone() *NARInfo {
 	return info2
 }
 
-// Directory returns the store directory of the store object.
+// StoreDirectory returns the store directory of the store object.
 func (info *NARInfo) StoreDirectory() zbstore.Directory {
 	return info.StorePath.Dir()
 }
