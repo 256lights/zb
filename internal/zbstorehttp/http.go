@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"sync"
 
 	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/xhttp"
@@ -293,8 +294,36 @@ func putEncoding(ctx context.Context, client Client, contentEncoding string, req
 	if err != nil {
 		return err
 	}
+	var wg sync.WaitGroup
+	noMoreContent := make(chan struct{})
+	getContentAndBlockReturn := func() (io.ReadCloser, error) {
+		wg.Add(1)
+		select {
+		case <-noMoreContent:
+			wg.Done()
+			return nil, fmt.Errorf("GetBody called after request finished")
+		default:
+		}
 
-	body, err := getContent()
+		content, err := getContent()
+		if err != nil {
+			wg.Done()
+			return nil, err
+		}
+		return xio.ReadFuncCloser{
+			Reader: content,
+			CloseFunc: func() error {
+				defer wg.Done()
+				return content.Close()
+			},
+		}, nil
+	}
+	defer func() {
+		close(noMoreContent)
+		wg.Wait()
+	}()
+
+	body, err := getContentAndBlockReturn()
 	if err != nil {
 		return err
 	}
@@ -306,7 +335,7 @@ func putEncoding(ctx context.Context, client Client, contentEncoding string, req
 		},
 		ContentLength: -1,
 		Body:          body,
-		GetBody:       getContent,
+		GetBody:       getContentAndBlockReturn,
 	}
 	if contentEncoding != "" {
 		httpRequest.Header.Set("Content-Encoding", contentEncoding)
@@ -335,7 +364,7 @@ func putEncoding(ctx context.Context, client Client, contentEncoding string, req
 	log.Debugf(ctx, "PUT %s Content-Encoding:%s", req.url.Redacted(), contentEncoding)
 	resp, err := client.Do(httpRequest.WithContext(ctx))
 	if resp != nil {
-		resp.Body.Close()
+		defer resp.Body.Close()
 	}
 	if err == nil &&
 		resp.StatusCode != http.StatusOK &&
