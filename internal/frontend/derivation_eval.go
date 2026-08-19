@@ -317,7 +317,7 @@ func stringToEnvVar(l *lua.State, drv *zbstore.Derivation, idx int) (string, err
 }
 
 func writeDerivation(ctx context.Context, store Store, drv *zbstore.Derivation) (zbstore.Path, error) {
-	narBytes, trailer, err := drv.Export(nix.SHA256)
+	obj, err := drv.Export(nix.SHA256)
 	if err != nil {
 		if drv.Name == "" {
 			return "", fmt.Errorf("write derivation: %v", err)
@@ -325,10 +325,10 @@ func writeDerivation(ctx context.Context, store Store, drv *zbstore.Derivation) 
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
 
-	if _, err := store.Object(ctx, trailer.StorePath); err == nil {
+	if _, err := store.Object(ctx, obj.StorePath); err == nil {
 		// Already exists: no need to re-import.
-		log.Debugf(ctx, "Using existing store path %s", trailer.StorePath)
-		return trailer.StorePath, nil
+		log.Debugf(ctx, "Using existing store path %s", obj.StorePath)
+		return obj.StorePath, nil
 	} else if !errors.Is(err, zbstore.ErrNotFound) {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
@@ -339,18 +339,14 @@ func writeDerivation(ctx context.Context, store Store, drv *zbstore.Derivation) 
 	}
 	defer closeExport(false)
 
-	if _, err := exporter.Write(narBytes); err != nil {
-		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
-	}
-	err = exporter.Trailer(trailer)
-	if err != nil {
+	if err := exporter.WriteObject(ctx, obj); err != nil {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
 	if err := closeExport(true); err != nil {
 		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
 	}
 
-	return trailer.StorePath, nil
+	return obj.StorePath, nil
 }
 
 func toDerivation(l *lua.State) (*derivation, error) {
