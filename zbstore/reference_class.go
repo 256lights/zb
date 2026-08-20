@@ -16,6 +16,26 @@ import (
 	"zombiezen.com/go/nix"
 )
 
+// A ReferenceClass is a mapping of referenced path to optional realization.
+type ReferenceClass struct {
+	Path        Path                       `json:"path"`
+	Realization RealizationOutputReference `json:"realization"`
+}
+
+// compareReferenceClasses returns
+//
+//   - -1 if rc1 is less than rc2
+//   - 0 if rc1 equals rc2
+//   - 1 if rc1 is greater than rc2
+//
+// according to the rules in https://zb.256lights.llc/binary-cache/realizations#signatures.
+func compareReferenceClasses(rc1, rc2 *ReferenceClass) int {
+	if result := cmp.Compare(rc1.Path, rc2.Path); result != 0 {
+		return result
+	}
+	return compareRealizationOutputReferences(rc1.Realization, rc2.Realization)
+}
+
 // RealizationOutputReference is a reference to an output of an equivalence class of derivations.
 // It is similar to an [OutputReference], but can refers to many derivations.
 type RealizationOutputReference struct {
