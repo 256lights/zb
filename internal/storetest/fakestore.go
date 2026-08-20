@@ -119,7 +119,8 @@ func (store *Store) AddRealization(ref zbstore.RealizationOutputReference, r *zb
 
 // Object is an in-memory implementation of the [zbstore.Object] interface.
 type Object struct {
-	NAR []byte
+	NAR     []byte
+	NARHash nix.Hash
 	zbstore.ExportTrailer
 }
 
@@ -129,9 +130,15 @@ func (obj *Object) WriteNAR(ctx context.Context, dst io.Writer) error {
 	return err
 }
 
-// Trailer returns &obj.ExportTrailer.
-func (obj *Object) Trailer() *zbstore.ExportTrailer {
-	return &obj.ExportTrailer
+// Info returns converts obj.ExportTrailer to [*zbstore.ObjectInfo].
+func (obj *Object) Info() *zbstore.ObjectInfo {
+	return &zbstore.ObjectInfo{
+		StorePath:      obj.StorePath,
+		NARSize:        int64(len(obj.NAR)),
+		NARHash:        obj.NARHash,
+		References:     obj.References,
+		ContentAddress: obj.ContentAddress,
+	}
 }
 
 // ParseDerivation parses a ".drv" object as a [*zbstore.Derivation].

@@ -33,7 +33,7 @@ func TestVerifyObject(t *testing.T) {
 		ctx := testcontext.New(t)
 		obj := &fakeObject{
 			nar: narData,
-			trailer: ExportTrailer{
+			info: ObjectInfo{
 				StorePath:      path,
 				ContentAddress: ca,
 			},
@@ -67,7 +67,7 @@ func TestVerifyObject(t *testing.T) {
 		ctx := testcontext.New(t)
 		obj := &fakeObject{
 			nar: narData,
-			trailer: ExportTrailer{
+			info: ObjectInfo{
 				StorePath:      path,
 				ContentAddress: ca,
 				References:     *sets.NewSorted(path),
@@ -91,7 +91,7 @@ func TestVerifyObject(t *testing.T) {
 		ctx := testcontext.New(t)
 		obj := &fakeObject{
 			nar: narData,
-			trailer: ExportTrailer{
+			info: ObjectInfo{
 				StorePath:      path,
 				ContentAddress: ca,
 			},
@@ -114,7 +114,7 @@ func TestVerifyObject(t *testing.T) {
 		ctx := testcontext.New(t)
 		obj := &fakeObject{
 			nar: narData,
-			trailer: ExportTrailer{
+			info: ObjectInfo{
 				StorePath:      path,
 				ContentAddress: ca,
 			},
@@ -124,7 +124,7 @@ func TestVerifyObject(t *testing.T) {
 		}
 	})
 
-	t.Run("MismatchedCA", func(t *testing.T) {
+	t.Run("MismatchedContentAddress", func(t *testing.T) {
 		narData := singleFileNAR(t, []byte("Hello, World!\n"))
 		ca, _, err := SourceSHA256ContentAddress(bytes.NewReader(narData), nil)
 		if err != nil {
@@ -142,7 +142,7 @@ func TestVerifyObject(t *testing.T) {
 		ctx := testcontext.New(t)
 		obj := &fakeObject{
 			nar: narData,
-			trailer: ExportTrailer{
+			info: ObjectInfo{
 				StorePath:      path,
 				ContentAddress: badCA,
 			},
@@ -172,7 +172,7 @@ func TestVerifyObject(t *testing.T) {
 		ctx := testcontext.New(t)
 		obj := &fakeObject{
 			nar: narData,
-			trailer: ExportTrailer{
+			info: ObjectInfo{
 				StorePath:      badPath,
 				ContentAddress: ca,
 			},
@@ -202,13 +202,15 @@ func singleFileNAR(tb testing.TB, data []byte) []byte {
 	return buf.Bytes()
 }
 
+// fakeObject is an in-memory implementation of [Object]
+// that intentionally permits incorrect information.
 type fakeObject struct {
-	trailer ExportTrailer
-	nar     []byte
+	info ObjectInfo
+	nar  []byte
 }
 
-func (obj *fakeObject) Trailer() *ExportTrailer {
-	return &obj.trailer
+func (obj *fakeObject) Info() *ObjectInfo {
+	return &obj.info
 }
 
 func (obj *fakeObject) WriteNAR(ctx context.Context, w io.Writer) error {

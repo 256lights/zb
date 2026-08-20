@@ -17,52 +17,52 @@ import (
 type Object interface {
 	// WriteNAR writes the NAR serialization of the store object to w.
 	WriteNAR(ctx context.Context, dst io.Writer) error
-	// Trailer returns the metadata of the object.
-	// The caller must not modify any fields in the returned ExportTrailer.
-	Trailer() *ExportTrailer
+	// Info returns the metadata of the object.
+	// The caller must not modify any fields in the returned [*ObjectInfo].
+	Info() *ObjectInfo
 }
 
 // VerifyObject returns an error if the store object's content
 // does not match its path or its content address.
 // opts.Digest is ignored: obj.Trailer().StorePath.Digest() will always be used.
 func VerifyObject(ctx context.Context, obj Object, opts *ContentAddressOptions) (err error) {
-	trailer := obj.Trailer()
+	info := obj.Info()
 	defer func(path Path) {
 		if err != nil {
 			err = fmt.Errorf("verify %s content address: %v", path, err)
 		}
-	}(trailer.StorePath)
+	}(info.StorePath)
 
 	computed, err := computeObjectAddress(ctx, obj, opts)
 	if err != nil {
 		return err
 	}
-	if !trailer.ContentAddress.Equal(computed) {
-		return fmt.Errorf("%v does not match content (computed %v)", trailer.ContentAddress, computed)
+	if !info.ContentAddress.Equal(computed) {
+		return fmt.Errorf("%v does not match content (computed %v)", info.ContentAddress, computed)
 	}
 
-	dir := trailer.StorePath.Dir()
-	name := trailer.StorePath.Name()
-	storeRefs := MakeReferences(trailer.StorePath, &trailer.References)
+	dir := info.StorePath.Dir()
+	name := info.StorePath.Name()
+	storeRefs := MakeReferences(info.StorePath, &info.References)
 	computedPath, err := FixedCAOutputPath(dir, name, computed, storeRefs)
 	if err != nil {
 		return err
 	}
-	if trailer.StorePath != computedPath {
+	if info.StorePath != computedPath {
 		return fmt.Errorf("does not match computed path %s", computedPath)
 	}
 	return nil
 }
 
 func computeObjectAddress(ctx context.Context, obj Object, opts *ContentAddressOptions) (ContentAddress, error) {
-	trailer := obj.Trailer()
-	storeRefs := MakeReferences(trailer.StorePath, &trailer.References)
-	if err := ValidateContentAddress(trailer.ContentAddress, storeRefs); err != nil {
+	info := obj.Info()
+	storeRefs := MakeReferences(info.StorePath, &info.References)
+	if err := ValidateContentAddress(info.ContentAddress, storeRefs); err != nil {
 		return ContentAddress{}, err
 	}
 
 	switch {
-	case IsSourceContentAddress(trailer.ContentAddress) && trailer.ContentAddress.Hash().Type() == nix.SHA256:
+	case IsSourceContentAddress(info.ContentAddress) && info.ContentAddress.Hash().Type() == nix.SHA256:
 		pr, pw := io.Pipe()
 		done := make(chan struct{})
 		go func() {
@@ -77,7 +77,7 @@ func computeObjectAddress(ctx context.Context, obj Object, opts *ContentAddressO
 
 		var digest string
 		if storeRefs.Self {
-			digest = trailer.StorePath.Digest()
+			digest = info.StorePath.Digest()
 		}
 		opts = contentAddressOptionsWithDigest(opts, digest)
 		computed, _, err := SourceSHA256ContentAddress(pr, opts)
@@ -85,11 +85,11 @@ func computeObjectAddress(ctx context.Context, obj Object, opts *ContentAddressO
 			return ContentAddress{}, err
 		}
 		return computed, nil
-	case IsSourceContentAddress(trailer.ContentAddress):
+	case IsSourceContentAddress(info.ContentAddress):
 		// Future-proofing in case we add new algorithms but don't update backends.
-		return ContentAddress{}, fmt.Errorf("unsupported source content address %v", trailer.ContentAddress.Hash().Type())
-	case trailer.ContentAddress.IsRecursiveFile():
-		h := nix.NewHasher(trailer.ContentAddress.Hash().Type())
+		return ContentAddress{}, fmt.Errorf("unsupported source content address %v", info.ContentAddress.Hash().Type())
+	case info.ContentAddress.IsRecursiveFile():
+		h := nix.NewHasher(info.ContentAddress.Hash().Type())
 		if err := obj.WriteNAR(ctx, h); err != nil {
 			return ContentAddress{}, err
 		}
@@ -118,12 +118,12 @@ func computeObjectAddress(ctx context.Context, obj Object, opts *ContentAddressO
 		if hdr.Mode&0o111 != 0 {
 			return ContentAddress{}, fmt.Errorf("must not be executable")
 		}
-		h := nix.NewHasher(trailer.ContentAddress.Hash().Type())
+		h := nix.NewHasher(info.ContentAddress.Hash().Type())
 		if _, err := io.Copy(h, nr); err != nil {
 			return ContentAddress{}, err
 		}
 		var computed ContentAddress
-		if trailer.ContentAddress.IsText() {
+		if info.ContentAddress.IsText() {
 			computed = nix.TextContentAddress(h.SumHash())
 		} else {
 			computed = nix.FlatFileContentAddress(h.SumHash())

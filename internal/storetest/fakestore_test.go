@@ -57,12 +57,15 @@ func TestStoreImport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		trailer := obj.Trailer()
-		if trailer.StorePath != path {
-			t.Errorf("obj.Trailer().StorePath = %q; want %q", trailer.StorePath, path)
+		info := obj.Info()
+		if info.StorePath != path {
+			t.Errorf("obj.Info().StorePath = %q; want %q", info.StorePath, path)
 		}
-		if !trailer.ContentAddress.Equal(ca) {
-			t.Errorf("obj.Trailer().ContentAddress = %v; want %v", trailer.ContentAddress, ca)
+		if info.NARSize != int64(narContent.Len()) {
+			t.Errorf("obj.Info().NARSize = %d; want %d", info.NARSize, narContent.Len())
+		}
+		if !info.ContentAddress.Equal(ca) {
+			t.Errorf("obj.Info().ContentAddress = %v; want %v", info.ContentAddress, ca)
 		}
 
 		got := new(bytes.Buffer)
@@ -84,12 +87,15 @@ func TestStoreImport(t *testing.T) {
 		}
 
 		obj := batch[0]
-		trailer := obj.Trailer()
-		if trailer.StorePath != path {
-			t.Errorf("batch[0].Trailer().StorePath = %q; want %q", trailer.StorePath, path)
+		info := obj.Info()
+		if info.StorePath != path {
+			t.Errorf("batch[0].Info().StorePath = %q; want %q", info.StorePath, path)
 		}
-		if !trailer.ContentAddress.Equal(ca) {
-			t.Errorf("batch[0].Trailer().ContentAddress = %v; want %v", trailer.ContentAddress, ca)
+		if info.NARSize != int64(narContent.Len()) {
+			t.Errorf("batch[0].Info().NARSize = %d; want %d", info.NARSize, narContent.Len())
+		}
+		if !info.ContentAddress.Equal(ca) {
+			t.Errorf("batch[0].Info().ContentAddress = %v; want %v", info.ContentAddress, ca)
 		}
 
 		got := new(bytes.Buffer)

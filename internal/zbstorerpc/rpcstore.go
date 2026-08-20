@@ -54,11 +54,7 @@ func (s *Store) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, 
 	}
 	return &object{
 		store: s,
-		info: zbstore.ExportTrailer{
-			StorePath:      path,
-			References:     *sets.NewSorted(resp.Info.References...),
-			ContentAddress: resp.Info.ContentAddress,
-		},
+		info:  *resp.Info.WithPath(path),
 	}, nil
 }
 
@@ -217,10 +213,10 @@ func (s *Store) Import(header jsonrpc.Header, body io.Reader) error {
 
 type object struct {
 	store *Store
-	info  zbstore.ExportTrailer
+	info  zbstore.ObjectInfo
 }
 
-func (obj *object) Trailer() *zbstore.ExportTrailer {
+func (obj *object) Info() *zbstore.ObjectInfo {
 	return &obj.info
 }
 

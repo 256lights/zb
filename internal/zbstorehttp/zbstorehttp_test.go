@@ -42,12 +42,14 @@ func TestStoreObject(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		wantTrailer := &zbstore.ExportTrailer{
+		wantInfo := &zbstore.ObjectInfo{
 			StorePath:      "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
+			NARHash:        wantHash,
+			NARSize:        128,
 			ContentAddress: nix.RecursiveFileContentAddress(caHash),
 		}
-		if diff := cmp.Diff(wantTrailer, obj.Trailer(), transformSortedSet[zbstore.Path]()); diff != "" {
-			t.Errorf("trailer (-want +got):\n%s", diff)
+		if diff := cmp.Diff(wantInfo, obj.Info(), transformSortedSet[zbstore.Path]()); diff != "" {
+			t.Errorf("object info (-want +got):\n%s", diff)
 		}
 		h := nix.NewHasher(nix.SHA256)
 		if err := obj.WriteNAR(ctx, h); err != nil {
