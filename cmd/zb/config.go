@@ -306,6 +306,9 @@ func (g *globalConfig) newHTTPClient() (*httpClient, io.Closer, error) {
 	}
 	baseTransport.RegisterProtocol(althttp.GCSScheme, g.newGCSTransport(baseTransport))
 
+	if err := os.MkdirAll(filepath.Dir(g.HTTPCacheDB), 0o777); err != nil {
+		return nil, nil, err
+	}
 	cache := httpcache.Open(g.HTTPCacheDB, baseTransport, &httpcache.Options{
 		MaxResponseSize:         4 << 20, // 4 MiB
 		RequestCoalescingCutoff: 5 * time.Second,
