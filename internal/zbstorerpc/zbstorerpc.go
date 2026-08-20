@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"zb.256lights.llc/pkg/internal/xiter"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
 )
@@ -49,18 +50,38 @@ type InfoResponse struct {
 	Info *ObjectInfo `json:"info"`
 }
 
-// ObjectInfo is a condensed version of NAR info used in [InfoResponse].
+// ObjectInfo is a condensed version of [*zbstore.ObjectInfo] used in [InfoResponse].
 type ObjectInfo struct {
-	// NARHash is the hash of the decompressed .nar file.
-	// Nix requires this field to be set.
+	// NARHash is a hash of the decompressed .nar file.
 	NARHash nix.Hash `json:"narHash"`
 	// NARSize is the size of the decompressed .nar file in bytes.
-	// Nix requires this field to be set.
 	NARSize int64 `json:"narSize"`
 	// References is the set of other store objects that this store object references.
 	References []zbstore.Path `json:"references"`
-	// CA is a content-addressability assertion.
-	CA zbstore.ContentAddress `json:"ca"`
+	// ContentAddress is a content-addressability assertion.
+	ContentAddress zbstore.ContentAddress `json:"ca"`
+}
+
+// NewObjectInfo converts [*zbstore.ObjectInfo] to [*ObjectInfo].
+func NewObjectInfo(info *zbstore.ObjectInfo) *ObjectInfo {
+	return &ObjectInfo{
+		NARHash:        info.NARHash,
+		NARSize:        info.NARSize,
+		ContentAddress: info.ContentAddress,
+		// Don't send null for the array.
+		References: slices.AppendSeq([]zbstore.Path{}, info.References.Values()),
+	}
+}
+
+// WithPath converts [*ObjectInfo] to [*zbstore.ObjectInfo].
+func (info *ObjectInfo) WithPath(path zbstore.Path) *zbstore.ObjectInfo {
+	return &zbstore.ObjectInfo{
+		StorePath:      path,
+		NARHash:        info.NARHash,
+		NARSize:        info.NARSize,
+		References:     *sets.NewSorted(info.References...),
+		ContentAddress: info.ContentAddress,
+	}
 }
 
 // RealizeMethod is the name of the method that triggers a build of a store path.

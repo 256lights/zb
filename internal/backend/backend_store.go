@@ -335,14 +335,14 @@ func recordRealizations(conn *sqlite.Conn, realizations iter.Seq2[zbstore.Realiz
 // pathInfo returns basic information about an object in the store.
 // If there is no such object in the database,
 // then pathInfo returns an error that wraps [zbstore.ErrNotFound].
-func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *ObjectInfo, err error) {
+func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *zbstore.ObjectInfo, err error) {
 	defer sqlitex.Save(conn)(&err)
 
-	var info *ObjectInfo
+	var info *zbstore.ObjectInfo
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "info.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{":path": string(path)},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			info = new(ObjectInfo)
+			info = new(zbstore.ObjectInfo)
 			info.StorePath = path
 			info.NARSize = stmt.GetInt64("nar_size")
 			var err error
@@ -350,7 +350,7 @@ func pathInfo(conn *sqlite.Conn, path zbstore.Path) (_ *ObjectInfo, err error) {
 			if err != nil {
 				return err
 			}
-			info.CA, err = nix.ParseContentAddress(stmt.GetText("ca"))
+			info.ContentAddress, err = nix.ParseContentAddress(stmt.GetText("ca"))
 			if err != nil {
 				return err
 			}
@@ -520,7 +520,7 @@ func objectExists(conn *sqlite.Conn, path zbstore.Path) (bool, error) {
 	return exists, nil
 }
 
-func insertObject(ctx context.Context, conn *sqlite.Conn, info *ObjectInfo) (err error) {
+func insertObject(ctx context.Context, conn *sqlite.Conn, info *zbstore.ObjectInfo) (err error) {
 	log.Debugf(ctx, "Registering metadata for %s", info.StorePath)
 
 	defer sqlitex.Save(conn)(&err)
@@ -533,7 +533,7 @@ func insertObject(ctx context.Context, conn *sqlite.Conn, info *ObjectInfo) (err
 			":path":     string(info.StorePath),
 			":nar_size": info.NARSize,
 			":nar_hash": info.NARHash.SRI(),
-			":ca":       info.CA.String(),
+			":ca":       info.ContentAddress.String(),
 		},
 	})
 	if sqlite.ErrCode(err) == sqlite.ResultConstraintRowID {

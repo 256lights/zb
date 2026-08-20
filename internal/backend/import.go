@@ -165,12 +165,12 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		}
 		defer endFn(&err)
 
-		return insertObject(ctx, conn, &ObjectInfo{
-			StorePath:  trailer.StorePath,
-			NARSize:    r.size,
-			NARHash:    r.hasher.SumHash(),
-			CA:         ca,
-			References: trailer.References,
+		return insertObject(ctx, conn, &zbstore.ObjectInfo{
+			StorePath:      trailer.StorePath,
+			NARSize:        r.size,
+			NARHash:        r.hasher.SumHash(),
+			ContentAddress: ca,
+			References:     trailer.References,
 		})
 	}()
 	if err != nil {

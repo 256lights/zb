@@ -57,7 +57,7 @@ func (s *Store) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, 
 		info: zbstore.ExportTrailer{
 			StorePath:      path,
 			References:     *sets.NewSorted(resp.Info.References...),
-			ContentAddress: resp.Info.CA,
+			ContentAddress: resp.Info.ContentAddress,
 		},
 	}, nil
 }

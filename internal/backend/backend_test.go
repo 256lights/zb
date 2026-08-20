@@ -207,9 +207,9 @@ func TestFetch(t *testing.T) {
 		want := &zbstorerpc.FetchResponse{
 			Found: map[zbstore.Path]*zbstorerpc.ObjectInfo{
 				path: {
-					CA:      ca,
-					NARSize: int64(narBuffer.Len()),
-					NARHash: narHash,
+					ContentAddress: ca,
+					NARSize:        int64(narBuffer.Len()),
+					NARHash:        narHash,
 				},
 			},
 		}
@@ -248,9 +248,9 @@ func TestFetch(t *testing.T) {
 		want := &zbstorerpc.FetchResponse{
 			Found: map[zbstore.Path]*zbstorerpc.ObjectInfo{
 				path: {
-					CA:      ca,
-					NARSize: int64(narBuffer.Len()),
-					NARHash: narHash,
+					ContentAddress: ca,
+					NARSize:        int64(narBuffer.Len()),
+					NARHash:        narHash,
 				},
 			},
 		}
@@ -463,14 +463,14 @@ func TestDelete(t *testing.T) {
 	}
 }
 
-// wantObjectInfo builds the expected [*zbstore.ObjectInfo]
+// wantObjectInfo builds the expected [*zbstorerpc.ObjectInfo]
 // for the given data, content address, and references.
 // It uses got.NARHash to determine the hashing algorithm to check against.
 func wantObjectInfo(got *zbstorerpc.ObjectInfo, narData []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) *zbstorerpc.ObjectInfo {
 	info := &zbstorerpc.ObjectInfo{
-		NARSize:    int64(len(narData)),
-		References: slices.Collect(refs.Values()),
-		CA:         ca,
+		NARSize:        int64(len(narData)),
+		References:     slices.Collect(refs.Values()),
+		ContentAddress: ca,
 	}
 	if info.References == nil {
 		// Should not be null.
@@ -486,14 +486,6 @@ func wantObjectInfo(got *zbstorerpc.ObjectInfo, narData []byte, ca zbstore.Conte
 	info.NARHash = h.SumHash()
 
 	return info
-}
-
-func wantFileObjectInfo(got *zbstorerpc.ObjectInfo, fileData []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) *zbstorerpc.ObjectInfo {
-	buf := new(bytes.Buffer)
-	if err := storetest.SingleFileNAR(buf, fileData); err != nil {
-		panic(err)
-	}
-	return wantObjectInfo(got, buf.Bytes(), ca, refs)
 }
 
 func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstorerpc.Codec, release func(), err error) {

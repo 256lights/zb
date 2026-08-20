@@ -119,7 +119,7 @@ func (c *storeObjectInfoCommand) Run(ctx context.Context, g *globalConfig) error
 			// Blank line between entries.
 			buf = append(buf, '\n')
 		}
-		buf, err = backend.NewObjectInfo(path, resp.Info).AppendText(buf)
+		buf, err = resp.Info.WithPath(path).AppendText(buf)
 		if err != nil {
 			return err
 		}
@@ -620,7 +620,7 @@ func (c *storeObjectRegisterCommand) Run(ctx context.Context, g *globalConfig) e
 	s := bufio.NewScanner(c.Input)
 	s.Split(splitObjectInfos)
 	ok := true
-	for info := new(backend.ObjectInfo); s.Scan(); {
+	for info := new(zbstore.ObjectInfo); s.Scan(); {
 		err := info.UnmarshalText(s.Bytes())
 		if err != nil {
 			log.Errorf(ctx, "Invalid object (skipping): %v", err)
