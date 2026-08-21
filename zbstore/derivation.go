@@ -111,47 +111,51 @@ func ParseDerivationObject(ctx context.Context, object Object) (*Derivation, err
 // and computes the derivation's store metadata using the given hashing algorithm.
 //
 // At the moment, the only supported algorithm is [nix.SHA256].
-func (drv *Derivation) Export(hashType nix.HashType) ([]byte, *ExportTrailer, error) {
+func (drv *Derivation) Export(hashType nix.HashType) (*Blob, error) {
 	if drv.Name == "" {
-		return nil, nil, fmt.Errorf("export derivation: missing name")
+		return nil, fmt.Errorf("export derivation: missing name")
 	}
 	if drv.Dir == "" {
-		return nil, nil, fmt.Errorf("export derivation %s: missing store directory", drv.Name)
+		return nil, fmt.Errorf("export derivation %s: missing store directory", drv.Name)
 	}
 
 	drvBytes, err := drv.MarshalText()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	narBuffer := new(bytes.Buffer)
 	narHasher := nix.NewHasher(hashType)
 	nw := nar.NewWriter(io.MultiWriter(narHasher, narBuffer))
 	if err := nw.WriteHeader(&nar.Header{Size: int64(len(drvBytes))}); err != nil {
-		return nil, nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
+		return nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
 	}
 	if _, err := nw.Write(drvBytes); err != nil {
-		return nil, nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
+		return nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
 	}
 	if err := nw.Close(); err != nil {
-		return nil, nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
+		return nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
 	}
 
 	caHasher := nix.NewHasher(hashType)
 	caHasher.Write(drvBytes)
-	trailer := &ExportTrailer{
-		ContentAddress: nix.TextContentAddress(caHasher.SumHash()),
-		References:     drv.References().Others,
+	blob := &Blob{
+		NAR:     narBuffer.Bytes(),
+		NARHash: narHasher.SumHash(),
+		ExportTrailer: ExportTrailer{
+			ContentAddress: nix.TextContentAddress(caHasher.SumHash()),
+			References:     drv.References().Others,
+		},
 	}
-	trailer.StorePath, err = FixedCAOutputPath(
+	blob.StorePath, err = FixedCAOutputPath(
 		drv.Dir,
 		drv.Name+DerivationExt,
-		trailer.ContentAddress,
+		blob.ContentAddress,
 		drv.References(),
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
+		return nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
 	}
-	return narBuffer.Bytes(), trailer, nil
+	return blob, nil
 }
 
 // Clone returns a deep copy of drv.

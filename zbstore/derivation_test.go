@@ -154,16 +154,18 @@ func TestDerivationExport(t *testing.T) {
 	t.Run("Export", func(t *testing.T) {
 		for _, test := range derivationMarshalTests(t) {
 			t.Run(test.name, func(t *testing.T) {
-				gotNAR, gotTrailer, err := test.drv.Export(nix.SHA256)
+				got, err := test.drv.Export(nix.SHA256)
 				if err != nil {
 					t.Error("Error:", err)
 				}
 
-				if diff := cmp.Diff(singleFileNAR(t, test.want), gotNAR); diff != "" {
-					t.Errorf("data (-want +got):\n%s", diff)
-				}
-				if diff := cmp.Diff(test.wantTrailer, gotTrailer, transformSortedSet[Path]()); diff != "" {
-					t.Errorf("trailer (-want +got):\n%s", diff)
+				if got != nil {
+					if diff := cmp.Diff(singleFileNAR(t, test.want), got.NAR); diff != "" {
+						t.Errorf("data (-want +got):\n%s", diff)
+					}
+					if diff := cmp.Diff(test.wantTrailer, &got.ExportTrailer, transformSortedSet[Path]()); diff != "" {
+						t.Errorf("trailer (-want +got):\n%s", diff)
+					}
 				}
 			})
 		}

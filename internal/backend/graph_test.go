@@ -477,17 +477,11 @@ func rewriteDerivationsForGraphTest(derivations []*zbstore.Derivation) (map[zbst
 		drv = drv.Clone()
 		drv.InputDerivations = rewrittenInputs
 
-		_, trailer, err := drv.Export(nix.SHA256)
+		obj, err := drv.Export(nix.SHA256)
 		if err != nil {
 			return nil, err
 		}
-		drvPath, err := zbstore.FixedCAOutputPath(drv.Dir, drv.Name+zbstore.DerivationExt, trailer.ContentAddress, zbstore.References{
-			Others: trailer.References,
-		})
-		if err != nil {
-			return nil, err
-		}
-		rewritten[drvPath] = drv
+		rewritten[obj.StorePath] = drv
 	}
 	return rewritten, nil
 }
