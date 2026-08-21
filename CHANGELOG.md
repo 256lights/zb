@@ -80,6 +80,14 @@ from roughly 10 minutes to XX seconds with a reasonably fast internet connection
 
 - URL arguments no longer search top-level tables with the current system string.
   This wasn't documented, but the standard library assumed its usage.
+- `zb serve` will no longer import objects without a content address set in the trailer.
+  Omitting the content address would cause `zb serve` to compute a source content address,
+  causing an additional full read over the store object.
+  Existing zb tooling would always send the content address,
+  since computing the content address is necessary to compute the proper store path.
+  This was originally intended as a way to be compatible with `nix-store --export`,
+  but it's unclear that such a property is useful or desirable,
+  and removing support for this feature makes the import more robust.
 
 ### Fixed
 
@@ -94,6 +102,8 @@ from roughly 10 minutes to XX seconds with a reasonably fast internet connection
   Thank you to [@HigherOrderLogic](https://github.com/HigherOrderLogic)!
   ([#78](https://github.com/256lights/zb/issues/78))
 - Improved backend disk performance by performing less `fsync` syscalls.
+- `zb serve` now performs more integrity checks during store import.
+  ([#66](https://github.com/256lights/zb/issues/66))
 - Updated to Go 1.26.5.
 
 ## [0.1.0][] - 2025-06-15

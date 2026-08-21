@@ -288,11 +288,12 @@ func TestDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const fakeDigest = "a"
+	const fakeDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	storeObject4Content := string(storePath2) + "\n" + string(dir) + fakeDigest + "-self.txt\n"
 	storePath4, _, err := storetest.ExportSourceFile(exporter, []byte(storeObject4Content), storetest.SourceExportOptions{
-		Name:      "self.txt",
-		Directory: dir,
+		Name:       "self.txt",
+		Directory:  dir,
+		TempDigest: fakeDigest,
 		References: zbstore.References{
 			Self:   true,
 			Others: *sets.NewSorted(storePath2),
@@ -465,7 +466,10 @@ func TestDelete(t *testing.T) {
 // wantObjectInfo builds the expected [*zbstorerpcrpc.ObjectInfo] for the given blob.
 // It uses got.NARHash to determine the hashing algorithm to check against.
 func wantObjectInfo(got *zbstorerpc.ObjectInfo, blob *zbstore.Blob) *zbstorerpc.ObjectInfo {
-	ht := got.NARHash.Type()
+	var ht nix.HashType
+	if got != nil {
+		ht = got.NARHash.Type()
+	}
 	if ht == 0 {
 		ht = nix.SHA256
 	}
