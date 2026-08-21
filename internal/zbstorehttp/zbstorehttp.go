@@ -398,11 +398,12 @@ type httpObject struct {
 	info   *NARInfo
 }
 
-func (obj *httpObject) Trailer() *zbstore.ExportTrailer {
-	return &zbstore.ExportTrailer{
+func (obj *httpObject) Info() *zbstore.ObjectInfo {
+	return &zbstore.ObjectInfo{
 		StorePath:      obj.info.StorePath,
+		NARHash:        obj.info.NARHash,
+		NARSize:        obj.info.NARSize,
 		References:     obj.info.References,
-		Deriver:        obj.info.Deriver,
 		ContentAddress: obj.info.CA,
 	}
 }

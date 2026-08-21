@@ -38,6 +38,11 @@ type ObjectInfo struct {
 	ContentAddress ContentAddress
 }
 
+// HasNARSize reports whether the object's NAR size is known.
+func (info *ObjectInfo) HasNARSize() bool {
+	return info.NARSize > 0
+}
+
 // ExportTrailer creates an [*ExportTrailer] from [*ObjectInfo].
 func (info *ObjectInfo) ExportTrailer() *ExportTrailer {
 	return &ExportTrailer{

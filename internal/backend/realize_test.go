@@ -2470,7 +2470,7 @@ func derivationsForCurrentSystem[O zbstore.Object](objects iter.Seq[O]) iter.Seq
 	systemString := "-" + system.Current().String()
 	return func(yield func(O) bool) {
 		for obj := range objects {
-			name := obj.Trailer().StorePath.Name()
+			name := obj.Info().StorePath.Name()
 			if !strings.Contains(name, systemString) || !strings.HasSuffix(name, zbstore.DerivationExt) {
 				continue
 			}
@@ -2483,7 +2483,7 @@ func derivationsForCurrentSystem[O zbstore.Object](objects iter.Seq[O]) iter.Seq
 
 func findObjectWithName[O zbstore.Object](name string, objects iter.Seq[O]) (O, error) {
 	for obj := range objects {
-		if obj.Trailer().StorePath.Name() == name {
+		if obj.Info().StorePath.Name() == name {
 			return obj, nil
 		}
 	}

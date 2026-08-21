@@ -243,8 +243,12 @@ type fakeObject struct {
 	narContent   io.Reader
 }
 
-func (obj *fakeObject) Trailer() *zbstore.ExportTrailer {
-	return &obj.trailer
+func (obj *fakeObject) Info() *zbstore.ObjectInfo {
+	return &zbstore.ObjectInfo{
+		StorePath:      obj.trailer.StorePath,
+		References:     obj.trailer.References,
+		ContentAddress: obj.trailer.ContentAddress,
+	}
 }
 
 func (obj *fakeObject) WriteNAR(ctx context.Context, w io.Writer) error {

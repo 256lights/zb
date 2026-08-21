@@ -108,9 +108,9 @@ func expandClosure(ctx context.Context, store Store, objects []Object, maxConcur
 		sorted := objects[:sortEnd]
 		unsorted := objects[sortEnd:]
 		i := slices.IndexFunc(unsorted, func(obj Object) bool {
-			trailer := obj.Trailer()
-			for ref := range trailer.References.Values() {
-				if ref != trailer.StorePath && !objectsHavePath(slices.Values(sorted), ref) {
+			info := obj.Info()
+			for ref := range info.References.Values() {
+				if ref != info.StorePath && !objectsHavePath(slices.Values(sorted), ref) {
 					return false
 				}
 			}
@@ -135,7 +135,7 @@ func orderedObjectBatch(ctx context.Context, store Store, paths iter.Seq[Path], 
 	result := make([]Object, 0, pathSet.Len())
 	for path := range paths {
 		i := slices.IndexFunc(batch, func(obj Object) bool {
-			return obj.Trailer().StorePath == path
+			return obj.Info().StorePath == path
 		})
 		if i < 0 {
 			return nil, fmt.Errorf("store object %s: %w", path, ErrNotFound)
@@ -148,7 +148,7 @@ func orderedObjectBatch(ctx context.Context, store Store, paths iter.Seq[Path], 
 func missingReferences(objects []Object) iter.Seq[Path] {
 	return func(yield func(Path) bool) {
 		for _, obj := range objects {
-			for ref := range obj.Trailer().References.Values() {
+			for ref := range obj.Info().References.Values() {
 				if !objectsHavePath(slices.Values(objects), ref) {
 					if !yield(ref) {
 						return
@@ -161,7 +161,7 @@ func missingReferences(objects []Object) iter.Seq[Path] {
 
 func objectsHavePath(objects iter.Seq[Object], path Path) bool {
 	for obj := range objects {
-		if obj.Trailer().StorePath == path {
+		if obj.Info().StorePath == path {
 			return true
 		}
 	}
@@ -201,7 +201,7 @@ func (ew *ExportWriter) WriteObject(ctx context.Context, obj Object) error {
 	if err := obj.WriteNAR(ctx, ew.w); err != nil {
 		return err
 	}
-	if err := ew.Trailer(obj.Trailer()); err != nil {
+	if err := ew.Trailer(obj.Info().ExportTrailer()); err != nil {
 		return err
 	}
 	return nil

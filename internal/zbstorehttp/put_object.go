@@ -98,22 +98,19 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 
 	grp := &narBodyGroup{
 		f: req.GetNAR,
-		trailer: zbstore.ExportTrailer{
+		info: zbstore.ObjectInfo{
 			StorePath:      req.StorePath,
+			NARSize:        req.NARSize,
 			References:     req.References,
 			ContentAddress: req.ContentAddress,
 		},
-		wantNARSize: -1,
-		createTemp:  s.CreateTemp,
-	}
-	if req.NARSize > 0 {
-		grp.wantNARSize = req.NARSize
+		createTemp: s.CreateTemp,
 	}
 	const cacheControl = "max-age=2592000" // 1 week
-	uploadNARError := put(ctx, s.client(), &putRequest{
+	uploadNARRequest := &putRequest{
 		url:           narURL,
 		origin:        s.URL,
-		contentLength: grp.wantNARSize,
+		contentLength: -1,
 		contentType:   nar.MIMEType,
 		cacheControl:  cacheControl,
 		getContent:    grp.new,
@@ -122,7 +119,11 @@ func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 		// If there is a URL collision and multiple distinct .narinfo files referencing it,
 		// then the other ones will detect the differing content address.
 		noReplace: false,
-	})
+	}
+	if grp.info.HasNARSize() {
+		uploadNARRequest.contentLength = grp.info.NARSize
+	}
+	uploadNARError := put(ctx, s.client(), uploadNARRequest)
 	copyResult, copyError := grp.wait()
 	if uploadNARError != nil {
 		err := fmt.Errorf("upload %s: %v", req.StorePath, uploadNARError)
@@ -272,10 +273,9 @@ func ensureInfoMatches(ec *multierror.Collector, req *PutObjectRequest, u *url.U
 // that share the same content
 // and attempt to converge on a successful [*narCopyResult].
 type narBodyGroup struct {
-	f           func() (io.ReadCloser, error)
-	trailer     zbstore.ExportTrailer
-	wantNARSize int64
-	createTemp  bytebuffer.Creator
+	f          func() (io.ReadCloser, error)
+	info       zbstore.ObjectInfo
+	createTemp bytebuffer.Creator
 
 	mu     sync.Mutex
 	cond   sync.Cond
@@ -323,7 +323,7 @@ func (grp *narBodyGroup) new() (io.ReadCloser, error) {
 	go func() {
 		defer close(verifyDone)
 		obj := &fakeObject{
-			trailer:   grp.trailer,
+			info:      grp.info,
 			writer:    verifyWriter,
 			writeDone: verifyWriteDone,
 		}
@@ -384,8 +384,8 @@ func (body *narBody) Read(p []byte) (int, error) {
 	}
 
 	var remaining int64 = -1
-	if body.group.wantNARSize > 0 {
-		remaining = body.group.wantNARSize - body.narSize
+	if body.group.info.HasNARSize() {
+		remaining = body.group.info.NARSize - body.narSize
 		if remaining < 0 {
 			// Defensive programming: we already read past the expected end.
 			// Shouldn't hit this case.
@@ -400,7 +400,7 @@ func (body *narBody) Read(p []byte) (int, error) {
 	}
 	var n int
 	n, body.readError = body.nar.Read(p)
-	if body.group.wantNARSize > 0 {
+	if body.group.info.HasNARSize() {
 		if int64(n) > remaining {
 			n = int(remaining)
 			body.readError = errNARTooLarge
@@ -422,14 +422,14 @@ var errNARTooLarge = errors.New("nar too large")
 func (body *narBody) Close() error {
 	err := body.nar.Close()
 
-	if body.group.wantNARSize > 0 && body.narSize < body.group.wantNARSize {
+	if body.group.info.HasNARSize() && body.narSize < body.group.info.NARSize {
 		body.verifyWriteDone <- errors.New("nar content closed early")
 	} else {
 		body.verifyWriteDone <- nil
 	}
 	<-body.verifyDone
-	if body.verifyError == nil && body.group.wantNARSize > 0 && body.narSize != body.group.wantNARSize {
-		body.verifyError = fmt.Errorf("nar size = %d bytes (advertised %d bytes)", body.narSize, body.group.wantNARSize)
+	if body.verifyError == nil && body.group.info.HasNARSize() && body.narSize != body.group.info.NARSize {
+		body.verifyError = fmt.Errorf("nar size = %d bytes (advertised %d bytes)", body.narSize, body.group.info.NARSize)
 	}
 
 	body.group.mu.Lock()
@@ -451,13 +451,13 @@ func (body *narBody) Close() error {
 }
 
 type fakeObject struct {
-	trailer   zbstore.ExportTrailer
+	info      zbstore.ObjectInfo
 	writer    chan<- io.Writer
 	writeDone <-chan error
 }
 
-func (obj *fakeObject) Trailer() *zbstore.ExportTrailer {
-	return &obj.trailer
+func (obj *fakeObject) Info() *zbstore.ObjectInfo {
+	return &obj.info
 }
 
 func (obj *fakeObject) WriteNAR(ctx context.Context, dst io.Writer) error {

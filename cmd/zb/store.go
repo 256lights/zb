@@ -482,11 +482,12 @@ func storeCopy(ctx context.Context, dst, src zbstore.Store, paths sets.Set[zbsto
 		}
 		// TODO(someday): Make concurrent.
 		for _, obj := range objects {
-			log.Infof(ctx, "Copying %s...", obj.Trailer().StorePath)
+			log.Infof(ctx, "Copying %s...", obj.Info().StorePath)
 			err := dst.PutObject(ctx, &zbstorehttp.PutObjectRequest{
-				StorePath:      obj.Trailer().StorePath,
-				References:     obj.Trailer().References,
-				ContentAddress: obj.Trailer().ContentAddress,
+				StorePath:      obj.Info().StorePath,
+				References:     obj.Info().References,
+				ContentAddress: obj.Info().ContentAddress,
+				NARSize:        obj.Info().NARSize,
 				GetNAR: func() (io.ReadCloser, error) {
 					pr, pw := io.Pipe()
 					done := make(chan struct{})
