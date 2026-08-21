@@ -46,7 +46,7 @@ jobs:
         run: go test ./...
 
       - name: Generate and verify proof
-        uses: EslaM-X/proofx-action@v0.3.0
+        uses: EslaM-X/proofx-action@v0.3.1
         with:
           collect: true
           prove: true
