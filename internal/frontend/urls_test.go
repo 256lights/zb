@@ -84,7 +84,7 @@ func TestURLs(t *testing.T) {
 					t.Fatal(err)
 				}
 				objectBase, subpath, _ := strings.Cut(u.Path, "/")
-				objectIndex := slices.IndexFunc(objects, func(obj *storetest.Object) bool {
+				objectIndex := slices.IndexFunc(objects, func(obj *zbstore.Blob) bool {
 					return obj.StorePath == storePaths[objectBase]
 				})
 				if objectIndex == -1 {

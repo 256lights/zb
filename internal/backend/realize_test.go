@@ -553,9 +553,14 @@ func TestRealizeReferenceToDep(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		want := wantObjectInfo(info.Info, narData, ca, sets.NewSorted(
-			drv1OutputPath,
-		))
+		want := wantObjectInfo(info.Info, &zbstore.Blob{
+			NAR: narData,
+			ExportTrailer: zbstore.ExportTrailer{
+				StorePath:      wantOutputPath,
+				ContentAddress: ca,
+				References:     *sets.NewSorted(drv1OutputPath),
+			},
+		})
 		if diff := cmp.Diff(want, info.Info); diff != "" {
 			t.Errorf("info (-want +got):\n%s", diff)
 		}
@@ -669,7 +674,7 @@ func TestRealizeInputReference(t *testing.T) {
 	}
 
 	// Verify that the realizations document that is uploaded is valid.
-	if drv, err := drvObject.ParseDerivation(); err != nil {
+	if drv, err := zbstore.ParseDerivationObject(ctx, drvObject); err != nil {
 		t.Error(err)
 	} else {
 		drvHash, err := drv.SHA256RealizationHash(nil)

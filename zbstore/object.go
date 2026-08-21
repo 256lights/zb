@@ -22,6 +22,34 @@ type Object interface {
 	Info() *ObjectInfo
 }
 
+// Blob is an in-memory implementation of the [Object] interface.
+type Blob struct {
+	// NAR is the blob's NAR serialization.
+	NAR []byte
+	// NARHash is an optional hash of NAR.
+	NARHash nix.Hash
+	// ExportTrailer is the blob's metadata.
+	// Deriver is ignored.
+	ExportTrailer
+}
+
+// WriteNAR writes blob.NAR to w.
+func (blob *Blob) WriteNAR(ctx context.Context, dst io.Writer) error {
+	_, err := dst.Write(blob.NAR)
+	return err
+}
+
+// Info returns converts blob.ExportTrailer to [*ObjectInfo].
+func (blob *Blob) Info() *ObjectInfo {
+	return &ObjectInfo{
+		StorePath:      blob.StorePath,
+		NARSize:        int64(len(blob.NAR)),
+		NARHash:        blob.NARHash,
+		References:     blob.References,
+		ContentAddress: blob.ContentAddress,
+	}
+}
+
 // VerifyObject returns an error if the store object's content
 // does not match its path or its content address.
 // opts.Digest is ignored: obj.Trailer().StorePath.Digest() will always be used.
