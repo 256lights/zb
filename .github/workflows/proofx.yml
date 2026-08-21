@@ -1,0 +1,61 @@
+# ProofX — Cryptographic Evidence of CI Results
+#
+# This workflow records and cryptographically binds the evidence
+# produced by the CI run (commit SHA, test results, environment)
+# into a signed proof.json.
+#
+# What this proves:
+#   - The evidence was collected from this specific commit
+#   - The evidence was bound together using a Merkle root
+#   - The binding was signed with an ed25519 key
+#
+# What this does NOT prove:
+#   - That the build is reproducible (use zb's own mechanisms for that)
+#   - That the tests are comprehensive
+#   - Any external claim beyond the evidence collected
+#
+# Verification:
+#   proofx verify proof.json
+#   Or: proofx.dev/v/<PROOF_ID> (browser, no install needed)
+#
+# More: https://github.com/EslaM-X/proofx
+
+name: ProofX
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  proofx:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Generate and verify proof
+        uses: EslaM-X/proofx-action@v0.3.0
+        with:
+          collect: true
+          prove: true
+          verify: true
+
+      - name: Upload proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proof
+          path: proof.json
+          retention-days: 90
