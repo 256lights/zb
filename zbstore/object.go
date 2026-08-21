@@ -29,7 +29,7 @@ type Object interface {
 // returning an error if the content does not match the [*ObjectInfo].
 // opts.Digest is ignored: obj.Info().StorePath.Digest() will always be used.
 // VerifyObject will call obj.WriteNAR at most once.
-func VerifyObject(ctx context.Context, dst io.Writer, obj Object, opts *ContentAddressOptions) (err error) {
+func VerifyObject(ctx context.Context, dst io.Writer, obj Object, opts *ContentAddressOptions) (size int64, err error) {
 	info := obj.Info()
 	defer func(path Path) {
 		if err != nil {
@@ -44,7 +44,7 @@ func VerifyObject(ctx context.Context, dst io.Writer, obj Object, opts *ContentA
 	closers = append(closers, nsv)
 	cav, err := newContentAddressVerifier(info.ContentAddress, info.StorePath, &info.References, opts)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	writers = append(writers, cav)
 	closers = append(closers, cav)
@@ -61,12 +61,13 @@ func VerifyObject(ctx context.Context, dst io.Writer, obj Object, opts *ContentA
 		writers = append(writers, v)
 		closers = append(closers, v)
 	}
+	wc := &writeCounter{w: dst}
 	if info.HasNARSize() {
 		v := &narSizeVerifier{want: info.NARSize}
-		writers = append(writers, v, newLimitedWriter(dst, info.NARSize))
+		writers = append(writers, v, newLimitedWriter(wc, info.NARSize))
 		closers = append(closers, v)
 	} else {
-		writers = append(writers, dst)
+		writers = append(writers, wc)
 	}
 
 	firstError := obj.WriteNAR(ctx, io.MultiWriter(writers...))
@@ -75,7 +76,7 @@ func VerifyObject(ctx context.Context, dst io.Writer, obj Object, opts *ContentA
 			firstError = err
 		}
 	}
-	return firstError
+	return wc.n, firstError
 }
 
 type contentAddressResult struct {
@@ -214,6 +215,18 @@ func (v *narSizeVerifier) Close() error {
 		return fmt.Errorf("nar size = %d bytes (expected %d bytes)", v.WriteCounter, v.want)
 	}
 	return nil
+}
+
+// writeCounter records the number of bytes that have successfully been written to w.
+type writeCounter struct {
+	w io.Writer
+	n int64
+}
+
+func (wc *writeCounter) Write(p []byte) (n int, err error) {
+	n, err = wc.w.Write(p)
+	wc.n += int64(n)
+	return n, err
 }
 
 type narHashVerifier struct {

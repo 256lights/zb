@@ -445,8 +445,8 @@ func verifyValidObject(tb testing.TB, object Object) {
 	}
 
 	got := new(bytes.Buffer)
-	if err := VerifyObject(ctx, got, object, nil); err != nil {
-		tb.Error("VerifyObject(...):", err)
+	if n, err := VerifyObject(ctx, got, object, nil); n != int64(want.Len()) || err != nil {
+		tb.Errorf("VerifyObject(...) = %d, %v; want %d, <nil>", n, err, want.Len())
 	}
 
 	if !bytes.Equal(got.Bytes(), want.Bytes()) {
@@ -469,8 +469,8 @@ func verifyInvalidObject(tb testing.TB, wantSize int, object Object) {
 	}
 
 	got := new(bytes.Buffer)
-	if err := VerifyObject(ctx, got, object, nil); err == nil {
-		tb.Error("VerifyObject(...) = <nil>; want <error>")
+	if n, err := VerifyObject(ctx, got, object, nil); n != int64(wantSize) || err == nil {
+		tb.Errorf("VerifyObject(...) = %d, <nil>; want %d, <error>", n, wantSize)
 	} else {
 		tb.Log("VerifyObject(...):", err)
 	}
