@@ -213,7 +213,8 @@ func (info *ObjectInfo) Equal(info2 *ObjectInfo) bool {
 		return info == nil && info2 == nil
 	}
 	if info.StorePath != info2.StorePath ||
-		info.NARSize != info2.NARSize ||
+		info.HasNARSize() != info2.HasNARSize() ||
+		(!info.HasNARSize() || info.NARSize != info2.NARSize) ||
 		!info.NARHash.Equal(info2.NARHash) ||
 		!info.ContentAddress.Equal(info2.ContentAddress) ||
 		info.References.Len() != info2.References.Len() {
