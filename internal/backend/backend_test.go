@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -95,7 +94,7 @@ func TestImport(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			} else {
-				want := wantObjectInfo(info.Info, obj.NAR, obj.ContentAddress, &obj.References)
+				want := wantObjectInfo(info.Info, obj)
 				if diff := cmp.Diff(want, info.Info); diff != "" {
 					t.Errorf("%s info (-want +got):\n%s", obj.StorePath, diff)
 				}
@@ -464,29 +463,18 @@ func TestDelete(t *testing.T) {
 	}
 }
 
-// wantObjectInfo builds the expected [*zbstorerpc.ObjectInfo]
-// for the given data, content address, and references.
+// wantObjectInfo builds the expected [*zbstorerpcrpc.ObjectInfo] for the given blob.
 // It uses got.NARHash to determine the hashing algorithm to check against.
-func wantObjectInfo(got *zbstorerpc.ObjectInfo, narData []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) *zbstorerpc.ObjectInfo {
-	info := &zbstorerpc.ObjectInfo{
-		NARSize:        int64(len(narData)),
-		References:     slices.Collect(refs.Values()),
-		ContentAddress: ca,
-	}
-	if info.References == nil {
-		// Should not be null.
-		info.References = []zbstore.Path{}
-	}
-
+func wantObjectInfo(got *zbstorerpc.ObjectInfo, blob *zbstore.Blob) *zbstorerpc.ObjectInfo {
 	ht := got.NARHash.Type()
 	if ht == 0 {
 		ht = nix.SHA256
 	}
 	h := nix.NewHasher(ht)
-	h.Write(narData)
-	info.NARHash = h.SumHash()
-
-	return info
+	h.Write(blob.NAR)
+	want := new(*blob.Info())
+	want.NARHash = h.SumHash()
+	return zbstorerpc.NewObjectInfo(want)
 }
 
 func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstorerpc.Codec, release func(), err error) {

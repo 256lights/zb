@@ -5,6 +5,7 @@ package zbstore
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -68,6 +69,42 @@ func ParseDerivation(dir Directory, name string, data []byte) (*Derivation, erro
 		return nil, err
 	}
 	return drv, nil
+}
+
+// ParseDerivationObject loads a ".drv" [Object] into memory
+// and parses it as a [*Derivation].
+func ParseDerivationObject(ctx context.Context, object Object) (*Derivation, error) {
+	drvPath := object.Info().StorePath
+	drvName, ok := drvPath.DerivationName()
+	if !ok {
+		return nil, fmt.Errorf("parse derivation: %s is not a %s file", drvPath, DerivationExt)
+	}
+
+	pr, pw := io.Pipe()
+	writeDone := make(chan struct{})
+	go func() {
+		defer close(writeDone)
+		err := object.WriteNAR(ctx, pw)
+		pw.CloseWithError(err)
+	}()
+	defer func() {
+		pr.Close()
+		<-writeDone
+	}()
+
+	nr := nar.NewReader(pr)
+	hdr, err := nr.Next()
+	if err != nil {
+		return nil, fmt.Errorf("parse %s derivation: %v", drvName, err)
+	}
+	if !hdr.Mode.IsRegular() {
+		return nil, fmt.Errorf("parse %s derivation: not a flat file", drvName)
+	}
+	drvData := new(bytes.Buffer)
+	if _, err := io.Copy(drvData, nr); err != nil {
+		return nil, fmt.Errorf("parse %s derivation: %v", drvName, err)
+	}
+	return ParseDerivation(drvPath.Dir(), drvName, drvData.Bytes())
 }
 
 // Export marshals the derivation to a NAR containing ATerm format

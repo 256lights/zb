@@ -24,8 +24,8 @@ import (
 // TxtarObjects converts the source files and .drv files in a txtar archive to a slice of [*Object],
 // rewriting their paths to the named directory.
 // TxtarObjects also returns a map of file names to store paths.
-func TxtarObjects(dir zbstore.Directory, files []txtar.File) ([]*Object, map[string]zbstore.Path, error) {
-	objects := make([]*Object, 0, len(files))
+func TxtarObjects(dir zbstore.Directory, files []txtar.File) ([]*zbstore.Blob, map[string]zbstore.Path, error) {
+	objects := make([]*zbstore.Blob, 0, len(files))
 	rewrites := make(map[string]zbstore.Path)
 
 	for objectFiles := range groupFilesByObject(files) {
@@ -41,7 +41,7 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) ([]*Object, map[str
 			if err != nil {
 				return objects, rewrites, err
 			}
-			obj := &Object{
+			obj := &zbstore.Blob{
 				ExportTrailer: zbstore.ExportTrailer{
 					References:     *refs,
 					ContentAddress: nix.TextContentAddress(nix.NewHash(nix.SHA256, new(sha256.Sum256(data))[:])),
@@ -74,7 +74,7 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) ([]*Object, map[str
 			return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
 		}
 		// TODO(someday): References.
-		obj := &Object{NAR: buf.Bytes()}
+		obj := &zbstore.Blob{NAR: buf.Bytes()}
 		obj.ContentAddress, _, err = zbstore.SourceSHA256ContentAddress(bytes.NewReader(buf.Bytes()), nil)
 		if err != nil {
 			return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
