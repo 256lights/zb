@@ -4,6 +4,7 @@
 package zbstore
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -205,6 +206,70 @@ func (ew *ExportWriter) WriteObject(ctx context.Context, obj Object) error {
 		return err
 	}
 	return nil
+}
+
+// StoreImport implements [Importer] by copying r to the export.
+// StoreImport performs some basic checks that r is a valid `nix-store --export` stream,
+// but broadly copies r verbatim.
+func (ew *ExportWriter) StoreImport(ctx context.Context, r io.Reader) error {
+	if ew.closed {
+		return fmt.Errorf("write to closed exporter")
+	}
+	if ew.header {
+		return fmt.Errorf("copy export: missing trailer")
+	}
+
+	// Check that data starts with either [exportObjectMarker] or [exportEOFMarker].
+	buf := make([]byte, 0, 32<<10)
+	n, err := io.ReadAtLeast(r, buf[:cap(buf)], max(len(exportObjectMarker), len(exportEOFMarker))+1)
+	buf = buf[:n]
+	if bytes.HasPrefix(buf, []byte(exportEOFMarker)) {
+		if len(buf) > len(exportEOFMarker) {
+			return fmt.Errorf("copy export: export does not start with object marker")
+		}
+		// Ignore any error. We already read the EOF marker.
+		return nil
+	}
+	if len(buf) < len(exportObjectMarker) {
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			err = fmt.Errorf("copy export: %v", io.ErrUnexpectedEOF)
+		}
+		// [io.ReadAtLeast] guarantees that the error is non-nil.
+		return err
+	}
+	if string(buf[:len(exportObjectMarker)]) != exportObjectMarker {
+		return fmt.Errorf("copy export: export does not start with object marker")
+	}
+
+	for {
+		// Copy up to the last len(exportEOFMarker) bytes.
+		i := len(buf) - len(exportEOFMarker)
+		if _, err := ew.w.Write(buf[:i]); err != nil {
+			return err
+		}
+		buf = append(buf[:0], buf[i:]...)
+
+		// Read at least one more byte.
+		n, err := io.ReadAtLeast(r, buf[len(buf):cap(buf)], 1)
+		buf = buf[:len(buf)+n]
+		if err != nil {
+			finalWriteSize := len(buf)
+			if err == io.EOF {
+				finalWriteSize -= len(exportEOFMarker)
+				if bytes.HasSuffix(buf, []byte(exportEOFMarker)) {
+					err = nil
+				} else {
+					err = fmt.Errorf("copy export: export does not end with EOF marker")
+				}
+			}
+			if finalWriteSize > 0 {
+				if _, writeError := ew.w.Write(buf[:finalWriteSize]); writeError != nil {
+					return writeError
+				}
+			}
+			return err
+		}
+	}
 }
 
 func (ew *ExportWriter) writeHeader() error {
