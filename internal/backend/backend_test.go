@@ -54,9 +54,15 @@ func TestImport(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		runScriptTest(ctx, t, dir, client, &scriptTestOptions{
-			filename: "TestImport.txt",
-			server:   server,
+		data, err := readTestData(dir, "TestImport.txt", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := data.writeTo(ctx, client, nil); err != nil {
+			t.Fatal(err)
+		}
+		runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
+			server: server,
 		})
 	})
 
@@ -77,8 +83,14 @@ func TestImport(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		runScriptTest(ctx, t, dir, client, &scriptTestOptions{
-			filename:      "TestImport.txt",
+		data, err := readTestData(dir, "TestImport.txt", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := data.writeTo(ctx, client, nil); err != nil {
+			t.Fatal(err)
+		}
+		runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
 			server:        server,
 			realDirectory: realStoreDir,
 		})
@@ -123,7 +135,14 @@ func TestFetch(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			runScriptTest(ctx, t, dir, client, &scriptTestOptions{
+			data, err := readTestData(dir, t.Name(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := data.writeTo(ctx, client, fallback); err != nil {
+				t.Fatal(err)
+			}
+			runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
 				server:        server,
 				realDirectory: realStoreDir,
 				fallback:      fallback,
@@ -168,7 +187,14 @@ func TestDelete(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			runScriptTest(ctx, t, dir, client, &scriptTestOptions{
+			data, err := readTestData(dir, t.Name(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := data.writeTo(ctx, client, nil); err != nil {
+				t.Fatal(err)
+			}
+			runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
 				server:        server,
 				realDirectory: realStoreDir,
 			})
@@ -177,20 +203,29 @@ func TestDelete(t *testing.T) {
 }
 
 type testDataArchive struct {
+	filename        string
 	comment         []byte
-	objects         []*zbstore.Blob
+	objects         storetest.BlobSlice
 	backendObjects  sets.Set[zbstore.Path]
 	fallbackObjects sets.Set[zbstore.Path]
 	rewrites        map[string]zbstore.Path
 }
 
-func readTestData(tb testing.TB, dir zbstore.Directory, name string, fileSubstitutions map[string]string) *testDataArchive {
-	tb.Helper()
-
+// readTestData parses a txtar file.
+// If the name does not end with ".txt", the extension is assumed.
+// Paths are interpreted relative to the testdata directory.
+//
+// fileSubstitutions is a map of textual substitutions to make on the txtar objects
+// before processing them with [storetest.TxtarObjects].
+func readTestData(dir zbstore.Directory, name string, fileSubstitutions map[string]string) (*testDataArchive, error) {
+	const ext = ".txt"
+	if !strings.HasSuffix(name, ext) {
+		name += ext
+	}
 	filename := filepath.Join("testdata", filepath.FromSlash(name))
 	archive, err := txtar.ParseFile(filename)
 	if err != nil {
-		tb.Fatal(err)
+		return nil, err
 	}
 
 	backendObjectNames := make(sets.Set[string], len(archive.Files))
@@ -211,7 +246,7 @@ func readTestData(tb testing.TB, dir zbstore.Directory, name string, fileSubstit
 				case "fallback":
 					fallbackObjectNames.Add(base)
 				default:
-					tb.Fatalf("%s: unknown label [%s] on %s", filename, label, file.Name)
+					return nil, fmt.Errorf("%s: unknown label [%s] on %s", filename, label, file.Name)
 				}
 			}
 		}
@@ -227,7 +262,7 @@ func readTestData(tb testing.TB, dir zbstore.Directory, name string, fileSubstit
 
 	allObjects, rewrites, err := storetest.TxtarObjects(dir, archive.Files)
 	if err != nil {
-		tb.Fatalf("%s: %v", filename, err)
+		return nil, fmt.Errorf("%s: %v", filename, err)
 	}
 	backendObjects := make(sets.Set[zbstore.Path], len(allObjects))
 	for name := range backendObjectNames {
@@ -238,31 +273,18 @@ func readTestData(tb testing.TB, dir zbstore.Directory, name string, fileSubstit
 		fallbackObjects.Add(rewrites[name])
 	}
 	return &testDataArchive{
+		filename:        filename,
 		comment:         archive.Comment,
 		objects:         allObjects,
 		backendObjects:  backendObjects,
 		fallbackObjects: fallbackObjects,
 		rewrites:        rewrites,
-	}
+	}, nil
 }
 
-func (data *testDataArchive) writeTo(ctx context.Context, allObjects zbstore.Importer, client *jsonrpc.Client, fallback zbstore.Importer) error {
+func (data *testDataArchive) writeTo(ctx context.Context, client *jsonrpc.Client, fallback zbstore.Importer) error {
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExportWriter(exportBuffer)
-	for _, obj := range data.objects {
-		if err := exporter.WriteObject(ctx, obj); err != nil {
-			return err
-		}
-	}
-	if err := exporter.Close(); err != nil {
-		return err
-	}
-	if err := allObjects.StoreImport(ctx, exportBuffer); err != nil {
-		return err
-	}
-
-	exportBuffer.Reset()
-	exporter = zbstore.NewExportWriter(exportBuffer)
 	for _, obj := range data.objects {
 		if data.backendObjects.Has(obj.StorePath) {
 			if err := exporter.WriteObject(ctx, obj); err != nil {
@@ -338,9 +360,6 @@ func reverseLookup[K any, V comparable](m iter.Seq2[K, V], want V) (K, bool) {
 
 // scriptTestOptions is the set of optional arguments to [runScripTest].
 type scriptTestOptions struct {
-	// filename of txtar file to read, relative to testdata.
-	// Defaults to the test's name.
-	filename string
 	// server is only set for tests that need to access server methods.
 	server *Server
 	// realDirectory is the path to the store's actual directory.
@@ -349,33 +368,15 @@ type scriptTestOptions struct {
 	fallback *storetest.Store
 	// initialEnv is a map of any extra environment variables to set in the script to start.
 	initialEnv map[string]string
-	// fileSubstitutions is a map of textual substitutions to make on the txtar objects
-	// before processing them with [storetest.TxtarObjects].
-	fileSubstitutions map[string]string
 }
 
 // runScriptTest runs a backend script test from a testdata file.
 // See testdata/README.md for documentation.
-func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, client *jsonrpc.Client, opts *scriptTestOptions) (zbstore.Store, map[string]string) {
+func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, client *jsonrpc.Client, data *testDataArchive, opts *scriptTestOptions) (env map[string]string) {
 	tb.Helper()
 
 	if opts == nil {
 		opts = new(scriptTestOptions)
-	}
-
-	filename := opts.filename
-	if filename == "" {
-		filename = tb.Name() + ".txt"
-	}
-	data := readTestData(tb, dir, filename, opts.fileSubstitutions)
-
-	allObjects := new(storetest.Store)
-	var fallbackImporter zbstore.Importer
-	if opts.fallback != nil {
-		fallbackImporter = opts.fallback
-	}
-	if err := data.writeTo(ctx, allObjects, client, fallbackImporter); err != nil {
-		tb.Fatal(err)
 	}
 
 	engine := &script.Engine{
@@ -397,7 +398,7 @@ func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, cl
 		directory:  dir,
 		server:     opts.server,
 		client:     client,
-		allObjects: allObjects,
+		allObjects: data.objects,
 		rewrites:   data.rewrites,
 		fallback:   opts.fallback,
 	}
@@ -421,13 +422,13 @@ func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, cl
 	tb.Log(time.Now().UTC().Format(time.RFC3339))
 	work, _ := state.LookupEnv("WORK")
 	tb.Logf("$WORK=%s", work)
-	scripttest.Run(tb, engine, state, filepath.FromSlash("testdata/"+filename), bytes.NewReader(data.comment))
-	finalVars := make(map[string]string)
+	scripttest.Run(tb, engine, state, data.filename, bytes.NewReader(data.comment))
+	env = make(map[string]string)
 	for _, kv := range state.Environ() {
 		k, v, _ := strings.Cut(kv, "=")
-		finalVars[k] = v
+		env[k] = v
 	}
-	return allObjects, finalVars
+	return env
 }
 
 func newReplacer[K, V ~string](rewrites iter.Seq2[K, V]) *strings.Replacer {

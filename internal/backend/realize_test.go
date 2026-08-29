@@ -42,7 +42,14 @@ func TestRealizeSingleDerivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, nil)
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, nil)
 }
 
 func TestRealizeReuse(t *testing.T) {
@@ -56,7 +63,14 @@ func TestRealizeReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, nil)
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, nil)
 }
 
 func TestRealizeDisableReuse(t *testing.T) {
@@ -70,7 +84,14 @@ func TestRealizeDisableReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, nil)
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, nil)
 }
 
 func TestRealizeMultiStep(t *testing.T) {
@@ -84,7 +105,14 @@ func TestRealizeMultiStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, nil)
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, nil)
 }
 
 func TestRealizeReferenceToDep(t *testing.T) {
@@ -98,7 +126,14 @@ func TestRealizeReferenceToDep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, nil)
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, nil)
 }
 
 func TestRealizeInputReference(t *testing.T) {
@@ -142,7 +177,14 @@ func TestRealizeInputReference(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, vars := runScriptTest(ctx, t, dir, client, nil)
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	vars := runScriptTest(ctx, t, dir, client, data, nil)
 	inputPath, _, err := dir.ParsePath(vars["in"])
 	if err != nil {
 		t.Fatal("in:", err)
@@ -216,7 +258,14 @@ func TestRealizeSelfReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, nil)
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, nil)
 }
 
 func TestRealizeFixed(t *testing.T) {
@@ -230,7 +279,14 @@ func TestRealizeFixed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, nil)
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, nil)
 }
 
 func TestRealizeFailure(t *testing.T) {
@@ -244,7 +300,14 @@ func TestRealizeFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, nil)
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, nil)
 }
 
 func TestRealizeNoOutput(t *testing.T) {
@@ -258,7 +321,14 @@ func TestRealizeNoOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, nil)
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, nil)
 }
 
 func TestRealizeCores(t *testing.T) {
@@ -278,8 +348,14 @@ func TestRealizeCores(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			runScriptTest(ctx, t, dir, client, &scriptTestOptions{
-				filename: "TestRealizeCores.txt",
+			data, err := readTestData(dir, "TestRealizeCores.txt", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := data.writeTo(ctx, client, nil); err != nil {
+				t.Fatal(err)
+			}
+			runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
 				initialEnv: map[string]string{
 					"cores": strconv.Itoa(n),
 				},
@@ -308,11 +384,16 @@ func TestRealizeFetchURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, &scriptTestOptions{
-		fileSubstitutions: map[string]string{
-			"@url@": srv.URL + "/hello.txt",
-		},
+	data, err := readTestData(dir, t.Name(), map[string]string{
+		"@url@": srv.URL + "/hello.txt",
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, nil)
 }
 
 func TestRealizeSignature(t *testing.T) {
@@ -342,7 +423,14 @@ func TestRealizeSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	allObjects, vars := runScriptTest(ctx, t, dir, client, nil)
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	vars := runScriptTest(ctx, t, dir, client, data, nil)
 
 	got := new(zbstorerpc.Build)
 	if err := jsonv2.Unmarshal([]byte(vars["build"]), got); err != nil {
@@ -352,7 +440,7 @@ func TestRealizeSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	drvHash, _, err := hashDerivationFromFetcher(ctx, allObjects, zbstore.Null{}, drvPath)
+	drvHash, _, err := hashDerivationFromFetcher(ctx, data.objects, zbstore.Null{}, drvPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +511,14 @@ func TestRealizeSingleDerivationFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, &scriptTestOptions{
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, fallbackStore); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
 		fallback: fallbackStore,
 	})
 }
@@ -444,7 +539,14 @@ func TestRealizeWithImproperlyNamedFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, &scriptTestOptions{
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, fallbackStore); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
 		fallback: fallbackStore,
 	})
 }
@@ -468,7 +570,14 @@ func TestRealizeMultiStepFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, &scriptTestOptions{
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, fallbackStore); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
 		fallback: fallbackStore,
 	})
 }
@@ -491,7 +600,14 @@ func TestRealizeMultiStepFallbackIntermediate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, &scriptTestOptions{
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, fallbackStore); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
 		fallback: fallbackStore,
 	})
 }
@@ -516,7 +632,14 @@ func TestRealizeMultiStepFallbackMissingObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, &scriptTestOptions{
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, fallbackStore); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
 		fallback: fallbackStore,
 	})
 }
@@ -533,7 +656,14 @@ func TestRealizeIssue288(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, nil)
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, client, data, nil)
 }
 
 func TestRealizeUpload(t *testing.T) {
@@ -586,9 +716,14 @@ func TestRealizeUpload(t *testing.T) {
 	}
 
 	// Run script and capture objects from test file.
-	allObjects, vars := runScriptTest(ctx, t, dir, client, &scriptTestOptions{
-		filename: t.Name() + "/test.txt",
-	})
+	data, err := readTestData(dir, t.Name()+"/test.txt", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, client, nil); err != nil {
+		t.Fatal(err)
+	}
+	vars := runScriptTest(ctx, t, dir, client, data, nil)
 
 	// Wait for uploads to finish.
 	if err := server.Drain(ctx); err != nil {
@@ -609,7 +744,7 @@ func TestRealizeUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	drvHash, _, err := hashDerivationFromFetcher(ctx, allObjects, uploadStore, drvPath)
+	drvHash, _, err := hashDerivationFromFetcher(ctx, data.objects, uploadStore, drvPath)
 	if err != nil {
 		t.Fatal(err)
 	}
