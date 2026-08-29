@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -106,41 +105,31 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 		realStoreDir = string(storeDir)
 	}
 	srv := backend.NewServer(storeDir, filepath.Join(tempDir, "db.sqlite"), opts2)
-	serverConn, clientConn := net.Pipe()
 
-	serveCtx, stopServe := context.WithCancel(context.WithoutCancel(ctx))
-	wg.Go(func() {
-		serverReceiver := srv.NewNARReceiver(serveCtx, bytebuffer.BufferCreator{})
-		defer serverReceiver.Cleanup(context.WithoutCancel(ctx))
+	clientCtx, stopClient := context.WithCancel(context.WithoutCancel(ctx))
+	client := zbstorerpc.NewClient(clientCtx, func(ctx context.Context) (io.ReadWriteCloser, error) {
+		serverConn, clientConn := net.Pipe()
+		wg.Go(func() {
+			serverReceiver := srv.NewNARReceiver(ctx, bytebuffer.BufferCreator{})
+			defer serverReceiver.Cleanup(context.WithoutCancel(ctx))
 
-		var serverImporter struct {
-			*backend.Server
-			zbstorerpc.Importer
-		}
-		serverImporter.Server = srv
-		serverImporter.Importer = zbstorerpc.NewReceiverImporter(serverReceiver)
-		zbstorerpc.Serve(serveCtx, serverConn, serverImporter)
-	})
-
-	var usedClientConn atomic.Bool
-	client := zbstorerpc.NewClient(ctx, func(ctx context.Context) (io.ReadWriteCloser, error) {
-		usedClientConn.Store(true)
+			var serverImporter struct {
+				*backend.Server
+				zbstorerpc.Importer
+			}
+			serverImporter.Server = srv
+			serverImporter.Importer = zbstorerpc.NewReceiverImporter(serverReceiver)
+			zbstorerpc.Serve(ctx, serverConn, serverImporter)
+		})
 		return clientConn, nil
 	})
 
 	tb.Cleanup(func() {
+		stopClient()
 		if err := client.Close(); err != nil {
 			tb.Logf("client.Close: %v", err)
 			tb.Fail()
 		}
-		if !usedClientConn.Load() {
-			if err := clientConn.Close(); err != nil {
-				tb.Logf("client.Close: %v", err)
-				tb.Fail()
-			}
-		}
-
-		stopServe()
 		wg.Wait()
 
 		if err := srv.Close(); err != nil {
