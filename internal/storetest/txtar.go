@@ -23,7 +23,7 @@ import (
 // TxtarObjects converts the source files and .drv files in a txtar archive to a slice of [*zbstore.Blob],
 // rewriting their paths to the named directory.
 // TxtarObjects also returns a map of file names to store paths.
-func TxtarObjects(dir zbstore.Directory, files []txtar.File) ([]*zbstore.Blob, map[string]zbstore.Path, error) {
+func TxtarObjects(dir zbstore.Directory, files []txtar.File) (BlobSlice, map[string]zbstore.Path, error) {
 	objects := make([]*zbstore.Blob, 0, len(files))
 	rewrites := make(map[string]zbstore.Path)
 
