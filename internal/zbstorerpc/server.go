@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 	"time"
 	"weak"
 
@@ -115,19 +114,19 @@ func ContextImporter(ctx context.Context) Importer {
 type serverCodec struct {
 	ctx      context.Context
 	r        *jsonrpc.Reader
+	w        chan *jsonrpc.Writer
 	importer Importer
-
-	writeLock sync.Mutex
-	w         *jsonrpc.Writer
 }
 
 func newServerCodec(ctx context.Context, rw io.ReadWriter, importer Importer) *serverCodec {
-	return &serverCodec{
+	sc := &serverCodec{
 		ctx:      ctx,
 		r:        jsonrpc.NewReader(rw),
+		w:        make(chan *jsonrpc.Writer, 1),
 		importer: importer,
-		w:        jsonrpc.NewWriter(rw),
 	}
+	sc.w <- jsonrpc.NewWriter(rw)
+	return sc
 }
 
 func (sc *serverCodec) ReadRequest() (jsontext.Value, error) {
@@ -167,19 +166,23 @@ func (sc *serverCodec) ReadRequest() (jsontext.Value, error) {
 }
 
 func (sc *serverCodec) WriteResponse(response jsontext.Value) error {
-	sc.writeLock.Lock()
-	defer sc.writeLock.Unlock()
-	return writeRPCMessage(sc.w, response)
+	w := <-sc.w
+	defer func() { sc.w <- w }()
+	return writeRPCMessage(w, response)
 }
 
 func (sc *serverCodec) StoreImport(ctx context.Context, r io.Reader) error {
-	id, ok := contextRequestExportID(ctx, sc)
-	if !ok {
-		id = ""
+	select {
+	case w := <-sc.w:
+		defer func() { sc.w <- w }()
+		id, ok := contextRequestExportID(ctx, sc)
+		if !ok {
+			id = ""
+		}
+		return writeExport(ctx, w, id, r)
+	case <-ctx.Done():
+		return fmt.Errorf("write export: %w", ctx.Err())
 	}
-	sc.writeLock.Lock()
-	defer sc.writeLock.Unlock()
-	return writeExport(ctx, sc.w, id, r)
 }
 
 func closeReadFunc(r io.Reader) (f func() error, ok bool) {
