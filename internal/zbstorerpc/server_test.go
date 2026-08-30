@@ -248,8 +248,8 @@ func (srv *fakeServer) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*json
 			}, nil
 		}),
 		ExportMethod: jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-			i := ContextImporter(ctx)
-			return nil, i.StoreImport(ctx, strings.NewReader(emptyExport))
+			err := ServeExport(ctx, strings.NewReader(emptyExport))
+			return nil, err
 		}),
 	}.JSONRPC(ctx, req)
 }

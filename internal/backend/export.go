@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	jsonv2 "github.com/go-json-experiment/json"
+	"golang.org/x/sync/errgroup"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
@@ -50,27 +51,26 @@ func (s *Server) Export(ctx context.Context, dst io.Writer, req *zbstorerpc.Expo
 }
 
 func (s *Server) export(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	conn := zbstorerpc.ContextImporter(ctx)
 	args := new(zbstorerpc.ExportRequest)
 	if err := jsonv2.Unmarshal(req.Params, args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 
 	pr, pw := io.Pipe()
-	done := make(chan struct{})
-	go func() {
-		close(done)
-		pw.CloseWithError(s.Export(ctx, pw, args))
-	}()
-	defer func() {
-		<-done
-		pr.Close()
-	}()
-
-	if err := conn.StoreImport(ctx, pr); err != nil {
-		return nil, err
-	}
-	return nil, nil
+	grp, ctx := errgroup.WithContext(ctx)
+	grp.Go(func() error {
+		err := s.Export(ctx, pw, args)
+		pw.CloseWithError(err)
+		return err
+	})
+	grp.Go(func() error {
+		err := zbstorerpc.ServeExport(ctx, pr)
+		pr.CloseWithError(err)
+		// Closing the pipe will cause the write to fail,
+		// and we want that error to come through.
+		return nil
+	})
+	return nil, grp.Wait()
 }
 
 // fetchInfoForExport generates export trailers for the given paths.

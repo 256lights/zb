@@ -413,6 +413,7 @@ type FetchResponse struct {
 
 // ExportMethod is the name of the method that triggers an export of store objects.
 // [ExportRequest] is used for the request and the response is null.
+// Servers can use [ExportOutput] to obtain the destination to use for output.
 const ExportMethod = "zb.export"
 
 // ExportRequest is the set of parameters for [ExportMethod].

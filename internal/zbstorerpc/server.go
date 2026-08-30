@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"time"
-	"weak"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
@@ -33,9 +32,6 @@ type Importer interface {
 // When the [context.Context]'s Done() channel is closed,
 // Serve will attempt to shut down the reading side of the connection to trigger an error.
 //
-// Calling [ContextImporter] on the [context.Context] that Serve sends to srv.JSONRPC
-// will return an [Importer] that writes an export message to rwc.
-//
 // Serve will always close the [io.ReadWriteCloser] before returning.
 func Serve(ctx context.Context, rwc io.ReadWriteCloser, srv Server) error {
 	if f, ok := closeReadFunc(rwc); ok {
@@ -51,18 +47,18 @@ func Serve(ctx context.Context, rwc io.ReadWriteCloser, srv Server) error {
 		}()
 	}
 
-	c := newServerCodec(ctx, rwc, srv)
-	serveError := jsonrpc.Serve(ctx, c, jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	sc := newServerCodec(ctx, rwc, srv)
+	serveError := jsonrpc.Serve(ctx, sc, jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+		dst := exportDestination{w: sc.w}
 		if idJSON := req.Extra[exportIDExtraFieldName]; len(idJSON) > 0 {
-			var id string
-			if err := jsonv2.Unmarshal(idJSON, &id); err != nil {
+			if err := jsonv2.Unmarshal(idJSON, &dst.id); err != nil {
 				return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s: %v", exportIDExtraFieldName, err))
 			}
-			ctx = withRequestExportID(ctx, c, id)
 		}
-		ctx = WithImporter(ctx, c)
+		ctx = context.WithValue(ctx, exportDestinationContextKey{}, dst)
 		return srv.JSONRPC(ctx, req)
 	}))
+	sc.close()
 	closeError := rwc.Close()
 	return errors.Join(serveError, closeError)
 }
@@ -70,44 +66,6 @@ func Serve(ctx context.Context, rwc io.ReadWriteCloser, srv Server) error {
 // exportIDExtraFieldName is the name of the extra field in [jsonrpc.Request]
 // used to pass a value that will be passed through with [exportIDHeaderName].
 const exportIDExtraFieldName = "zbExportID"
-
-type requestExportIDContextKey struct {
-	codec weak.Pointer[serverCodec]
-}
-
-func withRequestExportID(parent context.Context, c *serverCodec, id string) context.Context {
-	return context.WithValue(parent, requestExportIDContextKey{weak.Make(c)}, id)
-}
-
-func contextRequestExportID(ctx context.Context, c *serverCodec) (id string, ok bool) {
-	v := ctx.Value(requestExportIDContextKey{weak.Make(c)})
-	if v == nil {
-		return "", false
-	}
-	return v.(string), true
-}
-
-type importerContextKey struct{}
-
-// WithImporter returns a copy of parent
-// in which an [Importer] is used to send back export information in a [jsonrpc.Handler].
-//
-// [Serve] automatically calls WithImporter.
-// WithImporter is exported for testing purposes.
-func WithImporter(parent context.Context, i Importer) context.Context {
-	return context.WithValue(parent, importerContextKey{}, i)
-}
-
-// ContextImporter returns an [Importer] for the [context.Context].
-// For contexts that are not derived from [WithImporter],
-// ContextImporter returns an [Importer] that discards data it receives.
-func ContextImporter(ctx context.Context) Importer {
-	v := ctx.Value(importerContextKey{})
-	if v == nil {
-		return nopImporter{}
-	}
-	return v.(Importer)
-}
 
 // serverCodec implements [jsonrpc.ServerCodec] on an [io.ReadWriter]
 // using the Language Server Protocol "base protocol" for framing.
@@ -171,15 +129,36 @@ func (sc *serverCodec) WriteResponse(response jsontext.Value) error {
 	return writeRPCMessage(w, response)
 }
 
-func (sc *serverCodec) StoreImport(ctx context.Context, r io.Reader) error {
+func (sc *serverCodec) close() {
+	if _, hasWriter := <-sc.w; hasWriter {
+		close(sc.w)
+	}
+}
+
+type exportDestinationContextKey struct{}
+
+type exportDestination struct {
+	id string
+	w  chan *jsonrpc.Writer
+}
+
+// ServeExport copies a `nix-store --export` stream from an [io.Reader]
+// to the connection being handled by [Serve].
+// For contexts that are not derived from a JSON-RPC initiated by [Serve],
+// ServeExport reads a `nix-store --export` stream from the [io.Reader] and discards the data.
+func ServeExport(ctx context.Context, r io.Reader) error {
+	v := ctx.Value(exportDestinationContextKey{})
+	if v == nil {
+		return nopImporter{}.StoreImport(ctx, r)
+	}
+	dst := v.(exportDestination)
 	select {
-	case w := <-sc.w:
-		defer func() { sc.w <- w }()
-		id, ok := contextRequestExportID(ctx, sc)
+	case w, ok := <-dst.w:
 		if !ok {
-			id = ""
+			return errors.New("export on a closed connection")
 		}
-		return writeExport(ctx, w, id, r)
+		defer func() { dst.w <- w }()
+		return writeExport(ctx, w, dst.id, r)
 	case <-ctx.Done():
 		return fmt.Errorf("write export: %w", ctx.Err())
 	}
