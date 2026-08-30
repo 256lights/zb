@@ -231,27 +231,31 @@ func (srv *fakeServer) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*json
 		NopMethod: jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 			return nil, nil
 		}),
-		"subtract": jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-			var params []int64
-			if err := jsonv2.Unmarshal(req.Params, &params); err != nil {
-				return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
-			}
-			if len(params) == 0 {
-				return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("empty arguments"))
-			}
-			result := params[0]
-			for _, arg := range params[1:] {
-				result -= arg
-			}
-			return &jsonrpc.Response{
-				Result: jsontext.Value(strconv.FormatInt(result, 10)),
-			}, nil
-		}),
-		ExportMethod: jsonrpc.HandlerFunc(func(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-			err := ServeExport(ctx, strings.NewReader(emptyExport))
-			return nil, err
-		}),
+		"subtract":   jsonrpc.HandlerFunc(srv.subtract),
+		ExportMethod: jsonrpc.HandlerFunc(srv.export),
 	}.JSONRPC(ctx, req)
+}
+
+func (srv *fakeServer) subtract(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	var params []int64
+	if err := jsonv2.Unmarshal(req.Params, &params); err != nil {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
+	}
+	if len(params) == 0 {
+		return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("empty arguments"))
+	}
+	result := params[0]
+	for _, arg := range params[1:] {
+		result -= arg
+	}
+	return &jsonrpc.Response{
+		Result: jsontext.Value(strconv.FormatInt(result, 10)),
+	}, nil
+}
+
+func (srv *fakeServer) export(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
+	err := ServeExport(ctx, strings.NewReader(emptyExport))
+	return nil, err
 }
 
 func (srv *fakeServer) StoreImport(ctx context.Context, r io.Reader) error {
