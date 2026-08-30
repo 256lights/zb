@@ -113,72 +113,54 @@ func ContextImporter(ctx context.Context) Importer {
 // serverCodec implements [jsonrpc.ServerCodec] on an [io.ReadWriter]
 // using the Language Server Protocol "base protocol" for framing.
 type serverCodec struct {
+	ctx      context.Context
+	r        *jsonrpc.Reader
+	importer Importer
+
 	writeLock sync.Mutex
 	w         *jsonrpc.Writer
-
-	messages  <-chan jsontext.Value
-	readError error // can only be read after messages is closed
-	readDone  <-chan struct{}
 }
 
 func newServerCodec(ctx context.Context, rw io.ReadWriter, importer Importer) *serverCodec {
-	c := new(serverCodec)
-	messages := make(chan jsontext.Value)
-	readDone := make(chan struct{})
-	*c = serverCodec{
+	return &serverCodec{
+		ctx:      ctx,
+		r:        jsonrpc.NewReader(rw),
+		importer: importer,
 		w:        jsonrpc.NewWriter(rw),
-		messages: messages,
-		readDone: readDone,
 	}
-	go func() {
-		defer func() {
-			close(messages)
-			close(readDone)
-		}()
-		c.readError = serverReadLoop(ctx, messages, importer, jsonrpc.NewReader(rw))
-	}()
-	return c
 }
 
 func (sc *serverCodec) ReadRequest() (jsontext.Value, error) {
-	msg, ok := <-sc.messages
-	if !ok {
-		return nil, sc.readError
-	}
-	return msg, nil
-}
-
-func serverReadLoop(ctx context.Context, messages chan<- jsontext.Value, importer Importer, r *jsonrpc.Reader) error {
 	for {
-		header, bodySize, err := r.NextMessage()
+		header, bodySize, err := sc.r.NextMessage()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		switch ct := header.Get("Content-Type"); ct {
 		case rpcContentType:
 			if bodySize < 0 {
-				return fmt.Errorf("remote sent api message without valid Content-Length")
+				return nil, fmt.Errorf("remote sent api message without valid Content-Length")
 			}
 			if bodySize > maxAPIMessageSize {
-				return fmt.Errorf("remote sent large api message (%d bytes)", maxAPIMessageSize)
+				return nil, fmt.Errorf("remote sent large api message (%d bytes)", maxAPIMessageSize)
 			}
-			body, err := io.ReadAll(r)
+			body, err := io.ReadAll(sc.r)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			messages <- body
+			return body, nil
 		case exportContentType:
-			if err := importer.StoreImport(ctx, r); err != nil {
+			if err := sc.importer.StoreImport(sc.ctx, sc.r); err != nil {
 				err = fmt.Errorf("while receiving export: %v", err)
 				if bodySize < 0 {
-					return err
+					return nil, err
 				}
-				log.Warnf(ctx, "%v", err)
+				log.Warnf(sc.ctx, "%v", err)
 			}
 		default:
 			// Ignore, if possible.
 			if bodySize < 0 {
-				return fmt.Errorf("remote sent unknown Content-Type %q without valid Content-Length", ct)
+				return nil, fmt.Errorf("remote sent unknown Content-Type %q without valid Content-Length", ct)
 			}
 		}
 	}
