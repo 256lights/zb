@@ -28,7 +28,8 @@ type Importer interface {
 }
 
 // Serve serves zb JSON-RPC requests for a connection.
-// Serve will read requests from the [io.ReadWriteCloser] until Read returns an error.
+// Serve will read requests from the [io.ReadWriteCloser] until Read returns an error,
+// which Serve will return once all requests have completed.
 // When the [context.Context]'s Done() channel is closed,
 // Serve will attempt to shut down the reading side of the connection to trigger an error.
 //
