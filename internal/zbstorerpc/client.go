@@ -56,11 +56,7 @@ func (c *Client) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 	return c.client.JSONRPC(ctx, req)
 }
 
-// Object implements [zbstore.Store] by making a [InfoRequest] to s.Handler.
-//
-// Calling [zbstore.Object.WriteNAR] on the returned object
-// depends on s.Handler being wired up to [*Client.Import].
-// Otherwise, WriteNAR will block until ctx.Done() is closed.
+// Object implements [zbstore.Store] by making an [InfoRequest] to the server.
 func (c *Client) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, error) {
 	resp := new(InfoResponse)
 	err := jsonrpc.Do(ctx, c.client, InfoMethod, resp, &InfoRequest{Path: path})
@@ -78,11 +74,10 @@ func (c *Client) Object(ctx context.Context, path zbstore.Path) (zbstore.Object,
 
 // StoreImport implements [zbstore.Importer]
 // by sending the `nix-store --export` data over the underlying connection.
-// StoreImport will return an error if s.Handler is not a [*jsonrpc.Client] using a [*codec].
 func (c *Client) StoreImport(ctx context.Context, r io.Reader) error {
 	generic, releaseConn, err := c.client.Codec(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("import store objects: %w", err)
 	}
 	zc, ok := generic.(*clientCodec)
 	if !ok {
@@ -103,11 +98,7 @@ func (c *Client) StoreImport(ctx context.Context, r io.Reader) error {
 	return nil
 }
 
-// StoreExport implements [zbstore.Exporter]
-// by sending an [ExportRequest] to s.Handler.
-//
-// StoreExport depends on s.Handler being wired up to [*Client.Import].
-// Otherwise, StoreExport will block until ctx.Done() is closed.
+// StoreExport implements [zbstore.Exporter] by sending an [ExportRequest] to the server.
 func (c *Client) StoreExport(ctx context.Context, dst io.Writer, paths sets.Set[zbstore.Path], opts *zbstore.ExportOptions) error {
 	if err := c.export(ctx, dst, NewExportRequest(paths, opts)); err != nil {
 		return fmt.Errorf("export store objects: %w", err)
@@ -349,7 +340,7 @@ func (cc *clientCodec) interceptExportResponse(response jsontext.Value) bool {
 	hasExports := len(cc.pendingExports) > 0
 	cc.mu.Unlock()
 	if !hasExports {
-		// We don't need to parse payload if we don't have any pending exports.
+		// We don't need to parse the payload if we don't have any pending exports.
 		return false
 	}
 
@@ -409,7 +400,7 @@ func (cc *clientCodec) receiveExport(ctx context.Context, header jsonrpc.Header,
 		}
 		cc.mu.Unlock()
 
-		// Mostly synchronous: sender is either blocking sending this or closed.
+		// Mostly synchronous: sender is either blocking sending the writer or closed.
 		if e.w == nil {
 			log.Debugf(ctx, "Received duplicate export over RPC with id=%+q", id)
 		} else {
