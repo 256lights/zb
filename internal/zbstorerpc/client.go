@@ -246,12 +246,10 @@ func (snr *singleNARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 // clientCodec implements [jsonrpc.ClientCodec] on an [io.ReadWriteCloser]
 // using the Language Server Protocol "base protocol" for framing.
 type clientCodec struct {
-	w *jsonrpc.Writer
-	c io.Closer
-
-	messages  <-chan jsontext.Value
-	readError error // can only be read after messages is closed
-	readDone  <-chan struct{}
+	ctx context.Context
+	r   *jsonrpc.Reader
+	w   *jsonrpc.Writer
+	c   io.Closer
 
 	mu             sync.Mutex
 	idPrefix       string
@@ -266,24 +264,13 @@ type pendingExport struct {
 }
 
 func newClientCodec(ctx context.Context, rwc io.ReadWriteCloser) *clientCodec {
-	c := new(clientCodec)
-	messages := make(chan jsontext.Value)
-	readDone := make(chan struct{})
-	*c = clientCodec{
+	return &clientCodec{
+		ctx:            ctx,
+		r:              jsonrpc.NewReader(rwc),
 		w:              jsonrpc.NewWriter(rwc),
 		c:              rwc,
-		messages:       messages,
-		readDone:       readDone,
 		pendingExports: make(map[string]pendingExport),
 	}
-	go func() {
-		defer func() {
-			close(messages)
-			close(readDone)
-		}()
-		c.readError = c.readLoop(ctx, messages, jsonrpc.NewReader(rwc))
-	}()
-	return c
 }
 
 func (cc *clientCodec) WriteRequest(request jsontext.Value) error {
@@ -291,45 +278,37 @@ func (cc *clientCodec) WriteRequest(request jsontext.Value) error {
 }
 
 func (cc *clientCodec) ReadResponse() (jsontext.Value, error) {
-	msg, ok := <-cc.messages
-	if !ok {
-		return nil, cc.readError
-	}
-	return msg, nil
-}
-
-func (cc *clientCodec) readLoop(ctx context.Context, messages chan<- jsontext.Value, r *jsonrpc.Reader) error {
 	for {
-		header, bodySize, err := r.NextMessage()
+		header, bodySize, err := cc.r.NextMessage()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		switch ct := header.Get("Content-Type"); ct {
 		case rpcContentType:
 			if bodySize < 0 {
-				return fmt.Errorf("remote sent api message without valid Content-Length")
+				return nil, fmt.Errorf("remote sent api message without valid Content-Length")
 			}
 			if bodySize > maxAPIMessageSize {
-				return fmt.Errorf("remote sent large api message (%d bytes)", maxAPIMessageSize)
+				return nil, fmt.Errorf("remote sent large api message (%d bytes)", maxAPIMessageSize)
 			}
-			body, err := io.ReadAll(r)
+			body, err := io.ReadAll(cc.r)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if !cc.interceptExportResponse(body) {
-				messages <- body
+				return body, nil
 			}
 		case exportContentType:
-			if err := cc.receiveExport(ctx, header, r); err != nil {
+			if err := cc.receiveExport(header.Get(exportIDHeaderName)); err != nil {
 				if bodySize < 0 {
-					return err
+					return nil, err
 				}
-				log.Warnf(ctx, "%v", err)
+				log.Warnf(cc.ctx, "%v", err)
 			}
 		default:
 			// Ignore, if possible.
 			if bodySize < 0 {
-				return fmt.Errorf("remote sent unknown Content-Type %q without valid Content-Length", ct)
+				return nil, fmt.Errorf("remote sent unknown Content-Type %q without valid Content-Length", ct)
 			}
 		}
 	}
@@ -384,8 +363,7 @@ func (cc *clientCodec) interceptExportResponse(response jsontext.Value) bool {
 	return true
 }
 
-func (cc *clientCodec) receiveExport(ctx context.Context, header jsonrpc.Header, r io.Reader) error {
-	id := header.Get(exportIDHeaderName)
+func (cc *clientCodec) receiveExport(id string) error {
 	var w io.Writer
 	var done chan<- error
 	idKnown := false
@@ -402,33 +380,33 @@ func (cc *clientCodec) receiveExport(ctx context.Context, header jsonrpc.Header,
 
 		// Mostly synchronous: sender is either blocking sending the writer or closed.
 		if e.w == nil {
-			log.Debugf(ctx, "Received duplicate export over RPC with id=%+q", id)
+			log.Warnf(cc.ctx, "Receiving duplicate export over RPC with id=%+q", id)
 		} else {
 			w = <-e.w
 			if w == nil {
-				log.Debugf(ctx, "Received export over RPC with id=%+q. No longer interested.", id)
+				log.Debugf(cc.ctx, "Receiving export over RPC with id=%+q. No longer interested.", id)
 			} else {
+				log.Debugf(cc.ctx, "Receiving export over RPC with id=%+q...", id)
 				done = e.writeDone
 			}
 		}
 	}
 	if !idKnown {
-		log.Warnf(ctx, "Received unsolicited export over RPC with id=%+q", id)
+		log.Warnf(cc.ctx, "Receiving unsolicited export over RPC with id=%+q", id)
 	}
 	var importError error
 	if w == nil {
-		importError = nopImporter{}.StoreImport(ctx, r)
+		importError = nopImporter{}.StoreImport(cc.ctx, cc.r)
 	} else {
-		log.Debugf(ctx, "Receiving export over RPC with id=%+q...", id)
 		// The Importer.Import method determines the boundary of the body.
 		// When we tee, we don't want copy failures downstream
 		// to mess up our JSON-RPC connection.
 		// We swallow the errors and try to read the `nix-store --export` data to the end.
 		ecw := &errorCaptureWriter{w: w}
-		importError = nopImporter{}.StoreImport(ctx, io.TeeReader(r, ecw))
+		importError = nopImporter{}.StoreImport(cc.ctx, io.TeeReader(cc.r, ecw))
 		done <- cmp.Or(importError, ecw.err)
 	}
-	log.Debugf(ctx, "Finished receiving RPC export id=%+q err=%v", id, importError)
+	log.Debugf(cc.ctx, "Finished receiving RPC export id=%+q err=%v", id, importError)
 	if importError != nil {
 		return fmt.Errorf("while receiving export: %w", importError)
 	}
@@ -437,7 +415,6 @@ func (cc *clientCodec) receiveExport(ctx context.Context, header jsonrpc.Header,
 
 func (cc *clientCodec) Close() error {
 	err := cc.c.Close()
-	<-cc.readDone
 
 	cc.mu.Lock()
 	for _, e := range cc.pendingExports {
