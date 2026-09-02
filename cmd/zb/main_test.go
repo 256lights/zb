@@ -69,7 +69,10 @@ func TestEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			workDir := t.TempDir()
+			workDir, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			for _, file := range archive.Files {
 				inputFilename := filepath.Join(workDir, filepath.FromSlash(file.Name))
 				if err := os.MkdirAll(filepath.Dir(inputFilename), 0o777); err != nil {
@@ -81,7 +84,10 @@ func TestEndToEnd(t *testing.T) {
 			}
 
 			storeDir := backendtest.NewStoreDirectory(t)
-			tempDir := t.TempDir()
+			tempDir, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			var initialEnv []string
 			var storeSocketPath string
 			if runtime.GOOS == "windows" {
@@ -244,6 +250,8 @@ func readCommand() script.Cmd {
 }
 
 func startServerForTest(ctx context.Context, tb testing.TB, storeSocket string, server *backend.Server) {
+	tb.Helper()
+
 	l, err := net.Listen("unix", storeSocket)
 	if err != nil {
 		tb.Fatal(err)
