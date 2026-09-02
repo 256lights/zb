@@ -293,10 +293,7 @@ func (c *storeObjectCopyCommand) Validate() error {
 }
 
 func (c *storeObjectCopyCommand) Run(ctx context.Context, g *globalConfig, stdio *standardStreams) error {
-	base, err := resolveURL(stdio.workdir, "")
-	if err != nil {
-		return err
-	}
+	base := baseDirectoryURL(stdio.workdir)
 	sourceConfig := c.Source.resolve(base)
 	destinationConfig := c.Destination.resolve(base)
 	paths := sets.Collect(slices.Values(c.Paths))
