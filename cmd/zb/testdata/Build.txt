@@ -1,6 +1,7 @@
 zb build hello.lua
 stdout ^$ZB_STORE_DIR
-stderr '^hi from builder$'
+[!windows] stderr '^hi from builder$'
+[windows] stderr '^hi from builder\r\n'
 read result
 grep '\AHello, World!\n\z' $result
 grep '\AHello, World!\n\z' result
