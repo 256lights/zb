@@ -72,6 +72,10 @@ func (c *zbCommand) newKong() (*kong.Kong, error) {
 	if osutil.IsRoot() {
 		defaultBuildUsersGroup = backend.DefaultBuildUsersGroup
 	}
+	defaultOutLink := "result"
+	if runtime.GOOS == "windows" {
+		defaultOutLink = ""
+	}
 	k, err := kong.New(c,
 		kong.Name("zb"),
 		kong.Description("zb build tool"),
@@ -98,6 +102,7 @@ func (c *zbCommand) newKong() (*kong.Kong, error) {
 			"build_users_group":         defaultBuildUsersGroup,
 			"default_build_users_group": backend.DefaultBuildUsersGroup,
 			"default_log_dir":           filepath.Join(varDir(), "log", "zb"),
+			"default_out_link":          defaultOutLink,
 			"temp_dir":                  c.lookupEnv.tempDir(),
 			"num_cpu":                   strconv.Itoa(runtime.NumCPU()),
 			"supports_sandbox":          strconv.FormatBool(backend.SystemSupportsSandbox()),
@@ -330,11 +335,18 @@ func (c *evalCommand) Run(ctx context.Context, g *globalConfig, stdio *standardS
 
 type buildCommand struct {
 	evalOptions `kong:"embed"`
-	OutLink     string `kong:"short=o,default=result,placeholder=path,help=Change the name of the output path symlink. (Default: ${default})"`
+	OutLink     string `kong:"short=o,default=${default_out_link},help=Change the name of the output path symlink."`
 }
 
 func (c *buildCommand) Signature() string {
 	return `kong:"help=Build one or more derivations."`
+}
+
+func (c *buildCommand) Validate() error {
+	if runtime.GOOS == "windows" && c.OutLink != "" {
+		return errors.New("--out-link not supported on Windows")
+	}
+	return nil
 }
 
 func (c *buildCommand) Run(ctx context.Context, g *globalConfig, stdio *standardStreams, env envLookupFunc) error {
@@ -397,9 +409,9 @@ func (c *buildCommand) Run(ctx context.Context, g *globalConfig, stdio *standard
 		}
 	}
 
-	outputLinkBase := c.OutLink
-	if outputLinkBase != "" {
-		outputLinkBase = stdio.abs(outputLinkBase)
+	var outputLinkBase string
+	if c.OutLink != "" {
+		outputLinkBase = stdio.abs(c.OutLink)
 	}
 	for outputName, out := range results.All() {
 		s, paths, err := out.Evaluate(allRefs)

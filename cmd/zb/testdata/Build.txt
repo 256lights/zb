@@ -2,9 +2,9 @@ zb build hello.lua
 stdout ^$ZB_STORE_DIR
 [!windows] stderr '^hi from builder$'
 [windows] stderr '^hi from builder\r\n'
-read result
-grep '\AHello, World!\n\z' $result
-grep '\AHello, World!\n\z' result
+read resultPath
+grep '\AHello, World!\n\z' $resultPath
+[!windows] grep '\AHello, World!\n\z' result
 
 -- hello.lua --
 return setmetatable({}, {
