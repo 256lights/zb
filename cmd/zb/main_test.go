@@ -69,10 +69,7 @@ func TestEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			workDir, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			workDir := t.TempDir()
 			for _, file := range archive.Files {
 				inputFilename := filepath.Join(workDir, filepath.FromSlash(file.Name))
 				if err := os.MkdirAll(filepath.Dir(inputFilename), 0o777); err != nil {
@@ -84,43 +81,24 @@ func TestEndToEnd(t *testing.T) {
 			}
 
 			storeDir := backendtest.NewStoreDirectory(t)
-			tempDir, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			tempDir := t.TempDir()
 			var initialEnv []string
-			var storeSocketPath string
 			if runtime.GOOS == "windows" {
-				localAppData := filepath.Join(workDir, "AppData", "Local")
-				if err := os.MkdirAll(localAppData, 0o777); err != nil {
-					t.Fatal(err)
-				}
-				storeSocketPath = filepath.Join(localAppData, "zb-server.sock")
-
 				initialEnv = append(initialEnv,
 					"USERPROFILE="+workDir,
 					"APPDATA="+filepath.Join(workDir, "AppData", "Roaming"),
-					"LOCALAPPDATA="+localAppData,
+					"LOCALAPPDATA="+filepath.Join(workDir, "AppData", "Local"),
 					"TMP="+tempDir,
 				)
 			} else {
-				runtimeDir := filepath.Join(workDir, ".local", "run")
-				if err := os.MkdirAll(filepath.Dir(runtimeDir), 0o777); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Mkdir(runtimeDir, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				storeSocketPath = filepath.Join(runtimeDir, "zb-server.sock")
-
 				initialEnv = append(initialEnv,
 					"HOME="+workDir,
 					"TMPDIR="+tempDir,
 					// Prevent default of /etc/xdg.
 					"XDG_CONFIG_DIRS="+t.TempDir(),
-					"XDG_RUNTIME_DIR="+runtimeDir,
 				)
 			}
+			storeSocketPath := makeSocketPath(t)
 			initialEnv = append(initialEnv,
 				"PATH="+os.Getenv("PATH"),
 				"ZB_STORE_DIR="+string(storeDir),
@@ -286,6 +264,27 @@ func startServerForTest(ctx context.Context, tb testing.TB, storeSocket string, 
 			})
 		}
 	})
+}
+
+// makeSocketPath creates a path for a socket.
+//
+// It intentionally does not call [*testing.T.TempDir]
+// because Unix domain socket path names have very short limits.
+// See [unix(7)] for Linux or [unix(4)] for FreeBSD/Darwin.
+//
+// [unix(7)]: https://manpages.debian.org/trixie/manpages/unix.7.en.html
+// [unix(4)]: https://man.freebsd.org/cgi/man.cgi?query=unix&apropos=0&sektion=4&manpath=FreeBSD+15.1-RELEASE+and+Ports.quarterly&format=html
+func makeSocketPath(tb testing.TB) string {
+	dir, err := os.MkdirTemp("", "*")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			tb.Error("Clean up socket:", err)
+		}
+	})
+	return filepath.Join(dir, "sock")
 }
 
 type syncWriter struct {
