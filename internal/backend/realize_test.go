@@ -208,6 +208,7 @@ func TestRealize(t *testing.T) {
 		}
 		data, err := readTestData(dir, t.Name(), map[string]string{
 			"@url@": srv.URL + "/hello.txt",
+			"@urls@": "",
 		})
 		if err != nil {
 			t.Fatal(err)
