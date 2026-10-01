@@ -24,10 +24,10 @@ function fetchurl(args)
 
   local name = args.name
 
-  if args.url == nil then
-    name = args.name or baseNameOf(args.urls[1])
+  if args.url then
+    name = baseNameOf(args.url)
   else
-    name = args.name or baseNameOf(args.url)
+    name = baseNameOf(args.urls[1])
   end
 
   local outputHashMode = "flat"
