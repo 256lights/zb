@@ -194,7 +194,7 @@ func TestRealize(t *testing.T) {
 			env  func(string) map[string]string
 		}{
 			{
-				name: "Fetch singular url",
+				name: "FetchSingularURL",
 				env: func(urlBase string) map[string]string {
 					return map[string]string{
 						"@url@":  urlBase + "/hello.txt",
@@ -203,7 +203,7 @@ func TestRealize(t *testing.T) {
 				},
 			},
 			{
-				name: "Fetch from a list of urls",
+				name: "FetchURLs",
 				env: func(urlBase string) map[string]string {
 					return map[string]string{
 						"@url@":  "",
@@ -212,7 +212,6 @@ func TestRealize(t *testing.T) {
 				},
 			},
 		}
-		testDataTemplate := t.Name()
 		for _, test := range tests {
 			ctx := testcontext.New(t)
 
@@ -231,7 +230,7 @@ func TestRealize(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err := readTestData(dir, testDataTemplate, test.env(srv.URL))
+			data, err := readTestData(dir, "TestRealize/FetchURL.txt", test.env(srv.URL))
 			if err != nil {
 				t.Fatal(err)
 			}
