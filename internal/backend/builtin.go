@@ -85,7 +85,7 @@ func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string)
 		req.Header.Set("Accept", "*/*")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return err
+			continue
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
@@ -108,6 +108,7 @@ func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string)
 		if err2 != nil {
 			return err2
 		}
+		return nil
 	}
 
 	return err

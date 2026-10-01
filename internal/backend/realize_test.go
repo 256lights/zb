@@ -189,34 +189,57 @@ func TestRealize(t *testing.T) {
 	customTest("FetchURL", func(t *testing.T) {
 		t.Parallel()
 
-		ctx := testcontext.New(t)
+		tests := []struct {
+			name string
+			env  func(string) map[string]string
+		}{
+			{
+				name: "Fetch singular url",
+				env: func(urlBase string) map[string]string {
+					return map[string]string{
+						"@url@":  urlBase + "/hello.txt",
+						"@urls@": "",
+					}
+				},
+			},
+			{
+				name: "Fetch from a list of urls",
+				env: func(urlBase string) map[string]string {
+					return map[string]string{
+						"@url@":  "",
+						"@urls@": fmt.Sprintf("http://broken/hello.txt %s", urlBase+"/hello.txt"),
+					}
+				},
+			},
+		}
+		testDataTemplate := t.Name()
+		for _, test := range tests {
+			ctx := testcontext.New(t)
 
-		const fileContent = "Hello, World!\n"
-		mux := http.NewServeMux()
-		mux.HandleFunc("/hello.txt", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeContent(w, r, "hello.txt", time.Time{}, strings.NewReader(fileContent))
-		})
-		srv := httptest.NewServer(mux)
-		defer srv.Close()
+			const fileContent = "Hello, World!\n"
+			mux := http.NewServeMux()
+			mux.HandleFunc("/hello.txt", func(w http.ResponseWriter, r *http.Request) {
+				http.ServeContent(w, r, "hello.txt", time.Time{}, strings.NewReader(fileContent))
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
 
-		dir := backendtest.NewStoreDirectory(t)
-		server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-			TempDir: t.TempDir(),
-		})
-		if err != nil {
-			t.Fatal(err)
+			dir := backendtest.NewStoreDirectory(t)
+			server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+				TempDir: t.TempDir(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := readTestData(dir, testDataTemplate, test.env(srv.URL))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := data.writeTo(ctx, server, nil); err != nil {
+				t.Fatal(err)
+			}
+			runScriptTest(ctx, t, dir, server, data, nil)
 		}
-		data, err := readTestData(dir, t.Name(), map[string]string{
-			"@url@": srv.URL + "/hello.txt",
-			"@urls@": "",
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := data.writeTo(ctx, server, nil); err != nil {
-			t.Fatal(err)
-		}
-		runScriptTest(ctx, t, dir, server, data, nil)
 	})
 
 	customTest("Signature", func(t *testing.T) {
