@@ -22,7 +22,8 @@ function fetchurl(args)
     error("Either url or urls must be set")
   end
 
-  local name
+  local name = args.name
+
   if args.url == nil then
     name = args.name or baseNameOf(args.urls[1])
   else
