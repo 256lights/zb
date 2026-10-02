@@ -189,30 +189,8 @@ func TestRealize(t *testing.T) {
 	customTest("FetchURL", func(t *testing.T) {
 		t.Parallel()
 
-		tests := []struct {
-			name string
-			env  func(string) map[string]string
-		}{
-			{
-				name: "FetchSingularURL",
-				env: func(urlBase string) map[string]string {
-					return map[string]string{
-						"@url@":  urlBase + "/hello.txt",
-						"@urls@": "",
-					}
-				},
-			},
-			{
-				name: "FetchURLs",
-				env: func(urlBase string) map[string]string {
-					return map[string]string{
-						"@url@":  "",
-						"@urls@": fmt.Sprintf("http://broken/hello.txt %s", urlBase+"/hello.txt"),
-					}
-				},
-			},
-		}
-		for _, test := range tests {
+		tests := []string{"Success.txt", "Failure.txt"}
+		for _, name := range tests {
 			ctx := testcontext.New(t)
 
 			const fileContent = "Hello, World!\n"
@@ -220,6 +198,10 @@ func TestRealize(t *testing.T) {
 			mux.HandleFunc("/hello.txt", func(w http.ResponseWriter, r *http.Request) {
 				http.ServeContent(w, r, "hello.txt", time.Time{}, strings.NewReader(fileContent))
 			})
+			mux.HandleFunc("/broken.txt", func(w http.ResponseWriter, r *http.Request) {
+				http.NotFound(w, r)
+			})
+
 			srv := httptest.NewServer(mux)
 			defer srv.Close()
 
@@ -230,7 +212,10 @@ func TestRealize(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err := readTestData(dir, "TestRealize/FetchURL.txt", test.env(srv.URL))
+			data, err := readTestData(dir, fmt.Sprintf("TestRealize/FetchURL/%s", name), map[string]string{
+				"@url@":       srv.URL + "/hello.txt",
+				"@brokenurl@": srv.URL + "/broken.txt",
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
