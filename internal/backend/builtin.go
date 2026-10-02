@@ -55,7 +55,14 @@ func runBuiltin(ctx context.Context, invocation *builderInvocation) error {
 
 func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string) error {
 	href := drv.Env["url"]
-	if href == "" {
+	var urls []string
+	if href != "" {
+		urls = append(urls, href)
+	}
+
+	hrefs := drv.Env["urls"]
+	urls = append(urls, strings.Fields(hrefs)...)
+	if len(urls) == 0 {
 		return fmt.Errorf("missing url environment variable")
 	}
 	outputPath := drv.Env[zbstore.DefaultOutputName]
@@ -68,37 +75,43 @@ func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string)
 	}
 	executable := drv.Env["executable"] != ""
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, href, nil)
-	if err != nil {
-		return err
+	var err error
+	for _, href := range urls {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, href, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("User-Agent", useragent.String)
+		req.Header.Set("Accept", "*/*")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+			err = fmt.Errorf("get %s: %v", href, xhttp.ErrorFromResponse(resp))
+			continue
+		}
+		perm := os.FileMode(0o644)
+		if executable {
+			perm |= 0o111
+		}
+		f, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+		if err != nil {
+			return err
+		}
+		_, err1 := io.Copy(f, resp.Body)
+		err2 := f.Close()
+		if err1 != nil {
+			return err1
+		}
+		if err2 != nil {
+			return err2
+		}
+		return nil
 	}
-	req.Header.Set("User-Agent", useragent.String)
-	req.Header.Set("Accept", "*/*")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("get %s: %v", href, xhttp.ErrorFromResponse(resp))
-	}
-	perm := os.FileMode(0o644)
-	if executable {
-		perm |= 0o111
-	}
-	f, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
-	if err != nil {
-		return err
-	}
-	_, err1 := io.Copy(f, resp.Body)
-	err2 := f.Close()
-	if err1 != nil {
-		return err1
-	}
-	if err2 != nil {
-		return err2
-	}
-	return nil
+
+	return err
 }
 
 func extract(ctx context.Context, drv *zbstore.Derivation, realStoreDir string) error {

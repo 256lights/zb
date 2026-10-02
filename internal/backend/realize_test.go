@@ -189,33 +189,41 @@ func TestRealize(t *testing.T) {
 	customTest("FetchURL", func(t *testing.T) {
 		t.Parallel()
 
-		ctx := testcontext.New(t)
+		tests := []string{"Success.txt", "Failure.txt"}
+		for _, name := range tests {
+			ctx := testcontext.New(t)
 
-		const fileContent = "Hello, World!\n"
-		mux := http.NewServeMux()
-		mux.HandleFunc("/hello.txt", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeContent(w, r, "hello.txt", time.Time{}, strings.NewReader(fileContent))
-		})
-		srv := httptest.NewServer(mux)
-		defer srv.Close()
+			const fileContent = "Hello, World!\n"
+			mux := http.NewServeMux()
+			mux.HandleFunc("/hello.txt", func(w http.ResponseWriter, r *http.Request) {
+				http.ServeContent(w, r, "hello.txt", time.Time{}, strings.NewReader(fileContent))
+			})
+			mux.HandleFunc("/broken.txt", func(w http.ResponseWriter, r *http.Request) {
+				http.NotFound(w, r)
+			})
 
-		dir := backendtest.NewStoreDirectory(t)
-		server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-			TempDir: t.TempDir(),
-		})
-		if err != nil {
-			t.Fatal(err)
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			dir := backendtest.NewStoreDirectory(t)
+			server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+				TempDir: t.TempDir(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := readTestData(dir, fmt.Sprintf("TestRealize/FetchURL/%s", name), map[string]string{
+				"@url@":       srv.URL + "/hello.txt",
+				"@brokenurl@": srv.URL + "/broken.txt",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := data.writeTo(ctx, server, nil); err != nil {
+				t.Fatal(err)
+			}
+			runScriptTest(ctx, t, dir, server, data, nil)
 		}
-		data, err := readTestData(dir, t.Name(), map[string]string{
-			"@url@": srv.URL + "/hello.txt",
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := data.writeTo(ctx, server, nil); err != nil {
-			t.Fatal(err)
-		}
-		runScriptTest(ctx, t, dir, server, data, nil)
 	})
 
 	customTest("Signature", func(t *testing.T) {
