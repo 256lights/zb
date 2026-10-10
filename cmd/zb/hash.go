@@ -13,6 +13,7 @@ import (
 
 type hashCommand struct {
 	File    hashFileCommand    `kong:"cmd"`
+	Convert hashConvertCommand `kong:"cmd"`
 }
 
 func (c *hashCommand) Signature() string {
@@ -55,4 +56,12 @@ func (hf *hashFileCommand) Run() error {
 	}
 
 	return nil
+}
+
+type hashConvertCommand struct {
+	HashAlgo string `enum:"md5,sha1,sha256,sha512" default:"sha256" help:"Hash algorithm (${enum})"`
+	From     string `enum:"base16,base32,base64" default:"base16" help:"Hash format (${enum})"`
+	To       string `enum:"base16,base32,base64" default:"base16" help:"Hash format (${enum})"`
+
+	Hashes []string `kong:"arg"`
 }
