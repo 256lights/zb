@@ -58,6 +58,9 @@ type zbCommand struct {
 	Serve      serveCommand      `kong:"cmd"`
 	NAR        narCommand        `kong:"cmd"`
 
+	Hash        hashCommand        `kong:"cmd"`
+	PrefetchURL PrefetchURLCommand `kong:"cmd"`
+
 	Completion kongcompletion.Completion `kong:"cmd"`
 
 	Version     versionCommand `kong:"cmd"`
